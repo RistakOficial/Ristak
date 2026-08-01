@@ -13,6 +13,7 @@ const TRIGGER_LINK_WAIT_ACTIONS = new Set(['click_link', 'trigger_link_click', '
 const REPLY_MESSAGE_WAIT_ACTIONS = new Set(['reply_message', 'reply-message'])
 const SENT_MESSAGE_NODE_TYPES = new Set(['channel-whatsapp', 'channel-messenger', 'channel-instagram'])
 const DRIP_INTERVAL_UNITS = new Set(['minutes', 'hours', 'days'])
+const DEFAULT_REPLY_ACTION_CHANNELS = new Set(['whatsapp', 'messenger', 'instagram', 'email'])
 
 // Únicos canales conversacionales soportados (sin SMS ni Email)
 export const ALLOWED_CHANNELS = ['whatsapp', 'messenger', 'instagram']
@@ -38,6 +39,7 @@ const EXECUTABLE_NODE_TYPES = new Set([
   'action-create-contact',
   'action-find-contact',
   'action-change-whatsapp-number',
+  'action-set-default-reply-channel',
   'action-webhook',
   'action-contact-tag',
   'action-add-contact-tag',
@@ -164,6 +166,12 @@ export function getAutomationTriggerRequiredFeatures(trigger = {}) {
 
 export function getAutomationNodeRequiredFeatures(node = {}) {
   const features = [...(AUTOMATION_NODE_REQUIRED_FEATURES[String(node?.type || '')] || [])]
+  if (String(node?.type || '') === 'action-set-default-reply-channel') {
+    const channel = String(node?.config?.channel || '').trim().toLowerCase()
+    if (channel === 'whatsapp') features.push('whatsapp')
+    if (channel === 'messenger' || channel === 'instagram') features.push('campaigns')
+    if (channel === 'email') features.push('email')
+  }
   const triggers = asArray(node?.config?.triggers)
   for (const trigger of triggers) {
     features.push(...getAutomationTriggerRequiredFeatures(trigger))
@@ -498,6 +506,17 @@ export function validateFlowForPublish(flow) {
       const total = branches.reduce((sum, branch) => sum + (Number(branch?.percent) || 0), 0)
       if (branches.length < 2 || total !== 100) {
         errors.push('Las ramas del aleatorizador deben sumar 100%')
+      }
+    })
+
+  nodes
+    .filter((node) => node.type === 'action-set-default-reply-channel')
+    .forEach((node) => {
+      const channel = String(node.config?.channel || '').trim().toLowerCase()
+      if (!DEFAULT_REPLY_ACTION_CHANNELS.has(channel)) {
+        errors.push('La acción Cambiar canal de respuesta necesita un canal válido')
+      } else if (channel === 'whatsapp' && !String(node.config?.whatsappPhoneNumberId || '').trim()) {
+        errors.push('La acción Cambiar canal de respuesta necesita un número de WhatsApp conectado')
       }
     })
 

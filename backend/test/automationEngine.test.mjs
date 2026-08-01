@@ -3231,6 +3231,154 @@ test('acción cambia el número de WhatsApp preferido del contacto', async () =>
   }
 })
 
+test('acción define WhatsApp y un número conectado como respuesta predeterminada', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_default_reply_whatsapp_${suffix}`
+  const contactId = `contact_default_reply_whatsapp_${suffix}`
+  const phoneId = `wa_default_reply_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        config: {
+          triggers: [
+            { id: 'trigger-contact-created', type: 'trigger-contact-created', config: { source: '' } }
+          ]
+        }
+      },
+      {
+        id: 'default-reply',
+        type: 'action-set-default-reply-channel',
+        label: 'Cambiar canal de respuesta predeterminado',
+        config: {
+          channel: 'whatsapp',
+          whatsappPhoneNumberId: phoneId,
+          whatsappPhoneNumberIdName: 'Soporte',
+          reason: 'Ruta elegida por {{automation.name}}'
+        }
+      }
+    ],
+    edges: [
+      { id: 'edge-start-reply', sourceNodeId: 'start', targetNodeId: 'default-reply' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, preferred_whatsapp_phone_number_id, custom_fields)
+       VALUES (?, ?, ?, ?, NULL, ?)`,
+      [contactId, `+524${Date.now().toString().slice(-10)}`, `reply-wa-${suffix}@test.com`, 'Contacto WhatsApp', '{}']
+    )
+    await db.run(
+      `INSERT INTO whatsapp_api_phone_numbers (
+        id, phone_number, display_phone_number, verified_name, label, api_send_enabled
+      ) VALUES (?, ?, ?, ?, ?, 1)`,
+      [phoneId, '525533333333', '+52 55 3333 3333', 'Soporte Meta', 'Soporte']
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test canal predeterminado', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('contact-created', { contactId })
+
+    const contact = await db.get('SELECT preferred_whatsapp_phone_number_id FROM contacts WHERE id = ?', [contactId])
+    const preference = await db.get('SELECT * FROM contact_reply_channel_preferences WHERE contact_id = ?', [contactId])
+    const routingEvent = await db.get('SELECT * FROM whatsapp_routing_events WHERE contact_id = ? ORDER BY created_at DESC LIMIT 1', [contactId])
+    const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?', [automationId, contactId])
+
+    assert.equal(enrollment.status, 'completed')
+    assert.equal(contact.preferred_whatsapp_phone_number_id, phoneId)
+    assert.equal(preference.channel, 'whatsapp')
+    assert.equal(preference.route_id, phoneId)
+    assert.equal(preference.selection_source, 'automation')
+    assert.equal(routingEvent.new_phone_number_id, phoneId)
+    assert.equal(routingEvent.reason, 'Ruta elegida por Test canal predeterminado')
+    assert.equal(
+      JSON.parse(enrollment.log).some((entry) => String(entry.detail || '').includes('Canal de respuesta cambiado a Soporte')),
+      true
+    )
+  } finally {
+    await db.run('DELETE FROM whatsapp_routing_events WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contact_reply_channel_preferences WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneId])
+  }
+})
+
+test('acción define Instagram como respuesta sólo cuando el contacto tiene conversación enlazada', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_default_reply_instagram_${suffix}`
+  const contactId = `contact_default_reply_instagram_${suffix}`
+  const socialProfileId = `meta_social_default_reply_${suffix}`
+  const instagramAccountId = `ig_business_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        config: {
+          triggers: [
+            { id: 'trigger-contact-created', type: 'trigger-contact-created', config: { source: '' } }
+          ]
+        }
+      },
+      {
+        id: 'default-reply',
+        type: 'action-set-default-reply-channel',
+        label: 'Cambiar canal de respuesta predeterminado',
+        config: { channel: 'instagram' }
+      }
+    ],
+    edges: [
+      { id: 'edge-start-reply', sourceNodeId: 'start', targetNodeId: 'default-reply' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?)`,
+      [contactId, `+525${Date.now().toString().slice(-10)}`, `reply-ig-${suffix}@test.com`, 'Contacto Instagram', '{}']
+    )
+    await db.run(
+      `INSERT INTO meta_social_contacts (
+        id, contact_id, platform, sender_id, recipient_id, page_id, instagram_account_id
+      ) VALUES (?, ?, 'instagram', ?, ?, ?, ?)`,
+      [socialProfileId, contactId, `igsid_${suffix}`, instagramAccountId, `page_${suffix}`, instagramAccountId]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test canal Instagram', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('contact-created', { contactId })
+
+    const preference = await db.get('SELECT * FROM contact_reply_channel_preferences WHERE contact_id = ?', [contactId])
+    const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?', [automationId, contactId])
+    assert.equal(enrollment.status, 'completed')
+    assert.equal(preference.channel, 'instagram')
+    assert.equal(preference.route_id, instagramAccountId)
+    assert.equal(
+      JSON.parse(enrollment.log).some((entry) => String(entry.detail || '').includes('Canal de respuesta cambiado a Instagram Direct')),
+      true
+    )
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contact_reply_channel_preferences WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM meta_social_contacts WHERE id = ?', [socialProfileId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
 test('trigger contacto modificado filtra número de WhatsApp asignado', async () => {
   const suffix = randomUUID()
   const automationId = `automation_contact_change_whatsapp_${suffix}`

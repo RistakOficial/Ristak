@@ -88,6 +88,7 @@ const STANDARD_CONTACT_CHANGE_FIELDS: CatalogOption[] = [
   { value: 'email', label: 'Email', meta: 'sistema' },
   { value: 'source', label: 'Fuente', meta: 'sistema' },
   { value: 'assignedUser', label: 'Usuario asignado', meta: 'crm' },
+  { value: 'preferredReplyChannel', label: 'Canal de respuesta predeterminado', meta: 'chat' },
   { value: 'preferredWhatsAppPhoneNumberId', label: 'Número de WhatsApp asignado', meta: 'whatsapp' },
   { value: 'tags', label: 'Etiquetas', meta: 'crm' },
   { value: 'totalPaid', label: 'Total pagado', meta: 'pagos' },
@@ -382,11 +383,19 @@ async function loadInstagramAccounts(): Promise<CatalogOption[]> {
 
 async function loadWhatsAppNumbers(): Promise<CatalogOption[]> {
   const status = await whatsappApiService.getStatus()
-  return (status.phoneNumbers || []).map((phone) => ({
-    value: String(phone.id || phone.display_phone_number || ''),
-    label: phone.label || phone.verified_name || phone.display_phone_number || 'Número de WhatsApp',
-    meta: phone.display_phone_number || undefined
-  }))
+  return (status.phoneNumbers || [])
+    .filter((phone) => (
+      phone.availability?.available === true ||
+      phone.availability?.apiAvailable === true ||
+      phone.availability?.qrReady === true ||
+      phone.api_send_enabled === true ||
+      (phone.qr_send_enabled === true && ['connected', 'ready', 'open'].includes(String(phone.qr_status || '').toLowerCase()))
+    ))
+    .map((phone) => ({
+      value: String(phone.id || phone.display_phone_number || ''),
+      label: phone.label || phone.verified_name || phone.display_phone_number || 'Número de WhatsApp',
+      meta: phone.display_phone_number || undefined
+    }))
 }
 
 // Plantillas completas (con components: cuerpo, botones…) para previsualizar

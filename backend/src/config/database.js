@@ -3624,6 +3624,24 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_conekta_customer ON contacts(conekta_customer_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_created_at ON contacts(created_at)')
     await db.run(`
+      CREATE TABLE IF NOT EXISTS contact_reply_channel_preferences (
+        contact_id TEXT PRIMARY KEY,
+        channel TEXT NOT NULL,
+        route_id TEXT,
+        route_label TEXT,
+        selected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        selected_by_user_id TEXT,
+        selection_source TEXT NOT NULL DEFAULT 'manual',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      )
+    `)
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_contact_reply_channel_preference_selected
+      ON contact_reply_channel_preferences(channel, selected_at)
+    `)
+    await db.run(`
       CREATE TABLE IF NOT EXISTS contact_conversational_channel_preferences (
         contact_id TEXT PRIMARY KEY,
         channel TEXT NOT NULL CHECK (channel IN ('whatsapp', 'sms')),
@@ -3638,6 +3656,18 @@ async function initTablesUnlocked() {
     await db.run(`
       CREATE INDEX IF NOT EXISTS idx_contact_conv_channel_preference_selected
       ON contact_conversational_channel_preferences(channel, selected_at)
+    `)
+    await db.run(`
+      INSERT INTO contact_reply_channel_preferences (
+        contact_id, channel, selected_at, selected_by_user_id,
+        selection_source, created_at, updated_at
+      )
+      SELECT
+        contact_id, channel, selected_at, selected_by_user_id,
+        selection_source, created_at, updated_at
+      FROM contact_conversational_channel_preferences
+      WHERE 1 = 1
+      ON CONFLICT(contact_id) DO NOTHING
     `)
     await db.run(`
       CREATE INDEX IF NOT EXISTS idx_contacts_cursor_effective_created_at_id

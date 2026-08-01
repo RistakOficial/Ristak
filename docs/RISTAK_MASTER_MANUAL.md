@@ -1334,6 +1334,18 @@ completo. Abrir, buscar y `Cargar mas` son las unicas acciones que piden paginas
 plantillas de WhatsApp son snapshots locales: una lectura vacia no dispara
 `refresh` al proveedor; sincronizar sigue siendo una accion explicita.
 
+La accion **Cambiar canal de respuesta predeterminado** guarda, para el contacto
+que atraviesa el nodo, el canal que debe aparecer seleccionado al abrir una
+conversacion. Admite WhatsApp, Instagram Direct, Messenger y correo. Si se elige
+WhatsApp, el editor exige una fila concreta del catalogo local y solo ofrece
+numeros con una ruta de envio disponible; el runtime vuelve a validar el numero
+antes de guardar para no dejar una preferencia apuntando a una conexion caida.
+Instagram y Messenger exigen que el contacto tenga un perfil social enlazado, y
+correo exige una direccion. La preferencia vive en
+`contact_reply_channel_preferences` con el canal y, cuando aplica, el ID y nombre
+de la ruta. La accion historica **Cambiar numero de WhatsApp** sigue ejecutandose
+en flujos existentes, pero ya no se ofrece al crear nodos nuevos.
+
 ### Ejecuciones, reingreso y eventos dentro de Automatizaciones
 
 Cada entrada de un contacto a una automatizacion es una ejecucion independiente
@@ -2213,14 +2225,18 @@ ese rechazo. Los inbounds sincronizados guardan `from_phone`, `to_phone` y
 `business_phone` desde el payload HighLevel para que selector, ventana y ultimo
 remitente compartan la misma identidad.
 
-Para un mismo contacto, WhatsApp y SMS de HighLevel forman una sola decisión de
-salida del agente conversacional. La última selección manual de **WhatsApp ·
-HighLevel** o **SMS · HighLevel** hecha en el selector de `/chat` o `/movil` se
-persiste por contacto en `contact_conversational_channel_preferences`; un envío
-manual por una de esas rutas también actualiza la preferencia. `GET/PUT
-/api/contacts/:id/chat-channel-preference` exponen esa elección al chat. La
-preferencia manual manda hasta que el usuario elija el otro medio, sin que una
-respuesta automática del agente la reescriba.
+La decision de salida predeterminada de cada contacto se persiste en
+`contact_reply_channel_preferences`. La ultima seleccion manual hecha en
+`/chat`, `/movil` o el detalle del contacto, y la accion de Automatizaciones
+**Cambiar canal de respuesta predeterminado**, usan la misma fuente. `GET/PUT
+/api/contacts/:id/chat-channel-preference` exponen el canal y su ruta opcional.
+WhatsApp conserva el ID del numero elegido; Instagram y Messenger resuelven la
+cuenta desde el perfil social enlazado del contacto; correo no necesita una ruta
+adicional. Las filas historicas de
+`contact_conversational_channel_preferences` se migran como compatibilidad.
+El agente conversacional de HighLevel solo interpreta las preferencias
+WhatsApp/SMS y deja intactas las de Meta o correo. Una respuesta automatica del
+agente no reescribe la eleccion manual ni la establecida por una automatizacion.
 
 Si no existe selección manual, la ruta automática usa WhatsApp cuando hay un
 inbound real `ghl_whatsapp` del mismo teléfono ocurrido hace menos de 24 horas;

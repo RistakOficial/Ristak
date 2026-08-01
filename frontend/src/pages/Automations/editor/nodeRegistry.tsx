@@ -677,6 +677,7 @@ const CONTACT_UPDATED_FIELDS: VariableSchemaField[] = [
   field('Nombre', 'nombre'),
   field('Teléfono', 'telefono'),
   field('Correo', 'email'),
+  field('Canal de respuesta predeterminado', 'canal_respuesta_predefinido'),
   field('ID del número de WhatsApp preferido', 'id_numero_whatsapp_preferido'),
   field('Estado de actualización', 'estado_actualizacion')
 ]
@@ -1887,12 +1888,92 @@ const CONTACT_ACTIONS: NodeDefinition[] = [
     }
   },
   {
+    type: 'action-set-default-reply-channel',
+    kind: 'action',
+    label: 'Cambiar canal de respuesta predeterminado',
+    category: 'action-contacts',
+    description: 'Define por qué canal se responderá a este contacto',
+    icon: MessageCircleReply,
+    accent: 'blue',
+    addButtonLabel: 'Elegir canal',
+    defaultConfig: () => ({ channel: '', whatsappPhoneNumberId: '', whatsappPhoneNumberIdName: '', reason: '' }),
+    fields: [
+      {
+        key: 'channel',
+        label: 'Canal de respuesta',
+        type: 'select',
+        required: true,
+        options: [
+          { value: 'whatsapp', label: 'WhatsApp' },
+          { value: 'instagram', label: 'Instagram Direct' },
+          { value: 'messenger', label: 'Messenger' },
+          { value: 'email', label: 'Correo electrónico' }
+        ]
+      },
+      {
+        key: 'whatsappPhoneNumberId',
+        label: 'Número de WhatsApp de respuesta',
+        type: 'catalogSelect',
+        catalog: 'whatsappNumbers',
+        required: true,
+        showIf: (config) => str(config.channel) === 'whatsapp',
+        help: 'Sólo aparecen los números conectados y disponibles para enviar.'
+      },
+      {
+        key: 'socialRouteInfo',
+        label: 'Ruta social',
+        type: 'info',
+        text: 'Ristak usará la cuenta social enlazada a la conversación de cada contacto.',
+        showIf: (config) => ['instagram', 'messenger'].includes(str(config.channel))
+      },
+      {
+        key: 'reason',
+        label: 'Motivo interno (opcional)',
+        type: 'text',
+        placeholder: 'Cambio desde automatización',
+        showVariables: true,
+        advanced: true
+      }
+    ],
+    outputs: () => SINGLE_OUTPUT,
+    variableOutput: () => ({
+      baseId: 'contacto_actualizado',
+      baseLabel: 'Contacto actualizado',
+      fields: CONTACT_UPDATED_FIELDS
+    }),
+    validate: (config) => {
+      if (!str(config.channel)) return ['Selecciona el canal de respuesta']
+      if (str(config.channel) === 'whatsapp' && !str(config.whatsappPhoneNumberId)) {
+        return ['Selecciona el número de WhatsApp de respuesta']
+      }
+      return []
+    },
+    summary: (config) => {
+      const channel = str(config.channel)
+      const labels: Record<string, string> = {
+        whatsapp: 'WhatsApp',
+        instagram: 'Instagram Direct',
+        messenger: 'Messenger',
+        email: 'Correo electrónico'
+      }
+      if (!channel) return { empty: 'Selecciona el canal de respuesta' }
+      const phoneName = str(config.whatsappPhoneNumberIdName) || str(config.whatsappPhoneNumberId)
+      return {
+        text: channel === 'whatsapp'
+          ? phoneName ? `Responder por WhatsApp · ${phoneName}` : undefined
+          : `Responder por ${labels[channel] || channel}`,
+        empty: channel === 'whatsapp' ? 'Selecciona el número de WhatsApp' : 'Selecciona el canal de respuesta'
+      }
+    }
+  },
+  {
     type: 'action-change-whatsapp-number',
     kind: 'action',
     label: 'Cambiar número de WhatsApp',
     category: 'action-contacts',
     icon: Shuffle,
     accent: 'blue',
+    hiddenFromPicker: true,
     addButtonLabel: 'Seleccionar número',
     defaultConfig: () => ({ phoneNumberId: '', phoneNumberIdName: '', reason: '' }),
     fields: [

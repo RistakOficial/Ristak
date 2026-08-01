@@ -120,10 +120,12 @@ import {
   listContactPaymentsPage
 } from '../services/contactDetailPaginationService.js'
 import {
-  collapseHighLevelPhoneMirrorRowsForDisplay,
-  getHighLevelConversationalChannelPreference,
-  setHighLevelConversationalChannelPreference
+  collapseHighLevelPhoneMirrorRowsForDisplay
 } from '../services/highLevelConversationalChannelRoutingService.js'
+import {
+  getContactReplyChannelPreference,
+  setContactReplyChannelPreference
+} from '../services/contactReplyChannelPreferenceService.js'
 import { confirmationSuccessActionSqlContains } from '../services/appointmentConfirmationActions.js'
 import { CONVERSATIONAL_AGENT_COMPLETION_SIGNAL_VALUES } from '../utils/conversationalAgentCompletion.js'
 
@@ -158,7 +160,7 @@ export const getContactConversationalChannelPreference = async (req, res) => {
     const contact = await db.get('SELECT id FROM contacts WHERE id = ? LIMIT 1', [contactId])
     if (!contact) return res.status(404).json({ success: false, error: 'Contacto no encontrado' })
 
-    const preference = await getHighLevelConversationalChannelPreference(contactId)
+    const preference = await getContactReplyChannelPreference(contactId)
     res.json({ success: true, data: preference })
   } catch (error) {
     logger.error(`Error obteniendo canal conversacional del contacto: ${error.message}`)
@@ -168,10 +170,12 @@ export const getContactConversationalChannelPreference = async (req, res) => {
 
 export const updateContactConversationalChannelPreference = async (req, res) => {
   try {
-    const preference = await setHighLevelConversationalChannelPreference(
+    const preference = await setContactReplyChannelPreference(
       req.params?.id,
       req.body?.channel,
       {
+        routeId: req.body?.routeId,
+        routeLabel: req.body?.routeLabel,
         selectedByUserId: req.user?.userId || req.user?.id || null,
         source: 'manual'
       }
@@ -180,7 +184,7 @@ export const updateContactConversationalChannelPreference = async (req, res) => 
   } catch (error) {
     const status = error.code === 'CONTACT_NOT_FOUND'
       ? 404
-      : error.code === 'INVALID_HIGHLEVEL_CONVERSATIONAL_CHANNEL'
+      : error.code === 'INVALID_CONTACT_REPLY_CHANNEL'
         ? 400
         : 500
     if (status === 500) logger.error(`Error guardando canal conversacional del contacto: ${error.message}`)

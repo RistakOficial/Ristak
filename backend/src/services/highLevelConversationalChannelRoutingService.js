@@ -5,6 +5,10 @@ import {
   timestampSortExpression,
   timestampSortParameterExpression
 } from '../utils/sqlTimestampSort.js'
+import {
+  getContactReplyChannelPreference,
+  setContactReplyChannelPreference
+} from './contactReplyChannelPreferenceService.js'
 
 export const HIGHLEVEL_CONVERSATIONAL_WHATSAPP_WINDOW_MS = 24 * 60 * 60 * 1000
 export const HIGHLEVEL_CONVERSATIONAL_DUPLICATE_WINDOW_MS = 90 * 1000
@@ -244,28 +248,22 @@ function newestRow(rows = []) {
 }
 
 export async function getHighLevelConversationalChannelPreference(contactId) {
-  const cleanContactId = cleanString(contactId)
-  if (!cleanContactId) return null
-
-  const row = await db.get(`
-    SELECT contact_id, channel, selected_at, selected_by_user_id, selection_source
-    FROM contact_conversational_channel_preferences
-    WHERE contact_id = ?
-    LIMIT 1
-  `, [cleanContactId]).catch(() => null)
-  const channel = normalizeHighLevelConversationalPhoneChannel(row?.channel)
-  if (!row || !channel) return null
-
-  return {
-    contactId: row.contact_id,
-    channel,
-    selectedAt: row.selected_at || null,
-    selectedByUserId: row.selected_by_user_id || null,
-    source: row.selection_source || 'manual'
+  const preference = await getContactReplyChannelPreference(contactId)
+  const channel = normalizeHighLevelConversationalPhoneChannel(preference?.channel)
+  if (!channel) return null
+  if (
+    channel === 'whatsapp' &&
+    cleanString(preference?.routeId) &&
+    cleanString(preference.routeId).toLowerCase() !== 'highlevel'
+  ) {
+    return null
   }
+  return preference
 }
 
 export async function setHighLevelConversationalChannelPreference(contactId, channel, {
+  routeId = null,
+  routeLabel = null,
   selectedByUserId = null,
   source = 'manual'
 } = {}) {
@@ -277,32 +275,12 @@ export async function setHighLevelConversationalChannelPreference(contactId, cha
     error.code = 'INVALID_HIGHLEVEL_CONVERSATIONAL_CHANNEL'
     throw error
   }
-
-  const contact = await db.get('SELECT id FROM contacts WHERE id = ? LIMIT 1', [cleanContactId])
-  if (!contact) {
-    const error = new Error('Contacto no encontrado')
-    error.code = 'CONTACT_NOT_FOUND'
-    throw error
-  }
-
-  await db.run(`
-    INSERT INTO contact_conversational_channel_preferences (
-      contact_id, channel, selected_at, selected_by_user_id, selection_source, updated_at
-    ) VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(contact_id) DO UPDATE SET
-      channel = excluded.channel,
-      selected_at = CURRENT_TIMESTAMP,
-      selected_by_user_id = excluded.selected_by_user_id,
-      selection_source = excluded.selection_source,
-      updated_at = CURRENT_TIMESTAMP
-  `, [
-    cleanContactId,
-    normalizedChannel,
-    cleanString(selectedByUserId) || null,
-    cleanString(source) || 'manual'
-  ])
-
-  return getHighLevelConversationalChannelPreference(cleanContactId)
+  return setContactReplyChannelPreference(cleanContactId, normalizedChannel, {
+    routeId: routeId || (normalizedChannel === 'whatsapp' ? 'highlevel' : null),
+    routeLabel: routeLabel || (normalizedChannel === 'whatsapp' ? 'WhatsApp · HighLevel' : null),
+    selectedByUserId,
+    source
+  })
 }
 
 async function loadHighLevelPhoneInboundRows(contactId, nowMs) {

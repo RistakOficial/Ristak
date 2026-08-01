@@ -3704,7 +3704,7 @@ export const DesktopChat: React.FC = () => {
     setEmailIncludeSignature(true)
   }, [activeContact?.id, defaultComposerBusinessPhone?.id, defaultHighLevelPhoneNumber?.phoneNumber, highLevelConnected])
   useEffect(() => {
-    if (!activeContact?.id || !highLevelConnected) return
+    if (!activeContact?.id) return
     const requestId = composerChannelPreferenceRequestRef.current + 1
     composerChannelPreferenceRequestRef.current = requestId
     let cancelled = false
@@ -3714,7 +3714,15 @@ export const DesktopChat: React.FC = () => {
         if (cancelled || composerChannelPreferenceRequestRef.current !== requestId || !preference?.channel) return
         setCommentReplyTarget(null)
         setComposerChannel(preference.channel)
-        setComposerBusinessPhoneId(HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID)
+        setComposerBusinessPhoneId(
+          preference.channel === 'whatsapp'
+            ? preference.routeId === 'highlevel'
+              ? HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID
+              : preference.routeId || defaultComposerBusinessPhone?.id || ''
+            : preference.channel === 'sms'
+              ? HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID
+              : defaultComposerBusinessPhone?.id || ''
+        )
         setComposerHighLevelFromNumber(
           preference.channel === 'sms' ? defaultHighLevelPhoneNumber?.phoneNumber || '' : ''
         )
@@ -3722,7 +3730,7 @@ export const DesktopChat: React.FC = () => {
       .catch(() => undefined)
 
     return () => { cancelled = true }
-  }, [activeContact?.id, defaultHighLevelPhoneNumber?.phoneNumber, highLevelConnected])
+  }, [activeContact?.id])
   useEffect(() => {
     setComposerBusinessPhoneId((current) => {
       if (!activeContact) return ''
@@ -5934,14 +5942,19 @@ export const DesktopChat: React.FC = () => {
       ? value.slice(HIGHLEVEL_SMS_COMPOSER_VALUE_PREFIX.length)
       : ''
     const nextChannel = highLevelSmsPhoneId ? 'sms' : normalizeComposerChannel(value)
-    const preferredHighLevelPhoneChannel = nextChannel === 'sms'
-      ? 'sms'
-      : value === HIGHLEVEL_WHATSAPP_COMPOSER_VALUE
-        ? 'whatsapp'
-        : null
-    if (activeContact?.id && preferredHighLevelPhoneChannel) {
+    const nextWhatsAppRouteId = nextChannel === 'whatsapp' && value.startsWith('whatsapp:')
+      ? value.slice('whatsapp:'.length)
+      : ''
+    const preferredReplyChannel = !isCommentComposerChannel(nextChannel)
+      ? nextChannel
+      : null
+    if (activeContact?.id && preferredReplyChannel) {
       composerChannelPreferenceRequestRef.current += 1
-      void contactsService.updateConversationalChannelPreference(activeContact.id, preferredHighLevelPhoneChannel)
+      void contactsService.updateConversationalChannelPreference(activeContact.id, preferredReplyChannel, {
+        routeId: preferredReplyChannel === 'whatsapp'
+          ? nextWhatsAppRouteId || null
+          : null
+      })
         .catch((error: any) => {
           showToast(
             'warning',
@@ -5963,7 +5976,7 @@ export const DesktopChat: React.FC = () => {
     }
     setComposerChannel(nextChannel)
     if (nextChannel === 'whatsapp') {
-      const nextBusinessPhoneId = value.startsWith('whatsapp:') ? value.slice('whatsapp:'.length) : ''
+      const nextBusinessPhoneId = nextWhatsAppRouteId
       if (nextBusinessPhoneId === 'highlevel') {
         setComposerBusinessPhoneId(HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID)
       } else if (nextBusinessPhoneId) {

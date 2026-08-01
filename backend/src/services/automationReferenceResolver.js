@@ -713,6 +713,22 @@ function inspectNodeConfig({ node, catalogs, issues, seen }) {
     })
   }
 
+  if (
+    cleanString(node.type) === 'action-set-default-reply-channel' &&
+    cleanString(config.channel).toLowerCase() === 'whatsapp'
+  ) {
+    addCatalogIssue({
+      catalogs,
+      issues,
+      seen,
+      nodeId: node.id,
+      catalog: 'whatsappNumbers',
+      fieldPath: 'whatsappPhoneNumberId',
+      value: config.whatsappPhoneNumberId,
+      label: config.whatsappPhoneNumberIdName
+    })
+  }
+
   if (cleanString(config.form)) {
     addCatalogIssue({
       catalogs,

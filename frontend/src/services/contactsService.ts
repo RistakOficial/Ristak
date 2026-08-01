@@ -106,7 +106,9 @@ interface ChatReadStateResult {
 
 export interface ContactConversationalChannelPreference {
   contactId: string
-  channel: 'whatsapp' | 'sms'
+  channel: 'whatsapp' | 'sms' | 'messenger' | 'instagram' | 'email'
+  routeId?: string | null
+  routeLabel?: string | null
   selectedAt?: string | null
   selectedByUserId?: string | null
   source?: string
@@ -592,11 +594,12 @@ export const contactsService = {
 
   async updateConversationalChannelPreference(
     id: string,
-    channel: ContactConversationalChannelPreference['channel']
+    channel: ContactConversationalChannelPreference['channel'],
+    route?: { routeId?: string | null; routeLabel?: string | null }
   ): Promise<ContactConversationalChannelPreference> {
     return apiClient.put<ContactConversationalChannelPreference>(
       `/contacts/${encodeURIComponent(id)}/chat-channel-preference`,
-      { channel }
+      { channel, ...route }
     )
   },
 

@@ -36,6 +36,7 @@ import automationsService, {
 import {
   contactsService,
   getOldestJourneyMessageCursor,
+  type ContactConversationalChannelPreference,
   type JourneyEvent
 } from '@/services/contactsService'
 import { conversationalAgentService, type ConversationalAgentCompletionEvent } from '@/services/conversationalAgentService'
@@ -770,6 +771,7 @@ export function ContactDetailsModal({
   const [chatEmailHtml, setChatEmailHtml] = useState('')
   const [chatEmailIncludeSignature, setChatEmailIncludeSignature] = useState(true)
   const [chatChannelValue, setChatChannelValue] = useState('whatsapp')
+  const [chatReplyPreference, setChatReplyPreference] = useState<ContactConversationalChannelPreference | null>(null)
   const [chatSending, setChatSending] = useState(false)
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
   const [whatsappStatusLoading, setWhatsappStatusLoading] = useState(false)
@@ -833,6 +835,7 @@ export function ContactDetailsModal({
       setChatEmailHtml('')
       setChatEmailIncludeSignature(true)
       setChatChannelValue('whatsapp')
+      setChatReplyPreference(null)
       setChatSending(false)
       setWhatsappStatus(null)
       setWhatsappStatusLoading(false)
@@ -946,6 +949,7 @@ export function ContactDetailsModal({
     setChatEmailHtml('')
     setChatEmailIncludeSignature(true)
     setChatChannelValue('whatsapp')
+    setChatReplyPreference(null)
     setChatSending(false)
     setAutomationActivity(null)
     setAutomationActivityLoading(false)
@@ -1779,6 +1783,37 @@ export function ContactDetailsModal({
   }, [chatChannelOptions, chatChannelValue, isOpen, selectedBusinessPhone?.id, selectedContact])
 
   useEffect(() => {
+    if (!isOpen || !selectedContact?.id) {
+      setChatReplyPreference(null)
+      return
+    }
+    const contactId = selectedContact.id
+    let cancelled = false
+    setChatReplyPreference(null)
+    void contactsService.getConversationalChannelPreference(contactId)
+      .then((preference) => {
+        if (!cancelled) setChatReplyPreference(preference)
+      })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [isOpen, selectedContact?.id])
+
+  useEffect(() => {
+    if (!selectedContact?.id || chatReplyPreference?.contactId !== selectedContact.id) return
+    if (chatReplyPreference.channel === 'sms') return
+    const desiredValue = chatReplyPreference.channel === 'whatsapp'
+      ? chatReplyPreference.routeId
+        ? `whatsapp:${chatReplyPreference.routeId}`
+        : selectedBusinessPhone?.id
+          ? `whatsapp:${selectedBusinessPhone.id}`
+          : 'whatsapp'
+      : chatReplyPreference.channel
+    if (chatChannelOptions.some((option) => option.value === desiredValue)) {
+      setChatChannelValue(desiredValue)
+    }
+  }, [chatChannelOptions, chatReplyPreference, selectedBusinessPhone?.id, selectedContact?.id])
+
+  useEffect(() => {
     if (selectedChatChannel !== 'email' || chatEmailHtml.trim() || !chatDraft.trim()) return
     setChatEmailHtml(plainTextToEmailHtml(chatDraft))
   }, [chatDraft, chatEmailHtml, selectedChatChannel])
@@ -1798,7 +1833,26 @@ export function ContactDetailsModal({
     }
 
     setChatChannelValue(value)
-  }, [chatChannelValue, chatDraft, chatEmailHtml])
+    if (selectedContact?.id && nextChannel !== 'none') {
+      setChatError('')
+      const routeId = nextChannel === 'whatsapp' && value.startsWith('whatsapp:')
+        ? value.slice('whatsapp:'.length)
+        : null
+      setChatReplyPreference({
+        contactId: selectedContact.id,
+        channel: nextChannel,
+        routeId,
+        source: 'manual'
+      })
+      void contactsService.updateConversationalChannelPreference(selectedContact.id, nextChannel, {
+        routeId
+      })
+        .then((preference) => setChatReplyPreference(preference))
+        .catch((error: any) => {
+          setChatError(error?.message || 'Se eligió el canal sólo por ahora; no se pudo guardar como predeterminado.')
+        })
+    }
+  }, [chatChannelValue, chatDraft, chatEmailHtml, selectedContact?.id])
 
   const sendContactChatMessage = async () => {
     if (!selectedContact || !canSendChatMessage) return

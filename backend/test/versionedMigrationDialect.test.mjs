@@ -2023,3 +2023,67 @@ test('la migracion 141 de PostgreSQL protege inserts de writers anteriores al ro
     /trigger_state\.tgenabled IN \('O', 'A'\)/i
   )
 })
+
+test('la migracion 144 crea la preferencia general y conserva la elección telefónica anterior', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-contact-reply-preference-'))
+  const database = openMemoryDatabase()
+  const sqliteFile = '144_contact_reply_channel_preferences.sqlite.sql'
+  const postgresFile = '144a_contact_reply_channel_preferences.postgres.sql'
+
+  try {
+    await database.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE contacts (id TEXT PRIMARY KEY);
+      CREATE TABLE contact_conversational_channel_preferences (
+        contact_id TEXT PRIMARY KEY,
+        channel TEXT NOT NULL,
+        selected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        selected_by_user_id TEXT,
+        selection_source TEXT NOT NULL DEFAULT 'manual',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      );
+      INSERT INTO contacts (id) VALUES ('contact_legacy_preference');
+      INSERT INTO contact_conversational_channel_preferences (
+        contact_id, channel, selected_by_user_id, selection_source
+      ) VALUES ('contact_legacy_preference', 'whatsapp', 'user_legacy', 'manual');
+    `)
+
+    for (const file of [sqliteFile, postgresFile]) {
+      await copyFile(
+        new URL(`../migrations/versioned/${file}`, import.meta.url),
+        join(directory, file)
+      )
+    }
+
+    const firstRun = await runVersionedMigrations({ database, dialect: 'sqlite', directory })
+    assert.deepEqual(firstRun, { applied: 1, skipped: 1 })
+
+    const preferences = await database.all(`
+      SELECT contact_id, channel, route_id, selected_by_user_id, selection_source
+      FROM contact_reply_channel_preferences
+    `)
+    assert.deepEqual(preferences, [{
+      contact_id: 'contact_legacy_preference',
+      channel: 'whatsapp',
+      route_id: null,
+      selected_by_user_id: 'user_legacy',
+      selection_source: 'manual'
+    }])
+
+    const secondRun = await runVersionedMigrations({ database, dialect: 'sqlite', directory })
+    assert.deepEqual(secondRun, { applied: 0, skipped: 0 })
+
+    const postgresMigration = await readFile(
+      new URL(`../migrations/versioned/${postgresFile}`, import.meta.url),
+      'utf8'
+    )
+    assert.match(postgresMigration, /CREATE TABLE IF NOT EXISTS contact_reply_channel_preferences/i)
+    assert.match(postgresMigration, /ON CONFLICT\(contact_id\) DO NOTHING/i)
+    assert.doesNotMatch(postgresMigration, /\bDATETIME\b/i)
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

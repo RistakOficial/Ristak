@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  getAutomationNodeRequiredFeatures,
   normalizeFlow,
   validateFlowForPublish,
   START_NODE_TYPE
@@ -71,6 +72,40 @@ test('publicar acepta un flujo lineal válido', () => {
     edges: [edge('e1', 'start', 'a1')]
   }
   assert.deepEqual(validateFlowForPublish(flow), [])
+})
+
+test('publicar valida la acción de canal predeterminado y exige número sólo para WhatsApp', () => {
+  const replyAction = actionNode('reply', 'action-set-default-reply-channel')
+  const flow = {
+    nodes: [startNode(), replyAction],
+    edges: [edge('e1', 'start', 'reply')]
+  }
+
+  assert.match(validateFlowForPublish(flow).join(' '), /canal válido/i)
+
+  replyAction.config = { channel: 'whatsapp' }
+  assert.match(validateFlowForPublish(flow).join(' '), /número de WhatsApp conectado/i)
+
+  replyAction.config = { channel: 'whatsapp', whatsappPhoneNumberId: 'wa_123' }
+  assert.deepEqual(validateFlowForPublish(flow), [])
+
+  replyAction.config = { channel: 'instagram' }
+  assert.deepEqual(validateFlowForPublish(flow), [])
+})
+
+test('la acción de canal predeterminado exige la licencia del canal elegido', () => {
+  assert.deepEqual(
+    getAutomationNodeRequiredFeatures({ type: 'action-set-default-reply-channel', config: { channel: 'whatsapp' } }),
+    ['whatsapp']
+  )
+  assert.deepEqual(
+    getAutomationNodeRequiredFeatures({ type: 'action-set-default-reply-channel', config: { channel: 'messenger' } }),
+    ['campaigns']
+  )
+  assert.deepEqual(
+    getAutomationNodeRequiredFeatures({ type: 'action-set-default-reply-channel', config: { channel: 'email' } }),
+    ['email']
+  )
 })
 
 test('publicar acepta respuesta pública de Facebook con imagen', () => {

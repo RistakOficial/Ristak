@@ -3076,6 +3076,8 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
         : null;
     if (manuallySelectedPhoneChannel) {
       await setHighLevelConversationalChannelPreference(contact.id, manuallySelectedPhoneChannel, {
+        routeId: manuallySelectedPhoneChannel === 'whatsapp' ? 'highlevel' : null,
+        routeLabel: manuallySelectedPhoneChannel === 'whatsapp' ? 'WhatsApp · HighLevel' : null,
         selectedByUserId: req?.user?.userId || req?.user?.id || null,
         source: 'manual_send'
       }).catch(error => {

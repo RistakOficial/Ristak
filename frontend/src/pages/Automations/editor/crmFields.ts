@@ -53,7 +53,8 @@ export const CRM_FIELD_CATEGORIES: CrmFieldCategory[] = [
 const CHANNEL_FIELD_OPTIONS = [
   { value: 'whatsapp', label: 'WhatsApp' },
   { value: 'messenger', label: 'Messenger' },
-  { value: 'instagram', label: 'Instagram Direct' }
+  { value: 'instagram', label: 'Instagram Direct' },
+  { value: 'email', label: 'Correo electrónico' }
 ]
 
 const APPOINTMENT_STATUS_OPTIONS = [
@@ -746,6 +747,7 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   { id: 'phone', label: 'Teléfono', phrase: 'el teléfono', category: 'Contacto' },
   { id: 'assigned', label: 'Usuario asignado', phrase: 'el usuario asignado', catalog: 'users', category: 'Contacto' },
   { id: 'preferred_whatsapp_number', label: 'Número de WhatsApp asignado', phrase: 'el número de WhatsApp asignado', catalog: 'whatsappNumbers', category: 'Contacto' },
+  { id: 'preferred_reply_channel', label: 'Canal de respuesta predeterminado', phrase: 'el canal de respuesta predeterminado', options: CHANNEL_FIELD_OPTIONS, category: 'Contacto' },
   { id: 'custom', label: 'Campo personalizado…', phrase: 'el campo', category: 'Contacto', needsCustomKey: true },
   { id: 'created_at', label: 'Fecha de creación', phrase: 'la fecha de creación', category: 'Sistema' },
   { id: 'updated_at', label: 'Fecha de actualización', phrase: 'la fecha de actualización', category: 'Sistema' },

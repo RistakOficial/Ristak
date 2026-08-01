@@ -35,6 +35,11 @@ import {
   listPublishedAutomationRowsByIds,
   listPublishedAutomationRowsForEvent
 } from './automationTriggerIndexService.js'
+import {
+  getContactReplyChannelPreference,
+  normalizeContactReplyChannel,
+  setContactReplyChannelPreference
+} from './contactReplyChannelPreferenceService.js'
 
 /**
  * Motor de ejecución de automatizaciones.
@@ -80,6 +85,13 @@ const MESSAGE_TRIGGER_CHANNELS = {
   'trigger-instagram-message': 'instagram',
   'trigger-messenger-message': 'messenger',
   'trigger-email-message': 'email'
+}
+const AUTOMATION_DEFAULT_REPLY_CHANNELS = new Set(['whatsapp', 'messenger', 'instagram', 'email'])
+const DEFAULT_REPLY_CHANNEL_LABELS = {
+  whatsapp: 'WhatsApp',
+  messenger: 'Messenger',
+  instagram: 'Instagram Direct',
+  email: 'Correo electrónico'
 }
 
 async function canRunAutomationFlow(flow = {}) {
@@ -618,6 +630,8 @@ function changeFieldCandidates(value) {
     snake.replace(/_/g, ''),
     raw === 'preferred_whatsapp_phone_number_id' ? 'preferredWhatsAppPhoneNumberId' : '',
     raw === 'preferredWhatsAppPhoneNumberId' ? 'preferred_whatsapp_phone_number_id' : '',
+    raw === 'preferred_reply_channel' ? 'preferredReplyChannel' : '',
+    raw === 'preferredReplyChannel' ? 'preferred_reply_channel' : '',
     raw === 'assignedUser' ? 'assigned_user' : '',
     raw === 'totalPaid' ? 'total_paid' : '',
     raw === 'purchasesCount' ? 'purchases_count' : '',
@@ -1699,6 +1713,7 @@ function filterFieldValue(filter, ctx) {
     case 'email': return contact.email || ''
     case 'phone': return contact.phone || ''
     case 'preferred_whatsapp_number': return contact.preferredWhatsAppPhoneNumberId || contact.preferred_whatsapp_phone_number_id || ''
+    case 'preferred_reply_channel': return contact.preferredReplyChannel || contact.preferred_reply_channel || ''
     case 'country': return contact.country || ''
     case 'stage': return contact.stage || custom.stage || ''
     case 'assigned': return contact.assignedUser || custom.assignedUser || ''
@@ -3329,6 +3344,7 @@ function contactAutomationOutput(contact = {}) {
     telefono: contact.phone || '',
     email: contact.email || '',
     id_numero_whatsapp_preferido: contact.preferredWhatsAppPhoneNumberId || contact.preferred_whatsapp_phone_number_id || '',
+    canal_respuesta_predefinido: contact.preferredReplyChannel || contact.preferred_reply_channel || '',
     etiquetas: contact.tags || contact.tagKeys || [],
     campos_personalizados: contact.customFields || {}
   }
@@ -3815,6 +3831,163 @@ async function executeFindContact(node, ctx) {
     }
   }
   return { handle: 'out', detail: 'Contacto no encontrado: continúa sin cambiar contacto' }
+}
+
+function whatsappPhoneCanSend(phone = {}) {
+  const qrStatus = cleanString(phone.qr_status).toLowerCase()
+  return Number(phone.api_send_enabled || 0) === 1 || (
+    Number(phone.qr_send_enabled || 0) === 1 &&
+    ['connected', 'ready', 'open'].includes(qrStatus)
+  )
+}
+
+async function resolveDefaultReplyActionRoute(contact, channel, config) {
+  if (channel === 'whatsapp') {
+    if (!cleanString(contact.phone)) {
+      throw new Error('Este contacto no tiene teléfono para responder por WhatsApp')
+    }
+    const phoneNumberId = cleanString(
+      config.whatsappPhoneNumberId || config.phoneNumberId || config.targetPhoneNumberId
+    )
+    if (!phoneNumberId) throw new Error('Selecciona el número de WhatsApp de respuesta')
+    const phone = await loadWhatsAppPhoneSnapshot(phoneNumberId)
+    if (!phone?.id) throw new Error('Ese número de WhatsApp no está conectado')
+    if (!whatsappPhoneCanSend(phone)) {
+      throw new Error('Ese número de WhatsApp no tiene una conexión disponible para responder')
+    }
+    return {
+      routeId: phone.id,
+      routeLabel: whatsappPhoneLabel(phone),
+      whatsappPhone: phone
+    }
+  }
+
+  if (channel === 'email') {
+    if (!cleanString(contact.email)) {
+      throw new Error('Este contacto no tiene correo para usar como canal de respuesta')
+    }
+    return { routeId: null, routeLabel: DEFAULT_REPLY_CHANNEL_LABELS.email }
+  }
+
+  const profile = await db.get(`
+    SELECT id, page_id, instagram_account_id
+    FROM meta_social_contacts
+    WHERE contact_id = ?
+      AND platform = ?
+      AND COALESCE(sender_id, '') <> ''
+    ORDER BY updated_at DESC, last_seen_at DESC
+    LIMIT 1
+  `, [contact.id, channel]).catch(() => null)
+  if (!profile?.id) {
+    throw new Error(
+      channel === 'instagram'
+        ? 'Este contacto no tiene una conversación de Instagram enlazada'
+        : 'Este contacto no tiene una conversación de Messenger enlazada'
+    )
+  }
+  return {
+    routeId: channel === 'instagram'
+      ? cleanString(profile.instagram_account_id) || null
+      : cleanString(profile.page_id) || null,
+    routeLabel: DEFAULT_REPLY_CHANNEL_LABELS[channel]
+  }
+}
+
+async function applyContactDefaultReplyChannelAction(node, ctx) {
+  const config = node.config || {}
+  const contactId = cleanString(ctx.contact?.id)
+  if (!contactId) {
+    return {
+      handle: 'out',
+      detail: 'Canal de respuesta no cambiado (sin contacto)',
+      output: { estado_actualizacion: 'sin_contacto' },
+      outputBaseId: 'contacto_actualizado'
+    }
+  }
+
+  const channel = normalizeContactReplyChannel(config.channel || config.replyChannel)
+  if (!channel || !AUTOMATION_DEFAULT_REPLY_CHANNELS.has(channel)) {
+    throw new Error('Selecciona un canal de respuesta válido')
+  }
+
+  const contactRow = await db.get(
+    'SELECT id, phone, email, preferred_whatsapp_phone_number_id FROM contacts WHERE id = ?',
+    [contactId]
+  )
+  if (!contactRow?.id) throw new Error('Contacto no encontrado')
+
+  const route = await resolveDefaultReplyActionRoute(contactRow, channel, config)
+  const previousPreference = await getContactReplyChannelPreference(contactId)
+  const previousPhoneNumberId = cleanString(contactRow.preferred_whatsapp_phone_number_id)
+  const nextPhoneNumberId = channel === 'whatsapp' ? cleanString(route.routeId) : previousPhoneNumberId
+  const preferenceChanged = previousPreference?.channel !== channel ||
+    cleanString(previousPreference?.routeId) !== cleanString(route.routeId)
+  const whatsappRouteChanged = channel === 'whatsapp' && previousPhoneNumberId !== nextPhoneNumberId
+
+  if (!preferenceChanged && !whatsappRouteChanged) {
+    ctx.contact = await loadContact(contactId, ctx.contact)
+    return {
+      handle: 'out',
+      detail: `El contacto ya responde por ${route.routeLabel || DEFAULT_REPLY_CHANNEL_LABELS[channel]}`,
+      output: { ...contactAutomationOutput(ctx.contact), estado_actualizacion: 'sin_cambios' },
+      outputBaseId: 'contacto_actualizado'
+    }
+  }
+
+  const reason = renderedConfigValue(
+    config.reason || config.routingReason || 'Cambio de canal desde automatización',
+    ctx
+  )
+  await db.transaction(async (tx) => {
+    await setContactReplyChannelPreference(contactId, channel, {
+      routeId: route.routeId,
+      routeLabel: route.routeLabel,
+      source: 'automation'
+    })
+
+    if (!whatsappRouteChanged) return
+    await tx.run(
+      'UPDATE contacts SET preferred_whatsapp_phone_number_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [nextPhoneNumberId, contactId]
+    )
+    await tx.run(`
+      INSERT INTO whatsapp_routing_events (
+        id, contact_id, previous_phone_number_id, new_phone_number_id, reason, source
+      ) VALUES (?, ?, ?, ?, ?, 'automation')
+    `, [
+      createRistakId('whatsapp_routing_event'),
+      contactId,
+      previousPhoneNumberId || null,
+      nextPhoneNumberId,
+      reason
+    ])
+  })
+
+  ctx.contact = await loadContact(contactId, ctx.contact)
+  const changedFields = ['preferredReplyChannel', 'preferred_reply_channel']
+  if (whatsappRouteChanged) {
+    changedFields.push('preferredWhatsAppPhoneNumberId', 'preferred_whatsapp_phone_number_id')
+  }
+  const nextCascadeDepth = (Number(ctx.__cascadeDepth) || 0) + 1
+  setImmediate(() => {
+    handleAutomationEvent('contact-updated', {
+      contactId,
+      changedFields,
+      previousReplyChannel: previousPreference?.channel || null,
+      newReplyChannel: channel,
+      previousPhoneNumberId: whatsappRouteChanged ? previousPhoneNumberId || null : undefined,
+      newPhoneNumberId: whatsappRouteChanged ? nextPhoneNumberId : undefined,
+      contactChangeSource: 'automation',
+      __cascadeDepth: nextCascadeDepth
+    }).catch(() => undefined)
+  })
+
+  return {
+    handle: 'out',
+    detail: `Canal de respuesta cambiado a ${route.routeLabel || DEFAULT_REPLY_CHANNEL_LABELS[channel]}`,
+    output: { ...contactAutomationOutput(ctx.contact), estado_actualizacion: 'actualizado' },
+    outputBaseId: 'contacto_actualizado'
+  }
 }
 
 async function applyContactWhatsAppNumberAction(node, ctx) {
@@ -5519,6 +5692,9 @@ async function executeNode(node, ctx, enrollment) {
     case 'action-change-whatsapp-number':
       return applyContactWhatsAppNumberAction(node, ctx)
 
+    case 'action-set-default-reply-channel':
+      return applyContactDefaultReplyChannelAction(node, ctx)
+
     case 'action-webhook':
       return executeWebhookAction(node, ctx)
 
@@ -5783,7 +5959,10 @@ async function loadContactMetrics(contactId, row = {}) {
 async function loadContact(contactId, fallback = {}) {
   const row = contactId ? await db.get('SELECT * FROM contacts WHERE id = ?', [contactId]) : null
   const bag = customFieldsBag(row?.custom_fields)
-  const metrics = await loadContactMetrics(row?.id || contactId || null, row || {})
+  const [metrics, replyPreference] = await Promise.all([
+    loadContactMetrics(row?.id || contactId || null, row || {}),
+    getContactReplyChannelPreference(row?.id || contactId || null)
+  ])
   const storedTags = (() => {
     const parsed = parseJson(row?.tags, [])
     return Array.isArray(parsed) ? parsed : []
@@ -5804,6 +5983,10 @@ async function loadContact(contactId, fallback = {}) {
     visitorId: row?.visitor_id || '',
     preferredWhatsAppPhoneNumberId: row?.preferred_whatsapp_phone_number_id || '',
     preferred_whatsapp_phone_number_id: row?.preferred_whatsapp_phone_number_id || '',
+    preferredReplyChannel: replyPreference?.channel || '',
+    preferred_reply_channel: replyPreference?.channel || '',
+    preferredReplyRouteId: replyPreference?.routeId || '',
+    preferred_reply_route_id: replyPreference?.routeId || '',
     source: row?.source || bag.source || '',
     country: row?.country || bag.country || '',
     stage: row?.stage || bag.stage || '',
@@ -5835,7 +6018,7 @@ async function loadWhatsAppPhoneSnapshot(phoneNumberId) {
   if (!id) return null
   return db.get(`
     SELECT id, phone_number, display_phone_number, verified_name, label,
-      is_default_sender, api_send_enabled, qr_send_enabled, qr_status, updated_at
+      status, is_default_sender, api_send_enabled, qr_send_enabled, qr_status, updated_at
     FROM whatsapp_api_phone_numbers
     WHERE id = ?
   `, [id]).catch(() => null)
