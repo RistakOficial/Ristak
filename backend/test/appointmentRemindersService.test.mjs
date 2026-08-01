@@ -430,7 +430,7 @@ test('recordatorios de citas incluyen parámetros de botones URL dinámicos', as
         const buttons = [{
           type: 'website',
           label: 'Google Meet',
-          value: 'https://example.com/meet?contactId={{1}}'
+          value: 'https://app.ristak.test/trigger-links/rstk_link_test?contactId={{1}}'
         }]
         const variableBindings = {
           headerText: {},
@@ -482,7 +482,7 @@ test('recordatorios de citas incluyen parámetros de botones URL dinámicos', as
               buttons: [{
                 type: 'URL',
                 text: 'Google Meet',
-                url: 'https://example.com/meet?contactId={{1}}'
+                url: 'https://app.ristak.test/trigger-links/rstk_link_test?contactId={{1}}'
               }]
             }
           ]),
@@ -1246,6 +1246,101 @@ test('overview marca recordatorios bloqueados si no hay remitente de WhatsApp', 
 
     assert.equal(overviewReminder?.deliveryHealth?.status, 'error')
     assert.match(overviewReminder?.deliveryHealth?.message || '', /WhatsApp API|remitente/)
+  })
+})
+
+test('overview limpia errores resueltos por un envío correcto o por reconfigurar la regla', async () => {
+  await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder }) => {
+    const suffix = randomUUID()
+    const configuredAt = DateTime.utc().minus({ hours: 4 })
+    const firstErrorAt = configuredAt.plus({ minutes: 10 })
+    const recoveredAt = configuredAt.plus({ minutes: 20 })
+    const unresolvedAt = configuredAt.plus({ minutes: 30 })
+    const appointmentIds = {
+      firstError: `appointment_health_error_${suffix}`,
+      recovered: `appointment_health_sent_${suffix}`,
+      unresolved: `appointment_health_unresolved_${suffix}`
+    }
+
+    try {
+      await db.run(
+        'UPDATE appointment_reminders SET updated_at = ? WHERE id = ?',
+        [configuredAt.toISO(), reminder.id]
+      )
+      await db.run(`
+        INSERT INTO appointment_reminder_sends (
+          id, reminder_id, appointment_id, status, error_message, send_at, sent_at, created_at
+        ) VALUES (?, ?, ?, 'error', 'Fallo anterior', ?, ?, ?)
+      `, [
+        `send_health_error_${suffix}`,
+        reminder.id,
+        appointmentIds.firstError,
+        firstErrorAt.toISO(),
+        firstErrorAt.toISO(),
+        firstErrorAt.toISO()
+      ])
+      await db.run(`
+        INSERT INTO appointment_reminder_sends (
+          id, reminder_id, appointment_id, status, send_at, sent_at, created_at
+        ) VALUES (?, ?, ?, 'sent', ?, ?, ?)
+      `, [
+        `send_health_sent_${suffix}`,
+        reminder.id,
+        appointmentIds.recovered,
+        recoveredAt.toISO(),
+        recoveredAt.toISO(),
+        recoveredAt.toISO()
+      ])
+
+      let overview = await getAppointmentRemindersOverview()
+      let overviewReminder = overview.reminders.find((item) => item.id === reminder.id)
+      assert.deepEqual(overviewReminder?.failures, {
+        errorCount: 0,
+        lastErrorAt: null,
+        lastErrorMessage: null
+      })
+
+      await db.run(`
+        INSERT INTO appointment_reminder_sends (
+          id, reminder_id, appointment_id, status, error_message, send_at, sent_at, created_at
+        ) VALUES (?, ?, ?, 'error', 'Fallo todavía vigente', ?, ?, ?)
+      `, [
+        `send_health_unresolved_${suffix}`,
+        reminder.id,
+        appointmentIds.unresolved,
+        unresolvedAt.toISO(),
+        unresolvedAt.toISO(),
+        unresolvedAt.toISO()
+      ])
+
+      overview = await getAppointmentRemindersOverview()
+      overviewReminder = overview.reminders.find((item) => item.id === reminder.id)
+      assert.equal(overviewReminder?.failures?.errorCount, 1)
+      assert.equal(overviewReminder?.failures?.lastErrorMessage, 'Fallo todavía vigente')
+
+      await db.run(
+        'UPDATE appointment_reminders SET updated_at = ? WHERE id = ?',
+        [unresolvedAt.plus({ minutes: 1 }).toISO(), reminder.id]
+      )
+
+      overview = await getAppointmentRemindersOverview()
+      overviewReminder = overview.reminders.find((item) => item.id === reminder.id)
+      assert.deepEqual(overviewReminder?.failures, {
+        errorCount: 0,
+        lastErrorAt: null,
+        lastErrorMessage: null
+      })
+    } finally {
+      await db.run(
+        'DELETE FROM appointment_reminder_sends WHERE reminder_id = ? AND appointment_id IN (?, ?, ?)',
+        [
+          reminder.id,
+          appointmentIds.firstError,
+          appointmentIds.recovered,
+          appointmentIds.unresolved
+        ]
+      )
+    }
   })
 })
 

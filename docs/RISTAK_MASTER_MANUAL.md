@@ -4498,6 +4498,14 @@ request no puede omitir el componente `button` y dejar que Meta lo rechace con
 resolver, Ristak falla antes del proveedor con un motivo accionable y conserva
 el envío para el reintento controlado.
 
+Para que un botón de plantilla abra un destino y además funcione como clic de
+disparo, la URL aprobada por Meta debe apuntar a `/trigger-links/{public_id}` y
+llevar un sufijo dinámico como `?contactId={{1}}`; el binding de ese parámetro
+debe ser `contact.id`. Al enviar el recordatorio, Ristak entrega el ID del
+contacto como parámetro de botón. Al hacer clic, la ruta pública registra el
+evento, identifica al contacto, ejecuta las automatizaciones configuradas y
+redirige al destino final, por ejemplo Google Meet.
+
 Existe una compatibilidad acotada para copias antiguas ya aprobadas de
 `confirmacion_cita_dia_anterior`. Si Meta acepta el request y después devuelve
 un rechazo estructural indicando que recibió tres variables pero la plantilla
@@ -4538,6 +4546,13 @@ empezar y aplica el mismo enfriamiento de 15 minutos. Esto cubre tanto errores
 estructurales de plantilla como saldo insuficiente u otros rechazos terminales
 del proveedor. El claim atómico existente decide qué instancia puede reintentar,
 por lo que dos workers no mandan dos copias.
+
+La insignia **Con errores** del panel representa fallos que siguen vigentes, no
+todo el historial. Un envío `sent` posterior resuelve los errores anteriores de
+esa regla; guardar una configuración nueva también descarta de la salud visible
+los fallos de la versión previa. Las filas históricas se conservan en
+`appointment_reminder_sends` para auditoría y reintentos, pero no mantienen la
+tarjeta roja después de que el recordatorio se recuperó.
 
 Los ultimátums usan las columnas `confirmation_deadline_at`,
 `confirmation_timeout_status` y `confirmation_timeout_processed_at` del mismo

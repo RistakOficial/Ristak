@@ -689,37 +689,54 @@ async function listSenderOptions() {
   }))
 }
 
-// (NOTI-008) Antes los fallos de envío (p.ej. plantilla no APPROVED) quedaban
-// SOLO en logs/DB y la pantalla de recordatorios nunca los exponía: el usuario creía que sus
-// recordatorios salían cuando ninguno salía. Aquí agregamos los fallos recientes (status='error')
-// por recordatorio usando las columnas existentes, sin cambios de schema.
+// (NOTI-008) La pantalla sólo debe mostrar fallos que siguen sin resolverse. Un envío
+// correcto posterior demuestra que el recordatorio se recuperó; guardar una configuración
+// nueva también invalida errores de la versión anterior. El historial completo permanece en
+// appointment_reminder_sends para auditoría, pero no deja la tarjeta roja para siempre.
 async function getRecentReminderFailures() {
   const rows = await db.all(`
-    SELECT reminder_id,
-      COUNT(*) AS error_count,
-      MAX(COALESCE(sent_at, send_at, created_at)) AS last_error_at,
-      MAX(id) AS latest_id
-    FROM appointment_reminder_sends
-    WHERE status = 'error'
-    GROUP BY reminder_id
+    WITH send_state AS (
+      SELECT reminder_id,
+        MAX(
+          CASE WHEN status = 'sent'
+            THEN COALESCE(sent_at, send_at, created_at)
+          END
+        ) AS last_success_at
+      FROM appointment_reminder_sends
+      GROUP BY reminder_id
+    ), ranked_failures AS (
+      SELECT sends.reminder_id,
+        sends.error_message,
+        COALESCE(sends.sent_at, sends.send_at, sends.created_at) AS occurred_at,
+        COUNT(*) OVER (PARTITION BY sends.reminder_id) AS error_count,
+        ROW_NUMBER() OVER (
+          PARTITION BY sends.reminder_id
+          ORDER BY COALESCE(sends.sent_at, sends.send_at, sends.created_at) DESC, sends.id DESC
+        ) AS latest_rank
+      FROM appointment_reminder_sends sends
+      INNER JOIN appointment_reminders reminder ON reminder.id = sends.reminder_id
+      LEFT JOIN send_state state ON state.reminder_id = sends.reminder_id
+      WHERE sends.status = 'error'
+        AND COALESCE(sends.sent_at, sends.send_at, sends.created_at) >=
+          COALESCE(reminder.updated_at, reminder.created_at)
+        AND (
+          state.last_success_at IS NULL OR
+          COALESCE(sends.sent_at, sends.send_at, sends.created_at) > state.last_success_at
+        )
+    )
+    SELECT reminder_id, error_count, occurred_at, error_message
+    FROM ranked_failures
+    WHERE latest_rank = 1
   `)
 
   const byReminder = new Map()
   for (const row of rows) {
     const reminderId = cleanString(row.reminder_id)
     if (!reminderId) continue
-    // Trae el mensaje de error más reciente para mostrarlo en la UI.
-    const latest = await db.get(`
-      SELECT error_message, COALESCE(sent_at, send_at, created_at) AS occurred_at
-      FROM appointment_reminder_sends
-      WHERE reminder_id = ? AND status = 'error'
-      ORDER BY COALESCE(sent_at, send_at, created_at) DESC, id DESC
-      LIMIT 1
-    `, [reminderId])
     byReminder.set(reminderId, {
       errorCount: Number(row.error_count || 0),
-      lastErrorAt: cleanString(row.last_error_at) || null,
-      lastErrorMessage: cleanString(latest?.error_message) || null
+      lastErrorAt: cleanString(row.occurred_at) || null,
+      lastErrorMessage: cleanString(row.error_message) || null
     })
   }
   return byReminder
