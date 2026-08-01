@@ -134,6 +134,44 @@ test('una proyección incremental continuous se revisa aunque su último estado 
   assert.deepEqual(result.scheduled, [{ key: 'tracking-analytics', queued: true }])
 })
 
+test('una lectura colgada no congela el watchdog ni bloquea otras proyecciones', async () => {
+  const scheduled = []
+  const warnings = []
+  const scheduler = createReadModelProjectionMaintenanceScheduler({
+    readTimeoutMs: 100,
+    projections: [
+      {
+        key: 'stalled',
+        version: 1,
+        readState: () => new Promise(() => undefined),
+        schedule: () => {
+          throw new Error('una lectura sin estado no debe agendarse')
+        }
+      },
+      {
+        key: 'healthy',
+        version: 1,
+        readState: async () => ({ projection_version: 1, status: 'dirty' }),
+        schedule: () => {
+          scheduled.push('healthy')
+          return { scheduled: true }
+        }
+      }
+    ],
+    shuttingDown: () => false,
+    logger: { warn: (message) => warnings.push(message) }
+  })
+
+  const first = await scheduler.tick()
+  const second = await scheduler.tick()
+
+  assert.deepEqual(first.scheduled, [{ key: 'healthy', queued: true }])
+  assert.deepEqual(second.scheduled, [{ key: 'healthy', queued: true }])
+  assert.deepEqual(scheduled, ['healthy', 'healthy'])
+  assert.equal(warnings.length, 2)
+  assert.ok(warnings.every((message) => /stalled.*excedió 100ms/.test(message)))
+})
+
 test('los read paths no convierten GET en comando de backfill', async () => {
   const [contacts, tracking, trackingVisitor, metrics, firstSeen, origin, contactOrigin, identity, crm, maintenance, server] = await Promise.all([
     readFile(new URL('../src/controllers/contactsController.js', import.meta.url), 'utf8'),

@@ -1430,6 +1430,11 @@ snapshot publicado: no consulta el estado, no agenda trabajo y jamás carga o
 parsea flows dentro de un GET. Un scheduler de sistema revisa cada segundo la
 fila singleton de `automation_review_projection_state`; si detecta `pending` o
 revisiones distintas, encola el worker en el coordinador global de backfills.
+El watchdog general aplica un deadline de cinco segundos a cada lectura de
+estado. Una conexión de PostgreSQL colgada durante una recuperación se descarta
+para ese tick sin bloquear las demás proyecciones; el siguiente ciclo vuelve a
+intentarlo y conserva la capacidad de reactivar colas `dirty` sin reiniciar la
+aplicación.
 
 La biblioteca de Automatizaciones consume ese mismo snapshot por los IDs de la
 página. Su primera carga hace una sola petición y no vuelve a leer grafos ni

@@ -52,6 +52,7 @@ import { isDeployShutdownStarted } from '../utils/deployDrainTracker.js'
 import { logger as defaultLogger } from '../utils/logger.js'
 
 const DEFAULT_INTERVAL_MS = 30_000
+const DEFAULT_READ_TIMEOUT_MS = 5_000
 
 const defaultProjections = Object.freeze([
   {
@@ -130,14 +131,38 @@ const defaultProjections = Object.freeze([
  */
 export function createReadModelProjectionMaintenanceScheduler({
   intervalMs = DEFAULT_INTERVAL_MS,
+  readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
   projections = defaultProjections,
   shuttingDown = isDeployShutdownStarted,
   setIntervalFn = setInterval,
   clearIntervalFn = clearInterval,
+  setTimeoutFn = setTimeout,
+  clearTimeoutFn = clearTimeout,
   logger = defaultLogger
 } = {}) {
   let intervalId = null
   let running = false
+
+  async function readStateWithDeadline(projection) {
+    const timeoutMs = Math.max(100, Number(readTimeoutMs) || DEFAULT_READ_TIMEOUT_MS)
+    let timeoutId = null
+    const deadline = new Promise((_, reject) => {
+      timeoutId = setTimeoutFn(() => {
+        const error = new Error(`La lectura excedió ${timeoutMs}ms`)
+        error.code = 'PROJECTION_STATE_READ_TIMEOUT'
+        reject(error)
+      }, timeoutMs)
+    })
+
+    try {
+      return await Promise.race([
+        Promise.resolve().then(() => projection.readState()),
+        deadline
+      ])
+    } finally {
+      if (timeoutId !== null) clearTimeoutFn(timeoutId)
+    }
+  }
 
   async function tick() {
     if (running || shuttingDown()) return { scheduled: [], skipped: true }
@@ -146,7 +171,7 @@ export function createReadModelProjectionMaintenanceScheduler({
       const scheduled = []
       const states = await Promise.all(projections.map(async projection => {
         try {
-          return { projection, state: await projection.readState(), error: null }
+          return { projection, state: await readStateWithDeadline(projection), error: null }
         } catch (error) {
           logger.warn(`[Proyecciones] No se pudo leer ${projection.key}: ${error.message}`)
           return { projection, state: null, error }
