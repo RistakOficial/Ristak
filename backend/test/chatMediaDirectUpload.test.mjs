@@ -22,7 +22,10 @@ import {
   uploadMediaAsset
 } from '../src/services/mediaStorageService.js'
 import { createMediaUploadRequestHash } from '../src/services/mediaUploadSafetyService.js'
-import { prepareWhatsAppMediaForDirectUpload } from '../src/services/whatsappApiService.js'
+import {
+  isWhatsAppApiUnsupportedDocumentFormat,
+  prepareWhatsAppMediaForDirectUpload
+} from '../src/services/whatsappApiService.js'
 
 async function withFakeFfmpeg(callback) {
   const previousPath = process.env.FFMPEG_PATH
@@ -474,6 +477,86 @@ test('upload multipart de documento conserva bytes, idempotencia y metadata de c
     assert.equal(prepared.input.metadata.whatsappDocument, true)
   } finally {
     await fs.rm(folder, { recursive: true, force: true })
+  }
+})
+
+test('upload directo conserva XML y ZIP para canales de chat compatibles sin marcarlos como WhatsApp API', async () => {
+  const xmlBytes = Buffer.from('<?xml version="1.0"?><factura id="A-42"/>')
+  const xml = await prepareWhatsAppMediaForDirectUpload({
+    buffer: xmlBytes,
+    mimeType: 'text/xml; charset=utf-8',
+    filename: 'factura.xml',
+    kind: 'document'
+  })
+  assert.deepEqual(xml.buffer, xmlBytes)
+  assert.equal(xml.mimeType, 'application/xml')
+  assert.equal(xml.filename, 'factura.xml')
+  assert.equal(xml.metadata.chatDocumentCompatible, true)
+  assert.equal(xml.metadata.whatsappApiCompatible, false)
+
+  const zipBytes = Buffer.from('PK\u0003\u0004factura')
+  const zip = await prepareWhatsAppMediaForDirectUpload({
+    buffer: zipBytes,
+    mimeType: 'application/octet-stream',
+    filename: 'factura.zip',
+    kind: 'document'
+  })
+  assert.deepEqual(zip.buffer, zipBytes)
+  assert.equal(zip.mimeType, 'application/zip')
+  assert.equal(zip.filename, 'factura.zip')
+  assert.equal(zip.metadata.whatsappApiCompatible, false)
+
+  assert.equal(isWhatsAppApiUnsupportedDocumentFormat({ mimeType: 'text/xml' }), true)
+  assert.equal(isWhatsAppApiUnsupportedDocumentFormat({ filename: 'factura.ZIP' }), true)
+  assert.equal(isWhatsAppApiUnsupportedDocumentFormat({ mimeType: 'application/pdf', filename: 'factura.pdf' }), false)
+})
+
+test('media storage guarda XML y ZIP como documentos con MIME canonico', async () => {
+  const previousProvider = process.env.MEDIA_STORAGE_PROVIDER
+  const previousRequireBunny = process.env.MEDIA_STORAGE_REQUIRE_BUNNY
+  const accountId = `chat_documents_${Date.now()}`
+  const assetIds = []
+  process.env.MEDIA_STORAGE_PROVIDER = 'local'
+  process.env.MEDIA_STORAGE_REQUIRE_BUNNY = 'false'
+  resetCentralStorageConfigCache()
+
+  try {
+    for (const fixture of [
+      {
+        buffer: Buffer.from('<?xml version="1.0"?><factura/>'),
+        filename: 'factura.xml',
+        mimeType: 'text/xml',
+        expectedMimeType: 'application/xml'
+      },
+      {
+        buffer: Buffer.from('PK\u0003\u0004factura'),
+        filename: 'factura.zip',
+        mimeType: 'application/x-zip-compressed',
+        expectedMimeType: 'application/zip'
+      }
+    ]) {
+      const asset = await uploadMediaAsset({
+        ...fixture,
+        module: 'chat',
+        businessId: 'default',
+        clientAccountId: accountId,
+        isPublic: true,
+        skipCompression: true
+      })
+      assetIds.push(asset.id)
+      assert.equal(asset.mediaType, 'document')
+      assert.equal(asset.mimeType, fixture.expectedMimeType)
+    }
+  } finally {
+    for (const assetId of assetIds) {
+      await softDeleteMediaAsset(assetId).catch(() => undefined)
+      await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+    }
+    if (previousProvider === undefined) delete process.env.MEDIA_STORAGE_PROVIDER
+    else process.env.MEDIA_STORAGE_PROVIDER = previousProvider
+    if (previousRequireBunny === undefined) delete process.env.MEDIA_STORAGE_REQUIRE_BUNNY
+    else process.env.MEDIA_STORAGE_REQUIRE_BUNNY = previousRequireBunny
+    resetCentralStorageConfigCache()
   }
 })
 

@@ -3,6 +3,27 @@ import XCTest
 @testable import Ristak
 
 final class ChatMediaUploadTests: XCTestCase {
+    func testDocumentEncoderAcceptsXMLAndZIPButMarksThemUnsupportedForWhatsAppAPI() throws {
+        let fixtures: [(name: String, bytes: Data, mimeType: String)] = [
+            ("factura.xml", Data("<factura/>".utf8), "application/xml"),
+            ("factura.zip", Data([0x50, 0x4B, 0x03, 0x04]), "application/zip"),
+        ]
+
+        for fixture in fixtures {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(fixture.name)
+            defer { try? FileManager.default.removeItem(at: url) }
+            try fixture.bytes.write(to: url, options: .atomic)
+
+            let media = try MediaEncoder.encodeDocumentFile(at: url, mimeTypeOverride: fixture.mimeType)
+
+            XCTAssertEqual(media.kind, .document)
+            XCTAssertEqual(media.binaryData, fixture.bytes)
+            XCTAssertEqual(media.mimeType, fixture.mimeType)
+            XCTAssertEqual(media.filename, fixture.name)
+            XCTAssertTrue(media.isUnsupportedByWhatsAppAPI)
+        }
+    }
+
     func testMultipartCarriesRawBytesWithoutBase64Inflation() throws {
         let bytes = Data(repeating: 0xA5, count: 1_048_576)
         let media = EncodedChatMedia(

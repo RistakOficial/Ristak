@@ -72,7 +72,9 @@ const DOCUMENT_MIME_BY_EXTENSION = {
   ppt: 'application/vnd.ms-powerpoint',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   txt: 'text/plain',
-  csv: 'text/csv'
+  csv: 'text/csv',
+  xml: 'application/xml',
+  zip: 'application/zip'
 }
 const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
 

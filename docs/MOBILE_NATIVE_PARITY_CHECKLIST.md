@@ -306,9 +306,11 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     Una senal terminal pendiente se conserva como alerta humana, nunca como bot.
     Los estados asignados pueden limpiar avisos con `clear_signal`.
     Enviar manualmente con agente activo abre confirmacion para pausar 24h y
-    enviar, quitar del agente y enviar o cancelar. Falta voice note real,
-    ubicacion, sugerencia IA, plantillas, picker avanzado de fecha/hora y
-    soporte de video/audio/documento desde el picker.
+    enviar, quitar del agente y enviar o cancelar. El picker ya prepara
+    imagen/video y documentos PDF/Office/TXT/CSV/XML/ZIP; Messenger admite
+    archivos, Instagram detiene documentos y WhatsApp API explica la restriccion
+    de XML/ZIP sin cambiar de transporte. Falta voice note real, ubicacion,
+    sugerencia IA, plantillas y picker avanzado de fecha/hora.
 - [x] Envio por canal correcto: WhatsApp API, QR, HighLevel, Messenger,
   Instagram, email/SMS cuando aplique.
   - Avance: el composer separa WhatsApp API/QR, HighLevel WhatsApp, cada número

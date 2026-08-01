@@ -1068,6 +1068,30 @@ export class RistakApiClient {
     });
   }
 
+  sendMetaSocialAttachment(
+    contact: ChatContact,
+    platform: 'messenger' | 'instagram',
+    payload: {
+      attachmentType: 'image' | 'video' | 'file';
+      attachmentDataUrl: string;
+      filename?: string;
+      mimeType?: string;
+      externalId?: string;
+      replyToMessageId?: string;
+      replyToProviderMessageId?: string;
+    },
+  ) {
+    return this.request<SendTextResponse>('/whatsapp-api/meta/social/messages/attachment', {
+      method: 'POST',
+      body: JSON.stringify({
+        contactId: contact.id,
+        platform,
+        ...payload,
+        externalId: payload.externalId || createNativeExternalId(`native-${platform}-attachment`),
+      }),
+    });
+  }
+
   sendLocation(contact: ChatContact, latitude: number, longitude: number, name = 'Ubicación', address = '', whatsAppSender?: NativeWhatsAppSenderRoute, externalId?: string) {
     const sender = normalizeNativeWhatsAppSenderRoute(contact, whatsAppSender);
     return this.request<SendTextResponse>('/whatsapp-api/messages/location', {

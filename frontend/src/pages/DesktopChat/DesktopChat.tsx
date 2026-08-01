@@ -511,6 +511,8 @@ const DOCUMENT_ATTACHMENT_ACCEPT = [
   '.pptx',
   '.txt',
   '.csv',
+  '.xml',
+  '.zip',
   '.aac',
   '.amr',
   '.m4a',
@@ -529,6 +531,10 @@ const DOCUMENT_ATTACHMENT_ACCEPT = [
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'text/plain',
   'text/csv',
+  'application/xml',
+  'text/xml',
+  'application/zip',
+  'application/x-zip-compressed',
   'audio/*'
 ].join(',')
 const DOCUMENT_MIME_BY_EXTENSION: Record<string, string> = {
@@ -540,7 +546,9 @@ const DOCUMENT_MIME_BY_EXTENSION: Record<string, string> = {
   ppt: 'application/vnd.ms-powerpoint',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   txt: 'text/plain',
-  csv: 'text/csv'
+  csv: 'text/csv',
+  xml: 'application/xml',
+  zip: 'application/zip'
 }
 const VIDEO_MIME_BY_EXTENSION: Record<string, string> = {
   mp4: 'video/mp4',
@@ -880,6 +888,18 @@ function getDraftAttachmentMessageType(attachment: DesktopDraftAttachment): Chat
   if (attachment.kind === 'video') return 'video'
   if (attachment.kind === 'audio') return 'audio'
   return 'document'
+}
+
+function isWhatsAppApiUnsupportedDocumentAttachment(attachment: DesktopDraftAttachment) {
+  if (getDraftAttachmentMessageType(attachment) !== 'document') return false
+  const extension = getFileExtension(attachment.name)
+  const mimeType = String(attachment.mimeType || '').trim().toLowerCase()
+  return extension === 'xml' || extension === 'zip' || [
+    'application/xml',
+    'text/xml',
+    'application/zip',
+    'application/x-zip-compressed'
+  ].includes(mimeType)
 }
 
 function getNativeMetaAudioDurationMs(audio: DesktopDraftAttachment | VoiceDraftAttachment | null | undefined) {
@@ -5747,7 +5767,7 @@ export const DesktopChat: React.FC = () => {
         }
 
         if (!isSupportedDocumentFile(file)) {
-          showToast('error', 'Archivo no válido', 'Elige un PDF, Word, Excel, PowerPoint, TXT o CSV.')
+          showToast('error', 'Archivo no válido', 'Elige un PDF, Word, Excel, PowerPoint, TXT, CSV, XML o ZIP.')
           continue
         }
 
@@ -7221,6 +7241,20 @@ export const DesktopChat: React.FC = () => {
 
     if (activeNativeMetaChannel === 'instagram' && attachmentsToSend.some((attachment) => getDraftAttachmentMessageType(attachment) === 'document')) {
       showToast('warning', 'Instagram no envía documentos', 'Quita el archivo o mándalo como foto, video, audio o nota de voz.')
+      return
+    }
+
+    const hasWhatsAppApiUnsupportedDocument = attachmentsToSend.some(isWhatsAppApiUnsupportedDocumentAttachment)
+    const sendsAttachmentsThroughWhatsAppApi = composerChannel === 'whatsapp' && (
+      (sendAttachmentsThroughHighLevel && activeConversationChannel === 'whatsapp_api') ||
+      (!sendAttachmentsThroughHighLevel && !sendAttachmentsThroughNativeMeta && nativeWhatsAppTransport === 'api')
+    )
+    if (hasWhatsAppApiUnsupportedDocument && sendsAttachmentsThroughWhatsAppApi) {
+      showToast(
+        'warning',
+        'WhatsApp API no admite ZIP ni XML',
+        'Elige un número conectado sólo por QR o cambia a Messenger u otro canal compatible.'
+      )
       return
     }
 

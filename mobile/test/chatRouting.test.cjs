@@ -321,6 +321,19 @@ test('todos los envios nativos consumen la ruta normalizada y no el sender viejo
   assert.match(source, /scheduleText\([\s\S]*?fromPhone:[\s\S]*?sender\.fromPhone[\s\S]*?businessPhoneNumberId:[\s\S]*?sender\.phoneNumberId/);
 });
 
+test('Android permite XML/ZIP en canales compatibles y no los disfraza para WhatsApp API', () => {
+  const appSource = fs.readFileSync(require.resolve('../src/App.tsx'), 'utf8');
+  const apiSource = fs.readFileSync(require.resolve('../src/api.ts'), 'utf8');
+
+  assert.match(appSource, /xml: 'application\/xml'/);
+  assert.match(appSource, /zip: 'application\/zip'/);
+  assert.match(appSource, /WhatsApp API no admite ZIP ni XML/);
+  assert.match(appSource, /whatsAppSend\?\.sender\.transport === 'api'/);
+  assert.match(appSource, /selectedRouteChannel === 'instagram'[\s\S]*Instagram no admite documentos/);
+  assert.match(appSource, /api\.sendMetaSocialAttachment\(contact, channel/);
+  assert.match(apiSource, /\/whatsapp-api\/meta\/social\/messages\/attachment/);
+});
+
 test('ubicacion, auxiliares y programados conservan proveedor, ventana y estado semantico', () => {
   const source = fs.readFileSync(require.resolve('../src/App.tsx'), 'utf8');
 

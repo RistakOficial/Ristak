@@ -989,6 +989,26 @@ const SCHEDULE_PICKER_WEEKDAYS = ['DOM', 'LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'S�
 const MEDIA_ATTACHMENT_MAX_BYTES = 16 * 1024 * 1024;
 const DOCUMENT_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
 const VIDEO_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+const CHAT_DOCUMENT_MIME_BY_EXTENSION: Record<string, string> = {
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  txt: 'text/plain',
+  csv: 'text/csv',
+  xml: 'application/xml',
+  zip: 'application/zip',
+};
+const WHATSAPP_API_UNSUPPORTED_DOCUMENT_EXTENSIONS = new Set(['xml', 'zip']);
+const WHATSAPP_API_UNSUPPORTED_DOCUMENT_MIME_TYPES = new Set([
+  'application/xml',
+  'text/xml',
+  'application/zip',
+  'application/x-zip-compressed',
+]);
 const CAMERA_SHARE_VIDEO_MAX_DURATION_SECONDS = 60;
 const CHAT_IMAGE_PICKER_QUALITY = 1;
 const CHAT_IMAGE_OUTPUT_QUALITY = 0.80;
@@ -22167,7 +22187,20 @@ function NativeConversationScreen({
       return;
     }
     const result = await DocumentPicker.getDocumentAsync({
-      type: ['application/pdf', 'text/*', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+      type: [
+        'application/pdf',
+        'text/*',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-powerpoint',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'application/xml',
+        'text/xml',
+        'application/zip',
+        'application/x-zip-compressed',
+      ],
       multiple: remaining > 1,
       copyToCacheDirectory: true,
     });
@@ -22391,13 +22424,13 @@ function NativeConversationScreen({
       Alert.alert('Canal no disponible', selectedChannelOption?.disabledReason || 'Elige otro canal para enviar.');
       return;
     }
-    const canSendNativeMetaAudio = (
-      attachmentsToSend.length === 1 &&
-      attachmentsToSend[0]?.kind === 'audio' &&
-      (selectedRouteChannel === 'messenger' || selectedRouteChannel === 'instagram')
-    );
-    if (attachmentsToSend.length > 0 && selectedRouteChannel !== 'whatsapp' && !canSendNativeMetaAudio && !selectedHighLevelChannel) {
-      Alert.alert('Adjuntos', 'Este canal nativo acepta texto o audio. Cambia a WhatsApp para mandar otros archivos.');
+    const isNativeMetaChannel = selectedRouteChannel === 'messenger' || selectedRouteChannel === 'instagram';
+    if (attachmentsToSend.length > 0 && selectedRouteChannel !== 'whatsapp' && !isNativeMetaChannel && !selectedHighLevelChannel) {
+      Alert.alert('Adjuntos', 'Este canal no admite archivos desde el chat. Elige WhatsApp, Messenger u otro canal compatible.');
+      return;
+    }
+    if (selectedRouteChannel === 'instagram' && attachmentsToSend.some((attachment) => attachment.kind === 'document')) {
+      Alert.alert('Instagram no admite documentos', 'Cambia a Messenger, WhatsApp QR u otro canal compatible para mandar este archivo.');
       return;
     }
     if (replyingToMessage && attachmentsToSend.length > 0) {
@@ -22410,6 +22443,19 @@ function NativeConversationScreen({
     }
     if ((selectedRouteChannel === 'whatsapp' || selectedRouteChannel === 'sms') && !contact.phone) {
       Alert.alert('Falta teléfono', 'Este contacto no tiene teléfono principal para enviar por este canal.');
+      return;
+    }
+    const unsupportedWhatsAppDocument = attachmentsToSend.find(isWhatsAppApiUnsupportedDocumentAttachment);
+    const sendingWhatsApp = selectedRouteChannel === 'whatsapp' && !selectedHighLevelChannel;
+    const whatsAppSend = sendingWhatsApp ? resolveWhatsAppSendTransport() : null;
+    if (unsupportedWhatsAppDocument && (
+      selectedHighLevelChannel === 'whatsapp_api'
+      || whatsAppSend?.sender.transport === 'api'
+    )) {
+      Alert.alert(
+        'WhatsApp API no admite ZIP ni XML',
+        'Elige un número conectado sólo por QR o cambia a Messenger u otro canal compatible.',
+      );
       return;
     }
     sendLockedRef.current = true;
@@ -22427,8 +22473,6 @@ function NativeConversationScreen({
       : privateCommentReply
         ? 'private'
         : undefined;
-    const sendingWhatsApp = selectedRouteChannel === 'whatsapp' && !selectedHighLevelChannel;
-    const whatsAppSend = sendingWhatsApp ? resolveWhatsAppSendTransport() : null;
     if (whatsAppSend && !whatsAppSend.replyWindowOpen && !whatsAppSend.apiUnavailable) {
       // Con API operativa, una ventana cerrada exige plantilla oficial aunque
       // exista QR conectado como respaldo.
@@ -22475,31 +22519,46 @@ function NativeConversationScreen({
     sendIntentRef.current = { signature: sendSignature, externalId };
     const optimisticId = `local-${externalId}`;
     const retryAttachmentClientIds = new Set(attachmentsToSend.map((attachment) => attachment.id));
+    const nativeMetaTextOptimisticId = `${optimisticId}-text`;
     const optimisticMessages: ChatMessage[] = attachmentsToSend.length
-      ? attachmentsToSend.map((attachment, index) => ({
-        id: `${optimisticId}-attachment-${index}`,
-        contactId: contact.id,
-        date: sentAt,
-        direction: 'outbound',
-        text: index === 0 ? textToSend : '',
-        channel: optimisticChannel,
-        transport: optimisticTransport,
-        status: 'enviando',
-        pending: true,
-        paymentPreview: index === 0 ? paymentPreviewToSend || undefined : undefined,
-        replyToMessageId: replyPayload?.replyToMessageId,
-        replyToProviderMessageId: replyPayload?.replyToProviderMessageId,
-        attachment: {
-          type: attachment.kind,
-          clientId: attachment.id,
-          dataUrl: attachment.dataUrl,
-          url: attachment.uri,
-          name: attachment.name,
-          mimeType: attachment.mimeType,
-          durationMs: attachment.durationMs,
-          size: attachment.size,
-        },
-      }))
+      ? [
+        ...(isNativeMetaChannel && textToSend ? [{
+          id: nativeMetaTextOptimisticId,
+          contactId: contact.id,
+          date: sentAt,
+          direction: 'outbound' as const,
+          text: textToSend,
+          channel: optimisticChannel,
+          transport: optimisticTransport,
+          status: 'enviando',
+          pending: true,
+          paymentPreview: paymentPreviewToSend || undefined,
+        }] : []),
+        ...attachmentsToSend.map((attachment, index) => ({
+          id: `${optimisticId}-attachment-${index}`,
+          contactId: contact.id,
+          date: sentAt,
+          direction: 'outbound' as const,
+          text: !isNativeMetaChannel && index === 0 ? textToSend : '',
+          channel: optimisticChannel,
+          transport: optimisticTransport,
+          status: 'enviando',
+          pending: true,
+          paymentPreview: !isNativeMetaChannel && index === 0 ? paymentPreviewToSend || undefined : undefined,
+          replyToMessageId: replyPayload?.replyToMessageId,
+          replyToProviderMessageId: replyPayload?.replyToProviderMessageId,
+          attachment: {
+            type: attachment.kind,
+            clientId: attachment.id,
+            dataUrl: attachment.dataUrl,
+            url: attachment.uri,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            durationMs: attachment.durationMs,
+            size: attachment.size,
+          },
+        })),
+      ]
       : [{
         id: optimisticId,
         contactId: contact.id,
@@ -22535,8 +22594,38 @@ function NativeConversationScreen({
     ]);
     scrollConversationToLatest(false);
     updateContactPreview(attachmentsToSend.length ? (textToSend || getAttachmentLabel(attachmentsToSend[0]?.kind)) : textToSend, sentAt, optimisticChannel);
+    let nativeMetaTextSent = false;
     try {
       if (attachmentsToSend.length > 0) {
+        if (isNativeMetaChannel && textToSend) {
+          const textResponse = await api.sendText(
+            contact,
+            textToSend,
+            selectedRouteChannel as NativeMessageChannel,
+            replyPayload,
+            undefined,
+            `${externalId}-text`,
+          );
+          const textResponseState = getOutboundSendResultState(textResponse);
+          if (textResponseState.failed) throw new Error(textResponseState.errorReason);
+          nativeMetaTextSent = true;
+          const textLocalMessageId = getSendResponseLocalMessageId(textResponse);
+          const textProviderMessageId = getSendResponseProviderMessageId(textResponse);
+          setMessages((current) => current.map((message) => message.id === nativeMetaTextOptimisticId
+            ? {
+              ...message,
+              optimisticId: message.optimisticId || message.id,
+              serverMessageId: textLocalMessageId || message.serverMessageId,
+              providerMessageId: textProviderMessageId || message.providerMessageId,
+              pending: textResponseState.pending,
+              failed: textResponseState.failed,
+              errorReason: textResponseState.errorReason,
+              status: textResponseState.status,
+              channel: textResponse.transport || message.channel,
+              transport: textResponse.transport || message.transport,
+            }
+            : message));
+        }
         const responses: PromiseSettledResult<Awaited<ReturnType<typeof sendDraftAttachment>>>[] = [];
         // Read/encode and upload one file at a time. Four 25 MB files encoded in
         // parallel can exceed 130 MB in JS memory and freeze or kill Android.
@@ -22608,7 +22697,7 @@ function NativeConversationScreen({
         }
         if (failedIndexes.length) {
           setDraftAttachments(failedIndexes.map((index) => attachmentsToSend[index]).filter(Boolean));
-          if (failedIndexes.includes(0)) {
+          if (failedIndexes.includes(0) && !nativeMetaTextSent) {
             setDraft(text);
             setPaymentLinkDraftPreview(paymentPreviewToSend);
           }
@@ -22673,14 +22762,14 @@ function NativeConversationScreen({
       requestSilentConversationRefresh();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Intenta otra vez.';
-      setMessages((current) => current.map((message) => (
-        message.id === optimisticId || message.id.startsWith(`${optimisticId}-attachment-`)
-          ? { ...message, pending: false, failed: true, status: 'error', errorReason: errorMessage }
-          : message
-      )));
-      setDraft(text);
+      setMessages((current) => current.map((message) => {
+        const belongsToSend = message.id === optimisticId || message.id.startsWith(`${optimisticId}-`);
+        if (!belongsToSend || (nativeMetaTextSent && message.id === nativeMetaTextOptimisticId)) return message;
+        return { ...message, pending: false, failed: true, status: 'error', errorReason: errorMessage };
+      }));
+      setDraft(nativeMetaTextSent ? '' : text);
       setDraftAttachments(attachmentsToSend);
-      setPaymentLinkDraftPreview(paymentPreviewToSend);
+      setPaymentLinkDraftPreview(nativeMetaTextSent ? null : paymentPreviewToSend);
       Alert.alert('No se envió', errorMessage);
     } finally {
       sendLockedRef.current = false;
@@ -24397,7 +24486,7 @@ function NativeConversationAttachmentSheet({
         ) : null}
         <SheetActionRow Icon={Camera} title="Cámara" subtitle="Toma foto o graba video para enviarlo por WhatsApp." onPress={onCamera} />
         <SheetActionRow Icon={ImageIcon} title="Fotos y videos" subtitle="Adjunta media desde tu galería." onPress={onLibrary} />
-        <SheetActionRow Icon={FilePlus} title="Documento" subtitle="Adjunta PDF, Word, Excel o archivo compatible." onPress={onDocument} />
+        <SheetActionRow Icon={FilePlus} title="Documento" subtitle="Adjunta PDF, Office, XML, ZIP u otro archivo compatible." onPress={onDocument} />
         <SheetActionRow Icon={MapPin} title="Ubicación" subtitle="Comparte tu ubicación actual por WhatsApp." onPress={onLocation} />
         <SheetActionRow Icon={Search} title="Buscar en este chat" subtitle="Encuentra mensajes dentro de la conversación." onPress={onSearch} />
         <View style={styles.sheetSectionDivider}>
@@ -26497,17 +26586,43 @@ async function preparePickedMediaAttachment(asset: ImagePicker.ImagePickerAsset,
 }
 
 async function preparePickedDocumentAttachment(asset: DocumentPicker.DocumentPickerAsset, index: number): Promise<ConversationDraftAttachment> {
-  const mimeType = asset.mimeType || 'application/octet-stream';
+  const name = asset.name || getFilenameFromUri(asset.uri, `documento-${index + 1}`);
+  const extension = getDocumentExtension(name);
+  const declaredMimeType = String(asset.mimeType || '').split(';', 1)[0].trim().toLowerCase();
+  const mimeType = (
+    !declaredMimeType
+    || declaredMimeType === 'application/octet-stream'
+    || declaredMimeType === 'binary/octet-stream'
+  )
+    ? CHAT_DOCUMENT_MIME_BY_EXTENSION[extension] || 'application/octet-stream'
+    : declaredMimeType === 'text/xml'
+      ? 'application/xml'
+      : declaredMimeType === 'application/x-zip-compressed'
+        ? 'application/zip'
+        : declaredMimeType;
   const size = await getLocalFileSize(asset.uri, asset.size);
   assertAttachmentSize(size, DOCUMENT_ATTACHMENT_MAX_BYTES, 'El documento', true);
   return {
     id: `document-${Date.now()}-${index}`,
     uri: asset.uri,
     kind: 'document',
-    name: asset.name || getFilenameFromUri(asset.uri, `documento-${index + 1}`),
+    name,
     mimeType,
     size,
   };
+}
+
+function getDocumentExtension(value: string) {
+  const cleanValue = String(value || '').split(/[?#]/, 1)[0];
+  const match = cleanValue.match(/\.([a-z0-9]+)$/i);
+  return match?.[1]?.toLowerCase() || '';
+}
+
+function isWhatsAppApiUnsupportedDocumentAttachment(attachment: ConversationDraftAttachment) {
+  if (attachment.kind !== 'document') return false;
+  const cleanMimeType = String(attachment.mimeType || '').split(';', 1)[0].trim().toLowerCase();
+  return WHATSAPP_API_UNSUPPORTED_DOCUMENT_MIME_TYPES.has(cleanMimeType)
+    || WHATSAPP_API_UNSUPPORTED_DOCUMENT_EXTENSIONS.has(getDocumentExtension(attachment.name));
 }
 
 async function prepareVoiceAttachment(uri: string, durationMs?: number): Promise<ConversationDraftAttachment> {
@@ -26548,8 +26663,18 @@ async function sendDraftAttachment(
   const hydrated = await hydrateDraftAttachmentData(attachment);
   const dataUrl = hydrated.dataUrl || '';
   const externalId = `native-attachment-${contact.id}-${attachment.id}`;
-  if (attachment.kind === 'audio' && (channel === 'messenger' || channel === 'instagram')) {
-    return api.sendMetaSocialAudio(contact, channel, dataUrl, attachment.durationMs, reply, externalId);
+  if (channel === 'messenger' || channel === 'instagram') {
+    if (attachment.kind === 'audio') {
+      return api.sendMetaSocialAudio(contact, channel, dataUrl, attachment.durationMs, reply, externalId);
+    }
+    return api.sendMetaSocialAttachment(contact, channel, {
+      attachmentType: attachment.kind === 'document' ? 'file' : attachment.kind,
+      attachmentDataUrl: dataUrl,
+      filename: attachment.name,
+      mimeType: attachment.mimeType,
+      externalId,
+      ...reply,
+    });
   }
   if (highLevelChannel) {
     return api.sendHighLevelMessage(contact, {

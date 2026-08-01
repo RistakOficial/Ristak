@@ -37,6 +37,7 @@ enum MessageExternalIdFactory {
     static func template() -> String { make("template") }
     static func meta() -> String { make("meta") }
     static func metaAudio() -> String { make("meta-audio") }
+    static func metaAttachment() -> String { make("meta-attachment") }
     static func comment() -> String { make("comment") }
     static func highLevel() -> String { make("ghl") }
     static func email() -> String { make("email") }
@@ -493,6 +494,22 @@ struct MetaSocialAudioSendRequest: Encodable, Sendable {
         self.replyToMessageId = replyToMessageId
         self.replyToProviderMessageId = replyToProviderMessageId
     }
+}
+
+/// `POST /meta/social/messages/attachment`. Messenger admite archivos;
+/// Instagram se limita a imagen/video y se valida antes de enviar.
+struct MetaSocialAttachmentSendRequest: Encodable, Sendable {
+    var contactId: String
+    var platform: MetaSocialPlatform
+    var attachmentType: String
+    var attachmentDataUrl: String? = nil
+    var attachmentUrl: String? = nil
+    var attachmentMediaAssetId: String? = nil
+    var mimeType: String? = nil
+    var filename: String? = nil
+    var externalId: String? = nil
+    var replyToMessageId: String? = nil
+    var replyToProviderMessageId: String? = nil
 }
 
 /// `POST /meta/social/messages/reaction` (doc 05 §3.3). SOLO `❤️`;

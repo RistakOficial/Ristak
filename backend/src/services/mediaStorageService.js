@@ -232,6 +232,7 @@ const MIME_EXTENSION = {
   'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
   'text/plain': 'txt',
   'text/csv': 'csv',
+  'application/xml': 'xml',
   'application/json': 'json',
   'application/zip': 'zip'
 }
@@ -258,7 +259,9 @@ const bunnyFolderSyncInflight = new Map()
 // estable sin debilitar la validación del contenido.
 const MIME_TYPE_ALIASES = new Map([
   ['audio/x-m4a', 'audio/mp4'],
-  ['audio/m4a', 'audio/mp4']
+  ['audio/m4a', 'audio/mp4'],
+  ['text/xml', 'application/xml'],
+  ['application/x-zip-compressed', 'application/zip']
 ])
 
 function nowIso() {
@@ -567,7 +570,7 @@ function mediaTypeFromMime(mimeType = '') {
   if (base.startsWith('image/')) return 'image'
   if (base.startsWith('video/')) return 'video'
   if (base.startsWith('audio/')) return 'audio'
-  if (base === 'application/pdf' || base.startsWith('text/') || base.includes('document') || base.includes('spreadsheet') || base.includes('presentation') || base.includes('msword')) {
+  if (base === 'application/pdf' || base === 'application/xml' || base === 'application/zip' || base.startsWith('text/') || base.includes('document') || base.includes('spreadsheet') || base.includes('presentation') || base.includes('msword')) {
     return 'document'
   }
   return 'other'

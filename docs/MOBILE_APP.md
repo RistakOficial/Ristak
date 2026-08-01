@@ -1619,6 +1619,18 @@ UI recibe `sent`; `delivered`/`read` se reconcilian despues en background sobre
 el mismo globo. La URL CDN puede guardarse para reaperturas futuras, pero no
 reemplaza el preview local en una conversacion ya abierta ni dispara un refetch
 bloqueante al terminar el POST.
+
+Los pickers de documentos de `/movil`, Android e iOS incluyen XML y ZIP, ademas
+de PDF/Office/TXT/CSV, y normalizan los aliases MIME del sistema operativo antes
+de subir. Esos archivos salen por WhatsApp QR/Baileys y por Messenger nativo.
+Android e iOS usan `/api/whatsapp-api/meta/social/messages/attachment` para
+imagen, video y archivo de Messenger/Instagram, manteniendo `/audio` para audio;
+Instagram bloquea documentos antes de Graph. Si el numero elegido resuelve a
+WhatsApp API oficial o el canal HighLevel es `whatsapp_api`, XML/ZIP se detienen
+antes de preparar el envio y el usuario recibe la instruccion de cambiar a QR,
+Messenger u otro canal compatible. No se cambia de API a QR por un rechazo de
+contenido.
+
 Las previews nativas deben diferenciar cada
 tipo como `/movil`: fotos con proporcion real y `contain` sin marco fijo,
 video reproducible, waveform de nota de voz con avatar/microfono/progreso,

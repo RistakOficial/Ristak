@@ -61,6 +61,10 @@ enum ChatMediaLimits {
     /// MIME de documento aceptados.
     static let allowedDocumentMimeTypes: Set<String> = [
         "application/pdf",
+        "application/xml",
+        "text/xml",
+        "application/zip",
+        "application/x-zip-compressed",
         "application/msword",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/vnd.ms-excel",
@@ -84,6 +88,14 @@ struct EncodedChatMedia: Sendable {
     let sizeBytes: Int
     /// Solo audio: duración medida por el cliente.
     let durationMs: Double?
+
+    var isUnsupportedByWhatsAppAPI: Bool {
+        guard kind == .document else { return false }
+        let normalizedMime = MediaEncoder.normalizeMime(mimeType)
+        if ["application/xml", "application/zip"].contains(normalizedMime) { return true }
+        let fileExtension = (filename as NSString).pathExtension.lowercased()
+        return fileExtension == "xml" || fileExtension == "zip"
+    }
 
 }
 
@@ -118,7 +130,7 @@ enum MediaEncodingError: LocalizedError, Sendable {
         case .audioTooLarge:
             return "El audio pesa demasiado. Graba uno más corto para poder enviarlo por WhatsApp."
         case .documentInvalidFormat:
-            return "El archivo debe ser PDF, Word, Excel, PowerPoint, TXT, CSV, audio o video compatible."
+            return "El archivo debe ser PDF, Word, Excel, PowerPoint, TXT, CSV, XML, ZIP, audio o video compatible."
         case .documentTooLarge:
             return "El documento pesa demasiado. Elige uno de menos de 20 MB para poder enviarlo por WhatsApp."
         case .unreadableFile(let label):

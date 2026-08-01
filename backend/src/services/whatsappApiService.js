@@ -230,11 +230,27 @@ const DOCUMENT_EXTENSION_BY_MIME = {
   'application/vnd.ms-powerpoint': 'ppt',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
   'text/plain': 'txt',
-  'text/csv': 'csv'
+  'text/csv': 'csv',
+  'application/xml': 'xml',
+  'text/xml': 'xml',
+  'application/zip': 'zip',
+  'application/x-zip-compressed': 'zip'
 }
-const DOCUMENT_MIME_BY_EXTENSION = Object.fromEntries(
-  Object.entries(DOCUMENT_EXTENSION_BY_MIME).map(([mimeType, extension]) => [extension, mimeType])
-)
+const DOCUMENT_MIME_ALIASES = {
+  'text/xml': 'application/xml',
+  'application/x-zip-compressed': 'application/zip'
+}
+const DOCUMENT_MIME_BY_EXTENSION = {
+  ...Object.fromEntries(
+    Object.entries(DOCUMENT_EXTENSION_BY_MIME).map(([mimeType, extension]) => [extension, mimeType])
+  ),
+  xml: 'application/xml',
+  zip: 'application/zip'
+}
+const WHATSAPP_API_UNSUPPORTED_DOCUMENT_MIME_TYPES = new Set([
+  'application/xml',
+  'application/zip'
+])
 const API_FALLBACK_PHONE_STATUSES = new Set([
   'BANNED',
   'BLOCKED',
@@ -843,8 +859,54 @@ function parseAudioDataUrl(value = '') {
 }
 
 function getDocumentSendExtension(mimeType = '') {
-  const cleanMime = cleanMimeType(mimeType)
+  const cleanMime = normalizeChatDocumentMimeType(mimeType)
   return DOCUMENT_EXTENSION_BY_MIME[cleanMime] || VIDEO_EXTENSION_BY_MIME[cleanMime] || AUDIO_EXTENSION_BY_MIME[cleanMime] || 'bin'
+}
+
+function normalizeChatDocumentMimeType(value = '') {
+  const cleanMime = cleanMimeType(value)
+  return DOCUMENT_MIME_ALIASES[cleanMime] || cleanMime
+}
+
+function getDocumentExtensionFromReference(value = '') {
+  const cleanValue = cleanString(value)
+  if (!cleanValue) return ''
+  try {
+    return cleanString(new URL(cleanValue).pathname).toLowerCase().split('.').pop() || ''
+  } catch {
+    return cleanValue.toLowerCase().split('?')[0].split('#')[0].split('.').pop() || ''
+  }
+}
+
+function resolveChatDocumentMimeType({ mimeType = '', dataUrlMimeType = '', filename = '', url = '' } = {}) {
+  const extension = getDocumentExtensionFromReference(filename) || getDocumentExtensionFromReference(url)
+  const extensionMimeType = DOCUMENT_MIME_BY_EXTENSION[extension]
+  if (WHATSAPP_API_UNSUPPORTED_DOCUMENT_MIME_TYPES.has(extensionMimeType)) {
+    return extensionMimeType
+  }
+
+  for (const candidate of [mimeType, dataUrlMimeType]) {
+    const normalized = normalizeChatDocumentMimeType(candidate)
+    if (
+      DOCUMENT_EXTENSION_BY_MIME[normalized] ||
+      VIDEO_EXTENSION_BY_MIME[normalized] ||
+      AUDIO_EXTENSION_BY_MIME[normalized]
+    ) {
+      return normalized
+    }
+  }
+
+  return extensionMimeType || VIDEO_MIME_BY_EXTENSION[extension] || AUDIO_MIME_BY_EXTENSION[extension] || ''
+}
+
+export function isWhatsAppApiUnsupportedDocumentFormat({ mimeType = '', dataUrl = '', filename = '', url = '' } = {}) {
+  const dataUrlMimeType = cleanString(dataUrl).match(/^data:([^;,]*)/i)?.[1] || ''
+  return WHATSAPP_API_UNSUPPORTED_DOCUMENT_MIME_TYPES.has(resolveChatDocumentMimeType({
+    mimeType,
+    dataUrlMimeType,
+    filename,
+    url
+  }))
 }
 
 function sanitizeDocumentFilename(value = '', mimeType = '') {
@@ -862,17 +924,14 @@ function parseDocumentDataUrl(value = '', filename = '', providedMimeType = '') 
     throw new Error('El documento no llegó en un formato válido.')
   }
 
-  const extension = cleanString(filename).toLowerCase().split('.').pop()
-  const directMimeType = cleanString(providedMimeType).toLowerCase()
-  const dataUrlMimeType = cleanString(match[1]).toLowerCase()
-  const mimeType = DOCUMENT_EXTENSION_BY_MIME[directMimeType] || VIDEO_EXTENSION_BY_MIME[directMimeType] || AUDIO_EXTENSION_BY_MIME[directMimeType]
-    ? directMimeType
-    : DOCUMENT_EXTENSION_BY_MIME[dataUrlMimeType] || VIDEO_EXTENSION_BY_MIME[dataUrlMimeType] || AUDIO_EXTENSION_BY_MIME[dataUrlMimeType]
-      ? dataUrlMimeType
-      : DOCUMENT_MIME_BY_EXTENSION[extension] || VIDEO_MIME_BY_EXTENSION[extension] || AUDIO_MIME_BY_EXTENSION[extension]
+  const mimeType = resolveChatDocumentMimeType({
+    mimeType: providedMimeType,
+    dataUrlMimeType: match[1],
+    filename
+  })
 
   if (!mimeType) {
-    throw new Error('El archivo debe ser PDF, Word, Excel, PowerPoint, TXT, CSV, audio o video compatible.')
+    throw new Error('El archivo debe ser PDF, Word, Excel, PowerPoint, TXT, CSV, XML, ZIP, audio o video compatible.')
   }
 
   const buffer = Buffer.from(match[2].replace(/\s/g, ''), 'base64')
@@ -1389,7 +1448,9 @@ export async function prepareWhatsAppMediaForDirectUpload({
   }
 
   const cleanKind = cleanString(kind).toLowerCase()
-  const normalizedMimeType = cleanMimeType(mimeType)
+  const normalizedMimeType = cleanKind === 'document'
+    ? resolveChatDocumentMimeType({ mimeType, filename })
+    : cleanMimeType(mimeType)
 
   if (cleanKind === 'image') {
     const extension = IMAGE_EXTENSION_BY_MIME[normalizedMimeType]
@@ -1466,7 +1527,7 @@ export async function prepareWhatsAppMediaForDirectUpload({
       VIDEO_EXTENSION_BY_MIME[normalizedMimeType] ||
       AUDIO_EXTENSION_BY_MIME[normalizedMimeType]
     if (!allowed) {
-      throw new Error('El archivo debe ser PDF, Word, Excel, PowerPoint, TXT, CSV, audio o video compatible.')
+      throw new Error('El archivo debe ser PDF, Word, Excel, PowerPoint, TXT, CSV, XML, ZIP, audio o video compatible.')
     }
     if (buffer.length > MAX_WHATSAPP_DOCUMENT_BYTES) {
       throw new Error('El documento pesa demasiado. Elige uno de menos de 20 MB para poder enviarlo por WhatsApp.')
@@ -1477,7 +1538,8 @@ export async function prepareWhatsAppMediaForDirectUpload({
       extension: getDocumentSendExtension(normalizedMimeType),
       filename: sanitizeDocumentFilename(filename, normalizedMimeType),
       metadata: {
-        whatsappApiCompatible: true,
+        whatsappApiCompatible: !WHATSAPP_API_UNSUPPORTED_DOCUMENT_MIME_TYPES.has(normalizedMimeType),
+        chatDocumentCompatible: true,
         whatsappDocument: true,
         originalMimeType: normalizedMimeType
       }
@@ -14419,6 +14481,15 @@ export async function sendWhatsAppApiDocumentMessage({
     })
   }
   throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
+
+  if (isWhatsAppApiUnsupportedDocumentFormat({
+    mimeType,
+    dataUrl: documentDataUrl,
+    filename,
+    url: cleanDocumentUrl
+  })) {
+    throw new Error('La API oficial de WhatsApp no admite archivos ZIP ni XML. Usa un número conectado sólo por QR o envíalo por Messenger u otro canal compatible.')
+  }
 
   if (!link) {
     const preparedDocument = await prepareWhatsAppDocumentForProviderUpload(documentDataUrl, filename, mimeType)

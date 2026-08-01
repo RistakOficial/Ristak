@@ -776,6 +776,46 @@ test('envío API de documento conserva metadata del archivo sin guardar URL prop
   })
 })
 
+test('WhatsApp API rechaza XML y ZIP antes de subirlos al proveedor', async () => {
+  await withYCloudProviderMediaCapture(async (captures) => {
+    const to = `+52154${Date.now().toString().slice(-8)}`
+
+    try {
+      await captures.openReplyWindow(to)
+
+      for (const fixture of [
+        {
+          documentDataUrl: `data:application/xml;base64,${Buffer.from('<factura/>').toString('base64')}`,
+          filename: 'factura.xml',
+          mimeType: 'application/xml'
+        },
+        {
+          documentDataUrl: `data:application/zip;base64,${Buffer.from('PK\u0003\u0004factura').toString('base64')}`,
+          filename: 'factura.zip',
+          mimeType: 'application/zip'
+        }
+      ]) {
+        await assert.rejects(
+          () => sendWhatsAppApiDocumentMessage({
+            to,
+            ...fixture,
+            externalId: `provider-unsupported-document-${fixture.filename}`,
+            allowQrFallback: true
+          }),
+          /API oficial de WhatsApp no admite archivos ZIP ni XML/
+        )
+      }
+
+      assert.equal(captures.uploads.length, 0)
+      assert.equal(captures.messages.length, 0)
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_messages WHERE to_phone = ? OR phone = ?', [to, to])
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
+      await db.run('DELETE FROM contacts WHERE phone = ?', [to])
+    }
+  })
+})
+
 test('envío API convierte un MP3 real, sube OGG/Opus decodificable y manda Media ID', async () => {
   await withRealMp3(async (audioDataUrl) => {
     await withYCloudProviderMediaCapture(async (captures) => {

@@ -33,6 +33,7 @@ import {
 } from '../services/contactIdentityService.js';
 import {
   buildLocalMediaUrl,
+  isWhatsAppApiUnsupportedDocumentFormat,
   saveWhatsAppAudioPlaybackPreviewDataUrl,
   saveWhatsAppDocumentDataUrl,
   saveWhatsAppImageDataUrl,
@@ -2866,6 +2867,23 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     throw createHighLevelChatError('Ese canal no está permitido para enviar desde el chat.');
   }
 
+  if (channelConfig.key === 'whatsapp_api') {
+    const unsupportedAttachment = Array.isArray(attachmentDataUrls)
+      ? attachmentDataUrls.find(item => isWhatsAppApiUnsupportedDocumentFormat({
+          mimeType: item?.mimeType || item?.type,
+          dataUrl: item?.dataUrl,
+          filename: item?.filename || item?.name
+        }))
+      : null;
+    if (unsupportedAttachment) {
+      throw createHighLevelChatError(
+        'La API oficial de WhatsApp no admite archivos ZIP ni XML. Usa WhatsApp por QR, Messenger u otro canal compatible.',
+        415,
+        'WHATSAPP_DOCUMENT_TYPE_UNSUPPORTED'
+      );
+    }
+  }
+
   const attachmentUrls = [];
   const referenceCount = Math.max(legacyAttachmentUrls.length, mediaAssetIds.length);
   for (let index = 0; index < referenceCount; index += 1) {
@@ -2874,6 +2892,17 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
       legacyUrl: legacyAttachmentUrls[index],
       expectedMediaTypes: ['image', 'video', 'audio', 'document', 'other']
     });
+    if (channelConfig.key === 'whatsapp_api' && isWhatsAppApiUnsupportedDocumentFormat({
+      mimeType: reference?.mimeType,
+      filename: reference?.filename,
+      url: reference?.url
+    })) {
+      throw createHighLevelChatError(
+        'La API oficial de WhatsApp no admite archivos ZIP ni XML. Usa WhatsApp por QR, Messenger u otro canal compatible.',
+        415,
+        'WHATSAPP_DOCUMENT_TYPE_UNSUPPORTED'
+      );
+    }
     if (reference?.url) attachmentUrls.push(reference.url);
   }
 

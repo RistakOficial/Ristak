@@ -369,6 +369,17 @@ foto, documento, video y audio seleccionados para Meta Direct salen por Graph y
 nunca usan el endpoint de mensajes ni el upload de YCloud. El fallback QR aplica
 con las mismas reglas estrictas de indisponibilidad que YCloud.
 
+El formato de un documento tambien forma parte de la frontera de proveedor. La
+lista oficial de WhatsApp Business Platform incluye TXT, PDF y formatos de
+Microsoft Office, pero no XML ni ZIP. Ristak permite seleccionar esos dos
+formatos porque WhatsApp QR/Baileys y otros canales si pueden transportarlos;
+cuando la fila seleccionada resuelve a Meta directo o YCloud, los bloquea antes
+del upload con un error accionable. La ruta `whatsapp_api` de HighLevel aplica la
+misma compuerta. Un error de MIME/extension no es indisponibilidad y jamas debe
+provocar fallback de contenido hacia QR. Si la API oficial ya estaba realmente
+indisponible y el fallback estricto eligio QR, Baileys conserva bytes, filename y
+MIME `application/xml` o `application/zip`.
+
 Meta directo también conserva el contrato conversacional nativo. Una respuesta
 saliente usa `context.message_id`; una reacción usa `type=reaction` con
 `reaction.message_id` y `reaction.emoji`; al abrir el chat, el visto se manda por
@@ -726,6 +737,7 @@ No borrar ni “reparar” IDs específicos sin contestar esas preguntas.
 
 - [Meta: WhatsApp Cloud API](https://developers.facebook.com/docs/whatsapp/cloud-api/overview)
 - [Meta: colección oficial de WhatsApp Business Platform](https://www.postman.com/meta/whatsapp-business-platform/overview)
+- [Meta: tipos MIME oficiales para documentos de WhatsApp](https://www.postman.com/meta/whatsapp-business-platform/folder/13382743-ecb27be5-4d27-4763-bbee-6a8002c04bf3)
 - [Meta: colección oficial de administración de WhatsApp Business](https://www.postman.com/meta/whatsapp-business-platform/documentation/3kru5r6/moved-whatsapp-business-management-api)
 - [Meta: plantilla con encabezado de imagen y `header_handle`](https://www.postman.com/meta/whatsapp-business-platform/request/zwo15hw/create-template-w-image-header-text-body-text-footer-and-2-call-to-action-buttons)
 - [Meta: Resumable Upload API](https://developers.facebook.com/docs/graph-api/guides/upload/)
@@ -736,6 +748,7 @@ No borrar ni “reparar” IDs específicos sin contestar esas preguntas.
 - [YCloud: listar números de WhatsApp](https://docs.ycloud.com/reference/whatsapp_phone_number-list)
 - [YCloud: eventos webhook y eliminación remota](https://docs.ycloud.com/reference/webhook-events-payloads)
 - [YCloud: enviar mensajes](https://docs.ycloud.com/reference/whatsapp_message-send)
+- [YCloud: ejemplos y tipos de documentos WhatsApp](https://docs.ycloud.com/reference/whatsapp-messaging-examples)
 - [YCloud: ecos enviados desde WhatsApp Business](https://docs.ycloud.com/reference/whatsapp-business-app-sent-message-sync-webhook-examples)
 - [YCloud: cambios BSUID](https://docs.ycloud.com/reference/webhook-updates-bsuid)
 

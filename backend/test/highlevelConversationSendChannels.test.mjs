@@ -49,6 +49,24 @@ test('HighLevel conversational agent preserves the inbound business number when 
   assert.match(source, /fromNumber: replyFromNumber \|\| latest\.business_phone \|\| undefined/)
 })
 
+test('HighLevel bloquea ZIP y XML antes de intentar mandarlos por WhatsApp API', async () => {
+  for (const fixture of [
+    { dataUrl: 'data:application/zip;base64,UEsDBA==', filename: 'factura.zip', mimeType: 'application/zip' },
+    { dataUrl: 'data:text/xml;base64,PGZhY3R1cmEvPg==', filename: 'factura.xml', mimeType: 'text/xml' }
+  ]) {
+    await assert.rejects(
+      () => sendHighLevelConversationMessageCore({
+        contactId: 'contacto-no-necesario-para-preflight',
+        channel: 'whatsapp_api',
+        attachmentDataUrls: [{ ...fixture, kind: 'document' }]
+      }, { markHumanTakeover: false }),
+      error => error?.statusCode === 415
+        && error?.code === 'WHATSAPP_DOCUMENT_TYPE_UNSUPPORTED'
+        && /ZIP ni XML/.test(error?.message || '')
+    )
+  }
+})
+
 test('HighLevel conversation sender supports explicit WhatsApp, SMS, Messenger, Instagram and Email routes', async () => {
   const marker = randomUUID().replace(/-/g, '')
   const contactId = `contact_send_channels_${marker}`

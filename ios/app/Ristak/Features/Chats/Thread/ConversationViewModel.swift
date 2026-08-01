@@ -1498,32 +1498,36 @@ final class ConversationViewModel {
 
         switch selectedChannel {
         case .messenger, .instagram:
-            if pendingAttachments.count == 1, pendingAttachments[0].kind == .audio {
-                guard text.isEmpty else {
-                    alert = ConversationAlert(
-                        title: "Audio sin texto",
-                        message: "Messenger e Instagram desde Meta nativo no combinan texto y audio en el mismo envío."
-                    )
-                    return
-                }
-                await sendMetaAudioDraft(pendingAttachments[0])
-                return
-            }
-            guard pendingAttachments.isEmpty else {
+            if selectedChannel == .instagram, pendingAttachments.contains(where: { $0.kind == .document }) {
                 alert = ConversationAlert(
-                    title: "Adjunto no disponible",
-                    message: "Messenger e Instagram desde Meta nativo mandan texto o audio en este chat."
+                    title: "Instagram no admite documentos",
+                    message: "Cambia a Messenger, WhatsApp QR u otro canal compatible para mandar este archivo."
                 )
                 return
             }
-            guard !text.isEmpty else {
+            guard !text.isEmpty || !pendingAttachments.isEmpty else {
                 alert = ConversationAlert(title: "Escribe o graba algo", message: "Manda texto o una nota de voz desde este chat.")
                 return
             }
-            await sendMetaText(text)
+            if !pendingAttachments.isEmpty {
+                if !text.isEmpty {
+                    guard await sendMetaText(text, preserveComposer: true) else { return }
+                }
+                await sendMetaAttachments(pendingAttachments)
+            } else {
+                await sendMetaText(text)
+            }
 
         case .highLevelWhatsApp, .sms:
             guard !text.isEmpty || !pendingAttachments.isEmpty else { return }
+            if case .highLevelWhatsApp = selectedChannel,
+               pendingAttachments.contains(where: { $0.media.isUnsupportedByWhatsAppAPI }) {
+                alert = ConversationAlert(
+                    title: "WhatsApp API no admite ZIP ni XML",
+                    message: "Elige un número conectado sólo por QR o cambia a Messenger u otro canal compatible."
+                )
+                return
+            }
             await sendHighLevel(text: text, drafts: pendingAttachments)
 
         case .whatsapp:
@@ -1531,6 +1535,14 @@ final class ConversationViewModel {
                 alert = ConversationAlert(
                     title: "Falta el teléfono",
                     message: "Guarda el número del contacto antes de escribir por WhatsApp."
+                )
+                return
+            }
+            if resolveWhatsAppTransport() == .api,
+               pendingAttachments.contains(where: { $0.media.isUnsupportedByWhatsAppAPI }) {
+                alert = ConversationAlert(
+                    title: "WhatsApp API no admite ZIP ni XML",
+                    message: "Elige un número conectado sólo por QR o cambia a Messenger u otro canal compatible."
                 )
                 return
             }
@@ -1821,6 +1833,61 @@ final class ConversationViewModel {
         await sendMetaAudio(media: draft.media, localURL: nil, restoreDraft: draft)
     }
 
+    private func sendMetaAttachments(_ drafts: [ComposerAttachmentDraft]) async {
+        for draft in drafts {
+            if draft.kind == .audio {
+                await sendMetaAudioDraft(draft)
+            } else {
+                await sendMetaAttachmentDraft(draft)
+            }
+        }
+    }
+
+    private func sendMetaAttachmentDraft(_ draft: ComposerAttachmentDraft) async {
+        guard let platform = selectedChannel.metaPlatform else { return }
+        let media = draft.media
+        let externalId = MessageExternalIdFactory.metaAttachment()
+        let transport = platform == .instagram ? "instagram" : "messenger"
+
+        var optimistic = makeOptimisticMessage(id: externalId, text: "", transport: transport)
+        optimistic.messageType = media.kind.rawValue
+        optimistic.attachment = ChatAttachment(
+            type: attachmentKind(for: media.kind),
+            localPreviewData: media.kind == .image ? media.binaryData : nil,
+            name: media.filename,
+            mimeType: media.mimeType,
+            durationMs: media.durationMs,
+            size: Double(media.sizeBytes)
+        )
+        appendOptimistic(optimistic, restore: FailedSendPayload(text: "", attachment: draft))
+        clearComposerAfterSend()
+
+        do {
+            let mediaReference = try await messagingService.prepareMediaReference(
+                media,
+                clientUploadID: "ios-chat-\(draft.id)",
+                contactID: contactID
+            )
+            let result = try await messagingService.sendMetaSocialAttachment(
+                MetaSocialAttachmentSendRequest(
+                    contactId: contactID,
+                    platform: platform,
+                    attachmentType: media.kind == .document ? "file" : media.kind.rawValue,
+                    attachmentDataUrl: mediaReference.legacyDataURL,
+                    attachmentUrl: mediaReference.publicURL,
+                    attachmentMediaAssetId: mediaReference.mediaAssetID,
+                    mimeType: media.mimeType,
+                    filename: media.filename,
+                    externalId: externalId
+                )
+            )
+            applySendResult(result, to: externalId)
+            scheduleServerReconciliation()
+        } catch {
+            handleSendFailure(error, externalId: externalId, restoreOnWindowError: nil)
+        }
+    }
+
     private func sendMetaAudio(media: EncodedChatMedia, localURL: URL?, restoreDraft: ComposerAttachmentDraft) async {
         guard let platform = selectedChannel.metaPlatform else { return }
         let externalId = MessageExternalIdFactory.metaAudio()
@@ -1868,8 +1935,9 @@ final class ConversationViewModel {
         }
     }
 
-    private func sendMetaText(_ text: String, preserveComposer: Bool = false) async {
-        guard let platform = selectedChannel.metaPlatform else { return }
+    @discardableResult
+    private func sendMetaText(_ text: String, preserveComposer: Bool = false) async -> Bool {
+        guard let platform = selectedChannel.metaPlatform else { return false }
         let externalId = MessageExternalIdFactory.meta()
         let reply = preserveComposer ? nil : replyTarget
 
@@ -1900,8 +1968,10 @@ final class ConversationViewModel {
             )
             applySendResult(result, to: externalId)
             scheduleServerReconciliation()
+            return true
         } catch {
             handleSendFailure(error, externalId: externalId, restoreOnWindowError: nil)
+            return false
         }
     }
 
@@ -2377,7 +2447,7 @@ final class ConversationViewModel {
 
     // MARK: - Adjuntos del composer
 
-    private func canAddAttachment(allowMetaSocialAudio: Bool = false) -> Bool {
+    private func canAddAttachment(allowMetaSocialAttachment: Bool = false) -> Bool {
         if replyTarget != nil {
             alert = ConversationAlert(
                 title: "Respuesta solo con texto",
@@ -2392,7 +2462,7 @@ final class ConversationViewModel {
             )
             return false
         }
-        guard selectedChannel.isWhatsApp || selectedChannel.isHighLevel || (allowMetaSocialAudio && selectedChannel.isMetaSocial) else {
+        guard selectedChannel.isWhatsApp || selectedChannel.isHighLevel || (allowMetaSocialAttachment && selectedChannel.isMetaSocial) else {
             alert = ConversationAlert(
                 title: "Adjuntos por WhatsApp",
                 message: "Los adjuntos nativos se envían por WhatsApp API/QR. Cambia el canal a WhatsApp para mandar este archivo."
@@ -2422,7 +2492,7 @@ final class ConversationViewModel {
     }
 
     func addCameraImage(_ image: UIImage) {
-        guard canAddAttachment() else { return }
+        guard canAddAttachment(allowMetaSocialAttachment: true) else { return }
         attachmentPreparationCount += 1
         let preparationID = UUID()
         let task = Task { [weak self] in
@@ -2449,7 +2519,7 @@ final class ConversationViewModel {
     }
 
     func addCameraVideo(at url: URL) {
-        guard canAddAttachment() else { return }
+        guard canAddAttachment(allowMetaSocialAttachment: true) else { return }
         attachmentPreparationCount += 1
         let preparationID = UUID()
         let task = Task { [weak self] in
@@ -2479,7 +2549,7 @@ final class ConversationViewModel {
 
     /// Media elegida de la fototeca (imagen o video ya en Data).
     func addPickedMedia(data: Data, mimeType: String?, filename: String?) {
-        guard canAddAttachment() else { return }
+        guard canAddAttachment(allowMetaSocialAttachment: true) else { return }
         let mime = MediaEncoder.normalizeMime(mimeType)
         attachmentPreparationCount += 1
         let preparationID = UUID()
@@ -2518,8 +2588,7 @@ final class ConversationViewModel {
     }
 
     func addDocument(at url: URL) {
-        guard canAddAttachment(allowMetaSocialAudio: true) else { return }
-        let isMetaSocial = selectedChannel.isMetaSocial
+        guard canAddAttachment(allowMetaSocialAttachment: true) else { return }
         // `fileImporter` puede entregar una URL security-scoped. Abrir el scope
         // ANTES de saltar al worker y cerrarlo solo cuando termino la lectura.
         let hasSecurityScope = url.startAccessingSecurityScopedResource()
@@ -2538,9 +2607,6 @@ final class ConversationViewModel {
             }
             do {
                 let encoded = try await Task.detached(priority: .userInitiated) {
-                    if isMetaSocial {
-                        return try MediaEncoder.encodeAudioFile(at: url, durationMs: nil)
-                    }
                     return try MediaEncoder.encodeDocumentFile(at: url)
                 }.value
                 try Task.checkCancellation()
@@ -2550,14 +2616,7 @@ final class ConversationViewModel {
             } catch is CancellationError {
                 return
             } catch {
-                if isMetaSocial {
-                    self.alert = ConversationAlert(
-                        title: "Adjunto no disponible",
-                        message: "Messenger e Instagram desde Meta nativo mandan texto o audio en este chat."
-                    )
-                } else {
-                    self.alert = ConversationAlert(title: "Documento", message: error.localizedDescription)
-                }
+                self.alert = ConversationAlert(title: "Documento", message: error.localizedDescription)
             }
         }
         attachmentPreparationTasks[preparationID] = task

@@ -21,9 +21,9 @@ struct ComposerView: View {
     @State private var isFileImporterPresented = false
     @State private var sendPulse = false
 
-    /// Tipos aceptados por el picker de documentos (PDF/Word/Excel/PPT/TXT/CSV).
+    /// Tipos aceptados por el picker (PDF/Office/TXT/CSV/XML/ZIP).
     private static let documentContentTypes: [UTType] = {
-        var types: [UTType] = [.pdf, .plainText, .commaSeparatedText]
+        var types: [UTType] = [.pdf, .plainText, .commaSeparatedText, .xml, .zip]
         let identifiers: [String] = [
             "com.microsoft.word.doc",
             "org.openxmlformats.wordprocessingml.document",

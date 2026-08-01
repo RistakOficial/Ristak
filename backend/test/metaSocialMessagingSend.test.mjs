@@ -2840,6 +2840,34 @@ test('sendMetaSocialAttachmentMessage manda PDF por Messenger y externalId evita
   })
 })
 
+test('sendMetaSocialAttachmentMessage manda XML por Messenger como archivo real', async () => {
+  await withMetaMediaSendHarness({
+    platform: 'messenger',
+    testId: 'xml-file'
+  }, async ({ calls, uploads, contactId }) => {
+    const xmlBytes = Buffer.from('<?xml version="1.0"?><factura id="A-42"/>')
+    const result = await sendMetaSocialAttachmentMessage({
+      contactId,
+      platform: 'messenger',
+      attachmentType: 'file',
+      attachmentDataUrl: `data:text/xml;base64,${xmlBytes.toString('base64')}`,
+      mimeType: 'text/xml',
+      filename: 'factura.xml',
+      publicBaseUrl: 'https://ristak.test'
+    })
+
+    assert.equal(result.attachment.type, 'file')
+    assert.equal(result.attachment.mimeType, 'application/xml')
+    assert.equal(result.attachment.filename, 'factura.xml')
+    assert.equal(uploads.length, 1)
+    assert.equal(uploads[0].mimeType, 'application/xml')
+    assert.deepEqual(uploads[0].buffer, xmlBytes)
+
+    const [sendCall] = getMetaMessagePosts(calls)
+    assert.equal(JSON.parse(sendCall.body).message.attachment.type, 'file')
+  })
+})
+
 test('dos envíos concurrentes con el mismo externalId hacen un solo POST a Meta', async () => {
   await withMetaMediaSendHarness({
     platform: 'messenger',

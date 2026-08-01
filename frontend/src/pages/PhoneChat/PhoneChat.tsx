@@ -366,6 +366,8 @@ const DOCUMENT_ATTACHMENT_ACCEPT = [
   '.pptx',
   '.txt',
   '.csv',
+  '.xml',
+  '.zip',
   '.aac',
   '.amr',
   '.m4a',
@@ -384,6 +386,10 @@ const DOCUMENT_ATTACHMENT_ACCEPT = [
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'text/plain',
   'text/csv',
+  'application/xml',
+  'text/xml',
+  'application/zip',
+  'application/x-zip-compressed',
   'audio/*'
 ].join(',')
 const DOCUMENT_MIME_BY_EXTENSION: Record<string, string> = {
@@ -395,7 +401,9 @@ const DOCUMENT_MIME_BY_EXTENSION: Record<string, string> = {
   ppt: 'application/vnd.ms-powerpoint',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   txt: 'text/plain',
-  csv: 'text/csv'
+  csv: 'text/csv',
+  xml: 'application/xml',
+  zip: 'application/zip'
 }
 const VIDEO_MIME_BY_EXTENSION: Record<string, string> = {
   mp4: 'video/mp4',
@@ -4957,6 +4965,18 @@ function getDraftAttachmentKind(attachment: MobileChatAttachment): ChatAttachmen
   if (attachment.attachmentType === 'video') return 'video'
   if (attachment.attachmentType === 'audio') return 'audio'
   return 'document'
+}
+
+function isWhatsAppApiUnsupportedDocumentAttachment(attachment: MobileChatAttachment) {
+  if (getDraftAttachmentKind(attachment) !== 'document') return false
+  const extension = getFileExtension(attachment.name)
+  const mimeType = String(attachment.type || '').trim().toLowerCase()
+  return extension === 'xml' || extension === 'zip' || [
+    'application/xml',
+    'text/xml',
+    'application/zip',
+    'application/x-zip-compressed'
+  ].includes(mimeType)
 }
 
 function getNativeMetaAudioDurationMs(audio: MobileChatAttachment | VoiceDraftAttachment | null | undefined) {
@@ -12059,7 +12079,7 @@ export const PhoneChat: React.FC = () => {
         }
 
         if (!isSupportedDocumentFile(file)) {
-          showToast('error', 'Archivo no válido', 'Elige un PDF, Word, Excel, PowerPoint, TXT o CSV.')
+          showToast('error', 'Archivo no válido', 'Elige un PDF, Word, Excel, PowerPoint, TXT, CSV, XML o ZIP.')
           continue
         }
 
@@ -13568,6 +13588,17 @@ export const PhoneChat: React.FC = () => {
       const requestedChannel: HighLevelChatChannel = sendAttachmentsThroughHighLevel && activeMetaSocialChannel
         ? activeMetaSocialChannel
         : activeHighLevelChatChannel
+      if (
+        requestedChannel === 'whatsapp_api' &&
+        attachmentsToSend.some(isWhatsAppApiUnsupportedDocumentAttachment)
+      ) {
+        showToast(
+          'warning',
+          'WhatsApp API no admite ZIP ni XML',
+          'Elige un número conectado sólo por QR o cambia a Messenger u otro canal compatible.'
+        )
+        return
+      }
       const optimisticChannel: HighLevelChatChannel = requestedChannel === activeHighLevelChatChannel
         ? effectiveHighLevelChatChannel
         : requestedChannel
@@ -13781,6 +13812,18 @@ export const PhoneChat: React.FC = () => {
 
     if (resolvedTransport === 'api' && !whatsappConnected) {
       showToast('error', 'WhatsApp no está conectado', 'Conecta WhatsApp API en configuración para enviar mensajes desde Ristak.')
+      return
+    }
+
+    if (
+      resolvedTransport === 'api' &&
+      attachmentsToSend.some(isWhatsAppApiUnsupportedDocumentAttachment)
+    ) {
+      showToast(
+        'warning',
+        'WhatsApp API no admite ZIP ni XML',
+        'Elige un número conectado sólo por QR o cambia a Messenger u otro canal compatible.'
+      )
       return
     }
 

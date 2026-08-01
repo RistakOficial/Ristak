@@ -57,6 +57,7 @@ const META_SOCIAL_MESSENGER_FILE_MIME_TYPES = new Set([
   'application/vnd.ms-powerpoint',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'application/json',
+  'application/xml',
   'application/zip',
   'text/csv',
   'text/plain'
@@ -98,6 +99,8 @@ function cleanMediaMimeType(value = '') {
   if (normalized === 'audio/x-m4a' || normalized === 'audio/m4a') return 'audio/mp4'
   if (normalized === 'audio/x-wav') return 'audio/wav'
   if (normalized === 'image/jpg') return 'image/jpeg'
+  if (normalized === 'text/xml') return 'application/xml'
+  if (normalized === 'application/x-zip-compressed') return 'application/zip'
   return normalized
 }
 
@@ -214,7 +217,7 @@ function assertMetaSocialSourceMatchesType({ platform, attachmentType, mimeType,
   }
 
   if (!META_SOCIAL_MESSENGER_FILE_MIME_TYPES.has(cleanMime)) {
-    throw createMetaSocialMessageError('Messenger no acepta este tipo de archivo. Usa PDF, Word, Excel, PowerPoint, TXT, CSV, JSON o ZIP.', 415, {
+    throw createMetaSocialMessageError('Messenger no acepta este tipo de archivo. Usa PDF, Word, Excel, PowerPoint, TXT, CSV, JSON, XML o ZIP.', 415, {
       code: 'messenger_file_type_invalid'
     })
   }

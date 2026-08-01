@@ -15,7 +15,7 @@ import UniformTypeIdentifiers
 ///   transcodifica a MP4 ≤16 MB).
 /// - Audio: AAC/M4A como `audio/mp4` ≤16 MB (el backend transcodifica a
 ///   OGG/Opus, formato de nota de voz de WhatsApp).
-/// - Documento: PDF/Word/Excel/PowerPoint/TXT/CSV ≤20 MB; filename sanitizado.
+/// - Documento: PDF/Word/Excel/PowerPoint/TXT/CSV/XML/ZIP ≤20 MB; filename sanitizado.
 enum MediaEncoder {
     /// WhatsApp termina reduciendo las fotos a un tamaño parecido. Hacerlo antes
     /// evita subir 3-8 MB como base64 para que el servidor y WhatsApp vuelvan a
@@ -210,8 +210,17 @@ enum MediaEncoder {
     /// Normaliza un MIME (`"image/jpeg; charset=..."` → `"image/jpeg"`).
     static func normalizeMime(_ value: String?) -> String {
         let raw = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard let semicolon = raw.firstIndex(of: ";") else { return raw }
-        return String(raw[..<semicolon]).trimmingCharacters(in: .whitespaces)
+        let clean: String
+        if let semicolon = raw.firstIndex(of: ";") {
+            clean = String(raw[..<semicolon]).trimmingCharacters(in: .whitespaces)
+        } else {
+            clean = raw
+        }
+        switch clean {
+        case "text/xml": return "application/xml"
+        case "application/x-zip-compressed": return "application/zip"
+        default: return clean
+        }
     }
 
     static func fileExtension(forMime mime: String) -> String? {
@@ -239,6 +248,8 @@ enum MediaEncoder {
         case "application/vnd.openxmlformats-officedocument.presentationml.presentation": return "pptx"
         case "text/plain": return "txt"
         case "text/csv": return "csv"
+        case "application/xml": return "xml"
+        case "application/zip": return "zip"
         default:
             if let type = UTType(mimeType: normalizeMime(mime)) {
                 return type.preferredFilenameExtension

@@ -2685,6 +2685,26 @@ una URL publica HTTPS a Graph. Messenger e Instagram no exponen `ptt` ni
 interna para mostrarla correctamente. La burbuja queda con `media_url`, MIME y
 nombre reproducibles despues de recargar.
 
+Los selectores de documentos de `/chat`, `/movil`, `mobile/` e `ios/app`
+aceptan tambien facturas XML y paquetes ZIP de hasta 20 MB. La salida depende
+del canal real, no solo de que el archivo haya podido seleccionarse:
+
+- WhatsApp QR/Baileys los envia como documento conservando bytes, nombre y MIME.
+- Messenger nativo los envia como `file` por Send API; texto y archivo viajan
+  como mensajes separados porque Meta no admite caption dentro del adjunto.
+- WhatsApp API oficial, tanto Meta directo como YCloud y la ruta WhatsApp de
+  HighLevel, los detiene antes del upload: el catalogo oficial de documentos no
+  incluye XML ni ZIP. La UI explica que debe elegirse un numero conectado solo
+  por QR, Messenger u otro canal compatible.
+- Instagram nativo no admite documentos. Sus imagenes, videos y audios conservan
+  las rutas multimedia normales.
+
+Un rechazo por formato nunca autoriza fallback silencioso de API a QR. Solo la
+indisponibilidad real del proveedor oficial puede activar el fallback estricto
+ya documentado. Storage normaliza `text/xml` a `application/xml` y
+`application/x-zip-compressed` a `application/zip`; XML se sirve como descarga
+con `Content-Disposition: attachment` y `nosniff`, no como contenido ejecutable.
+
 Instagram aplica su contrato antes del POST: imagen JPG/PNG (GIF cuando Meta lo
 admita) hasta 8 MB ya preparada, audio normalizado y video normalizado. Su Send
 API no ofrece documentos/PDF salientes; cualquier archivo se detiene antes de

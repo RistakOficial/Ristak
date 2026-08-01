@@ -90,6 +90,11 @@ struct MessagingService: Sendable {
         try await client.post("/whatsapp-api/meta/social/messages/audio", body: request, timeout: APIClient.mediaTimeout)
     }
 
+    /// `POST /meta/social/messages/attachment` — media y archivos de Messenger/Instagram.
+    func sendMetaSocialAttachment(_ request: MetaSocialAttachmentSendRequest) async throws -> MessageSendResult {
+        try await client.post("/whatsapp-api/meta/social/messages/attachment", body: request, timeout: APIClient.mediaTimeout)
+    }
+
     /// `POST /meta/social/messages/reaction` — SOLO ❤️.
     func sendMetaSocialReaction(_ request: MetaSocialReactionSendRequest) async throws -> MessageSendResult {
         try await client.post("/whatsapp-api/meta/social/messages/reaction", body: request)
