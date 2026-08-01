@@ -397,14 +397,17 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
   }, [draft.messageType, timingAnchor, visibleTemplates])
 
   useEffect(() => {
-    if (!isOpen || isDirectMessage || draft.templateId || !defaultTemplateForType) return
+    // El draft de una regla existente se hidrata en otro efecto durante este mismo
+    // render. Si elegimos el default antes de que esa hidratación se aplique, el
+    // segundo setState pisa silenciosamente cualquier plantilla personalizada.
+    if (!isOpen || reminder || isDirectMessage || draft.templateId || !defaultTemplateForType) return
     setDraft(prev => ({
       ...prev,
       templateId: defaultTemplateForType.id,
       templateName: defaultTemplateForType.name,
       templateLanguage: defaultTemplateForType.language
     }))
-  }, [defaultTemplateForType, draft.templateId, isDirectMessage, isOpen])
+  }, [defaultTemplateForType, draft.templateId, isDirectMessage, isOpen, reminder])
 
   const templateOptions = useMemo(() => visibleTemplates.map(template => ({
     value: template.id,

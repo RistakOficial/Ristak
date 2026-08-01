@@ -81,4 +81,10 @@ assert.match(
   'el editor de mensajes automáticos sólo debe cerrarse con sus acciones explícitas'
 )
 
+assert.match(
+  reminderModalSource,
+  /if \(!isOpen \|\| reminder \|\| isDirectMessage \|\| draft\.templateId \|\| !defaultTemplateForType\) return/,
+  'abrir una regla existente debe conservar su plantilla personalizada en lugar de imponer el default'
+)
+
 console.log('Appointment modal shared contract OK')

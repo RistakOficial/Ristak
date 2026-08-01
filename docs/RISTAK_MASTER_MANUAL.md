@@ -4506,6 +4506,11 @@ contacto como parámetro de botón. Al hacer clic, la ruta pública registra el
 evento, identifica al contacto, ejecuta las automatizaciones configuradas y
 redirige al destino final, por ejemplo Google Meet.
 
+Al reabrir una regla existente, el editor conserva esa plantilla personalizada.
+La selección automática de la plantilla default sólo corre al crear una regla
+nueva; nunca debe reemplazar en pantalla ni al guardar el botón dinámico que ya
+estaba configurado.
+
 Existe una compatibilidad acotada para copias antiguas ya aprobadas de
 `confirmacion_cita_dia_anterior`. Si Meta acepta el request y después devuelve
 un rechazo estructural indicando que recibió tres variables pero la plantilla
