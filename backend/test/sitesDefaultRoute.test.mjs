@@ -104,6 +104,53 @@ test('public domain root uses the configured default site route', async () => {
   }
 })
 
+test('site routes preserve hyphens and resolve nested public paths', async () => {
+  const previousConfig = await snapshotDomainConfig()
+  const suffix = Date.now()
+  let site
+
+  try {
+    await configureVerifiedPublicDomain()
+
+    site = await createSite({
+      name: 'Landing con ruta anidada',
+      slug: `/Campañas-${suffix} / Venta-Verano/`,
+      siteType: 'landing_page',
+      status: 'published',
+      blankCanvas: true,
+      theme: {
+        pageMode: 'website',
+        pages: [
+          { id: 'page-home', title: 'Inicio', slug: 'inicio', sortOrder: 0 },
+          { id: 'page-thanks', title: 'Gracias', slug: 'gracias', sortOrder: 1 }
+        ]
+      }
+    })
+
+    const expectedRoute = `campanas-${suffix}/venta-verano`
+    assert.equal(site.slug, expectedRoute)
+
+    const directResolution = await resolvePublicSiteForHost('example.test', { path: `/${expectedRoute}` })
+    assert.equal(directResolution.ok, true)
+    assert.equal(directResolution.site.id, site.id)
+    assert.deepEqual(directResolution.pagePath, [])
+
+    const legacyPageResolution = await resolvePublicSiteForHost('example.test', {
+      path: `/${expectedRoute}/gracias`
+    })
+    assert.equal(legacyPageResolution.ok, true)
+    assert.equal(legacyPageResolution.site.id, site.id)
+    assert.equal(legacyPageResolution.pageId, '')
+    assert.deepEqual(legacyPageResolution.pagePath, ['gracias'])
+
+    const settings = await setSitesPublicDefaultRoute(site.id)
+    assert.equal(settings.defaultRoute.path, `/${expectedRoute}`)
+  } finally {
+    if (site) await deleteSite(site.id).catch(() => undefined)
+    await restoreDomainConfig(previousConfig)
+  }
+})
+
 test('public domain root can use a configured default site page route', async () => {
   const previousConfig = await snapshotDomainConfig()
   const suffix = Date.now()

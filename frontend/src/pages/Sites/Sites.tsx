@@ -228,6 +228,12 @@ import customFieldModalStyles from '../Settings/CustomFields.module.css'
 import './sitesCanvas.css'
 import { buildCanvasTheme } from './sitesCanvasTheme'
 import { SITE_FONT_OPTIONS, normalizeSiteFontFamily } from './siteFonts'
+import {
+  normalizeRouteSegment,
+  normalizeSiteRouteEditorDraft,
+  normalizeSiteRouteEditorInput,
+  normalizeSiteRoutePath
+} from './siteRouteUtils'
 import { StageConversionTable } from './analytics/StageConversionTable'
 // Contrato de bloques compartido con el renderer público (Paquete C): las
 // variables/clases por bloque y los helpers de paridad vienen de UNA copia.
@@ -3439,15 +3445,9 @@ const isPublicSiteLive = (site: PublicSite, domainConfig: SitesDomainConfig) => 
   return site.status === 'published' && Boolean(selectedDomain.domain && selectedDomain.renderDomainVerified)
 }
 
-const normalizeRouteInput = (value: string) => value
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '')
-  .toLowerCase()
-  .replace(/^\/+/, '')
-  .replace(/[^a-z0-9]+/g, '-')
-  .replace(/^-+|-+$/g, '')
+const normalizeRouteInput = normalizeRouteSegment
 
-const getRoutePath = (site?: PublicSite | null) => `/${normalizeRouteInput(site?.slug || '')}`
+const getRoutePath = (site?: PublicSite | null) => `/${normalizeSiteRoutePath(site?.slug || '')}`
 
 const appendNoTrackToUrl = (url: string) => {
   if (!url) return url
@@ -3522,31 +3522,19 @@ const getDefaultSiteNamePrefix = (siteType: SiteType) =>
 const getDefaultRoutePrefix = (siteType: SiteType) =>
   normalizeRouteInput(getDefaultSiteNamePrefix(siteType))
 
-const getRouteEditorValue = (site?: PublicSite | null) => normalizeRouteInput(site?.slug || '')
+const getRouteEditorValue = (site?: PublicSite | null) => normalizeSiteRouteEditorDraft(site?.slug || '', '')
 
 const normalizeRouteEditorInput = (value: string, domainConfig: SitesDomainConfig) => {
-  const raw = value.trim()
-  if (/^https?:\/\//i.test(raw)) {
-    try {
-      return normalizeRouteInput(new URL(raw).pathname)
-    } catch {
-      return normalizeRouteInput(raw)
-    }
-  }
-
-  const withoutProtocol = raw.replace(/^https?:\/\//i, '')
-  const domain = getPublicDomainPreview(domainConfig).replace(/^https?:\/\//i, '').replace(/\/+$/, '')
-  const withoutDomain = withoutProtocol.toLowerCase().startsWith(`${domain.toLowerCase()}/`)
-    ? withoutProtocol.slice(domain.length)
-    : raw
-
-  return normalizeRouteInput(withoutDomain)
+  return normalizeSiteRouteEditorInput(value, getPublicDomainPreview(domainConfig))
 }
+
+const normalizeRouteEditorDraft = (value: string, domainConfig: SitesDomainConfig) =>
+  normalizeSiteRouteEditorDraft(value, getPublicDomainPreview(domainConfig))
 
 const getNextSiteIdentity = (siteType: SiteType, existingSites: PublicSite[]) => {
   const namePrefix = getDefaultSiteNamePrefix(siteType)
   const routePrefix = getDefaultRoutePrefix(siteType)
-  const used = new Set(existingSites.map(site => normalizeRouteInput(site.slug)))
+  const used = new Set(existingSites.map(site => normalizeSiteRoutePath(site.slug)))
   let index = 1
   let suffix = String(index).padStart(2, '0')
   let slug = `${routePrefix}-${suffix}`
@@ -10580,7 +10568,7 @@ export const Sites: React.FC = () => {
       const pagesForSave = normalizePagesForSave(getEmbeddedFormContentPagesFromSite(draftForm))
       let savedForm = await sitesService.updateSite(formId, {
         name: draftForm.name,
-        slug: normalizeRouteInput(draftForm.slug) || normalizeRouteInput(draftForm.name) || 'formulario',
+        slug: normalizeSiteRoutePath(draftForm.slug) || normalizeRouteInput(draftForm.name) || 'formulario',
         siteType: draftForm.siteType,
         status: draftForm.status,
         title: getPublicTitleForSave(draftForm),
@@ -10701,7 +10689,7 @@ export const Sites: React.FC = () => {
       let sourceForm = existingSource
         ? normalizeSiteForEditor(await sitesService.updateSite(existingSource.id, {
           name: formName,
-          slug: normalizeRouteInput(existingSource.slug) || normalizeRouteInput(formName) || 'formulario-video',
+          slug: normalizeSiteRoutePath(existingSource.slug) || normalizeRouteInput(formName) || 'formulario-video',
           siteType: 'standard_form',
           status: existingSource.status,
           title: getPublicTitleForSave(existingSource),
@@ -10925,7 +10913,7 @@ export const Sites: React.FC = () => {
       if (shouldSaveSite) {
         site = await sitesService.updateSite(siteToSave.id, {
           name: siteToSave.name,
-          slug: normalizeRouteInput(siteToSave.slug) || normalizeRouteInput(siteToSave.name) || getDefaultRoutePrefix(siteToSave.siteType),
+          slug: normalizeSiteRoutePath(siteToSave.slug) || normalizeRouteInput(siteToSave.name) || getDefaultRoutePrefix(siteToSave.siteType),
           siteType: siteToSave.siteType,
           status: options.statusOverride || siteToSave.status,
           domain: siteToSave.domain,
@@ -12443,7 +12431,7 @@ export const Sites: React.FC = () => {
     try {
       const site = await sitesService.updateSite(siteToSave.id, {
         name: siteToSave.name,
-        slug: normalizeRouteInput(siteToSave.slug) || normalizeRouteInput(siteToSave.name) || getDefaultRoutePrefix(siteToSave.siteType),
+        slug: normalizeSiteRoutePath(siteToSave.slug) || normalizeRouteInput(siteToSave.name) || getDefaultRoutePrefix(siteToSave.siteType),
         siteType: siteToSave.siteType,
         status: siteToSave.status,
         domain: siteToSave.domain,
@@ -13756,7 +13744,7 @@ export const Sites: React.FC = () => {
   }
 
   const handleUpdateLibraryRoute = async (siteToUpdate: PublicSite, nextRoute: string) => {
-    const nextSlug = normalizeRouteInput(nextRoute) || getDefaultRoutePrefix(siteToUpdate.siteType)
+    const nextSlug = normalizeSiteRoutePath(nextRoute) || getDefaultRoutePrefix(siteToUpdate.siteType)
 
     try {
       const site = await sitesService.updateSite(siteToUpdate.id, {
@@ -15779,7 +15767,7 @@ export const Sites: React.FC = () => {
                         routeValue={getRouteEditorValue(editorToolbarSettingsSite)}
                         routePlaceholder={editorToolbarSettingsSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
                         onRouteChange={(value) => patchEditorToolbarSettingsSite({
-                          slug: normalizeRouteEditorInput(value, getSiteDomainConfig(editorToolbarSettingsSite, domainConfig))
+                          slug: normalizeRouteEditorDraft(value, getSiteDomainConfig(editorToolbarSettingsSite, domainConfig))
                         })}
                         onPatchSite={patchEditorToolbarSettingsSite}
                         onPatchTheme={patchEditorToolbarSettingsTheme}
@@ -15922,7 +15910,7 @@ export const Sites: React.FC = () => {
                   routeValue={getRouteEditorValue(librarySettingsSite)}
                   routePlaceholder={librarySettingsSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
                   onRouteChange={(value) => patchLibrarySettingsSite({
-                    slug: normalizeRouteEditorInput(value, getSiteDomainConfig(librarySettingsSite, domainConfig))
+                    slug: normalizeRouteEditorDraft(value, getSiteDomainConfig(librarySettingsSite, domainConfig))
                   })}
                   onPatchSite={patchLibrarySettingsSite}
                   onPatchTheme={patchLibrarySettingsTheme}
@@ -28642,7 +28630,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
               placeholder={routeEditingSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
               suffix={<Pencil size={16} />}
               onFocus={(event) => event.currentTarget.select()}
-              onChange={(value) => setRouteDraft(normalizeRouteEditorInput(value, routeEditingDomainConfig))}
+              onChange={(value) => setRouteDraft(normalizeRouteEditorDraft(value, routeEditingDomainConfig))}
               onKeyDown={(event) => {
                 if (event.key === 'Escape') {
                   event.preventDefault()

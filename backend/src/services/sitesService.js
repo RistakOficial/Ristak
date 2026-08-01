@@ -5109,6 +5109,23 @@ function slugify(value) {
   return base || `site-${Date.now()}`
 }
 
+function normalizeSiteRoutePath(value) {
+  return cleanString(value)
+    .split(/[?#]/, 1)[0]
+    .split('/')
+    .map(segment => {
+      let decoded = segment
+      try {
+        decoded = decodeURIComponent(segment)
+      } catch {
+        decoded = segment
+      }
+      return slugifyPageSegment(decoded)
+    })
+    .filter(Boolean)
+    .join('/')
+}
+
 function getDefaultRoutePrefix(siteType) {
   return siteType === 'landing_page' ? 'embudo' : 'formulario'
 }
@@ -13680,7 +13697,8 @@ export async function listSiteSubmissions(siteId, { limit = 250 } = {}) {
 export async function createSite(input = {}) {
   const id = createRistakId('site')
   const siteType = validateSiteType(input.siteType || input.site_type)
-  const slug = await ensureUniqueSlug(slugify(input.slug || await getNextDefaultSlug(siteType)))
+  const requestedRoute = normalizeSiteRoutePath(input.slug || await getNextDefaultSlug(siteType)) || `site-${Date.now()}`
+  const slug = await ensureUniqueSlug(requestedRoute)
   const name = cleanString(input.name) || getDefaultSiteName(siteType, slug)
   const title = Object.prototype.hasOwnProperty.call(input, 'title')
     ? cleanString(input.title)
@@ -15382,7 +15400,8 @@ export async function createImportedSiteFromHtml(input = {}) {
   const mappings = buildDefaultImportedFormMappings(detectedForms)
   const publicTitle = getImportedHtmlTitle(prepared.sanitized.html, input.title || filename.replace(/\.[^.]+$/, '') || 'Página importada')
   const publicDescription = getImportedHtmlDescription(prepared.sanitized.html, input.description || 'Página importada desde HTML propio')
-  const slug = await ensureUniqueSlug(slugify(input.slug || publicTitle || 'pagina-importada'))
+  const requestedRoute = normalizeSiteRoutePath(input.slug || publicTitle || 'pagina-importada') || `site-${Date.now()}`
+  const slug = await ensureUniqueSlug(requestedRoute)
   let theme = {
     ...DEFAULT_THEME,
     template: IMPORTED_SITE_TEMPLATE,
@@ -17142,7 +17161,7 @@ async function updateSiteUnlocked(siteId, input = {}) {
     : validateSiteType(input.siteType || input.site_type)
   const nextSlug = input.slug === undefined
     ? current.slug
-    : await ensureUniqueSlug(slugify(input.slug), siteId)
+    : await ensureUniqueSlug(normalizeSiteRoutePath(input.slug) || `site-${Date.now()}`, siteId)
   const domainChanged = normalizeDomain(current.domain) !== nextDomain
   let nextTheme = { ...DEFAULT_THEME, ...(input.theme || current.theme || {}) }
   const nextMetaCapiEnabled = input.metaCapiEnabled === undefined
@@ -19126,30 +19145,6 @@ export async function verifyAppDomainConnection(domainValue) {
   return verifyPublicDomainConnection(domain)
 }
 
-function normalizePublicRouteSlug(pathValue) {
-  const path = cleanString(pathValue || '/')
-  const firstSegment = path
-    .split('?')[0]
-    .split('#')[0]
-    .split('/')
-    .filter(Boolean)[0] || ''
-  let decoded = firstSegment
-
-  try {
-    decoded = decodeURIComponent(firstSegment)
-  } catch {
-    decoded = firstSegment
-  }
-
-  return cleanString(decoded)
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/^\/+/, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-}
-
 function normalizePublicRouteSegments(pathValue) {
   const path = cleanString(pathValue || '/')
     .split('?')[0]
@@ -19169,16 +19164,32 @@ function normalizePublicRouteSegments(pathValue) {
     .filter(Boolean)
 }
 
-async function findSiteByRoutePath(pathValue) {
-  const slug = normalizePublicRouteSlug(pathValue)
-  if (!slug) return null
+async function findSiteRouteMatchByPath(pathValue) {
+  const segments = normalizePublicRouteSegments(pathValue)
+  if (!segments.length) return null
+  const routePath = segments.join('/')
 
   const row = await db.get(
-    'SELECT * FROM public_sites WHERE LOWER(slug) = LOWER(?) LIMIT 1',
-    [slug]
+    `SELECT * FROM public_sites
+     WHERE LOWER(?) = LOWER(slug)
+        OR LOWER(?) LIKE LOWER(slug) || '/%'
+     ORDER BY LENGTH(slug) DESC
+     LIMIT 1`,
+    [routePath, routePath]
   )
 
-  return mapSite(row)
+  const site = mapSite(row)
+  if (!site) return null
+
+  const matchedPath = normalizeSiteRoutePath(site.slug)
+  return {
+    site,
+    consumedSegments: matchedPath ? matchedPath.split('/').length : 0
+  }
+}
+
+async function findSiteByRoutePath(pathValue) {
+  return (await findSiteRouteMatchByPath(pathValue))?.site || null
 }
 
 async function findSitePageByRoutePath(pathValue) {
@@ -19499,9 +19510,10 @@ export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false
   if (!domainResolution.ok) return domainResolution
 
   const routeSegments = normalizePublicRouteSegments(path)
-  let site = await findSiteByRoutePath(path)
+  const siteRoute = await findSiteRouteMatchByPath(path)
+  let site = siteRoute?.site || null
   let pageId = ''
-  let pagePath = routeSegments.slice(1)
+  let pagePath = routeSegments.slice(siteRoute?.consumedSegments || 0)
 
   if (!site && !routeSegments.length) {
     const rootRoute = await findRootPublicSite(domainResolution.domainConfig)

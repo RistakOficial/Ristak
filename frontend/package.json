@@ -16,6 +16,7 @@
     "test:sites-imported-form-meta-trigger": "node scripts/test-sites-imported-form-meta-trigger.mjs",
     "test:sites-embedded-form-inspector": "node scripts/test-sites-embedded-form-inspector.mjs",
     "test:sites-inspector-stacking": "node scripts/test-sites-inspector-stacking.mjs",
+    "test:sites-route-input": "node --experimental-strip-types --test scripts/test-sites-route-input.mjs",
     "test:appointment-modal-contract": "node scripts/test-appointment-modal-contract.mjs",
     "test:appointment-reminder-ordering": "node --experimental-strip-types --test scripts/test-appointment-reminder-ordering.mjs",
     "test:calendar-commercial-reports": "node scripts/test-calendar-commercial-reports.mjs",

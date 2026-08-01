@@ -5588,7 +5588,15 @@ limpia en lugar de depender de `?page=`. La ruta legacy del sitio
 `/<site-slug>` se conserva por compatibilidad y abre la landing como antes. La
 opcion "Cambiar ruta" en el menu de tres puntos de cada pagina abre el editor de
 ruta de esa pagina especifica, separado de "Cambiar nombre". La
-ruta predeterminada de cada dominio puede apuntar a un sitio completo o a una
+ruta publica general del Site acepta segmentos con guion y subrutas separadas
+por diagonal, por ejemplo `/servicios/diseno-web`. El editor conserva `-` y `/`
+mientras se escribe, permite pegar la URL publica completa y guarda solamente
+la ruta relativa canonica: minusculas, sin acentos, espacios convertidos a
+guiones y diagonales duplicadas eliminadas. El backend conserva todos los
+segmentos al crear o actualizar el Site y resuelve primero la coincidencia de
+ruta mas larga; asi una ruta anidada no se confunde con el primer segmento y las
+URLs legacy que agregan una pagina despues del slug del Site siguen funcionando.
+La ruta predeterminada de cada dominio puede apuntar a un sitio completo o a una
 pagina especifica (`siteId + pageId`): cuando apunta a una pagina, esa pagina
 abre en la raiz de ese dominio (`https://dominio/`) y su slug propio sigue
 resolviendo como ruta directa.
