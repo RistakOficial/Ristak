@@ -362,6 +362,13 @@ tr:hover td { background: var(--surface-2); }   /* fila hover */
 Estado en celda → `<Badge>`. Números → `--num-font`; positivos `--pos`,
 negativos `--neg`.
 
+La paginación de `<Table>` usa una ventana móvil de cinco páginas. Los números
+son controles planos, sin borde, fondo ni caja visible; solamente las flechas
+anterior/siguiente conservan forma de botón. Cuando existen más páginas fuera de
+la ventana se muestran puntos suspensivos. Las listas keyset/cursor conservan su
+lectura escalable: un salto numérico hacia adelante recorre secuencialmente los
+cursores necesarios y no debe degradarse a paginación offset para pintar el pie.
+
 ---
 
 ## 7. Variantes funcionales permitidas (deben sentirse intencionales)

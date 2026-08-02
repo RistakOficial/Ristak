@@ -1879,7 +1879,7 @@ export const PaymentSubscriptions: React.FC = () => {
             keyExtractor={(item) => item.id}
             onRowClick={openEditSubscription}
             emptyMessage="No hay suscripciones guardadas"
-            loading={loading}
+            loading={loading || refreshing}
             searchable={true}
             searchPlaceholder="Buscar suscripciones..."
             paginated={true}

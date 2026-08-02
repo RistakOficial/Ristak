@@ -514,28 +514,30 @@ body.light input.selectionCheckbox:checked:hover::after {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 4px;
-  background-color: var(--design-table-toolbar-bg, var(--color-background));
-  border-top: 1px solid var(--design-table-border, rgba(148, 163, 184, 0.18));
+  gap: var(--spacing-xs);
+  background-color: var(--surface);
+  border-top: 1px solid var(--border);
 }
 
 .pageButton {
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border: 1px solid var(--design-table-border, var(--color-border-subtle));
-  background-color: var(--design-table-control-bg, var(--color-background));
-  border-radius: var(--design-control-radius, var(--radius-sm));
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background-color: var(--surface);
+  border-radius: var(--radius-ctl);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-text-secondary);
+  color: var(--text-dim);
   transition: all var(--transition-fast);
 }
 
 .pageButton:hover:not(:disabled) {
-  background-color: var(--color-surface);
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+  background-color: var(--surface-hover);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .pageButton:disabled {
@@ -545,40 +547,60 @@ body.light input.selectionCheckbox:checked:hover::after {
 
 .pageNumbers {
   display: flex;
+  align-items: center;
   gap: 2px;
 }
 
 .pageNumber {
-  min-width: 32px;
+  min-width: 30px;
   height: 32px;
-  padding: 0 var(--spacing-sm);
-  border: 1px solid var(--design-table-border, var(--color-border-subtle));
-  background-color: var(--design-table-control-bg, var(--color-background));
-  border-radius: var(--design-control-radius, var(--radius-sm));
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-text-secondary);
+  color: var(--text-dim);
   font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  transition: all var(--transition-fast);
+  font-weight: 500;
+  text-underline-offset: 4px;
+  transition: color var(--transition-fast);
 }
 
-.pageNumber:hover {
-  background-color: var(--color-surface);
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+.pageNumber:hover:not(:disabled) {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 .pageNumber.active {
-  background-color: var(--color-primary);
-  border-color: var(--color-primary);
-  color: var(--color-text-inverse);
+  color: var(--text);
+  font-weight: 600;
+  cursor: default;
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 2px;
+}
+
+.pageNumber:disabled {
+  color: var(--text-mute);
+  cursor: wait;
+}
+
+.pageEllipsis {
+  min-width: 18px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-mute);
+  font-size: var(--font-size-sm);
+  user-select: none;
 }
 
 .pageInfo {
-  color: var(--color-text-secondary);
+  color: var(--text-dim);
   font-size: var(--font-size-sm);
   margin-left: var(--spacing-md);
 }

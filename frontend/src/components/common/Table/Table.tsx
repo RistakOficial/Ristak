@@ -15,6 +15,7 @@ import { getDateSortValueForKey } from '@/utils/dateSort'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { TabList } from '../TabList'
 import { SearchField } from '../SearchField'
+import { getTablePaginationItems } from './pagination'
 import styles from './Table.module.css'
 
 export interface Column<T> {
@@ -258,9 +259,12 @@ export function Table<T extends Record<string, any>>({
   const [localSortBy, setLocalSortBy] = useState<string | null>(initialSortBy || null)
   const [localSortOrder, setLocalSortOrder] = useState<'asc' | 'desc'>(initialSortOrder)
   const [localCurrentPage, setLocalCurrentPage] = useState(1)
+  const [cursorJumpTarget, setCursorJumpTarget] = useState<number | null>(null)
   const [editMode, setEditMode] = useState(false)
   const [draggedColumn, setDraggedColumn] = useState<string | null>(null)
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null)
+  const cursorJumpRequestedPageRef = useRef<number | null>(null)
+  const cursorJumpSawLoadingRef = useRef(false)
 
   // Determinar columnas iniciales (propColumns o propInitialColumns)
   const initialColumns = propInitialColumns || propColumns || []
@@ -513,6 +517,12 @@ export function Table<T extends Record<string, any>>({
       ? Math.max(resolvedCurrentPage + (hasNextPage ? 1 : 0), 1)
       : Math.max(Number(controlledTotalPages) || Math.ceil(totalItemCount / pageSize), 1)
     : Math.ceil(filteredData.length / pageSize)
+  const paginationItems = useMemo(() => getTablePaginationItems({
+    currentPage: resolvedCurrentPage,
+    totalPages,
+    cursorPagination,
+    hasNextPage
+  }), [cursorPagination, hasNextPage, resolvedCurrentPage, totalPages])
   const totalVisibleColumns = visibleColumns.length + (rowSelection ? 1 : 0)
   const selectedKeySet = useMemo(() => new Set(rowSelection?.selectedKeys ?? []), [rowSelection?.selectedKeys])
   const selectableRows = useMemo(() => {
@@ -591,13 +601,71 @@ export function Table<T extends Record<string, any>>({
   }
 
   const handlePageChange = (nextPage: number) => {
-    const safeNextPage = Math.min(Math.max(nextPage, 1), Math.max(totalPages, 1))
+    if (loading) return
+
+    const safeNextPage = cursorPagination
+      ? Math.max(nextPage, 1)
+      : Math.min(Math.max(nextPage, 1), Math.max(totalPages, 1))
+
+    cursorJumpRequestedPageRef.current = null
+    cursorJumpSawLoadingRef.current = false
+    setCursorJumpTarget(null)
+
     if (serverSidePagination) {
+      if (cursorPagination && safeNextPage > resolvedCurrentPage + 1) {
+        if (!hasNextPage) return
+
+        const firstSequentialPage = resolvedCurrentPage + 1
+        cursorJumpRequestedPageRef.current = firstSequentialPage
+        setCursorJumpTarget(safeNextPage)
+        onPageChange?.(firstSequentialPage)
+        return
+      }
+
       onPageChange?.(safeNextPage)
     } else {
       setLocalCurrentPage(safeNextPage)
     }
   }
+
+  useEffect(() => {
+    if (!cursorPagination || !serverSidePagination || cursorJumpTarget === null) return
+
+    const requestedPage = cursorJumpRequestedPageRef.current
+    if (loading) {
+      if (requestedPage !== null) cursorJumpSawLoadingRef.current = true
+      return
+    }
+
+    if (!cursorJumpSawLoadingRef.current || requestedPage === null) return
+
+    if (resolvedCurrentPage < requestedPage) {
+      cursorJumpRequestedPageRef.current = null
+      cursorJumpSawLoadingRef.current = false
+      setCursorJumpTarget(null)
+      return
+    }
+
+    cursorJumpSawLoadingRef.current = false
+
+    if (resolvedCurrentPage >= cursorJumpTarget || !hasNextPage) {
+      cursorJumpRequestedPageRef.current = null
+      setCursorJumpTarget(null)
+      return
+    }
+
+    const nextSequentialPage = resolvedCurrentPage + 1
+    cursorJumpRequestedPageRef.current = nextSequentialPage
+    onPageChange?.(nextSequentialPage)
+  }, [
+    cursorJumpTarget,
+    cursorPagination,
+    hasNextPage,
+    loading,
+    onPageChange,
+    resolvedCurrentPage,
+    serverSidePagination
+  ])
 
   useEffect(() => {
     if ((hasSelectionActions || !showColumnEditor) && editMode) {
@@ -941,54 +1009,70 @@ export function Table<T extends Record<string, any>>({
       </div>
 
       {paginated && totalPages > 1 && (
-        <div className={styles.pagination}>
+        <nav
+          className={styles.pagination}
+          aria-label="Paginación de la tabla"
+          aria-busy={loading || cursorJumpTarget !== null}
+        >
           <button
+            type="button"
             className={styles.pageButton}
-            disabled={resolvedCurrentPage === 1}
+            aria-label="Página anterior"
+            disabled={resolvedCurrentPage === 1 || loading || cursorJumpTarget !== null}
             onClick={() => handlePageChange(resolvedCurrentPage - 1)}
           >
-            <ChevronLeft size={16} />
+            <ChevronLeft aria-hidden="true" size={16} />
           </button>
 
           <div className={styles.pageNumbers}>
-            {cursorPagination ? (
-              <span className={`${styles.pageNumber} ${styles.active}`} aria-current="page">
-                {resolvedCurrentPage}
-              </span>
-            ) : Array.from({ length: Math.min(9, totalPages) }, (_, i) => {
-              let pageNum
-              if (totalPages <= 9) {
-                // Mostrar todas las páginas si hay 9 o menos
-                pageNum = i + 1
-              } else if (resolvedCurrentPage <= 5) {
-                // Mostrar las primeras 9 páginas
-                pageNum = i + 1
-              } else if (resolvedCurrentPage >= totalPages - 4) {
-                // Mostrar las últimas 9 páginas
-                pageNum = totalPages - 8 + i
-              } else {
-                // Centrar la página actual (4 antes, 4 después)
-                pageNum = resolvedCurrentPage - 4 + i
+            {paginationItems.map((item) => {
+              if (typeof item !== 'number') {
+                return (
+                  <span key={item} className={styles.pageEllipsis} aria-hidden="true">
+                    …
+                  </span>
+                )
+              }
+
+              if (item === resolvedCurrentPage) {
+                return (
+                  <span
+                    key={item}
+                    className={`${styles.pageNumber} ${styles.active}`}
+                    aria-current="page"
+                  >
+                    {item}
+                  </span>
+                )
               }
 
               return (
                 <button
-                  key={pageNum}
-                  className={`${styles.pageNumber} ${resolvedCurrentPage === pageNum ? styles.active : ''}`}
-                  onClick={() => handlePageChange(pageNum)}
+                  type="button"
+                  key={item}
+                  className={styles.pageNumber}
+                  aria-label={`Ir a la página ${item}`}
+                  disabled={loading || cursorJumpTarget !== null}
+                  onClick={() => handlePageChange(item)}
                 >
-                  {pageNum}
+                  {item}
                 </button>
               )
             })}
           </div>
 
           <button
+            type="button"
             className={styles.pageButton}
-            disabled={cursorPagination ? !hasNextPage : resolvedCurrentPage === totalPages}
+            aria-label="Página siguiente"
+            disabled={
+              loading ||
+              cursorJumpTarget !== null ||
+              (cursorPagination ? !hasNextPage : resolvedCurrentPage === totalPages)
+            }
             onClick={() => handlePageChange(resolvedCurrentPage + 1)}
           >
-            <ChevronRight size={16} />
+            <ChevronRight aria-hidden="true" size={16} />
           </button>
 
           <span className={styles.pageInfo}>
@@ -998,7 +1082,7 @@ export function Table<T extends Record<string, any>>({
                 ? '0 de 0'
                 : `${((resolvedCurrentPage - 1) * pageSize) + 1} - ${Math.min(resolvedCurrentPage * pageSize, totalItemCount)} de ${totalItemCount}`}
           </span>
-        </div>
+        </nav>
       )}
     </div>
   )

@@ -24,6 +24,7 @@
     "test:appointment-reminder-ordering": "node --experimental-strip-types --test scripts/test-appointment-reminder-ordering.mjs",
     "test:calendar-commercial-reports": "node scripts/test-calendar-commercial-reports.mjs",
     "test:calendar-offline-contract": "node scripts/test-calendar-offline-contract.mjs",
+    "test:table-pagination": "node --experimental-strip-types --test scripts/test-table-pagination.mjs",
     "test:time-picker-live-preview": "node scripts/test-time-picker-live-preview.mjs",
     "test:floating-layer-viewport": "node scripts/test-floating-layer-viewport.mjs",
     "test:web-analytics-plan-access": "node --test scripts/test-web-analytics-plan-access.cjs",

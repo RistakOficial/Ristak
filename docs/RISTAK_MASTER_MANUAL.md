@@ -1761,6 +1761,13 @@ seleccion selecciona todos los registros filtrados de la tabla, aunque esten en
 otras paginas de la paginacion; no debe limitarse a las filas visibles de la
 pagina actual.
 
+La paginacion visible de las tablas desktop tambien pertenece al componente
+compartido `Table`: muestra una ventana movil de cinco numeros planos, puntos
+suspensivos cuando hay mas paginas y botones solamente para las flechas. Las
+listas keyset de Contactos, Pagos, planes y suscripciones mantienen su pila de
+cursores; si el usuario elige una pagina futura de la ventana, `Table` avanza por
+los cursores intermedios sin volver esas consultas a offset.
+
 ## Permisos, licencia y acceso
 
 Hay tres capas distintas:
