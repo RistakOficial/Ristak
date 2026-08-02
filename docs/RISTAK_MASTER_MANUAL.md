@@ -1307,6 +1307,16 @@ vistos; el heatmap usa la misma intensidad. El detalle por video agrupa páginas
 canónicas; la consulta debe funcionar igual con el `GROUP BY` estricto de
 PostgreSQL y con SQLite.
 
+Para proteger instalaciones pequeñas, PostgreSQL calcula tanto el agregado de
+video como su detalle con una sola materialización del ledger por petición. El
+detalle comparte esa lectura entre resumen, gráficas, espectadores, páginas,
+bloques, alcance y retención; el agregado hace lo propio entre resumen, rankings
+y series. SQLite ejecuta las mismas secciones en serie. Las rutas cancelan el
+trabajo si el cliente se desconecta y tienen un deadline de 18 segundos; el
+frontend aborta a los 20 segundos. Una base en recuperación o una lectura
+atascada debe producir un error reintentable y quitar el loader, no dejar una
+ráfaga de consultas concurrentes ni una espera infinita.
+
 El heartbeat regular se envia cada 10 segundos y los hitos/pausa/seek/cierre
 siguen vaciando el acumulado. `payload_json` ya no duplica URL, dispositivo y
 contexto completo en cada progreso: esas dimensiones viven normalizadas y el

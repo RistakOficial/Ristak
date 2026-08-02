@@ -674,6 +674,18 @@ La respuesta de detalle usa `schemaVersion = 3` y declara en `quality`
 `watchTimeStatus = empty|exact|mixed|inferred`. La inferencia repara huecos de
 telemetría; no inventa identificación ni crea filas nuevas en la base.
 
+En PostgreSQL, tanto el agregado de la pantalla como el detalle completo
+materializan su ledger una sola vez por petición. El agregado deriva resumen,
+rankings y series en una sentencia; el detalle deriva resumen, series,
+espectadores, páginas, bloques, alcance y retención en otra. No se deben volver a
+disparar esas secciones como lecturas paralelas: multiplicaría las ventanas,
+memoria y conexiones para el mismo video. SQLite conserva las mismas
+definiciones con lecturas secuenciales.
+La petición tiene deadline server-side de 18 segundos y el navegador la acota a
+20 segundos; cerrar la pantalla, cambiar filtros o vencer el plazo cancela la
+consulta real. Si la base está reiniciando o no responde, la interfaz debe salir
+del loader y mostrar un error reintentable, nunca girar indefinidamente.
+
 Los eventos de calidad adjuntan, cuando el navegador lo permite,
 `connection_type`, `downlink_mbps`, `rtt_ms` y `save_data`. Son señales
 aproximadas de diagnóstico, no una medición contractual del proveedor ni una
@@ -716,6 +728,7 @@ principal del producto.
 | `OPTIONS` responde pero falta `Access-Control-Allow-Origin` | CORS público roto o interceptado | Middleware, CDN/proxy y `Vary: Origin` |
 | `POST /collect` da `200`, pero la DB consultada no tiene filas | Posible DB/servicio equivocado, bypass o query incorrecta | Host destino, deployment, `no_track`, marker y base de esa instalación |
 | Preview de Sites no genera eventos | Esperado | Publicar y probar la URL pública real |
+| El detalle de video queda cargando | La lectura no terminó; no significa que falten eventos | Estado de PostgreSQL, deadline/cancelación y logs de `/api/sites/video-analytics/:assetId` |
 | Varias filas comparten `session_id` | Son eventos de una sesión | Contar distintos `session_id` |
 | `ERR_BLOCKED_BY_CLIENT` en Meta/Google | Bloqueador o Tracking Prevention de tercero | Revisar `/collect` por separado |
 | `ERR_NAME_NOT_RESOLVED` | DNS del hostname exacto | CNAME, Render custom domain y propagación |

@@ -14,6 +14,7 @@ import {
 import { getSitesVideoInventorySummary } from '../src/services/sitesService.js'
 
 const sitesControllerSourceUrl = new URL('../src/controllers/sitesController.js', import.meta.url)
+const videoTrackingServiceSourceUrl = new URL('../src/services/videoTrackingService.js', import.meta.url)
 const sitesFrontendSourceUrl = new URL('../../frontend/src/pages/Sites/Sites.tsx', import.meta.url)
 const sitesFrontendServiceSourceUrl = new URL('../../frontend/src/services/sitesService.ts', import.meta.url)
 
@@ -531,8 +532,9 @@ test('el agregado de reproducciones acepta siteIds sin enumerar los assetIds del
 })
 
 test('el frontend pide previews por streamVideoId y resume Sites por scope sin enumerar toda la biblioteca o videoteca', async () => {
-  const [controllerSource, frontendSource, frontendServiceSource] = await Promise.all([
+  const [controllerSource, videoTrackingSource, frontendSource, frontendServiceSource] = await Promise.all([
     readFile(sitesControllerSourceUrl, 'utf8'),
+    readFile(videoTrackingServiceSourceUrl, 'utf8'),
     readFile(sitesFrontendSourceUrl, 'utf8'),
     readFile(sitesFrontendServiceSourceUrl, 'utf8')
   ])
@@ -570,11 +572,32 @@ test('el frontend pide previews por streamVideoId y resume Sites por scope sin e
   assert.match(videoAggregateCall, /siteScope:\s*(?:body\.videoScope|videoScope)/)
   assert.match(videoAggregateCall, /breakdownAssetIds:\s*body\.videoBreakdownAssetIds/)
   assert.match(videoAggregateCall, /includeSiteBreakdown:\s*false/)
+  assert.match(videoAggregateCall, /signal:\s*requestScope\.signal/)
+  assert.match(analyticsHandlerSource, /sites_analytics_summary_deadline/)
+
+  const videoAggregateQueryStart = videoTrackingSource.indexOf('export async function getVideoPlaybackAggregate')
+  const videoAggregateQueryEnd = videoTrackingSource.indexOf('\nexport async function ', videoAggregateQueryStart + 1)
+  const videoAggregateQuerySource = videoTrackingSource.slice(videoAggregateQueryStart, videoAggregateQueryEnd)
+  assert.doesNotMatch(videoAggregateQuerySource, /Promise\.all\(/)
+  assert.match(videoAggregateQuerySource, /asset_result AS/)
+  assert.match(videoAggregateQuerySource, /top_asset_start_result AS/)
+  assert.match(videoAggregateQuerySource, /json_agg/)
 
   const videoDetailHandlerStart = controllerSource.indexOf('export async function getSitesVideoAnalyticsHandler')
   const videoDetailHandlerEnd = controllerSource.indexOf('\nexport async function ', videoDetailHandlerStart + 1)
   const videoDetailHandlerSource = controllerSource.slice(videoDetailHandlerStart, videoDetailHandlerEnd)
   assert.match(videoDetailHandlerSource, /siteId:\s*req\.query\.siteId\s*\|\|\s*req\.query\.site_id/)
+  assert.match(videoDetailHandlerSource, /signal:\s*requestScope\.signal/)
+  assert.match(videoDetailHandlerSource, /sites_video_analytics_deadline/)
+
+  const videoDetailQueryStart = videoTrackingSource.indexOf('export async function getVideoPlaybackViewers')
+  const videoDetailQueryEnd = videoTrackingSource.indexOf('\nexport async function ', videoDetailQueryStart + 1)
+  const videoDetailQuerySource = videoTrackingSource.slice(videoDetailQueryStart, videoDetailQueryEnd)
+  assert.doesNotMatch(videoDetailQuerySource, /Promise\.all\(/)
+  assert.match(videoDetailQuerySource, /if \(isPostgresRuntime\)/)
+  assert.match(videoDetailQuerySource, /summary_result AS/)
+  assert.match(videoDetailQuerySource, /json_agg/)
+  assert.match(videoDetailQuerySource, /const databaseOptions = \{ signal: input\.signal \}/)
 
   assert.doesNotMatch(frontendSource, /siteVideoAssetsPreviewPromise/)
   assert.doesNotMatch(frontendSource, /loadSiteVideoAssetsForPreview/)
@@ -625,18 +648,29 @@ test('el frontend pide previews por streamVideoId y resume Sites por scope sin e
   assert.match(summaryCall, /videoBreakdownAssetIds:/)
   assert.match(summaryCall, /videoAssetIds:\s*sitesAnalyticsVideoId\s*\?/)
 
-  const videoDetailCallStart = frontendSource.indexOf('sitesService.getVideoAnalytics(sitesAnalyticsVideoId, {')
-  const videoDetailCallEnd = frontendSource.indexOf('})\n      .then', videoDetailCallStart)
+  const videoDetailCallStart = frontendSource.indexOf('sitesService.getVideoAnalytics(')
+  const videoDetailCallEnd = frontendSource.indexOf('\n      .then', videoDetailCallStart)
   const videoDetailCall = frontendSource.slice(videoDetailCallStart, videoDetailCallEnd)
   assert.match(videoDetailCall, /siteId:\s*sitesAnalyticsSiteId\s*\|\|\s*undefined/)
+  assert.match(videoDetailCall, /\{ signal:\s*controller\.signal \}/)
   assert.doesNotMatch(videoDetailCall, /includeProviderAnalytics/)
   assert.doesNotMatch(frontendSource, /Bunny Stream · comparación del proveedor/)
   assert.match(frontendSource, /Retención real/)
   assert.match(frontendSource, /Medición de Ristak/)
 
-  const videoDetailServiceStart = frontendServiceSource.indexOf('getVideoAnalytics(assetId: string')
+  const videoDetailServiceStart = frontendServiceSource.indexOf('getVideoAnalytics(')
   const videoDetailServiceEnd = frontendServiceSource.indexOf('\n  verifyDomain(', videoDetailServiceStart)
   const videoDetailServiceSource = frontendServiceSource.slice(videoDetailServiceStart, videoDetailServiceEnd)
   assert.match(videoDetailServiceSource, /if \(input\.siteId\) params\.siteId = input\.siteId/)
   assert.match(videoDetailServiceSource, /params\.includeProviderAnalytics/)
+  assert.match(videoDetailServiceSource, /withRequestTimeout\(\{/)
+  assert.match(videoDetailServiceSource, /timeoutMs:\s*SITES_VIEW_REQUEST_TIMEOUT_MS/)
+  assert.match(videoDetailServiceSource, /signal:\s*options\.signal/)
+
+  const analyticsSummaryServiceStart = frontendServiceSource.indexOf('getAnalyticsSummary(')
+  const analyticsSummaryServiceEnd = frontendServiceSource.indexOf('\n  getVideoAnalytics(', analyticsSummaryServiceStart)
+  const analyticsSummaryServiceSource = frontendServiceSource.slice(analyticsSummaryServiceStart, analyticsSummaryServiceEnd)
+  assert.match(analyticsSummaryServiceSource, /withRequestTimeout\(\{/)
+  assert.match(analyticsSummaryServiceSource, /timeoutMs:\s*SITES_VIEW_REQUEST_TIMEOUT_MS/)
+  assert.match(analyticsSummaryServiceSource, /signal:\s*options\.signal/)
 })

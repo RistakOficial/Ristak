@@ -129,6 +129,16 @@ function parseJsonPayload(value) {
   }
 }
 
+function parseDatabaseJson(value, fallback) {
+  if (value && typeof value === 'object') return value
+  if (typeof value !== 'string') return fallback
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
 function buildCompactVideoPayload(data = {}, eventName = '') {
   const compact = {}
   const includeNetworkContext = new Set([
@@ -1955,82 +1965,152 @@ export async function getVideoPlaybackAggregate(input = {}) {
     MAX(playbacks.stream_video_id) AS stream_video_id,
     MAX(media_assets.original_filename) AS asset_name
   `
-  const selectedAssetRowsPromise = requestedBreakdownAssetIds.length
-    ? db.all(`
-        ${ledger.sql}
-        SELECT ${assetIdentitySelect}, ${aggregateSelect}
-        FROM playbacks
-        LEFT JOIN media_assets ON media_assets.id = playbacks.asset_id
-        WHERE playbacks.asset_id IN (${requestedBreakdownAssetIds.map(() => '?').join(',')})
-        GROUP BY playbacks.asset_id
-      `, [...ledger.params, ...requestedBreakdownAssetIds])
-    : Promise.resolve([])
-  const [
-    summaryRow,
-    selectedAssetRows,
-    topAssetStartRows,
-    topAssetWatchRows,
-    startChartRows,
-    watchChartRows
-  ] = await Promise.all([
-    db.get(`
-      ${ledger.sql}
-      SELECT ${aggregateSelect}
-      FROM playbacks
-    `, ledger.params),
-    selectedAssetRowsPromise,
-    db.all(`
-      ${ledger.sql}
-      SELECT ${assetIdentitySelect}, ${aggregateSelect}
-      FROM playbacks
-      LEFT JOIN media_assets ON media_assets.id = playbacks.asset_id
-      WHERE playbacks.asset_id IS NOT NULL AND playbacks.asset_id != ''
-      GROUP BY playbacks.asset_id
-      ORDER BY playback_starts DESC, watched_seconds DESC, playbacks.asset_id ASC
-      LIMIT 10
-    `, ledger.params),
-    db.all(`
-      ${ledger.sql}
-      SELECT ${assetIdentitySelect}, ${aggregateSelect}
-      FROM playbacks
-      LEFT JOIN media_assets ON media_assets.id = playbacks.asset_id
-      WHERE playbacks.asset_id IS NOT NULL AND playbacks.asset_id != ''
-      GROUP BY playbacks.asset_id
-      ORDER BY watched_seconds DESC, playback_starts DESC, playbacks.asset_id ASC
-      LIMIT 10
-    `, ledger.params),
-    db.all(`
-      ${ledger.sql}
-      SELECT
-        ${startPeriodExpression} AS period_key,
-        COUNT(*) AS plays
-      FROM playbacks
-      WHERE play_in_range = 1
-      GROUP BY ${startPeriodExpression}
-      ORDER BY period_key ASC
-    `, ledger.params),
-    db.all(`
-      ${ledger.sql}
-      SELECT
-        ${watchPeriodExpression} AS period_key,
-        COALESCE(SUM(accepted_delta), 0) AS watched_seconds
-      FROM scoped_events
-      WHERE in_range = 1
-      GROUP BY ${watchPeriodExpression}
-      ORDER BY period_key ASC
-    `, ledger.params)
-  ])
+  const assetAggregateSelect = `
+    SELECT ${assetIdentitySelect}, ${aggregateSelect}
+    FROM playbacks
+    LEFT JOIN media_assets ON media_assets.id = playbacks.asset_id
+    WHERE playbacks.asset_id IS NOT NULL AND playbacks.asset_id != ''
+    GROUP BY playbacks.asset_id
+  `
+  const startChartSelect = `
+    SELECT
+      ${startPeriodExpression} AS period_key,
+      COUNT(*) AS plays
+    FROM playbacks
+    WHERE play_in_range = 1
+    GROUP BY ${startPeriodExpression}
+  `
+  const watchChartSelect = `
+    SELECT
+      ${watchPeriodExpression} AS period_key,
+      COALESCE(SUM(accepted_delta), 0) AS watched_seconds
+    FROM scoped_events
+    WHERE in_range = 1
+    GROUP BY ${watchPeriodExpression}
+  `
+  const databaseOptions = { signal: input.signal }
+  let summaryRow
+  let selectedAssetRows
+  let topAssetStartRows
+  let topAssetWatchRows
+  let startChartRows
+  let watchChartRows
+  let siteRows
 
-  const siteRows = includeSiteBreakdown
-    ? await db.all(`
-        ${ledger.sql}
+  if (isPostgresRuntime) {
+    const selectedAssetCondition = requestedBreakdownAssetIds.length
+      ? `asset_id IN (${requestedBreakdownAssetIds.map(() => '?').join(',')})`
+      : '1 = 0'
+    const aggregateRow = await db.get(`
+      ${ledger.sql},
+      summary_result AS (
+        SELECT ${aggregateSelect}
+        FROM playbacks
+      ),
+      asset_result AS (${assetAggregateSelect}),
+      selected_asset_result AS (
+        SELECT * FROM asset_result WHERE ${selectedAssetCondition}
+      ),
+      top_asset_start_result AS (
+        SELECT * FROM asset_result
+        ORDER BY playback_starts DESC, watched_seconds DESC, asset_id ASC
+        LIMIT 10
+      ),
+      top_asset_watch_result AS (
+        SELECT * FROM asset_result
+        ORDER BY watched_seconds DESC, playback_starts DESC, asset_id ASC
+        LIMIT 10
+      ),
+      start_chart_result AS (${startChartSelect}),
+      watch_chart_result AS (${watchChartSelect}),
+      site_result AS (
         SELECT
           COALESCE(NULLIF(site_id, ''), 'unknown') AS site_id,
           ${aggregateSelect}
         FROM playbacks
+        WHERE ${includeSiteBreakdown ? '1 = 1' : '1 = 0'}
         GROUP BY COALESCE(NULLIF(site_id, ''), 'unknown')
-      `, ledger.params)
-    : []
+      )
+      SELECT
+        (SELECT row_to_json(summary_result) FROM summary_result) AS summary_row,
+        COALESCE((SELECT json_agg(row_to_json(selected_asset_result)) FROM selected_asset_result), '[]'::json) AS selected_asset_rows,
+        COALESCE((
+          SELECT json_agg(
+            row_to_json(top_asset_start_result)
+            ORDER BY top_asset_start_result.playback_starts DESC,
+                     top_asset_start_result.watched_seconds DESC,
+                     top_asset_start_result.asset_id ASC
+          )
+          FROM top_asset_start_result
+        ), '[]'::json) AS top_asset_start_rows,
+        COALESCE((
+          SELECT json_agg(
+            row_to_json(top_asset_watch_result)
+            ORDER BY top_asset_watch_result.watched_seconds DESC,
+                     top_asset_watch_result.playback_starts DESC,
+                     top_asset_watch_result.asset_id ASC
+          )
+          FROM top_asset_watch_result
+        ), '[]'::json) AS top_asset_watch_rows,
+        COALESCE((
+          SELECT json_agg(row_to_json(start_chart_result) ORDER BY start_chart_result.period_key)
+          FROM start_chart_result
+        ), '[]'::json) AS start_chart_rows,
+        COALESCE((
+          SELECT json_agg(row_to_json(watch_chart_result) ORDER BY watch_chart_result.period_key)
+          FROM watch_chart_result
+        ), '[]'::json) AS watch_chart_rows,
+        COALESCE((SELECT json_agg(row_to_json(site_result)) FROM site_result), '[]'::json) AS site_rows
+    `, [...ledger.params, ...requestedBreakdownAssetIds], databaseOptions)
+
+    summaryRow = parseDatabaseJson(aggregateRow?.summary_row, {})
+    selectedAssetRows = parseDatabaseJson(aggregateRow?.selected_asset_rows, [])
+    topAssetStartRows = parseDatabaseJson(aggregateRow?.top_asset_start_rows, [])
+    topAssetWatchRows = parseDatabaseJson(aggregateRow?.top_asset_watch_rows, [])
+    startChartRows = parseDatabaseJson(aggregateRow?.start_chart_rows, [])
+    watchChartRows = parseDatabaseJson(aggregateRow?.watch_chart_rows, [])
+    siteRows = parseDatabaseJson(aggregateRow?.site_rows, [])
+  } else {
+    summaryRow = await db.get(`
+      ${ledger.sql}
+      SELECT ${aggregateSelect}
+      FROM playbacks
+    `, ledger.params, databaseOptions)
+    selectedAssetRows = requestedBreakdownAssetIds.length
+      ? await db.all(`
+          ${ledger.sql}
+          SELECT ${assetIdentitySelect}, ${aggregateSelect}
+          FROM playbacks
+          LEFT JOIN media_assets ON media_assets.id = playbacks.asset_id
+          WHERE playbacks.asset_id IN (${requestedBreakdownAssetIds.map(() => '?').join(',')})
+          GROUP BY playbacks.asset_id
+        `, [...ledger.params, ...requestedBreakdownAssetIds], databaseOptions)
+      : []
+    topAssetStartRows = await db.all(`
+      ${ledger.sql}
+      ${assetAggregateSelect}
+      ORDER BY playback_starts DESC, watched_seconds DESC, playbacks.asset_id ASC
+      LIMIT 10
+    `, ledger.params, databaseOptions)
+    topAssetWatchRows = await db.all(`
+      ${ledger.sql}
+      ${assetAggregateSelect}
+      ORDER BY watched_seconds DESC, playback_starts DESC, playbacks.asset_id ASC
+      LIMIT 10
+    `, ledger.params, databaseOptions)
+    startChartRows = await db.all(`${ledger.sql} ${startChartSelect} ORDER BY period_key ASC`, ledger.params, databaseOptions)
+    watchChartRows = await db.all(`${ledger.sql} ${watchChartSelect} ORDER BY period_key ASC`, ledger.params, databaseOptions)
+    siteRows = includeSiteBreakdown
+      ? await db.all(`
+          ${ledger.sql}
+          SELECT
+            COALESCE(NULLIF(site_id, ''), 'unknown') AS site_id,
+            ${aggregateSelect}
+          FROM playbacks
+          GROUP BY COALESCE(NULLIF(site_id, ''), 'unknown')
+        `, ledger.params, databaseOptions)
+      : []
+  }
 
   const chartByPeriod = new Map()
   for (const row of startChartRows) {
@@ -2160,40 +2240,24 @@ export async function getVideoPlaybackViewers(input = {}) {
     `(${index}, ${index * 5}, ${(index + 1) * 5})`
   )).join(', ')
 
-  const [
-    summaryRow,
-    startChartRows,
-    watchChartRows,
-    viewerRows,
-    pageRows,
-    blockRows,
-    reachRows,
-    retentionRows
-  ] = await Promise.all([
-    db.get(`
-      ${ledger.sql}
-      SELECT ${aggregateSelect}
-      FROM playbacks
-    `, ledger.params),
-    db.all(`
-      ${ledger.sql}
-      SELECT ${startPeriodExpression} AS period_key, COUNT(*) AS plays
-      FROM playbacks
-      WHERE play_in_range = 1
-      GROUP BY ${startPeriodExpression}
-      ORDER BY period_key ASC
-    `, ledger.params),
-    db.all(`
-      ${ledger.sql}
-      SELECT ${watchPeriodExpression} AS period_key,
-             COALESCE(SUM(accepted_delta), 0) AS watched_seconds
-      FROM scoped_events
-      WHERE in_range = 1
-      GROUP BY ${watchPeriodExpression}
-      ORDER BY period_key ASC
-    `, ledger.params),
-    db.all(`
-      ${ledger.sql},
+  const summarySelect = `
+    SELECT ${aggregateSelect}
+    FROM playbacks
+  `
+  const startChartSelect = `
+    SELECT ${startPeriodExpression} AS period_key, COUNT(*) AS plays
+    FROM playbacks
+    WHERE play_in_range = 1
+    GROUP BY ${startPeriodExpression}
+  `
+  const watchChartSelect = `
+    SELECT ${watchPeriodExpression} AS period_key,
+           COALESCE(SUM(accepted_delta), 0) AS watched_seconds
+    FROM scoped_events
+    WHERE in_range = 1
+    GROUP BY ${watchPeriodExpression}
+  `
+  const viewerCtes = `
       viewer_playbacks AS (
         SELECT
           playbacks.*,
@@ -2229,111 +2293,188 @@ export async function getVideoPlaybackViewers(input = {}) {
         FROM viewer_playbacks
         GROUP BY identity_key
       )
-      SELECT
-        viewer_rollup.*,
-        c.full_name AS contact_full_name,
-        c.email AS contact_email,
-        c.phone AS contact_phone
-      FROM viewer_rollup
-      LEFT JOIN contacts c ON c.id = viewer_rollup.contact_id
-      ORDER BY viewer_rollup.last_event_at DESC, viewer_rollup.identity_key ASC
-      LIMIT ? OFFSET ?
-    `, [...ledger.params, limit, offset]),
-    db.all(`
-      ${ledger.sql}
-      SELECT
-        COALESCE(NULLIF(public_page_id, ''), NULLIF(page_url, ''), 'unknown') AS key,
-        COALESCE(NULLIF(page_url, ''), NULLIF(public_page_id, ''), 'Página desconocida') AS label,
-        COUNT(*) AS playback_sessions,
-        COALESCE(SUM(range_play_actions), 0) AS plays,
-        COALESCE(SUM(range_watched_seconds), 0) AS watched_seconds,
-        COALESCE(AVG(range_max_reach_percent), 0) AS avg_progress_percent
-      FROM playbacks
-      WHERE play_in_range = 1
-      GROUP BY
-        COALESCE(NULLIF(public_page_id, ''), NULLIF(page_url, ''), 'unknown'),
-        COALESCE(NULLIF(page_url, ''), NULLIF(public_page_id, ''), 'Página desconocida')
-    `, ledger.params),
-    db.all(`
-      ${ledger.sql}
-      SELECT
-        COALESCE(NULLIF(playbacks.block_id, ''), 'unknown') AS key,
-        COALESCE(NULLIF(playbacks.block_id, ''), 'Bloque desconocido') AS label,
-        COUNT(*) AS playback_sessions,
-        COALESCE(SUM(range_play_actions), 0) AS plays,
-        COALESCE(SUM(range_watched_seconds), 0) AS watched_seconds,
-        COALESCE(AVG(range_max_reach_percent), 0) AS avg_progress_percent
-      FROM playbacks
-      WHERE play_in_range = 1
-      GROUP BY
-        COALESCE(NULLIF(playbacks.block_id, ''), 'unknown'),
-        COALESCE(NULLIF(playbacks.block_id, ''), 'Bloque desconocido')
-    `, ledger.params),
-    db.all(`
-      ${ledger.sql},
-      thresholds(segment, start_percent, end_percent) AS (
-        VALUES ${thresholdValues}
-      )
-      SELECT
-        thresholds.segment,
-        thresholds.start_percent,
-        thresholds.end_percent,
-        COUNT(playbacks.playback_id) AS eligible_playbacks,
-        COALESCE(SUM(CASE
-          WHEN playbacks.range_max_reach_percent >= thresholds.start_percent THEN 1
-          ELSE 0
-        END), 0) AS reached_playbacks,
-        COALESCE(MAX(playbacks.range_duration_seconds), 0) AS duration_seconds
-      FROM thresholds
-      LEFT JOIN playbacks ON playbacks.play_in_range = 1
-      GROUP BY thresholds.segment, thresholds.start_percent, thresholds.end_percent
-      ORDER BY thresholds.segment ASC
-    `, ledger.params),
-    db.all(`
-      ${ledger.sql},
-      thresholds(segment, start_percent, end_percent) AS (
-        VALUES ${thresholdValues}
-      )
-      SELECT
-        thresholds.segment,
-        thresholds.start_percent,
-        thresholds.end_percent,
-        COUNT(DISTINCT playbacks.playback_id) AS eligible_playbacks,
-        COUNT(DISTINCT CASE
-          WHEN scoped_events.accepted_delta > 0
-           AND scoped_events.accepted_watch_from_seconds IS NOT NULL
-           AND scoped_events.accepted_watch_to_seconds IS NOT NULL
-           AND (
-             (
-               COALESCE(NULLIF(scoped_events.duration_seconds, 0), playbacks.range_duration_seconds) > 0
-               AND scoped_events.accepted_watch_to_seconds > (
-                 COALESCE(NULLIF(scoped_events.duration_seconds, 0), playbacks.range_duration_seconds)
-                 * thresholds.start_percent / 100.0
-               )
-               AND scoped_events.accepted_watch_from_seconds < (
-                 COALESCE(NULLIF(scoped_events.duration_seconds, 0), playbacks.range_duration_seconds)
-                 * thresholds.end_percent / 100.0
-               )
+  `
+  const viewerSelect = `
+    SELECT
+      viewer_rollup.*,
+      c.full_name AS contact_full_name,
+      c.email AS contact_email,
+      c.phone AS contact_phone
+    FROM viewer_rollup
+    LEFT JOIN contacts c ON c.id = viewer_rollup.contact_id
+    ORDER BY viewer_rollup.last_event_at DESC, viewer_rollup.identity_key ASC
+    LIMIT ? OFFSET ?
+  `
+  const pageSelect = `
+    SELECT
+      COALESCE(NULLIF(public_page_id, ''), NULLIF(page_url, ''), 'unknown') AS key,
+      COALESCE(NULLIF(page_url, ''), NULLIF(public_page_id, ''), 'Página desconocida') AS label,
+      COUNT(*) AS playback_sessions,
+      COALESCE(SUM(range_play_actions), 0) AS plays,
+      COALESCE(SUM(range_watched_seconds), 0) AS watched_seconds,
+      COALESCE(AVG(range_max_reach_percent), 0) AS avg_progress_percent
+    FROM playbacks
+    WHERE play_in_range = 1
+    GROUP BY
+      COALESCE(NULLIF(public_page_id, ''), NULLIF(page_url, ''), 'unknown'),
+      COALESCE(NULLIF(page_url, ''), NULLIF(public_page_id, ''), 'Página desconocida')
+  `
+  const blockSelect = `
+    SELECT
+      COALESCE(NULLIF(playbacks.block_id, ''), 'unknown') AS key,
+      COALESCE(NULLIF(playbacks.block_id, ''), 'Bloque desconocido') AS label,
+      COUNT(*) AS playback_sessions,
+      COALESCE(SUM(range_play_actions), 0) AS plays,
+      COALESCE(SUM(range_watched_seconds), 0) AS watched_seconds,
+      COALESCE(AVG(range_max_reach_percent), 0) AS avg_progress_percent
+    FROM playbacks
+    WHERE play_in_range = 1
+    GROUP BY
+      COALESCE(NULLIF(playbacks.block_id, ''), 'unknown'),
+      COALESCE(NULLIF(playbacks.block_id, ''), 'Bloque desconocido')
+  `
+  const reachSelect = `
+    SELECT
+      thresholds.segment,
+      thresholds.start_percent,
+      thresholds.end_percent,
+      COUNT(playbacks.playback_id) AS eligible_playbacks,
+      COALESCE(SUM(CASE
+        WHEN playbacks.range_max_reach_percent >= thresholds.start_percent THEN 1
+        ELSE 0
+      END), 0) AS reached_playbacks,
+      COALESCE(MAX(playbacks.range_duration_seconds), 0) AS duration_seconds
+    FROM thresholds
+    LEFT JOIN playbacks ON playbacks.play_in_range = 1
+    GROUP BY thresholds.segment, thresholds.start_percent, thresholds.end_percent
+  `
+  const retentionSelect = `
+    SELECT
+      thresholds.segment,
+      thresholds.start_percent,
+      thresholds.end_percent,
+      COUNT(DISTINCT playbacks.playback_id) AS eligible_playbacks,
+      COUNT(DISTINCT CASE
+        WHEN scoped_events.accepted_delta > 0
+         AND scoped_events.accepted_watch_from_seconds IS NOT NULL
+         AND scoped_events.accepted_watch_to_seconds IS NOT NULL
+         AND (
+           (
+             COALESCE(NULLIF(scoped_events.duration_seconds, 0), playbacks.range_duration_seconds) > 0
+             AND scoped_events.accepted_watch_to_seconds > (
+               COALESCE(NULLIF(scoped_events.duration_seconds, 0), playbacks.range_duration_seconds)
+               * thresholds.start_percent / 100.0
              )
-             OR (
-               COALESCE(NULLIF(scoped_events.duration_seconds, 0), playbacks.range_duration_seconds) <= 0
-               AND scoped_events.progress_percent >= thresholds.start_percent
-               AND scoped_events.progress_percent < thresholds.end_percent
+             AND scoped_events.accepted_watch_from_seconds < (
+               COALESCE(NULLIF(scoped_events.duration_seconds, 0), playbacks.range_duration_seconds)
+               * thresholds.end_percent / 100.0
              )
            )
-          THEN playbacks.playback_id
-          ELSE NULL
-        END) AS retained_playbacks,
-        COALESCE(MAX(playbacks.range_duration_seconds), 0) AS duration_seconds
-      FROM thresholds
-      LEFT JOIN playbacks ON playbacks.play_in_range = 1
-      LEFT JOIN scoped_events
-        ON scoped_events.playback_id = playbacks.playback_id
-       AND scoped_events.in_range = 1
-      GROUP BY thresholds.segment, thresholds.start_percent, thresholds.end_percent
+           OR (
+             COALESCE(NULLIF(scoped_events.duration_seconds, 0), playbacks.range_duration_seconds) <= 0
+             AND scoped_events.progress_percent >= thresholds.start_percent
+             AND scoped_events.progress_percent < thresholds.end_percent
+           )
+         )
+        THEN playbacks.playback_id
+        ELSE NULL
+      END) AS retained_playbacks,
+      COALESCE(MAX(playbacks.range_duration_seconds), 0) AS duration_seconds
+    FROM thresholds
+    LEFT JOIN playbacks ON playbacks.play_in_range = 1
+    LEFT JOIN scoped_events
+      ON scoped_events.playback_id = playbacks.playback_id
+     AND scoped_events.in_range = 1
+    GROUP BY thresholds.segment, thresholds.start_percent, thresholds.end_percent
+  `
+
+  let summaryRow
+  let startChartRows
+  let watchChartRows
+  let viewerRows
+  let pageRows
+  let blockRows
+  let reachRows
+  let retentionRows
+  const databaseOptions = { signal: input.signal }
+
+  if (isPostgresRuntime) {
+    // El ledger usa ventanas y agregaciones costosas. Ejecutarlo ocho veces en
+    // paralelo multiplicaba memoria y conexiones justo cuando PostgreSQL estaba
+    // bajo presión. Estos resultados comparten una sola materialización por request.
+    const detailRow = await db.get(`
+      ${ledger.sql},
+      summary_result AS (${summarySelect}),
+      start_chart_result AS (${startChartSelect}),
+      watch_chart_result AS (${watchChartSelect}),
+      ${viewerCtes},
+      viewer_result AS (${viewerSelect}),
+      page_result AS (${pageSelect}),
+      block_result AS (${blockSelect}),
+      thresholds(segment, start_percent, end_percent) AS (
+        VALUES ${thresholdValues}
+      ),
+      reach_result AS (${reachSelect}),
+      retention_result AS (${retentionSelect})
+      SELECT
+        (SELECT row_to_json(summary_result) FROM summary_result) AS summary_row,
+        COALESCE((
+          SELECT json_agg(row_to_json(start_chart_result) ORDER BY start_chart_result.period_key)
+          FROM start_chart_result
+        ), '[]'::json) AS start_chart_rows,
+        COALESCE((
+          SELECT json_agg(row_to_json(watch_chart_result) ORDER BY watch_chart_result.period_key)
+          FROM watch_chart_result
+        ), '[]'::json) AS watch_chart_rows,
+        COALESCE((
+          SELECT json_agg(
+            row_to_json(viewer_result)
+            ORDER BY viewer_result.last_event_at DESC, viewer_result.identity_key ASC
+          )
+          FROM viewer_result
+        ), '[]'::json) AS viewer_rows,
+        COALESCE((SELECT json_agg(row_to_json(page_result)) FROM page_result), '[]'::json) AS page_rows,
+        COALESCE((SELECT json_agg(row_to_json(block_result)) FROM block_result), '[]'::json) AS block_rows,
+        COALESCE((
+          SELECT json_agg(row_to_json(reach_result) ORDER BY reach_result.segment)
+          FROM reach_result
+        ), '[]'::json) AS reach_rows,
+        COALESCE((
+          SELECT json_agg(row_to_json(retention_result) ORDER BY retention_result.segment)
+          FROM retention_result
+        ), '[]'::json) AS retention_rows
+    `, [...ledger.params, limit, offset], databaseOptions)
+
+    summaryRow = parseDatabaseJson(detailRow?.summary_row, {})
+    startChartRows = parseDatabaseJson(detailRow?.start_chart_rows, [])
+    watchChartRows = parseDatabaseJson(detailRow?.watch_chart_rows, [])
+    viewerRows = parseDatabaseJson(detailRow?.viewer_rows, [])
+    pageRows = parseDatabaseJson(detailRow?.page_rows, [])
+    blockRows = parseDatabaseJson(detailRow?.block_rows, [])
+    reachRows = parseDatabaseJson(detailRow?.reach_rows, [])
+    retentionRows = parseDatabaseJson(detailRow?.retention_rows, [])
+  } else {
+    // SQLite se usa localmente y no puede devolver todas las secciones como JSON.
+    // Las lecturas se hacen en serie para conservar el mismo límite de recursos.
+    summaryRow = await db.get(`${ledger.sql} ${summarySelect}`, ledger.params, databaseOptions)
+    startChartRows = await db.all(`${ledger.sql} ${startChartSelect} ORDER BY period_key ASC`, ledger.params, databaseOptions)
+    watchChartRows = await db.all(`${ledger.sql} ${watchChartSelect} ORDER BY period_key ASC`, ledger.params, databaseOptions)
+    viewerRows = await db.all(`${ledger.sql}, ${viewerCtes} ${viewerSelect}`, [...ledger.params, limit, offset], databaseOptions)
+    pageRows = await db.all(`${ledger.sql} ${pageSelect}`, ledger.params, databaseOptions)
+    blockRows = await db.all(`${ledger.sql} ${blockSelect}`, ledger.params, databaseOptions)
+    reachRows = await db.all(`
+      ${ledger.sql},
+      thresholds(segment, start_percent, end_percent) AS (VALUES ${thresholdValues})
+      ${reachSelect}
       ORDER BY thresholds.segment ASC
-    `, ledger.params)
-  ])
+    `, ledger.params, databaseOptions)
+    retentionRows = await db.all(`
+      ${ledger.sql},
+      thresholds(segment, start_percent, end_percent) AS (VALUES ${thresholdValues})
+      ${retentionSelect}
+      ORDER BY thresholds.segment ASC
+    `, ledger.params, databaseOptions)
+  }
 
   const chartByPeriod = new Map()
   for (const row of startChartRows) {

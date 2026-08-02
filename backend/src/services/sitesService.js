@@ -10890,7 +10890,8 @@ export async function getSitesVideoInventorySummary({
   businessId = 'default',
   siteType = 'videos',
   landingMode = 'all',
-  siteId = ''
+  siteId = '',
+  signal
 } = {}) {
   const normalizedBusinessId = cleanString(businessId) || 'default'
   const normalizedType = ['sites', 'forms', 'videos'].includes(cleanString(siteType))
@@ -10946,7 +10947,7 @@ export async function getSitesVideoInventorySummary({
     INNER JOIN video_sources ON video_sources.media_asset_id = m.id
     INNER JOIN public_sites ps ON ps.id = video_sources.site_id
     WHERE ${[...assetClauses, ...siteClauses].join(' AND ')}
-  `, [...assetParams, ...siteParams])
+  `, [...assetParams, ...siteParams], { signal })
 
   return {
     total: Number(row?.total || 0),
@@ -13852,9 +13853,9 @@ export async function getSitesTrackingSummary(input = {}) {
   const requestedFormJourneySiteIds = formJourneySiteId ? [formJourneySiteId] : []
   const scopeSelection = buildSitesTrackingScopeSelection(siteScope, legacySiteIds)
   const dateFilters = await resolveSitesAnalyticsDateFilters(input)
-  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenFilters = await getHiddenContactFilters({ signal: input.signal })
   const [scopedSites, aggregate, series, coverage] = await Promise.all([
-    scopeSelection ? db.all(scopeSelection.sql, scopeSelection.params) : Promise.resolve([]),
+    scopeSelection ? db.all(scopeSelection.sql, scopeSelection.params, { signal: input.signal }) : Promise.resolve([]),
     getSitesTrackingAggregate(scopeSelection, dateFilters, hiddenFilters),
     getSitesTrackingSeries(scopeSelection, dateFilters, hiddenFilters),
     getSitesTrackingCoverage(scopeSelection, dateFilters, hiddenFilters)

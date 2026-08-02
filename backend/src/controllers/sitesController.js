@@ -94,11 +94,52 @@ import {
 } from '../services/publicContextTokenService.js'
 import { computeImportedSiteCodeRevision } from '../utils/importedSiteCodeRevision.js'
 
+const SITES_VIDEO_ANALYTICS_REQUEST_DEADLINE_MS = 18_000
 const SITE_PREVIEW_TTL_MS = 60 * 60 * 1000
 const MCP_HTML_LIVE_PREVIEW_TTL_SECONDS = 60 * 60
 const MCP_HTML_LIVE_PREVIEW_REFRESH_MS = 750
 const MCP_HTML_LIVE_PREVIEW_PURPOSE = 'sites.mcp_html_live_preview'
 const sitePreviewSessions = new Map()
+
+function createSitesAnalyticsAbortScope(req, res) {
+  const controller = new AbortController()
+  let disconnected = Boolean(req.aborted || res.destroyed)
+  let timedOut = false
+  const abortIfDisconnected = () => {
+    disconnected = true
+    if (!res.writableEnded && !res.finished && !controller.signal.aborted) controller.abort()
+  }
+  req.once?.('aborted', abortIfDisconnected)
+  res.once?.('close', abortIfDisconnected)
+  if (req.aborted || res.destroyed) abortIfDisconnected()
+  const deadlineTimer = setTimeout(() => {
+    timedOut = true
+    if (!controller.signal.aborted) controller.abort()
+  }, SITES_VIDEO_ANALYTICS_REQUEST_DEADLINE_MS)
+  deadlineTimer.unref?.()
+
+  return {
+    signal: controller.signal,
+    get disconnected() {
+      return disconnected || Boolean(req.aborted) || Boolean(res.destroyed) || res.writable === false
+    },
+    get timedOut() {
+      return timedOut
+    },
+    cleanup() {
+      clearTimeout(deadlineTimer)
+      req.off?.('aborted', abortIfDisconnected)
+      res.off?.('close', abortIfDisconnected)
+      req.removeListener?.('aborted', abortIfDisconnected)
+      res.removeListener?.('close', abortIfDisconnected)
+    }
+  }
+}
+
+function isSitesAnalyticsAbort(error, signal) {
+  return Boolean(signal?.aborted || error?.name === 'AbortError' || error?.code === 'ABORT_ERR')
+}
+
 const HLS_RUNTIME_FILE = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../node_modules/hls.js/dist/hls.min.js'
@@ -461,6 +502,7 @@ export async function getSitesVideoAssetsHandler(req, res) {
 }
 
 export async function getSitesAnalyticsSummaryHandler(req, res) {
+  const requestScope = createSitesAnalyticsAbortScope(req, res)
   try {
     const body = req.body || {}
     const dateFrom = body.dateFrom || body.date_from
@@ -469,7 +511,8 @@ export async function getSitesAnalyticsSummaryHandler(req, res) {
     const siteTrackingInput = {
       siteIds: body.siteIds || body.site_ids || [],
       dateFrom,
-      dateTo
+      dateTo,
+      signal: requestScope.signal
     }
     if (Object.prototype.hasOwnProperty.call(body, 'siteScope') || Object.prototype.hasOwnProperty.call(body, 'site_scope')) {
       siteTrackingInput.siteScope = body.siteScope ?? body.site_scope
@@ -496,16 +539,24 @@ export async function getSitesAnalyticsSummaryHandler(req, res) {
         includeSiteBreakdown: false,
         dateFrom,
         dateTo,
-        hourly: body.hourly
+        hourly: body.hourly,
+        signal: requestScope.signal
       }),
       getSitesVideoInventorySummary({
         businessId: body.businessId || body.business_id || 'default',
         siteType: videoScope.siteType || videoScope.site_type || 'videos',
         landingMode: videoScope.landingMode || videoScope.landing_mode || 'all',
-        siteId: videoScope.siteId || videoScope.site_id || ''
+        siteId: videoScope.siteId || videoScope.site_id || '',
+        signal: requestScope.signal
       })
     ])
 
+    if (requestScope.timedOut) {
+      const deadlineError = new Error('El resumen de analíticas tardó demasiado y fue cancelado.')
+      deadlineError.status = 503
+      throw deadlineError
+    }
+    if (requestScope.disconnected || requestScope.signal.aborted || res.writableEnded || res.finished) return
     res.json({
       success: true,
       data: {
@@ -522,12 +573,26 @@ export async function getSitesAnalyticsSummaryHandler(req, res) {
       }
     })
   } catch (error) {
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return
+      res.set?.('Retry-After', '1')
+      return res.status(503).json({
+        success: false,
+        error: 'Las analíticas tardaron demasiado. Intenta cargarlas nuevamente.',
+        code: 'sites_analytics_summary_deadline',
+        retryable: true
+      })
+    }
+    if (isSitesAnalyticsAbort(error, requestScope.signal)) return
     logger.error(`Error obteniendo resumen de analíticas de sites: ${error.message}`)
     sendError(res, error, 'Error obteniendo resumen de analíticas')
+  } finally {
+    requestScope.cleanup()
   }
 }
 
 export async function getSitesVideoAnalyticsHandler(req, res) {
+  const requestScope = createSitesAnalyticsAbortScope(req, res)
   try {
     const dateFrom = req.query.dateFrom || req.query.date_from
     const dateTo = req.query.dateTo || req.query.date_to
@@ -537,7 +602,8 @@ export async function getSitesVideoAnalyticsHandler(req, res) {
       dateFrom,
       dateTo,
       hourly: req.query.hourly,
-      limit: req.query.viewerLimit || req.query.viewer_limit || 50
+      limit: req.query.viewerLimit || req.query.viewer_limit || 50,
+      signal: requestScope.signal
     })
     let providerAnalytics = null
     let providerAnalyticsError = ''
@@ -556,6 +622,12 @@ export async function getSitesVideoAnalyticsHandler(req, res) {
         logger.warn(`Analítica del proveedor no disponible para ${req.params.assetId}: ${providerAnalyticsError}`)
       }
     }
+    if (requestScope.timedOut) {
+      const deadlineError = new Error('Las métricas del video tardaron demasiado y fueron canceladas.')
+      deadlineError.status = 503
+      throw deadlineError
+    }
+    if (requestScope.disconnected || requestScope.signal.aborted || res.writableEnded || res.finished) return
     res.json({
       success: true,
       data: {
@@ -565,12 +637,26 @@ export async function getSitesVideoAnalyticsHandler(req, res) {
       }
     })
   } catch (error) {
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return
+      res.set?.('Retry-After', '1')
+      return res.status(503).json({
+        success: false,
+        error: 'Las métricas del video tardaron demasiado. Intenta cargarlas nuevamente.',
+        code: 'sites_video_analytics_deadline',
+        retryable: true
+      })
+    }
+    if (isSitesAnalyticsAbort(error, requestScope.signal)) return
     logger.error(`Error obteniendo analíticas de video de sites: ${error.message}`)
     sendError(res, error, 'Error obteniendo analíticas de video')
+  } finally {
+    requestScope.cleanup()
   }
 }
 
 export async function getSitesVideoViewersHandler(req, res) {
+  const requestScope = createSitesAnalyticsAbortScope(req, res)
   try {
     const viewers = await getVideoPlaybackViewers({
       assetId: req.params.assetId,
@@ -579,12 +665,32 @@ export async function getSitesVideoViewersHandler(req, res) {
       dateFrom: req.query.dateFrom || req.query.date_from,
       dateTo: req.query.dateTo || req.query.date_to,
       limit: req.query.limit,
-      offset: req.query.offset
+      offset: req.query.offset,
+      signal: requestScope.signal
     })
+    if (requestScope.timedOut) {
+      const deadlineError = new Error('Los espectadores del video tardaron demasiado y fueron cancelados.')
+      deadlineError.status = 503
+      throw deadlineError
+    }
+    if (requestScope.disconnected || requestScope.signal.aborted || res.writableEnded || res.finished) return
     res.json({ success: true, data: viewers })
   } catch (error) {
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return
+      res.set?.('Retry-After', '1')
+      return res.status(503).json({
+        success: false,
+        error: 'Los espectadores del video tardaron demasiado. Intenta cargarlos nuevamente.',
+        code: 'sites_video_viewers_deadline',
+        retryable: true
+      })
+    }
+    if (isSitesAnalyticsAbort(error, requestScope.signal)) return
     logger.error(`Error obteniendo espectadores de video de sites: ${error.message}`)
     sendError(res, error, 'Error obteniendo espectadores de video')
+  } finally {
+    requestScope.cleanup()
   }
 }
 

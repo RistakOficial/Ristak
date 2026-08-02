@@ -12031,15 +12031,20 @@ export const Sites: React.FC = () => {
     }
 
     let cancelled = false
+    const controller = new AbortController()
     setSitesVideoAnalyticsLoading(true)
     setSitesVideoAnalytics(null)
     setSitesVideoAnalyticsError('')
 
-    sitesService.getVideoAnalytics(sitesAnalyticsVideoId, {
-      ...getSitesAnalyticsRange(dateRange.start, dateRange.end),
-      siteId: sitesAnalyticsSiteId || undefined,
-      viewerLimit: 200
-    })
+    sitesService.getVideoAnalytics(
+      sitesAnalyticsVideoId,
+      {
+        ...getSitesAnalyticsRange(dateRange.start, dateRange.end),
+        siteId: sitesAnalyticsSiteId || undefined,
+        viewerLimit: 200
+      },
+      { signal: controller.signal }
+    )
       .then((analytics) => {
         if (!cancelled) setSitesVideoAnalytics(analytics)
       })
@@ -12055,6 +12060,7 @@ export const Sites: React.FC = () => {
 
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [dateRange.end, dateRange.start, section, sitesAnalyticsSiteId, sitesAnalyticsSiteType, sitesAnalyticsVideoId])
 

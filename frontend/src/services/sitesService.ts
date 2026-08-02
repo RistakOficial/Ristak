@@ -1829,12 +1829,19 @@ export const sitesService = {
   },
 
   getAnalyticsSummary(input: SitesAnalyticsSummaryInput, options: { signal?: AbortSignal } = {}) {
-    return apiClient.post<SitesAnalyticsSummary>('/sites/analytics/summary', input, {
+    return withRequestTimeout({
+      request: signal => apiClient.post<SitesAnalyticsSummary>('/sites/analytics/summary', input, { signal }),
+      timeoutMs: SITES_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'Las analíticas tardaron demasiado. Intenta cargarlas nuevamente.',
       signal: options.signal
     })
   },
 
-  getVideoAnalytics(assetId: string, input: SitesVideoAnalyticsInput = {}) {
+  getVideoAnalytics(
+    assetId: string,
+    input: SitesVideoAnalyticsInput = {},
+    options: { signal?: AbortSignal } = {}
+  ) {
     const params: Record<string, string> = {}
     if (input.dateFrom) params.dateFrom = input.dateFrom
     if (input.dateTo) params.dateTo = input.dateTo
@@ -1844,7 +1851,15 @@ export const sitesService = {
     if (input.includeProviderAnalytics !== undefined) {
       params.includeProviderAnalytics = String(input.includeProviderAnalytics)
     }
-    return apiClient.get<SitesVideoAnalyticsDetail>(`/sites/video-analytics/${encodeURIComponent(assetId)}`, { params })
+    return withRequestTimeout({
+      request: signal => apiClient.get<SitesVideoAnalyticsDetail>(
+        `/sites/video-analytics/${encodeURIComponent(assetId)}`,
+        { params, signal }
+      ),
+      timeoutMs: SITES_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'Las métricas del video tardaron demasiado. Intenta cargarlas nuevamente.',
+      signal: options.signal
+    })
   },
 
   verifyDomain(domain: string) {
