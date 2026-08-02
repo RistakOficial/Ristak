@@ -2155,7 +2155,6 @@
 }
 
 .messageErrorBadge {
-  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2167,47 +2166,42 @@
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--neg) 10%, var(--surface));
   color: var(--neg);
-  cursor: help;
+  cursor: pointer;
 }
 
-.messageErrorBadge::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 8px);
-  z-index: 30;
-  width: max-content;
-  max-width: min(320px, calc(100vw - 32px));
-  padding: 8px 10px;
-  border: 1px solid var(--chat-border);
-  border-radius: var(--radius-sm);
+.messageErrorBadge[data-open='true'] {
+  border-color: color-mix(in srgb, var(--neg) 58%, var(--border));
+  background: var(--neg-soft);
+}
+
+.messageErrorPopover {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-ctl);
   background: var(--surface-solid);
   color: var(--text);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-pop);
   font-size: var(--font-size-xs);
-  font-weight: 550;
   line-height: 1.35;
   overflow-wrap: anywhere;
-  white-space: normal;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(3px);
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  user-select: text;
 }
 
-.messageErrorBadge[data-tooltip-side='left']::after {
-  right: 0;
-  left: auto;
+.messageErrorPopoverTitle {
+  color: var(--neg);
+  font-size: 11px;
+  font-weight: 600;
 }
 
-.messageErrorBadge[data-tooltip-side='right']::after {
-  right: auto;
-  left: 0;
-}
-
-.messageErrorBadge:hover::after,
-.messageErrorBadge:focus-visible::after {
-  opacity: 1;
-  transform: translateY(0);
+.messageErrorPopoverText {
+  margin: 0;
+  color: var(--text);
+  font-weight: 400;
+  white-space: pre-wrap;
 }
 
 .scheduledText {

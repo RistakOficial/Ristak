@@ -2639,7 +2639,10 @@ ajustan textos largos sin aumentar el ancho del documento. El historial de la
 conversacion solo admite desplazamiento vertical: globos, errores, menus y
 contenido del mensaje nunca deben crear scroll horizontal. El detalle de error
 de cada mensaje se abre hacia el interior del hilo (a la izquierda para mensajes
-salientes y a la derecha para entrantes), con ancho limitado al viewport.
+salientes y a la derecha para entrantes), con ancho limitado al viewport. Al
+tocar el indicador, el detalle queda abierto por encima de las columnas del chat
+hasta que el usuario toca fuera o presiona `Escape`; interactuar con el panel no
+lo cierra y su texto se puede seleccionar y copiar.
 
 En `/chat` desktop y `/movil`, el avatar del contacto no debe llevar aro,
 contorno ni relleno coloreado por red social. La identidad del canal vive en el

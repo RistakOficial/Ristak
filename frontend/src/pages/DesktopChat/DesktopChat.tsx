@@ -3210,6 +3210,85 @@ function getMessageRoutingDetails(message: DesktopChatMessage) {
   return { label, reason: cleanReason }
 }
 
+interface MessageErrorBadgeProps {
+  direction: DesktopChatMessage['direction']
+  errorText: string
+}
+
+const MessageErrorBadge: React.FC<MessageErrorBadgeProps> = ({ direction, errorText }) => {
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  const popoverId = React.useId()
+  const { style: popoverStyle, placement: popoverPlacement } = useAnchoredPortal(triggerRef, open, {
+    panelRef,
+    placement: 'auto',
+    align: direction === 'outbound' ? 'end' : 'start',
+    gap: 8,
+    minWidth: 280,
+    maxWidth: 360,
+    maxHeight: 240,
+    matchWidth: false
+  })
+
+  useEffect(() => {
+    if (!open) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (triggerRef.current?.contains(target) || panelRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setOpen(false)
+      triggerRef.current?.focus()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown, true)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open])
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={styles.messageErrorBadge}
+        aria-label="Ver detalle del error del mensaje"
+        aria-controls={open ? popoverId : undefined}
+        aria-expanded={open}
+        data-open={open ? 'true' : 'false'}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <CircleAlert size={14} aria-hidden="true" />
+      </button>
+      {open && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              ref={panelRef}
+              id={popoverId}
+              className={styles.messageErrorPopover}
+              style={popoverStyle}
+              role="note"
+              aria-label="Detalle del error del mensaje"
+              data-placement={popoverPlacement}
+            >
+              <strong className={styles.messageErrorPopoverTitle}>Detalle del error</strong>
+              <p className={styles.messageErrorPopoverText}>{errorText}</p>
+            </div>,
+            document.body
+          )
+        : null}
+    </>
+  )
+}
+
 function getDefaultAppointmentRange(timeZone: string) {
   const start = new Date(Date.now() + 60 * 60 * 1000)
   start.setMinutes(0, 0, 0)
@@ -9191,17 +9270,7 @@ export const DesktopChat: React.FC = () => {
     const failed = FAILED_MESSAGE_STATUSES.has(String(message.status || '').trim().toLowerCase()) || Boolean(message.errorReason)
     if (!failed) return null
     const errorText = String(message.errorReason || '').trim() || 'No se pudo enviar este mensaje.'
-    return (
-      <button
-        type="button"
-        className={styles.messageErrorBadge}
-        aria-label={`Error del mensaje: ${errorText}`}
-        data-tooltip={errorText}
-        data-tooltip-side={message.direction === 'outbound' ? 'left' : 'right'}
-      >
-        <CircleAlert size={14} />
-      </button>
-    )
+    return <MessageErrorBadge direction={message.direction} errorText={errorText} />
   }
 
   const renderAgentCompletionCard = (completion: ConversationalAgentCompletionEvent) => (
