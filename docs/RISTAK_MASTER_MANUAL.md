@@ -6790,8 +6790,11 @@ El selector coloca primero la asociacion ya detectada o guardada y ordena los
 destinos del sistema por prioridad operativa: nombre completo, correo,
 telefono/WhatsApp, ciudad, direccion, empresa, nombre, apellido y mensaje. Los
 campos personalizados ya existentes aparecen despues, subiendo al inicio del
-grupo el que ya esta asociado; `Crear campo nuevo` queda al final para evitar
-duplicar un destino existente por accidente. Esa prioridad tambien ordena las
+grupo el que ya esta asociado. Cuando la pregunta ya coincide con una definición
+compatible, `Crear campo nuevo` se oculta: el usuario puede conservar el destino,
+elegir otro existente o usar `No guardar`, pero no crear accidentalmente un
+duplicado semántico. La creación sólo vuelve a ofrecerse cuando no existe una
+coincidencia o la definición encontrada tiene un tipo incompatible. Esa prioridad tambien ordena las
 filas visibles del formulario: todos los campos ya asociados al sistema aparecen
 antes que los personalizados o pendientes, en el mismo orden operativo, mientras
 los demas conservan su orden relativo del HTML. El orden visual no cambia el

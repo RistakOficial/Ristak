@@ -26259,9 +26259,11 @@ const ImportedHtmlEditorPanel: React.FC<{
                                   })}
                                 </optgroup>
                               )}
-                              <optgroup label="Crear campo nuevo">
-                                <option value={newCustomValue}>Crear · {field.label || field.destinationKey || field.fieldId}</option>
-                              </optgroup>
+                              {(!selectedCustomField || incompatibleCustomField) && (
+                                <optgroup label="Crear campo nuevo">
+                                  <option value={newCustomValue}>Crear · {field.label || field.destinationKey || field.fieldId}</option>
+                                </optgroup>
+                              )}
                               <option value="ignored">No guardar</option>
                             </CustomSelect>
                           </div>

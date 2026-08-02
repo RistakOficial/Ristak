@@ -309,6 +309,16 @@ assert.match(
 )
 assert.match(
   importedFieldMappingRowSource,
+  /\{\(!selectedCustomField \|\| incompatibleCustomField\) && \(\s*<optgroup label="Crear campo nuevo">/,
+  'si Ristak ya encontró un campo personalizado compatible, el selector no debe ofrecer crear un duplicado'
+)
+assert.match(
+  importedFieldMappingRowSource,
+  /\)\}\s*<option value="ignored">No guardar<\/option>/,
+  'No guardar debe seguir disponible aunque crear un campo nuevo quede oculto'
+)
+assert.match(
+  importedFieldMappingRowSource,
   /disabled=\{!compatible\}[\s\S]*?tipo incompatible/,
   'una asociación heredada de otro tipo debe seguir visible como alerta, pero no debe poder elegirse de nuevo'
 )
