@@ -4636,6 +4636,15 @@ acciones sí se procesan. Una respuesta de reagendamiento no busca ni reserva po
 si sola otro horario; la politica de vencimiento sólo decide si conservar o
 cancelar la cita actual.
 
+Una decisión `confirmed` es terminal para ese envío de confirmación. Desde que
+el procesador reserva esa decisión, los mensajes posteriores ya no reabren
+`appointment_confirmation_windows`, no vuelven a invocar al clasificador y no
+repiten el cierre ni el push de cita confirmada. Esos mensajes continúan por el
+flujo normal del chat; por ejemplo, una solicitud posterior del enlace o de la
+ubicacion no se mezcla con la respuesta que ya confirmó la asistencia. Si una
+reprogramación genera un envío nuevo, la misma fila se reinicia sin arrastrar los
+mensajes ni el resultado de la confirmación anterior.
+
 Una regla con IA puede guardar `confirmation_reply_text`, un cierre opcional de
 hasta 4096 caracteres. Después de clasificar `confirmed`, Ristak lo renderiza con
 las variables del contacto y de la cita usando la zona horaria del negocio, y lo

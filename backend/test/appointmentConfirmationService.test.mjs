@@ -329,16 +329,145 @@ test('confirmacion IA envia una sola respuesta libre por la misma linea de Whats
       businessPhoneNumberId,
       isoAgo(3 * 60 * 1000)
     ])
-    await handleInboundForConfirmation({
+    const laterInbound = await handleInboundForConfirmation({
       contactId,
       text: 'Confirmado',
       receivedAt: isoAgo(3 * 60 * 1000),
       messageId: secondInboundMessageId
     })
-    await expireWindow(window.id)
-    await processExpiredConfirmationWindows()
+    assert.equal(laterInbound.windowActive, false)
 
     assert.equal(captures.length, 1, 'la cortesía configurada debe enviarse una sola vez por confirmación')
+
+    const terminalWindow = await db.get(`
+      SELECT status, result, message_revision, accumulated_messages
+      FROM appointment_confirmation_windows
+      WHERE id = ?
+    `, [window.id])
+    assert.equal(terminalWindow.status, 'done')
+    assert.equal(terminalWindow.result, 'confirmed')
+    assert.equal(Number(terminalWindow.message_revision), 1)
+    assert.deepEqual(storedMessageTexts(terminalWindow.accumulated_messages), ['Sí confirmo'])
+  })
+})
+
+test('confirmacion IA terminada no reabre la ventana ni repite el push con mensajes posteriores', async () => {
+  await withConfirmationFixture({}, async ({ contactId, appointmentId }) => {
+    const classifierCalls = []
+    const payloads = []
+    setAppointmentConfirmationClassifierForTest(async ({ accumulatedMessages }) => {
+      classifierCalls.push([...accumulatedMessages])
+      return { result: 'confirmed', confidence: 'high', reason: 'Confirmó su asistencia' }
+    })
+    setAppNotificationPayloadSenderForTest(async (payload, options) => {
+      payloads.push({ payload, options })
+      return { sent: 1, webSent: 1, nativeSent: 0, skipped: false }
+    })
+
+    const confirmationInbound = await handleInboundForConfirmation({
+      contactId,
+      text: 'Hola, sí está bien, gracias'
+    })
+    assert.equal(confirmationInbound.windowActive, true)
+
+    const window = await db.get(
+      'SELECT id FROM appointment_confirmation_windows WHERE contact_id = ? AND appointment_id = ?',
+      [contactId, appointmentId]
+    )
+    await expireWindow(window.id)
+    const firstProcessing = await processExpiredConfirmationWindows()
+
+    assert.equal(firstProcessing.processed, 1)
+    assert.deepEqual(classifierCalls, [['Hola, sí está bien, gracias']])
+    assert.equal(payloads.length, 1)
+    assert.equal(payloads[0].payload.category, 'appointment_confirmed')
+
+    const laterInbound = await handleInboundForConfirmation({
+      contactId,
+      text: 'Pásame el link o las instrucciones, por favor'
+    })
+    assert.equal(laterInbound.windowActive, false)
+
+    const secondProcessing = await processExpiredConfirmationWindows()
+    assert.equal(secondProcessing.processed, 0)
+    assert.equal(classifierCalls.length, 1)
+    assert.equal(payloads.length, 1)
+
+    const terminalWindow = await db.get(`
+      SELECT status, result, message_revision, accumulated_messages
+      FROM appointment_confirmation_windows
+      WHERE id = ?
+    `, [window.id])
+    assert.equal(terminalWindow.status, 'done')
+    assert.equal(terminalWindow.result, 'confirmed')
+    assert.equal(Number(terminalWindow.message_revision), 1)
+    assert.deepEqual(
+      storedMessageTexts(terminalWindow.accumulated_messages),
+      ['Hola, sí está bien, gracias']
+    )
+  })
+})
+
+test('un envío nuevo tras reprogramar inicia una confirmacion limpia', async () => {
+  await withConfirmationFixture({}, async ({ contactId, appointmentId, sendId, reminderId }) => {
+    setAppointmentConfirmationClassifierForTest(async () => ({
+      result: 'confirmed',
+      confidence: 'high',
+      reason: 'Confirmó el horario original'
+    }))
+
+    await handleInboundForConfirmation({ contactId, text: 'Sí, confirmo' })
+    const originalWindow = await db.get(
+      'SELECT id FROM appointment_confirmation_windows WHERE contact_id = ? AND appointment_id = ?',
+      [contactId, appointmentId]
+    )
+    await expireWindow(originalWindow.id)
+    await processExpiredConfirmationWindows()
+
+    const replacementSendId = `send_conf_reprogrammed_${randomUUID()}`
+    try {
+      // La reprogramación elimina los envíos before_appointment para que el
+      // cron pueda crear uno nuevo para el horario recalculado.
+      await db.run('DELETE FROM appointment_reminder_sends WHERE id = ?', [sendId])
+      await db.run(`
+        INSERT INTO appointment_reminder_sends (
+          id, reminder_id, appointment_id, contact_id, status,
+          message_type, ai_enabled, send_at, sent_at
+        ) VALUES (?, ?, ?, ?, 'sent', 'confirmation', 1, ?, ?)
+      `, [
+        replacementSendId,
+        reminderId,
+        appointmentId,
+        contactId,
+        isoAgo(2 * 60 * 1000),
+        isoAgo(2 * 60 * 1000)
+      ])
+
+      const newInbound = await handleInboundForConfirmation({
+        contactId,
+        text: 'Confirmo el nuevo horario'
+      })
+      assert.equal(newInbound.windowActive, true)
+
+      const resetWindow = await db.get(`
+        SELECT reminder_send_id, status, result, result_detail, processed_at,
+               message_revision, accumulated_messages
+        FROM appointment_confirmation_windows
+        WHERE id = ?
+      `, [originalWindow.id])
+      assert.equal(resetWindow.reminder_send_id, replacementSendId)
+      assert.equal(resetWindow.status, 'waiting')
+      assert.equal(resetWindow.result, null)
+      assert.equal(resetWindow.result_detail, null)
+      assert.equal(resetWindow.processed_at, null)
+      assert.equal(Number(resetWindow.message_revision), 1)
+      assert.deepEqual(
+        storedMessageTexts(resetWindow.accumulated_messages),
+        ['Confirmo el nuevo horario']
+      )
+    } finally {
+      await db.run('DELETE FROM appointment_reminder_sends WHERE id = ?', [replacementSendId])
+    }
   })
 })
 

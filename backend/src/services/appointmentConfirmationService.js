@@ -272,6 +272,14 @@ export async function handleInboundForConfirmation({
         AND s.status = 'sent'
         AND s.message_type = 'confirmation'
         AND s.ai_enabled = 1
+        AND NOT EXISTS (
+          SELECT 1
+          FROM appointment_confirmation_windows resolved_window
+          WHERE resolved_window.contact_id = s.contact_id
+            AND resolved_window.appointment_id = s.appointment_id
+            AND resolved_window.reminder_send_id = s.id
+            AND resolved_window.result = 'confirmed'
+        )
         AND a.deleted_at IS NULL
         AND a.start_time > ?
         AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN (
@@ -289,7 +297,7 @@ export async function handleInboundForConfirmation({
     // Una sola escritura atómica crea o agrega el mensaje. Antes se hacía
     // SELECT + UPDATE/UPSERT y dos mensajes entregados en el mismo lote podían
     // leer el mismo arreglo y sobrescribirse entre sí.
-    await transaction.run(`
+    const stored = await transaction.run(`
       INSERT INTO appointment_confirmation_windows
         (id, contact_id, appointment_id, reminder_send_id, status,
          accumulated_messages, message_revision, bypass_automations,
@@ -298,12 +306,37 @@ export async function handleInboundForConfirmation({
       ON CONFLICT(contact_id, appointment_id) DO UPDATE SET
         reminder_send_id = excluded.reminder_send_id,
         status = 'waiting',
-        accumulated_messages = ${confirmationMessagesAppendExpression()},
-        message_revision = COALESCE(appointment_confirmation_windows.message_revision, 0) + 1,
+        accumulated_messages = CASE
+          WHEN appointment_confirmation_windows.reminder_send_id = excluded.reminder_send_id
+            THEN ${confirmationMessagesAppendExpression()}
+          ELSE excluded.accumulated_messages
+        END,
+        message_revision = CASE
+          WHEN appointment_confirmation_windows.reminder_send_id = excluded.reminder_send_id
+            THEN COALESCE(appointment_confirmation_windows.message_revision, 0) + 1
+          ELSE 1
+        END,
         bypass_automations = excluded.bypass_automations,
         confirmation_success_action = excluded.confirmation_success_action,
         last_message_at = excluded.last_message_at,
+        result = CASE
+          WHEN appointment_confirmation_windows.reminder_send_id = excluded.reminder_send_id
+            THEN appointment_confirmation_windows.result
+          ELSE NULL
+        END,
+        result_detail = CASE
+          WHEN appointment_confirmation_windows.reminder_send_id = excluded.reminder_send_id
+            THEN appointment_confirmation_windows.result_detail
+          ELSE NULL
+        END,
+        processed_at = CASE
+          WHEN appointment_confirmation_windows.reminder_send_id = excluded.reminder_send_id
+            THEN appointment_confirmation_windows.processed_at
+          ELSE NULL
+        END,
         updated_at = excluded.updated_at
+      WHERE appointment_confirmation_windows.reminder_send_id <> excluded.reminder_send_id
+         OR COALESCE(appointment_confirmation_windows.result, '') <> 'confirmed'
     `, [
       makeWindowId(), id, pending.appointment_id, pending.send_id,
       JSON.stringify(storedMessage ? [storedMessage] : []),
@@ -314,6 +347,12 @@ export async function handleInboundForConfirmation({
       ),
       now, now, now
     ])
+    // La decisión `confirmed` es terminal para el mismo envío desde que el
+    // procesador la reserva, incluso antes de terminar sus efectos secundarios.
+    // Esta segunda compuerta cubre la carrera donde un inbound entra después del
+    // SELECT anterior pero mientras la confirmación pasa de `deciding` a `done`.
+    // Un envío nuevo (por ejemplo tras reprogramar) sí inicia un ciclo limpio.
+    if (!stored || Number(stored.changes || 0) === 0) return null
     return {
       appointmentId: pending.appointment_id,
       bypassAutomations
