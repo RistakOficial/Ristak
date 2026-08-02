@@ -163,6 +163,13 @@ import {
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
 import { useAccountCurrency } from '@/hooks/useAccountCurrency'
 import { stripRistakAdIdMarkersFromText } from '@/utils/whatsappAttributionText'
+import {
+  CHAT_AUDIO_PLAYBACK_RATES,
+  formatChatAudioPlaybackRate,
+  getChatAudioSeekSeconds,
+  getNextChatAudioPlaybackRate,
+  type ChatAudioPlaybackRate
+} from '@/utils/chatAudioPlayback'
 import styles from './DesktopChat.module.css'
 
 type ChatFilter = 'all' | 'goal_completed' | 'agent' | 'unread' | 'appointments' | 'customers'
@@ -3246,6 +3253,7 @@ export const DesktopChat: React.FC = () => {
   const voiceStartedAtRef = useRef(0)
   const voiceTimerRef = useRef<number | null>(null)
   const messageAudioRefs = useRef<Record<string, HTMLAudioElement | null>>({})
+  const messageAudioScrubbingRef = useRef<{ messageId: string; pointerId: number } | null>(null)
   const selectAllChatCheckboxRef = useRef<HTMLInputElement | null>(null)
   const chatsRef = useRef<DesktopChatContact[]>([])
   const [initialChatCache] = useState<ChatListCacheSnapshot>(() => readCachedChatList())
@@ -3370,6 +3378,7 @@ export const DesktopChat: React.FC = () => {
   const [, setVoiceElapsedMs] = useState(0)
   const [playingAudioId, setPlayingAudioId] = useState('')
   const [messageAudioProgress, setMessageAudioProgress] = useState<Record<string, { currentTime: number; duration: number }>>({})
+  const [messageAudioRates, setMessageAudioRates] = useState<Record<string, ChatAudioPlaybackRate>>({})
   const [reactingMessageId, setReactingMessageId] = useState<string | null>(null)
   const [messageReactionMenu, setMessageReactionMenu] = useState<MessageReactionMenuState | null>(null)
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
@@ -8477,6 +8486,97 @@ export const DesktopChat: React.FC = () => {
     }))
   }, [])
 
+  const getMessageAudioRate = useCallback((messageId: string): ChatAudioPlaybackRate => (
+    messageAudioRates[messageId] || CHAT_AUDIO_PLAYBACK_RATES[0]
+  ), [messageAudioRates])
+
+  const applyMessageAudioRate = useCallback((audio: HTMLAudioElement, rate: ChatAudioPlaybackRate) => {
+    audio.preservesPitch = true
+    audio.defaultPlaybackRate = rate
+    audio.playbackRate = rate
+  }, [])
+
+  const handleCycleMessageAudioRate = useCallback((
+    messageId: string,
+    event: React.MouseEvent<HTMLButtonElement>
+  ) => {
+    event.stopPropagation()
+    const nextRate = getNextChatAudioPlaybackRate(getMessageAudioRate(messageId))
+    setMessageAudioRates((current) => ({
+      ...current,
+      [messageId]: nextRate
+    }))
+
+    const audio = messageAudioRefs.current[messageId]
+    if (audio) applyMessageAudioRate(audio, nextRate)
+  }, [applyMessageAudioRate, getMessageAudioRate])
+
+  const seekMessageAudioToSeconds = useCallback((
+    messageId: string,
+    requestedSeconds: number,
+    fallbackDuration = 0
+  ) => {
+    const audio = messageAudioRefs.current[messageId]
+    if (!audio) return
+
+    const duration = Number.isFinite(audio.duration) && audio.duration > 0
+      ? audio.duration
+      : fallbackDuration
+    if (!Number.isFinite(duration) || duration <= 0) return
+
+    const nextTime = Math.min(duration, Math.max(0, requestedSeconds))
+    try {
+      audio.currentTime = nextTime
+    } catch {
+      return
+    }
+
+    setMessageAudioProgress((current) => ({
+      ...current,
+      [messageId]: { currentTime: nextTime, duration }
+    }))
+  }, [])
+
+  const seekMessageAudioFromPointer = useCallback((
+    messageId: string,
+    clientX: number,
+    track: HTMLElement,
+    fallbackDuration: number
+  ) => {
+    const rect = track.getBoundingClientRect()
+    seekMessageAudioToSeconds(
+      messageId,
+      getChatAudioSeekSeconds(clientX, rect.left, rect.width, fallbackDuration),
+      fallbackDuration
+    )
+  }, [seekMessageAudioToSeconds])
+
+  const handleMessageAudioSeekKeyDown = useCallback((
+    messageId: string,
+    fallbackDuration: number,
+    event: React.KeyboardEvent<HTMLDivElement>
+  ) => {
+    const audio = messageAudioRefs.current[messageId]
+    const nativeDuration = Number(audio?.duration)
+    const duration = Number.isFinite(nativeDuration) && nativeDuration > 0
+      ? nativeDuration
+      : fallbackDuration
+    if (!duration) return
+
+    const nativeCurrentTime = Number(audio?.currentTime)
+    const currentTime = Number.isFinite(nativeCurrentTime) ? nativeCurrentTime : 0
+    let nextTime: number | null = null
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') nextTime = currentTime - 5
+    if (event.key === 'ArrowRight' || event.key === 'ArrowUp') nextTime = currentTime + 5
+    if (event.key === 'Home') nextTime = 0
+    if (event.key === 'End') nextTime = duration
+    if (nextTime === null) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    seekMessageAudioToSeconds(messageId, nextTime, duration)
+  }, [seekMessageAudioToSeconds])
+
   const handleToggleMessageAudio = useCallback(async (messageId: string) => {
     const audio = messageAudioRefs.current[messageId]
     if (!audio) return
@@ -8492,12 +8592,16 @@ export const DesktopChat: React.FC = () => {
     }
 
     try {
+      if (audio.ended || (Number.isFinite(audio.duration) && audio.duration > 0 && audio.currentTime >= audio.duration - 0.05)) {
+        audio.currentTime = 0
+      }
+      applyMessageAudioRate(audio, getMessageAudioRate(messageId))
       await audio.play()
       setPlayingAudioId(messageId)
     } catch {
       showToast('error', 'No se pudo reproducir el audio', 'Intenta abrirlo otra vez.')
     }
-  }, [showToast])
+  }, [applyMessageAudioRate, getMessageAudioRate, showToast])
 
   const canReactToMessage = (message: DesktopChatMessage) => Boolean(getMessageReactionChannel(message))
 
@@ -8789,6 +8893,10 @@ export const DesktopChat: React.FC = () => {
       const currentSeconds = progress?.currentTime || 0
       const progressPercent = durationSeconds > 0 ? Math.max(0, Math.min(100, (currentSeconds / durationSeconds) * 100)) : 0
       const isPlaying = playingAudioId === message.id
+      const playbackRate = getMessageAudioRate(message.id)
+      const elapsedOrDurationSeconds = currentSeconds > 0 && currentSeconds < durationSeconds
+        ? currentSeconds
+        : durationSeconds
       const audioTitle = attachment.name && attachment.name !== 'Mensaje de voz' ? attachment.name : 'Mensaje de voz'
       const routePhone = message.direction === 'outbound'
         ? getMessageBusinessPhone(message, whatsappStatus) || selectedBusinessPhone
@@ -8812,13 +8920,19 @@ export const DesktopChat: React.FC = () => {
               className={styles.audioNative}
               src={attachmentSrc}
               preload="metadata"
-              onLoadedMetadata={() => updateMessageAudioProgress(message.id)}
+              onLoadedMetadata={(event) => {
+                applyMessageAudioRate(event.currentTarget, playbackRate)
+                updateMessageAudioProgress(message.id)
+              }}
               onTimeUpdate={() => updateMessageAudioProgress(message.id)}
-              onPlay={() => setPlayingAudioId(message.id)}
+              onPlay={(event) => {
+                applyMessageAudioRate(event.currentTarget, playbackRate)
+                setPlayingAudioId(message.id)
+              }}
               onPause={() => setPlayingAudioId((current) => (current === message.id ? '' : current))}
               onEnded={() => {
                 updateMessageAudioProgress(message.id)
-                setPlayingAudioId('')
+                setPlayingAudioId((current) => (current === message.id ? '' : current))
               }}
             />
           ) : null}
@@ -8831,20 +8945,71 @@ export const DesktopChat: React.FC = () => {
           >
             {isPlaying ? <Pause size={18} /> : <Play size={18} />}
           </button>
-          <span className={styles.audioWaveform} aria-hidden="true">
+          <div
+            className={styles.audioWaveform}
+            role="slider"
+            tabIndex={attachmentSrc && durationSeconds > 0 ? 0 : -1}
+            aria-label="Posición del mensaje de voz"
+            aria-disabled={!attachmentSrc || durationSeconds <= 0}
+            aria-valuemin={0}
+            aria-valuemax={Math.max(0, Math.round(durationSeconds))}
+            aria-valuenow={Math.max(0, Math.min(Math.round(durationSeconds), Math.round(currentSeconds)))}
+            aria-valuetext={durationSeconds > 0
+              ? `${formatVoiceDuration(currentSeconds * 1000)} de ${formatVoiceDuration(durationSeconds * 1000)}`
+              : 'Duración no disponible'}
+            onPointerDown={(event) => {
+              if (!attachmentSrc || durationSeconds <= 0 || (event.pointerType === 'mouse' && event.button !== 0)) return
+              event.preventDefault()
+              event.stopPropagation()
+              event.currentTarget.setPointerCapture(event.pointerId)
+              messageAudioScrubbingRef.current = { messageId: message.id, pointerId: event.pointerId }
+              seekMessageAudioFromPointer(message.id, event.clientX, event.currentTarget, durationSeconds)
+            }}
+            onPointerMove={(event) => {
+              const scrub = messageAudioScrubbingRef.current
+              if (!scrub || scrub.messageId !== message.id || scrub.pointerId !== event.pointerId) return
+              event.preventDefault()
+              event.stopPropagation()
+              seekMessageAudioFromPointer(message.id, event.clientX, event.currentTarget, durationSeconds)
+            }}
+            onPointerUp={(event) => {
+              const scrub = messageAudioScrubbingRef.current
+              if (!scrub || scrub.messageId !== message.id || scrub.pointerId !== event.pointerId) return
+              event.preventDefault()
+              event.stopPropagation()
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId)
+              }
+              messageAudioScrubbingRef.current = null
+            }}
+            onPointerCancel={(event) => {
+              if (messageAudioScrubbingRef.current?.pointerId === event.pointerId) {
+                messageAudioScrubbingRef.current = null
+              }
+            }}
+            onKeyDown={(event) => handleMessageAudioSeekKeyDown(message.id, durationSeconds, event)}
+          >
             {Array.from({ length: MESSAGE_AUDIO_WAVE_BAR_COUNT }).map((_, index) => {
               const pattern = MESSAGE_AUDIO_WAVE_PATTERN[index % MESSAGE_AUDIO_WAVE_PATTERN.length]
+              const played = progressPercent > 0 && (index / Math.max(1, MESSAGE_AUDIO_WAVE_BAR_COUNT - 1)) * 100 <= progressPercent
               return (
                 <span
                   key={index}
-                  className={styles.audioWaveBar}
+                  className={`${styles.audioWaveBar} ${played ? styles.audioWaveBarPlayed : ''}`}
                   style={{ '--bar-height': `${pattern}px` } as React.CSSProperties}
                 />
               )
             })}
             <span className={styles.audioProgressDot} />
-          </span>
-          <span className={styles.audioAvatar} aria-label={`Foto de ${audioAvatarName}`}>
+          </div>
+          <button
+            type="button"
+            className={styles.audioAvatar}
+            onClick={(event) => handleCycleMessageAudioRate(message.id, event)}
+            disabled={!attachmentSrc}
+            aria-label={`Cambiar velocidad del audio. Actual ${formatChatAudioPlaybackRate(playbackRate)}`}
+            title={`Velocidad ${formatChatAudioPlaybackRate(playbackRate)} · clic para cambiar`}
+          >
             <span className={styles.audioAvatarFallback}>{audioAvatarInitials}</span>
             {audioAvatarUrl ? (
               <img
@@ -8856,11 +9021,14 @@ export const DesktopChat: React.FC = () => {
                 onError={(event) => { event.currentTarget.hidden = true }}
               />
             ) : null}
+            {playbackRate > 1 ? (
+              <span className={styles.audioSpeedBadge}>{formatChatAudioPlaybackRate(playbackRate)}</span>
+            ) : null}
             <span className={styles.audioAvatarMicBadge} aria-hidden="true"><Mic size={11} /></span>
-          </span>
+          </button>
           <span className={styles.audioAttachmentBody}>
             <strong>{audioTitle}</strong>
-            <small>{attachmentSrc ? (durationSeconds > 0 ? formatVoiceDuration(durationSeconds * 1000) : 'Audio') : 'Audio no disponible'}</small>
+            <small>{attachmentSrc ? (durationSeconds > 0 ? formatVoiceDuration(elapsedOrDurationSeconds * 1000) : 'Audio') : 'Audio no disponible'}</small>
           </span>
         </div>
       )
