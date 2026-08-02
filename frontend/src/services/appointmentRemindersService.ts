@@ -4,6 +4,9 @@ import apiClient, { type ApiRequestError } from './apiClient'
 // Mensajes automáticos de citas (recordatorios, avisos y modo confirmación)
 // ---------------------------------------------------------------------------
 
+export const DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT =
+  'Perfecto, {{contact.first_name}}. Tu cita quedó confirmada para el {{cita.fecha}} a las {{cita.hora}}. ¡Te esperamos!'
+
 // Internamente 'confirmation' significa "usar este mensaje como confirmación de cita".
 export type ReminderMessageType = 'reminder' | 'confirmation'
 // 'before_appointment' = X antes del inicio de la cita; 'after_booking' = X después de agendar.

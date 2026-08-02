@@ -54,6 +54,7 @@ export {
   DEFAULT_APPOINTMENT_NOTICE_TEXT,
   DEFAULT_REMINDER_TEXT,
   DEFAULT_CONFIRMATION_TEXT,
+  DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT,
   formatOffsetLabel,
   computeReminderSendAt
 }
@@ -98,6 +99,8 @@ const CONFIRMATION_RESPONSE_WINDOW_UNITS = new Set(['minutes', 'hours'])
 const CONFIRMATION_TIMEOUT_MODES = new Set(['elapsed', 'response_window'])
 const MAX_CONFIRMATION_TIMEOUT_MS = 30 * OFFSET_UNIT_MS.days
 const MAX_CONFIRMATION_REPLY_TEXT_LENGTH = 4096
+const DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT =
+  'Perfecto, {{contact.first_name}}. Tu cita quedó confirmada para el {{cita.fecha}} a las {{cita.hora}}. ¡Te esperamos!'
 const DEFAULT_CONFIRMATION_RESPONSE_START = '09:00'
 const DEFAULT_CONFIRMATION_RESPONSE_END = '21:00'
 const DEFAULT_TEMPLATE_NAME_BY_PURPOSE = {
@@ -1102,7 +1105,22 @@ function sanitizeReminderInput(input = {}, base = {}) {
     confirmationSuccessActionsSource,
     DEFAULT_CONFIRMATION_SUCCESS_ACTIONS
   )
-  const confirmationReplyText = cleanString(merged.confirmationReplyText)
+  const confirmationReplyTextWasSubmitted = Object.prototype.hasOwnProperty.call(
+    input,
+    'confirmationReplyText'
+  )
+  const isNewAiConfirmation = (
+    Object.keys(base).length === 0 &&
+    messageType === 'confirmation' &&
+    merged.aiEnabled !== false
+  )
+  const confirmationReplyText = confirmationReplyTextWasSubmitted
+    ? cleanString(input.confirmationReplyText)
+    : cleanString(base.confirmationReplyText) || (
+        isNewAiConfirmation
+          ? DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT
+          : ''
+      )
   if (confirmationReplyText.length > MAX_CONFIRMATION_REPLY_TEXT_LENGTH) {
     throw createServiceError(
       `El mensaje de respuesta al confirmar no puede superar ${MAX_CONFIRMATION_REPLY_TEXT_LENGTH} caracteres.`

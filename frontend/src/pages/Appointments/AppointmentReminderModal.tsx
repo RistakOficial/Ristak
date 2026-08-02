@@ -21,6 +21,7 @@ import {
   type ReminderOffsetUnit,
   type ReminderSenderOption,
   type ReminderTimingAnchor,
+  DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT,
   formatReminderOffsetLabel,
   getAppointmentReminderScheduleConflict
 } from '@/services/appointmentRemindersService'
@@ -285,7 +286,7 @@ const createNewReminderDraft = (): AppointmentReminderInput => ({
   smartOverflow: 'before',
   noConfirmAction: 'no_action',
   ...getDefaultConfirmationTimeout('before_appointment', 1, 'days'),
-  confirmationReplyText: '',
+  confirmationReplyText: DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT,
   confirmationSuccessActions: [...DEFAULT_CONFIRMATION_SUCCESS_ACTIONS]
 })
 
@@ -664,7 +665,9 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
         channel: selectedChannelId,
         contentMode,
         qrFallbackEnabled: isWhatsAppApiChannel,
-        confirmationReplyText: String(draft.confirmationReplyText || '').trim(),
+        confirmationReplyText: isConfirmation && draft.aiEnabled !== false
+          ? String(draft.confirmationReplyText || '').trim()
+          : reminder?.confirmationReplyText || '',
         confirmationSuccessActions: normalizeConfirmationSuccessActions(
           draft.confirmationSuccessActions,
           draft.confirmationSuccessAction

@@ -87,4 +87,10 @@ assert.match(
   'abrir una regla existente debe conservar su plantilla personalizada en lugar de imponer el default'
 )
 
+assert.match(
+  reminderModalSource,
+  /confirmationReplyText:\s*DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT/,
+  'una regla nueva debe abrir con la respuesta posterior a la confirmación ya escrita'
+)
+
 console.log('Appointment modal shared contract OK')

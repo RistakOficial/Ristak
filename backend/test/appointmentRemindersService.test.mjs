@@ -6,6 +6,7 @@ import { db, setAppConfig } from '../src/config/database.js'
 import { invalidateTimezoneCache } from '../src/utils/dateUtils.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
+  DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT,
   appointmentReminderRetryCutoffExpression,
   createAppointmentReminder,
   deleteAppointmentReminder,
@@ -1604,6 +1605,59 @@ test('el mensaje libre posterior a la confirmacion se guarda, se conserva al edi
     )
   } finally {
     if (reminderId) {
+      await db.run('DELETE FROM appointment_reminder_sends WHERE reminder_id = ?', [reminderId])
+      await db.run('DELETE FROM appointment_reminders WHERE id = ?', [reminderId])
+    }
+  }
+})
+
+test('una confirmacion nueva con IA recibe una respuesta editable por defecto', async () => {
+  const reminderIds = []
+  try {
+    const defaulted = await createAppointmentReminder({
+      name: `Confirmación con respuesta default ${randomUUID()}`,
+      messageType: 'confirmation',
+      aiEnabled: true,
+      timingAnchor: 'before_appointment',
+      offsetValue: 2,
+      offsetUnit: 'days'
+    })
+    reminderIds.push(defaulted.id)
+    assert.equal(
+      defaulted.confirmationReplyText,
+      DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT
+    )
+
+    const preserved = await updateAppointmentReminder(defaulted.id, { enabled: false })
+    assert.equal(
+      preserved.confirmationReplyText,
+      DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT
+    )
+
+    const explicitlyEmpty = await createAppointmentReminder({
+      name: `Confirmación sin respuesta ${randomUUID()}`,
+      messageType: 'confirmation',
+      aiEnabled: true,
+      timingAnchor: 'before_appointment',
+      offsetValue: 3,
+      offsetUnit: 'days',
+      confirmationReplyText: '   '
+    })
+    reminderIds.push(explicitlyEmpty.id)
+    assert.equal(explicitlyEmpty.confirmationReplyText, '')
+
+    const regularReminder = await createAppointmentReminder({
+      name: `Recordatorio sin respuesta ${randomUUID()}`,
+      messageType: 'reminder',
+      aiEnabled: true,
+      timingAnchor: 'before_appointment',
+      offsetValue: 4,
+      offsetUnit: 'days'
+    })
+    reminderIds.push(regularReminder.id)
+    assert.equal(regularReminder.confirmationReplyText, '')
+  } finally {
+    for (const reminderId of reminderIds) {
       await db.run('DELETE FROM appointment_reminder_sends WHERE reminder_id = ?', [reminderId])
       await db.run('DELETE FROM appointment_reminders WHERE id = ?', [reminderId])
     }
