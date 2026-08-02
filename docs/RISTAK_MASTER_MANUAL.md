@@ -2843,6 +2843,12 @@ burbuja, visor o archivo compartido; `Image`/`URL(string:)` no deben recibir
 rutas sin host. En
 `/chat` desktop, las burbujas de media deben mostrar solo el contenido principal:
 foto/video completo, audio con icono/control del lado izquierdo o mapa completo.
+El reproductor de notas de voz de `/chat` permite tocar o arrastrar toda la onda
+para adelantar y regresar; tambien acepta flechas de teclado en pasos de cinco
+segundos e `Inicio`/`Fin`. Tocar el avatar cicla la velocidad `1x -> 2x -> 4x`,
+mantiene la correccion de tono y muestra la velocidad activa sobre el avatar. Al
+mover el cabezal o reproducir, el tiempo visible cambia de la duracion total al
+tiempo transcurrido sin alterar el tamano del globo.
 En iOS, foto y video son full-bleed: el contenido forma la superficie completa
 del globo, conserva una puntita visible y superpone hora, transporte y acuse en
 la esquina inferior; video superpone tambien su duración. El scrubber de las
