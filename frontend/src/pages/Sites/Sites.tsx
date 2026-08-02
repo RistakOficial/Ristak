@@ -3207,8 +3207,18 @@ const getMediaAnalyticsSourceSiteRecord = (asset?: MediaAsset | null) => {
     : {}
 }
 
+const getMediaAnalyticsSourceSiteRecords = (asset?: MediaAsset | null) => {
+  const sourceSites = getMediaMetadataRecord(asset).analyticsSourceSites
+  const normalized = Array.isArray(sourceSites)
+    ? sourceSites.filter(sourceSite => sourceSite && typeof sourceSite === 'object') as Array<Record<string, unknown>>
+    : []
+  if (normalized.length) return normalized
+  const legacySource = getMediaAnalyticsSourceSiteRecord(asset)
+  return Object.keys(legacySource).length ? [legacySource] : []
+}
+
 const getMediaSourceSiteName = (asset?: MediaAsset | null) => {
-  const name = getMediaAnalyticsSourceSiteRecord(asset).name
+  const name = getMediaAnalyticsSourceSiteRecords(asset)[0]?.name
   return typeof name === 'string' ? name.trim() : ''
 }
 
@@ -3228,11 +3238,20 @@ const getMediaStreamVideoId = (asset?: MediaAsset | null) => {
 }
 
 const getMediaSourceSiteId = (asset?: MediaAsset | null) => {
+  const canonicalSourceId = getMediaAnalyticsSourceSiteRecords(asset)[0]?.id
+  const normalizedCanonicalSourceId = typeof canonicalSourceId === 'string' ? canonicalSourceId.trim() : ''
   const source = getMediaStreamSourceRecord(asset)
   const sourceEntityId = typeof source.moduleEntityId === 'string' ? source.moduleEntityId.trim() : ''
-  const analyticsSourceId = getMediaAnalyticsSourceSiteRecord(asset).id
-  const normalizedAnalyticsSourceId = typeof analyticsSourceId === 'string' ? analyticsSourceId.trim() : ''
-  return sourceEntityId || asset?.moduleEntityId || normalizedAnalyticsSourceId
+  return normalizedCanonicalSourceId || sourceEntityId || asset?.moduleEntityId || ''
+}
+
+const getMediaSourceSiteIds = (asset?: MediaAsset | null) => {
+  const canonicalIds = getMediaAnalyticsSourceSiteRecords(asset)
+    .map(sourceSite => typeof sourceSite.id === 'string' ? sourceSite.id.trim() : '')
+    .filter(Boolean)
+  if (canonicalIds.length) return [...new Set(canonicalIds)]
+  const legacyId = getMediaSourceSiteId(asset)
+  return legacyId ? [legacyId] : []
 }
 
 const readSitesNumber = (value: unknown) => {
@@ -3320,8 +3339,14 @@ const getMediaAssetDisplayName = (asset: MediaAsset) => (
     .trim() || 'Video'
 )
 
-const getSiteAnalyticsVideoLabel = (asset: MediaAsset, sitesById: Map<string, PublicSite>) => {
-  const siteName = sitesById.get(getMediaSourceSiteId(asset))?.name || getMediaSourceSiteName(asset)
+const getSiteAnalyticsVideoLabel = (asset: MediaAsset, sitesById: Map<string, PublicSite>, preferredSiteId = '') => {
+  const sourceIds = getMediaSourceSiteIds(asset)
+  const sourceSiteId = preferredSiteId && sourceIds.includes(preferredSiteId)
+    ? preferredSiteId
+    : sourceIds[0] || ''
+  const sourceRecord = getMediaAnalyticsSourceSiteRecords(asset).find(sourceSite => sourceSite.id === sourceSiteId)
+  const sourceRecordName = typeof sourceRecord?.name === 'string' ? sourceRecord.name.trim() : ''
+  const siteName = sitesById.get(sourceSiteId)?.name || sourceRecordName || getMediaSourceSiteName(asset)
   const videoName = shortenSitesText(getMediaAssetDisplayName(asset), siteName ? 34 : 54)
   return [videoName, siteName ? shortenSitesText(siteName, 24) : ''].filter(Boolean).join(' · ')
 }
@@ -9895,9 +9920,12 @@ export const Sites: React.FC = () => {
   const analyticsVideoOriginOptions = useMemo(() => {
     const origins = new Map<string, { id: string; name: string }>()
     ;(siteVideoAssets || []).forEach((asset) => {
-      const id = getMediaSourceSiteId(asset)
-      const name = sitesById.get(id)?.name || getMediaSourceSiteName(asset)
-      if (id && name) origins.set(id, { id, name })
+      getMediaAnalyticsSourceSiteRecords(asset).forEach((sourceSite) => {
+        const id = typeof sourceSite.id === 'string' ? sourceSite.id.trim() : ''
+        const fallbackName = typeof sourceSite.name === 'string' ? sourceSite.name.trim() : ''
+        const name = sitesById.get(id)?.name || fallbackName
+        if (id && name) origins.set(id, { id, name })
+      })
     })
     return [...origins.values()]
   }, [siteVideoAssets, sitesById])
@@ -9909,9 +9937,9 @@ export const Sites: React.FC = () => {
   }, [analyticsCatalogSites, analyticsVideoOriginOptions, sitesAnalyticsSiteType])
   const filteredAnalyticsVideos = useMemo(() => (
     (siteVideoAssets || []).filter((asset) => {
-      const sourceSiteId = getMediaSourceSiteId(asset)
-      if (!sourceSiteId) return false
-      if (sitesAnalyticsSiteId) return sourceSiteId === sitesAnalyticsSiteId
+      const sourceSiteIds = getMediaSourceSiteIds(asset)
+      if (!sourceSiteIds.length) return false
+      if (sitesAnalyticsSiteId) return sourceSiteIds.includes(sitesAnalyticsSiteId)
       return true
     })
   ), [siteVideoAssets, sitesAnalyticsSiteId])
@@ -12001,7 +12029,8 @@ export const Sites: React.FC = () => {
     sitesService.getVideoAnalytics(sitesAnalyticsVideoId, {
       ...getSitesAnalyticsRange(dateRange.start, dateRange.end),
       siteId: sitesAnalyticsSiteId || undefined,
-      viewerLimit: 200
+      viewerLimit: 200,
+      includeProviderAnalytics: true
     })
       .then((analytics) => {
         if (!cancelled) setSitesVideoAnalytics(analytics)
@@ -46828,6 +46857,24 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const videoRowsByWatchTime = aggregateVideoStats?.topAssetsByWatch || []
   const firstPartyTracking = analytics?.firstPartyTracking || null
   const firstPartySummary = firstPartyTracking?.summary || null
+  const providerAnalytics = analytics?.providerAnalytics || null
+  const providerSummary = providerAnalytics?.summary || null
+  const providerViewsChart = buildSitesChartPoints(providerAnalytics?.viewsChart || [])
+  const providerWatchTimeChart = buildSitesChartPoints(providerAnalytics?.watchTimeChart || [])
+  const providerEngagementScore = providerSummary?.engagementScore !== null &&
+    providerSummary?.engagementScore !== undefined &&
+    Number(providerSummary.engagementScore) >= 0
+    ? Number(providerSummary.engagementScore)
+    : null
+  const providerStatusLabel = analytics?.providerAnalyticsError
+    ? 'No disponible'
+    : providerAnalytics?.status === 'ready'
+      ? 'Respuesta de Bunny'
+      : providerAnalytics?.status === 'not_synced'
+        ? 'Sin Stream asociado'
+        : providerAnalytics?.status === 'not_configured' || providerAnalytics?.status === 'disabled'
+          ? 'Stream no configurado'
+          : 'Sin respuesta'
   const selectedVideoMode = Boolean(selectedVideoId)
   const totalVideoViews = aggregateVideoSummary?.playbackStarts ?? aggregateVideoSummary?.plays ?? null
   const totalVideoWatchTime = aggregateVideoSummary?.watchedSeconds ?? null
@@ -46942,7 +46989,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     0
   const videoViewers = firstPartyTracking?.viewers || []
   const currentVideoLabel = selectedVideo
-    ? getSiteAnalyticsVideoLabel(selectedVideo, sitesById)
+    ? getSiteAnalyticsVideoLabel(selectedVideo, sitesById, selectedSiteId)
     : selectedVideoId ? `Video ${selectedVideoId.slice(-8)}` : 'Sin video seleccionado'
   const scopeSiteLabel = selectedSiteId
     ? sitesById.get(selectedSiteId)?.name || siteOptions.find(site => site.id === selectedSiteId)?.name || 'Sitio seleccionado'
@@ -47515,6 +47562,37 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
               <div className={styles.sitesAnalyticsChartEmpty}>Sin actividad por visitante todavía.</div>
             )}
           </section>
+
+          <section className={styles.videoAnalyticsSection}>
+            <div className={styles.videoAnalyticsSectionHeader}>
+              <div>
+                <span>Bunny Stream · comparación del proveedor</span>
+                <strong>{providerStatusLabel}</strong>
+              </div>
+            </div>
+            {analytics?.providerAnalyticsError ? (
+              <div className={styles.sitesAnalyticsChartEmpty}>
+                Bunny no pudo entregar sus estadísticas: {analytics.providerAnalyticsError}
+              </div>
+            ) : providerAnalytics?.status === 'ready' ? (
+              <>
+                {renderDetailRows([
+                  { key: 'provider-views', icon: <Play size={15} />, label: 'Vistas reportadas por Bunny', value: formatSitesCompactNumber(providerSummary?.views) },
+                  { key: 'provider-watch', icon: <Clock3 size={15} />, label: 'Tiempo visto reportado', value: formatSitesSeconds(providerSummary?.watchTime) },
+                  { key: 'provider-average', icon: <Flame size={15} />, label: 'Promedio por vista', value: formatSitesSeconds(providerSummary?.averageWatchTime) },
+                  { key: 'provider-engagement', icon: <BarChart3 size={15} />, label: 'Engagement de Bunny', value: formatSitesPercent(providerEngagementScore) },
+                  { key: 'provider-country', icon: <Globe2 size={15} />, label: 'País principal', value: providerSummary?.topCountry || 'Sin dato' }
+                ], 'Bunny no devolvió métricas para este periodo.')}
+                <p className={styles.sitesAnalyticsDetailEmpty}>
+                  Esta lectura no reemplaza la medición first-party de Ristak; sirve para comparar lo que Bunny registró en el Stream.
+                </p>
+              </>
+            ) : (
+              <div className={styles.sitesAnalyticsChartEmpty}>
+                Este archivo todavía no tiene un Stream listo para consultar. Sus métricas first-party siguen disponibles arriba.
+              </div>
+            )}
+          </section>
         </div>
 
         {(viewsChart.length || watchTimeChart.length) && (
@@ -47547,6 +47625,42 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                   showLegend={false}
                   formatValue={(value) => formatSitesSeconds(value)}
                   formatTooltipValue={(value) => `${formatSitesSeconds(value)} vistos`}
+                />
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {providerAnalytics?.status === 'ready' && (providerViewsChart.length || providerWatchTimeChart.length) && (
+          <div className={styles.videoStreamCharts}>
+            {providerViewsChart.length ? (
+              <div className={styles.sitesAnalyticsChartBlock}>
+                <div className={styles.sitesAnalyticsChartTitle}>
+                  <span>Vistas de Bunny por periodo</span>
+                  <strong>{formatSitesCompactNumber(providerSummary?.views)}</strong>
+                </div>
+                <AreaChart
+                  data={providerViewsChart}
+                  height={190}
+                  showLegend={false}
+                  formatValue={(value) => formatSitesCompactNumber(value)}
+                  formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} vistas de Bunny`}
+                />
+              </div>
+            ) : null}
+            {providerWatchTimeChart.length ? (
+              <div className={styles.sitesAnalyticsChartBlock}>
+                <div className={styles.sitesAnalyticsChartTitle}>
+                  <span>Tiempo visto de Bunny por periodo</span>
+                  <strong>{formatSitesSeconds(providerSummary?.watchTime)}</strong>
+                </div>
+                <AreaChart
+                  data={providerWatchTimeChart}
+                  height={190}
+                  color="var(--pos)"
+                  showLegend={false}
+                  formatValue={(value) => formatSitesSeconds(value)}
+                  formatTooltipValue={(value) => `${formatSitesSeconds(value)} reportados por Bunny`}
                 />
               </div>
             ) : null}

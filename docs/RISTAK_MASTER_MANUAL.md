@@ -1250,15 +1250,26 @@ incluidos límites de identidad, cobertura y pruebas, vive en
 `docs/TRACKING_PIXEL.md`.
 
 La videoteca de Sites usa `/api/sites/video-assets` con paginas de 50 y cursor
-`created_at + id` para los modulos `sites/forms`. El selector y el preview son
-paginados, pero `inventory`, `topAssetsByStarts` y `topAssetsByWatch` salen del
-alcance completo en servidor. Un video guardado sin Bunny Stream conserva
-analitica first-party; la respuesta del proveedor es un bloque opcional separado
-y nunca rellena o reemplaza la medicion propia. Los videos del formulario interno
-de calendario se excluyen del inventario y de todos los scopes analiticos. Cuando
-la interfaz selecciona un origen exacto, el detalle de ese video transmite
-`siteId` hasta el ledger: tarjetas, curva y espectadores no mezclan otras páginas
-que reutilicen el mismo asset.
+`created_at + id`. El inventario se arma por uso actual: ownership legacy
+`sites/forms`, bindings de contenido HTML, IDs explícitos de bloque y URLs
+canónicas de Storage dentro de bloques de video. Por eso un asset de Media o uno
+compartido entre varios Sites aparece con todos sus orígenes publicados aunque
+`module_entity_id` sea nulo o viejo. El selector y el preview son paginados, pero
+`inventory`, `topAssetsByStarts` y `topAssetsByWatch` salen del alcance completo
+en servidor. Un video guardado sin Bunny Stream conserva analitica first-party;
+la respuesta de Bunny se consulta al seleccionar el video, aparece en un bloque
+separado y nunca rellena o reemplaza la medicion propia, ni siquiera si el
+proveedor devuelve cero. Los videos del formulario interno de calendario se
+excluyen del inventario y de todos los scopes analiticos. Cuando la interfaz
+selecciona un origen exacto, el detalle de ese video transmite `siteId` hasta el
+ledger: tarjetas, curva y espectadores no mezclan otras páginas que reutilicen
+el mismo asset.
+
+Los renders nuevos resuelven también los bloques que sólo guardan una URL
+Storage y adjuntan `media_asset_id` a `/video-event`. Para el histórico sin asset
+ni Stream, la consulta recupera el asset del bloque actual sólo si el evento es
+posterior a `public_site_blocks.updated_at`; una reasociación posterior jamás se
+aplica hacia atrás.
 
 Video usa el ledger `video_playback_events` como fuente analitica; la tabla
 `video_playback_sessions` queda como proyeccion para Journey/contactos. En
@@ -5455,7 +5466,9 @@ Tracking:
 - Sites y formularios publicados emiten tracking nativo en su dominio público.
   El editor, las sesiones de preview y los modos `no_track` lo desactivan a
   propósito; una prueba real exige dominio conectado, Site publicado, navegador
-  real y confirmación en DB.
+  real y confirmación en DB. En video, `no_track` también fuerza Bunny Storage y
+  no solicita playlist/iframe de Stream; esto aplica aunque se abra la URL pública
+  conectada con `?no_track=1`, para no contaminar estadísticas del proveedor.
 - Los códigos globales y por página de `headerTrackingCode` aceptan
   `{{variable.clave}}`. La referencia permanece visible en el editor y el valor
   exacto se inyecta antes de `</head>` únicamente al servir la URL pública. El
@@ -5909,8 +5922,9 @@ sin esperar otra transferencia. Si todavía no tiene identidad de Bunny Stream,
 Ristak encola una importación directa desde su URL de Storage: Bunny mueve el
 archivo por su red y Render no descarga ni retiene el video completo en memoria.
 El MP4 de Storage sigue funcionando mientras Stream lo importa y transcodifica.
-Cuando la playlist ya existe, editor, preview y publicado reproducen HLS
-adaptativo y conservan ese MP4 sólo como rescate. El poster de Stream se pinta
+Cuando la playlist ya existe, publicado para audiencia normal reproduce HLS
+adaptativo y conserva ese MP4 como rescate; editor, preview y `no_track` usan
+Storage de forma directa. El poster de Stream se pinta
 antes del primer segmento; hls.js inicia en la variante ligera, limita ABR al
 tamaño visible, activa fuentes a 600 px del viewport e intenta recuperar red o
 decodificación antes del fallback. El runtime publicado está fijado y servido
@@ -6243,24 +6257,25 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   resumible y firma temporal; la API key nunca llega al navegador. En cuentas
   estándar, backend crea además el espejo Storage sin cargar el archivo completo
   en memoria. El perfil premium conserva el máster en Stream y no lo descarga ni
-  lo vuelve a subir a través de Render: preview y publicado consumen HLS directo.
-  Publicado usa la playlist HLS validada de Stream dentro del mismo reproductor.
-  Editor y preview prefieren el espejo MP4 de Storage cuando existe para no
-  depender de hls.js ni de un manifiesto todavía en proceso; un asset premium
-  Stream-only conserva HLS porque deliberadamente no tiene copia. Cuando
+  lo vuelve a subir a través de Render. Publicado usa la playlist HLS validada de
+  Stream dentro del mismo reproductor para audiencia normal. Editor, preview y
+  cualquier URL pública con `no_track` usan exclusivamente el espejo MP4 de
+  Storage y nunca solicitan Stream; un asset premium Stream-only queda no
+  disponible en ese modo porque deliberadamente no tiene copia. Cuando
   publicado elige HLS, conecta además el MP4 como recuperación automática ante
   un error fatal, falta de soporte o falla de carga del runtime. Publicar nunca
   sustituye un video nativo listo por el iframe visual de Stream: conserva
   exactamente el botón, colores, barra, controles, acciones y formulario
-  configurados. Editor y preview mantienen tracking apagado; publicado envía los
-  eventos first-party de video y conserva los ids del asset y de Stream.
+  configurados. Editor y preview mantienen tracking y entrega Stream apagados;
+  publicado para audiencia real envía los eventos first-party de video y conserva
+  los ids del asset y de Stream.
   El HTML importado inyecta el mismo stylesheet y el mismo runtime de reproductor
   que el sitio construido en el editor: preview silencioso en loop, detección de
   orientación, HLS, play/pausa, volumen, velocidad, progreso, barra responsive,
   aviso de sonido y formulario sobre video. El runtime de acciones por tiempo es
   adicional y no sustituye al runtime del reproductor. La vista `srcDoc` embebida
-  dentro del editor carga el MP4 estable o, para Stream-only, HLS, y respeta
-  preview, loop, autoplay,
+  dentro del editor carga el MP4 estable; si el asset es Stream-only muestra el
+  estado de preparación sin tocar el proveedor, y respeta preview, loop, autoplay,
   controles y animaciones para que la edición sea fiel al resultado publicado.
   El teaser automático espera a que exista metadata, pero no se bloquea esperando
   un primer cuadro antes de ordenar el seek y el play: con `preload="metadata"`
@@ -6313,10 +6328,11 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   siguiente intento de subida. Los videos
   legacy respaldados solo por Storage conservan ese MP4 dentro del reproductor
   nativo de Ristak. Los videos estándar sincronizados lo usan directamente en
-  editor/preview y como recuperación automática de HLS en publicado. Player.js queda como compatibilidad
-  para un asset Stream-only que todavía no tiene espejo y para embeds Bunny
-  externos sin archivo Storage asociado; las acciones del reproductor nativo se
-  conectan directamente al elemento de video.
+  editor/preview y como recuperación automática de HLS en publicado. Player.js
+  queda como compatibilidad pública para un asset Stream-only que todavía no
+  tiene espejo y para embeds Bunny externos sin archivo Storage asociado; el
+  modo `no_track` no lo carga. Las acciones del reproductor nativo se conectan
+  directamente al elemento de video.
 - `video` con `data-rstk-native-render="custom"`: conserva literalmente el
   frontend del HTML importado y sustituye server-side únicamente el
   `<video data-rstk-video-media>` por el mismo elemento conectado a Media/Bunny.
@@ -7395,8 +7411,9 @@ Capacidades:
   no pueden colarse por encima de 1 GB.
 - Mientras sube, un TUS directo vive como `bunny_stream`. En estándar, al
   finalizar queda como `bunny`, con `bunny_path` y `public_url` de Storage. En
-  premium permanece `bunny_stream` y preview/publicado reproducen el HLS
-  adaptativo validado sin que el máster atraviese Render. La identidad Stream y
+  premium permanece `bunny_stream`: publicado normal reproduce el HLS adaptativo
+  validado sin que el máster atraviese Render y `no_track` queda no disponible
+  al no existir copia Storage. La identidad Stream y
   `stream.delivery.playlistUrl` permanecen en metadata para render y analíticas.
 - La política interna de media premium se resuelve por el correo normalizado del
   dueño configurado por Installer, nunca por el empleado conectado. Ese perfil

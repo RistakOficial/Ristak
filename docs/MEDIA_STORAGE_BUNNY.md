@@ -259,8 +259,9 @@ another account.
   authenticated original into Bunny Storage without buffering the full file in
   RAM, which creates their MP4 recovery source. Premium media accounts
   do not relay that large original through Render or duplicate it in Storage:
-  the Stream master is retained by Bunny and its adaptive HLS feeds preview and
-  published playback directly. When Sites selects an existing video from Bunny
+  the Stream master is retained by Bunny and its adaptive HLS feeds normal
+  published playback directly; no-track render stays unavailable because there
+  is intentionally no Storage copy. When Sites selects an existing video from Bunny
   Storage, the association completes immediately and
   `POST /api/media/assets/:id/stream/queue` asks Bunny Stream to fetch the CDN URL
   asynchronously. Bunny transfers that source directly; Render never downloads
@@ -275,15 +276,17 @@ another account.
   the selection path for an existing Storage video.
 - When Bunny exposes playback data, Ristak stores the validated adaptive HLS URL
   under `metadata_json.stream.delivery.playlistUrl` and its poster under
-  `metadata_json.stream.delivery.posterUrl`. Editor, preview URL and published
-  Sites all prefer that HLS source inside the native Ristak player. The poster is
+  `metadata_json.stream.delivery.posterUrl`. Published Sites prefer that HLS
+  source inside the native Ristak player for audiencia real. The poster is
   visible before the first segment arrives, so a slow connection does not look
   like an empty video. Standard accounts attach the Storage MP4 only as an
   automatic recovery source: after two bounded network retries or two media-error
   recoveries, a fatal HLS failure changes the same `<video>` to MP4 instead of
-  leaving it unusable. Editor/preview keep tracking disabled. Premium Stream-only
-  assets deliberately have no Storage duplicate and use their validated HLS in
-  every rendering mode.
+  leaving it unusable. Editor, preview and every request `no_track` use only the
+  Storage MP4 and never request Stream, so provider statistics are not polluted
+  even when the public URL includes `?no_track=1`. Premium Stream-only assets
+  deliberately have no Storage duplicate: they use validated HLS for audiencia
+  pública normal and stay unavailable in `no_track` until a Storage source exists.
 - Imported HTML Sites are code-first: pasting complete HTML or uploading an
   HTML/ZIP creates the site/pages and detects media slots before any Media asset
   is selected. `data-rstk-asset-id` and `data-rstk-background-asset-id` declare
@@ -358,8 +361,9 @@ another account.
   authenticated preview URL and published site; Bunny supplies the media/HLS,
   not the visual chrome.
 - Native video blocks use validated HLS inside the same customizable Ristak
-  player whenever Bunny has finished preparing it, in editor, preview and live.
-  The Storage MP4 is a recovery source, not the normal preview path.
+  player whenever Bunny has finished preparing it for normal live audience.
+  Editor, preview and public URLs marked `no_track` select Storage directly;
+  Storage is also the recovery source for normal published HLS playback.
   The right-side video setting **Resolución inteligente** defaults to enabled.
   Its editor copy explains the playback behavior without exposing the storage
   provider: HLS adapts bitrate and resolution to the connection. When disabled,
@@ -390,8 +394,9 @@ another account.
   than seeking across the full file, keeping bandwidth available for the teaser.
   This choice does not surrender the saved button, colors, controls, video
   actions or form gate to a provider iframe. Preview playback loads the real
-  media but keeps Ristak tracking disabled; published playback emits first-party
-  video events while preserving the Media asset and Stream ids. Published Sites
+  Storage media but keeps Ristak tracking and Stream delivery disabled;
+  published audience playback emits first-party video events while preserving
+  the Media asset and Stream ids. Published Sites
   self-host the pinned `hls.js` runtime at
   `/api/sites/public/video-engine/hls-1.6.16.min.js` with an immutable cache,
   instead of depending on a third-party JavaScript CDN. Esa ruta publica debe
@@ -462,6 +467,16 @@ Analytics derives `averageStartupSeconds`, `bufferingEvents`,
 `qoePlaybackSamples` as the denominator so historical playbacks without the new
 telemetry do not fabricate a zero; editor and preview continue to emit none of
 these events.
+
+Sites Analytics builds its video inventory from current usage, not only from the
+upload's original `module_entity_id`: it includes HTML content bindings, explicit
+block asset IDs and canonical Storage URLs in video blocks. Shared assets expose
+all published origin Sites. Storage-only assets remain measurable first-party;
+new renders attach their Media ID, and legacy events without IDs can be resolved
+from the current block only when they occurred after that block's latest binding
+update. For a selected Stream asset, Ristak may query Bunny's statistics and show
+them in a separately labeled provider panel. Provider views/watch time never
+replace the first-party ledger, including when Bunny returns zero.
 
 ## App media explorer
 

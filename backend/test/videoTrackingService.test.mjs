@@ -21,6 +21,76 @@ test('video detail uses normalized PostgreSQL-compatible block grouping', async 
   )
 })
 
+test('video analytics safely recovers a Storage asset from the current site block URL', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const siteId = `site_video_url_recovery_${suffix}`
+  const blockId = `block_video_url_recovery_${suffix}`
+  const assetId = `asset_video_url_recovery_${suffix}`
+  const storageUrl = `https://media.example.test/${assetId}.mp4`
+  const bindingUpdatedAt = new Date().toISOString()
+  const oldPlaybackId = `playback_before_binding_${suffix}`
+  const currentPlaybackId = `playback_after_binding_${suffix}`
+
+  try {
+    await db.run(
+      `INSERT INTO public_sites (id, name, slug, site_type, status, theme_json)
+       VALUES (?, 'Sitio con video Storage', ?, 'landing_page', 'published', ?)`,
+      [siteId, `${siteId}-slug`, JSON.stringify({ pageMode: 'website' })]
+    )
+    await db.run(
+      `INSERT INTO media_assets (
+        id, business_id, original_filename, stored_filename, bunny_path, public_url,
+        mime_type, media_type, extension, size_original, size_processed, quota_size,
+        status, storage_provider, module, is_public, metadata_json
+      ) VALUES (?, 'default', 'storage.mp4', 'storage.mp4', ?, ?, 'video/mp4',
+        'video', 'mp4', 100, 100, 100, 'ready', 'bunny', 'media', 1, '{}')`,
+      [assetId, `accounts/default/media/${assetId}.mp4`, storageUrl]
+    )
+    await db.run(
+      `INSERT INTO public_site_blocks (
+        id, site_id, block_type, label, content, settings_json, sort_order, updated_at
+      ) VALUES (?, ?, 'video', 'Agenda', '', ?, 0, ?)`,
+      [blockId, siteId, JSON.stringify({ mediaUrl: storageUrl }), bindingUpdatedAt]
+    )
+
+    const recordPlayback = async (playbackId, timestamp) => {
+      await recordVideoPlaybackEvent({
+        visitor_id: `visitor_${playbackId}`,
+        session_id: `session_${playbackId}`,
+        event_name: 'video_play',
+        ts: timestamp,
+        data: {
+          event_id: `${playbackId}:play`,
+          event_sequence: 1,
+          ingestion_version: 2,
+          playback_id: playbackId,
+          site_id: siteId,
+          block_id: blockId,
+          duration_seconds: 60
+        }
+      })
+    }
+    await recordPlayback(oldPlaybackId, Date.parse(bindingUpdatedAt) - 60_000)
+    await recordPlayback(currentPlaybackId, Date.parse(bindingUpdatedAt) + 1_000)
+
+    const aggregate = await getVideoPlaybackAggregate({ assetIds: [assetId] })
+    assert.equal(aggregate.summary.playbackStarts, 1)
+    assert.equal(aggregate.summary.playActions, 1)
+    assert.equal(aggregate.byAssetId[assetId]?.playbackStarts, 1)
+
+    const detail = await getVideoPlaybackViewers({ assetId, limit: 10 })
+    assert.equal(detail.summary.playbackStarts, 1)
+    assert.equal(detail.viewers.length, 1)
+    assert.equal(detail.viewers[0].visitorId, `visitor_${currentPlaybackId}`)
+  } finally {
+    await db.run('DELETE FROM video_playback_events WHERE playback_id IN (?, ?)', [oldPlaybackId, currentPlaybackId]).catch(() => undefined)
+    await db.run('DELETE FROM video_playback_sessions WHERE playback_id IN (?, ?)', [oldPlaybackId, currentPlaybackId]).catch(() => undefined)
+    await db.run('DELETE FROM public_site_blocks WHERE id = ?', [blockId]).catch(() => undefined)
+    await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+    await db.run('DELETE FROM public_sites WHERE id = ?', [siteId]).catch(() => undefined)
+  }
+})
+
 test('video detail merges null and blank block ids into one unknown breakdown', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const assetId = `asset_video_unknown_block_${suffix}`

@@ -657,7 +657,23 @@ Los eventos de calidad adjuntan, cuando el navegador lo permite,
 `connection_type`, `downlink_mbps`, `rtt_ms` y `save_data`. Son señales
 aproximadas de diagnóstico, no una medición contractual del proveedor ni una
 promesa de velocidad. Preview/editor conserva tracking apagado y no contamina
-estas métricas.
+estas métricas. Además, cualquier render `no_track` —incluida una URL pública
+abierta con `?no_track=1`— usa exclusivamente el MP4 de Bunny Storage. No carga
+la playlist ni el iframe de Bunny Stream, porque apagar sólo `/video-event` no
+evitaría que el proveedor contabilizara esa reproducción. Un asset Stream-only
+sin copia Storage queda temporalmente no disponible en ese modo.
+
+El inventario de Analíticas no depende del ownership histórico del upload. Un
+video pertenece al alcance de un Site cuando existe cualquiera de estas
+relaciones actuales: `module_entity_id` legacy, binding estable en
+`public_site_content_assets`, `mediaAssetId` del bloque o URL Storage canónica en
+un bloque `video`. Un mismo asset puede tener varios orígenes y el filtro debe
+conservarlos todos. Los bloques por URL se resuelven también al renderizar para
+que eventos nuevos guarden `media_asset_id`, incluso si el asset sólo tiene
+Storage. Para eventos históricos que llegaron sin asset ni Stream, la lectura
+puede recuperar el asset desde el bloque actual únicamente si el evento ocurrió
+después de `public_site_blocks.updated_at`; nunca atribuye actividad anterior a
+una reasociación posterior.
 
 El histórico previo a v2 puede sumar retries dos veces en la proyección y, al
 mismo tiempo, perder segundos o eventos repetidos en el ledger. No se debe
@@ -666,7 +682,10 @@ backfillear una fuente desde la otra. La respuesta declara `quality` como
 mostrarse con advertencia. Bunny u otro proveedor puede aparecer como comparación
 separada, nunca como fallback de la medición first-party. El detalle de un asset
 acepta `siteId`: si se eligió un origen exacto, todas sus métricas y espectadores
-quedan limitados a ese sitio aunque el mismo video exista en otros.
+quedan limitados a ese sitio aunque el mismo video exista en otros. La interfaz
+solicita la estadística de Bunny sólo para el video seleccionado y la rotula como
+comparación del proveedor; una respuesta en cero se muestra como cero y jamás
+borra reproducciones first-party reales.
 
 ### Matriz Rápida De Diagnóstico
 

@@ -616,6 +616,7 @@ export interface SitesVideoAnalyticsDetail {
 
 export interface SitesVideoAnalyticsInput extends MediaStreamAnalyticsInput {
   siteId?: string
+  includeProviderAnalytics?: boolean
 }
 
 export interface SitesAnalyticsSiteScope {
@@ -1827,6 +1828,9 @@ export const sitesService = {
     if (input.hourly !== undefined) params.hourly = String(input.hourly)
     if (input.viewerLimit) params.viewerLimit = String(input.viewerLimit)
     if (input.siteId) params.siteId = input.siteId
+    if (input.includeProviderAnalytics !== undefined) {
+      params.includeProviderAnalytics = String(input.includeProviderAnalytics)
+    }
     return apiClient.get<SitesVideoAnalyticsDetail>(`/sites/video-analytics/${encodeURIComponent(assetId)}`, { params })
   },
 

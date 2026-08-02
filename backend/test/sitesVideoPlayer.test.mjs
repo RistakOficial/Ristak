@@ -1398,6 +1398,37 @@ test('video player keeps the customized Ristak player in preview and live for St
   }
 })
 
+test('Storage-only site video preserves its Media asset identity in live tracking', async () => {
+  const assetId = `site_storage_identity_${Date.now()}`
+  const storageUrl = `https://cdn.example.com/sites/${assetId}.mp4`
+
+  try {
+    await db.run(
+      `INSERT INTO media_assets (
+        id, business_id, original_filename, stored_filename, bunny_path,
+        public_url, mime_type, media_type, extension,
+        size_original, size_processed, quota_size, status,
+        storage_provider, module, module_entity_id, is_public, metadata_json
+      ) VALUES (?, 'default', 'storage.mp4', 'storage.mp4', ?, ?, 'video/mp4', 'video', 'mp4',
+        128, 128, 128, 'ready', 'bunny', 'media', NULL, 1, '{}')`,
+      [assetId, `media/${assetId}.mp4`, storageUrl]
+    )
+
+    const site = baseSite({ mediaUrl: storageUrl })
+    const liveHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+    assert.match(liveHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(storageUrl)}"`))
+    assert.match(liveHtml, new RegExp(`data-rstk-media-asset-id="${escapeRegExp(assetId)}"`))
+    assert.match(liveHtml, /data-rstk-video-provider="html5_video"/)
+    assert.match(liveHtml, /data-rstk-video-track="true"/)
+  } finally {
+    await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+  }
+})
+
 test('video player auto orientation uses portrait dimensions from storage assets', async () => {
   const assetId = `site_portrait_stream_${Date.now()}`
   const storageUrl = `https://cdn.example.com/sites/${assetId}.mp4`
@@ -1714,7 +1745,7 @@ test('live Bunny Stream iframe uses the same editable video frame settings', asy
   assert.doesNotMatch(html, /class="[^"]*\brstk-video-player\b/)
 })
 
-test('live render keeps a synced Storage video inside the customized Ristak player', async () => {
+test('no-track render uses Storage while live audience uses Bunny HLS', async () => {
   const assetId = `site_stream_asset_${Date.now()}`
   const storageUrl = `https://cdn.example.com/sites/${assetId}.mp4`
   const streamVideoId = `stream-${assetId}`
@@ -1765,9 +1796,9 @@ test('live render keeps a synced Storage video inside the customized Ristak play
 
     const escapedStorageUrl = storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const posterUrl = `https://vz-premium.b-cdn.net/${streamVideoId}/thumbnail.jpg`
-    assert.doesNotMatch(previewHtml, new RegExp(`<video[^>]*\\ssrc="${escapedStorageUrl}"`))
-    assert.match(previewHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
-    assert.match(previewHtml, new RegExp(`data-rstk-video-fallback-src="${escapedStorageUrl}"`))
+    assert.match(previewHtml, new RegExp(`data-rstk-video-src="${escapedStorageUrl}"`))
+    assert.doesNotMatch(previewHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
+    assert.doesNotMatch(previewHtml, /data-rstk-video-fallback-src=/)
     assert.match(previewHtml, new RegExp(`poster="${escapeRegExp(posterUrl)}"`))
     assert.match(previewHtml, /data-rstk-video-adaptive-quality="true"/)
     assert.match(previewHtml, /\/api\/sites\/public\/video-engine\/hls-1\.6\.16\.min\.js/)
@@ -1802,7 +1833,7 @@ test('live render keeps a synced Storage video inside the customized Ristak play
   }
 })
 
-test('premium Stream-only video uses adaptive HLS in preview and live without relaying an MP4', async () => {
+test('premium Stream-only video stays disabled in no-track and uses HLS for live audience', async () => {
   const assetId = `site_premium_stream_${Date.now()}`
   const streamVideoId = `stream-${assetId}`
   const embedUrl = `https://player.mediadelivery.net/embed/123456/${streamVideoId}`
@@ -1849,9 +1880,8 @@ test('premium Stream-only video uses adaptive HLS in preview and live without re
       trackingEnabled: false,
       preview: true
     })
-    assert.match(previewHtml, /rstk-video-player/)
-    assert.match(previewHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
-    assert.match(previewHtml, /\/api\/sites\/public\/video-engine\/hls-1\.6\.16\.min\.js/)
+    assert.match(previewHtml, /data-rstk-preview-stream-disabled="true"/)
+    assert.doesNotMatch(previewHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
     assert.doesNotMatch(previewHtml, /data-rstk-video-track="true"/)
     assert.doesNotMatch(previewHtml, /player\.mediadelivery\.net\/embed/)
 
@@ -1870,7 +1900,7 @@ test('premium Stream-only video uses adaptive HLS in preview and live without re
   }
 })
 
-test('editor-style preview and live both use Bunny HLS with Storage as fallback', async () => {
+test('editor-style preview uses Storage and live uses Bunny HLS with Storage fallback', async () => {
   const assetId = `site_manual_stream_${Date.now()}`
   const storageUrl = `https://cdn.example.com/sites/${assetId}.mp4`
   const streamVideoId = `stream-${assetId}`
@@ -1919,9 +1949,9 @@ test('editor-style preview and live both use Bunny HLS with Storage as fallback'
     })
 
     const escapedStorageUrl = storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    assert.doesNotMatch(previewHtml, new RegExp(`<video[^>]*\\ssrc="${escapedStorageUrl}"`))
-    assert.match(previewHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
-    assert.match(previewHtml, new RegExp(`data-rstk-video-fallback-src="${escapedStorageUrl}"`))
+    assert.match(previewHtml, new RegExp(`data-rstk-video-src="${escapedStorageUrl}"`))
+    assert.doesNotMatch(previewHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
+    assert.doesNotMatch(previewHtml, /data-rstk-video-fallback-src=/)
     assert.match(previewHtml, /data-rstk-video-adaptive-quality="true"/)
     assert.match(previewHtml, /\/api\/sites\/public\/video-engine\/hls-1\.6\.16\.min\.js/)
     assert.doesNotMatch(previewHtml, /no_track=1/)

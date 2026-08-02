@@ -1301,6 +1301,59 @@ function playbackSiteLibrarySourceExpression(alias = 'ps') {
   END`
 }
 
+function playbackBlockJsonTextExpression(alias = 'video_block', key = '') {
+  if (isPostgresRuntime) {
+    return `BTRIM(COALESCE(ristak_safe_jsonb(${alias}.settings_json) ->> '${key}', ''))`
+  }
+  return `CASE
+    WHEN json_valid(${alias}.settings_json)
+    THEN TRIM(CAST(COALESCE(json_extract(${alias}.settings_json, '$.${key}'), '') AS TEXT))
+    ELSE ''
+  END`
+}
+
+function resolvedVideoEventAssetIdExpression(alias = 'e') {
+  const explicitAssetId = `COALESCE(
+    NULLIF(${playbackBlockJsonTextExpression('video_block', 'mediaAssetId')}, ''),
+    NULLIF(${playbackBlockJsonTextExpression('video_block', 'media_asset_id')}, '')
+  )`
+  const mediaUrl = `COALESCE(
+    NULLIF(${playbackBlockJsonTextExpression('video_block', 'mediaUrl')}, ''),
+    NULLIF(${playbackBlockJsonTextExpression('video_block', 'media_url')}, ''),
+    NULLIF(TRIM(COALESCE(video_block.content, '')), '')
+  )`
+  const happenedAfterCurrentBinding = isPostgresRuntime
+    ? `(${alias}.event_at)::timestamptz >= (video_block.updated_at)::timestamptz`
+    : `datetime(${alias}.event_at) >= datetime(video_block.updated_at)`
+
+  return `COALESCE(
+    NULLIF(${alias}.media_asset_id, ''),
+    CASE
+      WHEN COALESCE(${alias}.stream_video_id, '') = '' THEN (
+        SELECT candidate_media.id
+        FROM public_site_blocks video_block
+        INNER JOIN media_assets candidate_media ON (
+          candidate_media.public_url = ${mediaUrl}
+          OR (
+            ${mediaUrl} IS NULL
+            AND candidate_media.id = ${explicitAssetId}
+          )
+        )
+        WHERE video_block.id = ${alias}.block_id
+          AND video_block.site_id = ${alias}.site_id
+          AND video_block.block_type = 'video'
+          AND ${happenedAfterCurrentBinding}
+          AND candidate_media.media_type = 'video'
+          AND candidate_media.status = 'ready'
+          AND candidate_media.deleted_at IS NULL
+          AND candidate_media.is_public = 1
+        LIMIT 1
+      )
+      ELSE NULL
+    END
+  )`
+}
+
 function buildAggregatePlaybackWhere(assetIds, siteIds, siteScope, dateFilters = {}) {
   const params = []
   const conditions = []
@@ -1385,7 +1438,7 @@ function buildVideoEventScope({
   if (hiddenCondition) conditions.push(hiddenCondition)
 
   if (assetIds.length) {
-    conditions.push(`${alias}.media_asset_id IN (${assetIds.map(() => '?').join(',')})`)
+    conditions.push(`${resolvedVideoEventAssetIdExpression(alias)} IN (${assetIds.map(() => '?').join(',')})`)
     params.push(...assetIds)
   }
   if (streamVideoId) {
@@ -1464,6 +1517,7 @@ function buildVideoLedgerCte(scope, dateFilters = {}) {
       WITH scoped_events AS (
         SELECT
           e.*,
+          ${resolvedVideoEventAssetIdExpression('e')} AS resolved_media_asset_id,
           ROW_NUMBER() OVER (
             PARTITION BY e.playback_id
             ORDER BY e.event_at DESC, COALESCE(e.event_sequence, 0) DESC, e.id DESC
@@ -1481,7 +1535,7 @@ function buildVideoLedgerCte(scope, dateFilters = {}) {
       playback_facts AS (
         SELECT
           playback_id,
-          MAX(media_asset_id) AS asset_id,
+          MAX(resolved_media_asset_id) AS asset_id,
           MAX(stream_video_id) AS stream_video_id,
           MAX(site_id) AS site_id,
           MAX(CASE WHEN playback_event_rank = 1 THEN public_page_id ELSE NULL END) AS public_page_id,
@@ -1529,7 +1583,7 @@ function buildVideoLedgerCte(scope, dateFilters = {}) {
              AND event_time_quality IN ('client_adjusted', 'server_fallback')
             THEN 1 ELSE 0
           END), 0) AS adjusted_time_event_count,
-          COUNT(DISTINCT media_asset_id) AS asset_context_count,
+          COUNT(DISTINCT resolved_media_asset_id) AS asset_context_count,
           COUNT(DISTINCT site_id) AS site_context_count
         FROM scoped_events
         GROUP BY playback_id

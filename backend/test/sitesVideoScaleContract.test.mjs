@@ -11,6 +11,7 @@ import {
   getVideoPlaybackAggregate,
   recordVideoPlaybackEvent
 } from '../src/services/videoTrackingService.js'
+import { getSitesVideoInventorySummary } from '../src/services/sitesService.js'
 
 const sitesControllerSourceUrl = new URL('../src/controllers/sitesController.js', import.meta.url)
 const sitesFrontendSourceUrl = new URL('../../frontend/src/pages/Sites/Sites.tsx', import.meta.url)
@@ -70,6 +71,118 @@ async function insertSitesVideoAsset({ id, businessId, siteId, streamVideoId, cr
     ]
   )
 }
+
+async function insertSharedStorageVideoAsset({ id, businessId, createdAt }) {
+  await db.run(
+    `INSERT INTO media_assets (
+       id, business_id, original_filename, stored_filename, bunny_path, folder_path,
+       public_url, mime_type, media_type, extension,
+       size_original, size_processed, quota_size, status, storage_provider,
+       module, module_entity_id, is_public, metadata_json, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, 'media/videos', ?, 'video/mp4', 'video', 'mp4',
+       100, 80, 80, 'ready', 'bunny', 'media', NULL, 1, '{}', ?, ?)`,
+    [
+      id,
+      businessId,
+      `${id}.mp4`,
+      `${id}.mp4`,
+      `accounts/${businessId}/media/videos/${id}.mp4`,
+      `https://media.example.test/${id}.mp4`,
+      createdAt,
+      createdAt
+    ]
+  )
+}
+
+test('el inventario reconoce bindings HTML, bloques por URL y videos compartidos entre sitios', async () => {
+  const marker = uniqueMarker('sites_video_current_relations')
+  const businessId = marker
+  const siteA = `${marker}_site_a`
+  const siteB = `${marker}_site_b`
+  const boundAssetId = `${marker}_asset_bound`
+  const blockAssetId = `${marker}_asset_block`
+  const createdAt = '2099-07-14T12:00:00.000Z'
+
+  try {
+    await db.run(
+      `INSERT INTO public_sites (id, name, slug, site_type, status, theme_json)
+       VALUES (?, 'HTML principal', ?, 'landing_page', 'published', ?),
+              (?, 'HTML secundario', ?, 'landing_page', 'published', ?)`,
+      [
+        siteA,
+        `${marker}-a`,
+        JSON.stringify({ pageMode: 'website', librarySource: 'html' }),
+        siteB,
+        `${marker}-b`,
+        JSON.stringify({ pageMode: 'website', librarySource: 'html' })
+      ]
+    )
+    await insertSharedStorageVideoAsset({ id: boundAssetId, businessId, createdAt })
+    await insertSharedStorageVideoAsset({ id: blockAssetId, businessId, createdAt })
+    await db.run(
+      `INSERT INTO public_site_content_assets (id, site_id, asset_key, label, kind, media_asset_id)
+       VALUES (?, ?, 'hero-video', 'Video principal', 'video', ?),
+              (?, ?, 'shared-video', 'Video compartido', 'video', ?)`,
+      [`${marker}_binding_a`, siteA, boundAssetId, `${marker}_binding_b`, siteB, boundAssetId]
+    )
+    await db.run(
+      `INSERT INTO public_site_blocks (id, site_id, block_type, label, content, settings_json, sort_order)
+       VALUES (?, ?, 'video', 'Video por URL', '', ?, 0)`,
+      [
+        `${marker}_block`,
+        siteA,
+        JSON.stringify({ mediaUrl: `https://media.example.test/${blockAssetId}.mp4` })
+      ]
+    )
+
+    const response = handlerResponse()
+    await getSitesVideoAssetsHandler({
+      query: { businessId, siteType: 'sites', landingMode: 'website', limit: '10' }
+    }, response.res)
+    const result = response.read()
+    assert.equal(result.statusCode, 200)
+    assert.deepEqual(
+      result.payload.data.items.map(asset => asset.id).sort(),
+      [blockAssetId, boundAssetId].sort()
+    )
+    const sharedAsset = result.payload.data.items.find(asset => asset.id === boundAssetId)
+    assert.deepEqual(
+      sharedAsset.metadata.analyticsSourceSites.map(site => site.id).sort(),
+      [siteA, siteB].sort()
+    )
+    assert.equal(sharedAsset.metadata.analyticsSourceSite.id, siteA)
+
+    const exactResponse = handlerResponse()
+    await getSitesVideoAssetsHandler({
+      query: {
+        businessId,
+        assetId: boundAssetId,
+        analyticsScope: '1',
+        siteType: 'sites',
+        landingMode: 'website',
+        siteId: siteB
+      }
+    }, exactResponse.res)
+    assert.equal(exactResponse.read().payload?.data?.metadata?.analyticsSourceSite?.id, siteB)
+
+    const inventory = await getSitesVideoInventorySummary({
+      businessId,
+      siteType: 'sites',
+      landingMode: 'website'
+    })
+    assert.deepEqual(inventory, {
+      total: 2,
+      streamReady: 0,
+      storageOnly: 2,
+      originsTotal: 2
+    })
+  } finally {
+    await db.run('DELETE FROM public_site_content_assets WHERE site_id IN (?, ?)', [siteA, siteB]).catch(() => undefined)
+    await db.run('DELETE FROM public_site_blocks WHERE site_id IN (?, ?)', [siteA, siteB]).catch(() => undefined)
+    await db.run('DELETE FROM media_assets WHERE business_id = ?', [businessId]).catch(() => undefined)
+    await db.run('DELETE FROM public_sites WHERE id IN (?, ?)', [siteA, siteB]).catch(() => undefined)
+  }
+})
 
 test('/sites/video-assets pagina una sola ventana y resuelve streamVideoId aunque quede fuera de la primera página', async () => {
   const marker = uniqueMarker('sites_video_page')
@@ -463,6 +576,8 @@ test('el frontend pide previews por streamVideoId y resume Sites por scope sin e
   assert.doesNotMatch(frontendSource, /loadSiteVideoAssetsForPreview/)
   assert.doesNotMatch(frontendSource, /analyticsSiteIds\.has\(sourceSiteId\)/)
   assert.match(frontendSource, /analyticsSourceSite/)
+  assert.match(frontendSource, /analyticsSourceSites/)
+  assert.match(frontendSource, /getMediaSourceSiteIds/)
   assert.match(frontendSource, /getMediaSourceSiteName/)
   assert.match(frontendSource, /analyticsVideoOriginOptions/)
 
@@ -510,9 +625,11 @@ test('el frontend pide previews por streamVideoId y resume Sites por scope sin e
   const videoDetailCallEnd = frontendSource.indexOf('})\n      .then', videoDetailCallStart)
   const videoDetailCall = frontendSource.slice(videoDetailCallStart, videoDetailCallEnd)
   assert.match(videoDetailCall, /siteId:\s*sitesAnalyticsSiteId\s*\|\|\s*undefined/)
+  assert.match(videoDetailCall, /includeProviderAnalytics:\s*true/)
 
   const videoDetailServiceStart = frontendServiceSource.indexOf('getVideoAnalytics(assetId: string')
   const videoDetailServiceEnd = frontendServiceSource.indexOf('\n  verifyDomain(', videoDetailServiceStart)
   const videoDetailServiceSource = frontendServiceSource.slice(videoDetailServiceStart, videoDetailServiceEnd)
   assert.match(videoDetailServiceSource, /if \(input\.siteId\) params\.siteId = input\.siteId/)
+  assert.match(videoDetailServiceSource, /params\.includeProviderAnalytics/)
 })

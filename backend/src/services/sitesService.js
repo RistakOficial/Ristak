@@ -10066,15 +10066,7 @@ function buildAnalyticsSiteSelectorScope({
       params.push(normalizedLandingMode)
     }
   } else if (requireVideoAsset) {
-    clauses.push(`EXISTS (
-      SELECT 1
-      FROM media_assets analytics_media
-      WHERE analytics_media.module_entity_id = ${alias}.id
-        AND analytics_media.module IN ('sites', 'forms')
-        AND analytics_media.media_type = 'video'
-        AND analytics_media.status = 'ready'
-        AND analytics_media.deleted_at IS NULL
-    )`)
+    clauses.push(getSitesVideoSourceExistsSql(alias))
   }
 
   return {
@@ -10587,19 +10579,99 @@ function decodeSitesVideoListCursor(value = '', expectedScope = '') {
   }
 }
 
-function attachSitesVideoSourceMetadata(asset, sourceSiteRow = {}) {
-  if (!asset) return null
+function getSitesVideoBlockSettingTextExpression(alias = 'b', key = '') {
+  const source = getSafeSiteJsonExpression(`${alias}.settings_json`)
+  return databaseDialect === 'postgres'
+    ? `BTRIM(COALESCE(${source} ->> '${key}', ''))`
+    : `TRIM(CAST(COALESCE(json_extract(${source}, '$.${key}'), '') AS TEXT))`
+}
+
+function getSitesVideoSourceUnionSql() {
+  const mediaAssetId = `COALESCE(
+    NULLIF(${getSitesVideoBlockSettingTextExpression('video_block', 'mediaAssetId')}, ''),
+    NULLIF(${getSitesVideoBlockSettingTextExpression('video_block', 'media_asset_id')}, '')
+  )`
+  const mediaUrl = `COALESCE(
+    NULLIF(${getSitesVideoBlockSettingTextExpression('video_block', 'mediaUrl')}, ''),
+    NULLIF(${getSitesVideoBlockSettingTextExpression('video_block', 'media_url')}, ''),
+    NULLIF(TRIM(COALESCE(video_block.content, '')), '')
+  )`
+
+  // Una relación actual gana sobre el ownership histórico del upload. Esto
+  // cubre Media compartida, bindings estables de HTML y bloques que todavía
+  // guardan la URL Storage sin haber persistido mediaAssetId.
+  return `
+    SELECT legacy_media.id AS media_asset_id, legacy_media.module_entity_id AS site_id
+    FROM media_assets legacy_media
+    WHERE legacy_media.module IN ('sites', 'forms')
+      AND legacy_media.module_entity_id IS NOT NULL
+      AND legacy_media.module_entity_id != ''
+    UNION
+    SELECT content_asset.media_asset_id, content_asset.site_id
+    FROM public_site_content_assets content_asset
+    WHERE content_asset.media_asset_id IS NOT NULL
+      AND content_asset.media_asset_id != ''
+    UNION
+    SELECT explicit_media.id, video_block.site_id
+    FROM public_site_blocks video_block
+    INNER JOIN media_assets explicit_media ON explicit_media.id = ${mediaAssetId}
+    WHERE video_block.block_type = 'video'
+      AND ${mediaUrl} IS NULL
+    UNION
+    SELECT url_media.id, video_block.site_id
+    FROM public_site_blocks video_block
+    INNER JOIN media_assets url_media ON url_media.public_url = ${mediaUrl}
+    WHERE video_block.block_type = 'video'
+  `
+}
+
+function getSitesVideoSourceCteSql(alias = 'sites_video_sources') {
+  return `${alias} AS (${getSitesVideoSourceUnionSql()})`
+}
+
+function getSitesVideoSourceExistsSql(siteAlias = 's') {
+  return `EXISTS (
+    SELECT 1
+    FROM (${getSitesVideoSourceUnionSql()}) analytics_video_sources
+    INNER JOIN media_assets analytics_media
+      ON analytics_media.id = analytics_video_sources.media_asset_id
+    WHERE analytics_video_sources.site_id = ${siteAlias}.id
+      AND analytics_media.media_type = 'video'
+      AND analytics_media.status = 'ready'
+      AND analytics_media.deleted_at IS NULL
+      AND analytics_media.is_public = 1
+  )`
+}
+
+function mapSitesVideoSourceMetadata(sourceSiteRow = {}) {
   const sourceTheme = parseJson(sourceSiteRow.source_site_theme_json, {})
+  return {
+    id: cleanString(sourceSiteRow.source_site_id),
+    name: cleanString(sourceSiteRow.source_site_name) || 'Sitio sin nombre',
+    siteType: cleanString(sourceSiteRow.source_site_type),
+    pageMode: cleanString(sourceTheme.pageMode) || 'funnel'
+  }
+}
+
+function attachSitesVideoSourceMetadata(asset, sourceSiteRows = []) {
+  if (!asset) return null
+  const rows = Array.isArray(sourceSiteRows) ? sourceSiteRows : [sourceSiteRows]
+  const sourceSites = []
+  const seen = new Set()
+  for (const row of rows) {
+    const sourceSite = mapSitesVideoSourceMetadata(row)
+    if (!sourceSite.id || seen.has(sourceSite.id)) continue
+    seen.add(sourceSite.id)
+    sourceSites.push(sourceSite)
+  }
+  if (!sourceSites.length) return null
+
   return {
     ...asset,
     metadata: {
       ...(asset.metadata || {}),
-      analyticsSourceSite: {
-        id: cleanString(sourceSiteRow.source_site_id),
-        name: cleanString(sourceSiteRow.source_site_name) || 'Sitio sin nombre',
-        siteType: cleanString(sourceSiteRow.source_site_type),
-        pageMode: cleanString(sourceTheme.pageMode) || 'funnel'
-      }
+      analyticsSourceSite: sourceSites[0],
+      analyticsSourceSites: sourceSites
     }
   }
 }
@@ -10626,15 +10698,13 @@ export async function getSitesVideoAsset({
   const [asset = null] = normalizedStreamVideoId
     ? await findMediaAssetsByBunnyStreamVideoIds([normalizedStreamVideoId], {
         businessId: normalizedBusinessId,
-        modules: ['sites', 'forms']
+        modules: ['sites', 'forms', 'landing', 'media']
       })
     : await findMediaAssetsByIds([normalizedAssetId])
 
-  const module = cleanString(asset?.module).toLowerCase()
   if (
     !asset ||
     cleanString(asset.businessId || 'default') !== normalizedBusinessId ||
-    !['sites', 'forms'].includes(module) ||
     cleanString(asset.mediaType).toLowerCase() !== 'video'
   ) {
     return null
@@ -10645,8 +10715,8 @@ export async function getSitesVideoAsset({
     return null
   }
 
-  const sourceClauses = ['ps.id = ?']
-  const sourceParams = [cleanString(asset.moduleEntityId)]
+  const sourceClauses = ['video_sources.media_asset_id = ?']
+  const sourceParams = [asset.id]
   if (requireAnalyticsScope) {
     const analyticsSiteScope = buildAnalyticsSiteSelectorScope({
       siteType,
@@ -10665,17 +10735,19 @@ export async function getSitesVideoAsset({
     sourceClauses.push("ps.status != 'archived'")
   }
 
-  const sourceSite = await db.get(`
+  const sourceSites = await db.all(`
+    WITH ${getSitesVideoSourceCteSql('video_sources')}
     SELECT
       ps.id AS source_site_id,
       ps.name AS source_site_name,
       ps.site_type AS source_site_type,
       ps.theme_json AS source_site_theme_json
-    FROM public_sites ps
+    FROM video_sources
+    INNER JOIN public_sites ps ON ps.id = video_sources.site_id
     WHERE ${sourceClauses.join(' AND ')}
-    LIMIT 1
+    ORDER BY ps.updated_at DESC, ps.id ASC
   `, sourceParams)
-  return sourceSite ? attachSitesVideoSourceMetadata(asset, sourceSite) : null
+  return sourceSites.length ? attachSitesVideoSourceMetadata(asset, sourceSites) : null
 }
 
 /**
@@ -10713,58 +10785,87 @@ export async function listSitesVideoAssets({
   const cursorTimestampExpression = databaseDialect === 'postgres'
     ? `(${timestampExpression})::text`
     : timestampExpression
-  const clauses = [
+  const assetClauses = [
     'm.business_id = ?',
-    "m.module IN ('sites', 'forms')",
     "m.media_type = 'video'",
     "m.status = 'ready'",
     'm.deleted_at IS NULL',
+    'm.is_public = 1'
+  ]
+  const assetParams = [normalizedBusinessId]
+  const siteClauses = [
     "ps.status = 'published'",
     'ps.id != ?',
     `${getSiteLibrarySourceSqlExpression('ps')} != 'calendar'`
   ]
-  const params = [normalizedBusinessId, CALENDAR_DEFAULT_FORM_SITE_ID]
+  const siteParams = [CALENDAR_DEFAULT_FORM_SITE_ID]
 
   if (normalizedSiteId) {
-    clauses.push('ps.id = ?')
-    params.push(normalizedSiteId)
+    siteClauses.push('ps.id = ?')
+    siteParams.push(normalizedSiteId)
   }
   if (normalizedType === 'forms') {
-    clauses.push("ps.site_type IN ('standard_form', 'interactive_form')")
+    siteClauses.push("ps.site_type IN ('standard_form', 'interactive_form')")
   } else if (normalizedType === 'sites') {
-    clauses.push("ps.site_type = 'landing_page'")
+    siteClauses.push("ps.site_type = 'landing_page'")
     if (normalizedLandingMode) {
       const pageModeExpression = getSitePageModeSqlExpression('ps')
-      clauses.push(`${pageModeExpression} = ?`)
-      params.push(normalizedLandingMode)
+      siteClauses.push(`${pageModeExpression} = ?`)
+      siteParams.push(normalizedLandingMode)
     }
   }
 
   if (decodedCursor) {
-    clauses.push(`(${timestampExpression} < ? OR (${timestampExpression} = ? AND m.id < ?))`)
-    params.push(decodedCursor.createdAt, decodedCursor.createdAt, decodedCursor.id)
+    assetClauses.push(`(${timestampExpression} < ? OR (${timestampExpression} = ? AND m.id < ?))`)
+    assetParams.push(decodedCursor.createdAt, decodedCursor.createdAt, decodedCursor.id)
   }
 
   const rows = await db.all(`
+    WITH ${getSitesVideoSourceCteSql('video_sources')}
     SELECT
       m.id,
-      ${cursorTimestampExpression} AS cursor_created_at,
-      ps.id AS source_site_id,
-      ps.name AS source_site_name,
-      ps.site_type AS source_site_type,
-      ps.theme_json AS source_site_theme_json
+      ${cursorTimestampExpression} AS cursor_created_at
     FROM media_assets m
-    INNER JOIN public_sites ps ON ps.id = m.module_entity_id
-    WHERE ${clauses.join(' AND ')}
+    WHERE ${assetClauses.join(' AND ')}
+      AND EXISTS (
+        SELECT 1
+        FROM video_sources
+        INNER JOIN public_sites ps ON ps.id = video_sources.site_id
+        WHERE video_sources.media_asset_id = m.id
+          AND ${siteClauses.join(' AND ')}
+      )
     ORDER BY ${timestampExpression} DESC, m.id DESC
     LIMIT ?
-  `, [...params, safeLimit + 1])
+  `, [...assetParams, ...siteParams, safeLimit + 1])
   const hasMore = rows.length > safeLimit
   const pageRows = rows.slice(0, safeLimit)
   const assets = await findMediaAssetsByIds(pageRows.map(row => row.id))
   const assetsById = new Map(assets.map(asset => [asset.id, asset]))
+  const pageAssetIds = pageRows.map(row => row.id)
+  const sourceRows = pageAssetIds.length
+    ? await db.all(`
+        WITH ${getSitesVideoSourceCteSql('video_sources')}
+        SELECT
+          video_sources.media_asset_id,
+          ps.id AS source_site_id,
+          ps.name AS source_site_name,
+          ps.site_type AS source_site_type,
+          ps.theme_json AS source_site_theme_json
+        FROM video_sources
+        INNER JOIN public_sites ps ON ps.id = video_sources.site_id
+        WHERE video_sources.media_asset_id IN (${pageAssetIds.map(() => '?').join(', ')})
+          AND ${siteClauses.join(' AND ')}
+        ORDER BY ps.updated_at DESC, ps.id ASC
+      `, [...pageAssetIds, ...siteParams])
+    : []
+  const sourceRowsByAssetId = new Map()
+  for (const row of sourceRows) {
+    const sourceAssetId = cleanString(row.media_asset_id)
+    if (!sourceRowsByAssetId.has(sourceAssetId)) sourceRowsByAssetId.set(sourceAssetId, [])
+    sourceRowsByAssetId.get(sourceAssetId).push(row)
+  }
   const items = pageRows
-    .map(row => attachSitesVideoSourceMetadata(assetsById.get(row.id), row))
+    .map(row => attachSitesVideoSourceMetadata(assetsById.get(row.id), sourceRowsByAssetId.get(row.id) || []))
     .filter(Boolean)
 
   return {
@@ -10799,33 +10900,37 @@ export async function getSitesVideoInventorySummary({
     ? cleanString(landingMode)
     : ''
   const normalizedSiteId = cleanString(siteId)
-  const clauses = [
+  const assetClauses = [
     'm.business_id = ?',
-    "m.module IN ('sites', 'forms')",
     "m.media_type = 'video'",
     "m.status = 'ready'",
     'm.deleted_at IS NULL',
+    'm.is_public = 1'
+  ]
+  const assetParams = [normalizedBusinessId]
+  const siteClauses = [
     "ps.status = 'published'",
     'ps.id != ?',
     `${getSiteLibrarySourceSqlExpression('ps')} != 'calendar'`
   ]
-  const params = [normalizedBusinessId, CALENDAR_DEFAULT_FORM_SITE_ID]
+  const siteParams = [CALENDAR_DEFAULT_FORM_SITE_ID]
 
   if (normalizedSiteId) {
-    clauses.push('ps.id = ?')
-    params.push(normalizedSiteId)
+    siteClauses.push('ps.id = ?')
+    siteParams.push(normalizedSiteId)
   }
   if (normalizedType === 'forms') {
-    clauses.push("ps.site_type IN ('standard_form', 'interactive_form')")
+    siteClauses.push("ps.site_type IN ('standard_form', 'interactive_form')")
   } else if (normalizedType === 'sites') {
-    clauses.push("ps.site_type = 'landing_page'")
+    siteClauses.push("ps.site_type = 'landing_page'")
     if (normalizedLandingMode) {
-      clauses.push(`${getSitePageModeSqlExpression('ps')} = ?`)
-      params.push(normalizedLandingMode)
+      siteClauses.push(`${getSitePageModeSqlExpression('ps')} = ?`)
+      siteParams.push(normalizedLandingMode)
     }
   }
 
   const row = await db.get(`
+    WITH ${getSitesVideoSourceCteSql('video_sources')}
     SELECT
       COUNT(DISTINCT m.id) AS total,
       COUNT(DISTINCT CASE
@@ -10838,9 +10943,10 @@ export async function getSitesVideoInventorySummary({
       END) AS storage_only,
       COUNT(DISTINCT ps.id) AS origins_total
     FROM media_assets m
-    INNER JOIN public_sites ps ON ps.id = m.module_entity_id
-    WHERE ${clauses.join(' AND ')}
-  `, params)
+    INNER JOIN video_sources ON video_sources.media_asset_id = m.id
+    INNER JOIN public_sites ps ON ps.id = video_sources.site_id
+    WHERE ${[...assetClauses, ...siteClauses].join(' AND ')}
+  `, [...assetParams, ...siteParams])
 
   return {
     total: Number(row?.total || 0),
@@ -23140,7 +23246,6 @@ async function buildVideoStreamAssetsByStorageUrl(blocks = [], { enabled = false
   const assets = await findMediaAssetsByPublicUrls(urls)
   const assetsByUrl = new Map()
   for (const asset of assets) {
-    if (!getMediaAssetStreamMetadata(asset)) continue
     const lookupUrl = normalizeMediaLookupUrl(asset.publicUrl)
     if (lookupUrl) assetsByUrl.set(lookupUrl, asset)
   }
@@ -23240,11 +23345,14 @@ function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, contex
     || getMediaAssetStreamMetadata(asset)
     || getBunnyStreamMetadataFromUrl(asset.publicUrl)
 
-  // Preview y publicado usan la misma escalera adaptativa. El MP4 completo queda
-  // únicamente como último recurso; arrancar siempre con él castiga justo a la
-  // gente con peor señal.
-  const playerVideoUrl = resolvedStream?.playlistUrl || directVideoUrl
-  const fallbackSrc = resolvedStream?.playlistUrl ? directVideoUrl : ''
+  // Un render no-track jamás toca Bunny Stream: usa exclusivamente el MP4 de
+  // Storage para que editor, preview y enlaces internos no contaminen las
+  // estadísticas del proveedor. El público real sí conserva HLS adaptativo y
+  // Storage como recuperación.
+  const playerVideoUrl = context.noTrack
+    ? directVideoUrl
+    : resolvedStream?.playlistUrl || directVideoUrl
+  const fallbackSrc = !context.noTrack && resolvedStream?.playlistUrl ? directVideoUrl : ''
   if (playerVideoUrl) {
     return renderVideoPlayer(playerVideoUrl, block, settings, {
       noTrack: false,
@@ -23303,11 +23411,11 @@ function resolveHtml5VideoDelivery(block = {}, context = {}) {
     const stream = getMediaAssetStreamMetadata(liveStreamAsset)
     const storageUrl = getDirectMediaAssetVideoUrl(liveStreamAsset)
     const stableSrc = storageUrl || directVideoUrl
-    const src = stream?.playlistUrl || stableSrc
+    const src = context.noTrack ? stableSrc : stream?.playlistUrl || stableSrc
     if (!src) return null
     return {
       src,
-      fallbackSrc: stream?.playlistUrl ? stableSrc : '',
+      fallbackSrc: !context.noTrack && stream?.playlistUrl ? stableSrc : '',
       posterSrc: stream?.posterUrl || liveStreamAsset?.metadata?.thumbnailUrl || '',
       asset: liveStreamAsset || null,
       stream,
@@ -23320,11 +23428,11 @@ function resolveHtml5VideoDelivery(block = {}, context = {}) {
   const asset = getStorageAssetForStreamVideoUrl(embedVideoUrl, context)
   const stream = getMediaAssetStreamMetadata(asset) || getStreamMetadataForVideoUrl(embedVideoUrl, context)
   const storageUrl = getDirectMediaAssetVideoUrl(asset)
-  const src = stream?.playlistUrl || storageUrl
+  const src = context.noTrack ? storageUrl : stream?.playlistUrl || storageUrl
   if (!src) return null
   return {
     src,
-    fallbackSrc: stream?.playlistUrl ? storageUrl : '',
+    fallbackSrc: !context.noTrack && stream?.playlistUrl ? storageUrl : '',
     posterSrc: stream?.posterUrl || asset?.metadata?.thumbnailUrl || '',
     asset: asset || null,
     stream,
