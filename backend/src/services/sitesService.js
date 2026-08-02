@@ -25959,6 +25959,7 @@ function buildNativeSiteTrackingScript(context) {
       const PARAM_BUILDER_IP_URL = '/meta-param-builder-ip';
       const VISITOR_COOKIE_NAME = 'ristak_vid';
       const SESSION_COOKIE_NAME = 'ristak_sid';
+      const SESSION_ACTIVITY_COOKIE_NAME = 'ristak_sid_at';
       const PAGE_TAB_STORAGE_PREFIX = 'rstk:page-tab:';
       const VISITOR_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
       const SESSION_INACTIVITY_MS = 30 * 60 * 1000;
@@ -26109,16 +26110,28 @@ function buildNativeSiteTrackingScript(context) {
         const storedSessionId = normalizeIdentityValue(data.session_id);
         const cookieSessionId = normalizeIdentityValue(readCookie(SESSION_COOKIE_NAME));
         const now = Date.now();
-        const lastActivity = Number(data.last_activity || data.session_start || 0);
-        const expired = lastActivity > 0 && now - lastActivity > SESSION_INACTIVITY_MS;
-        if (!storedSessionId || expired) {
-          data.session_id = !expired && cookieSessionId ? cookieSessionId : generateSessionId();
-          data.session_start = Date.now();
-          data.first_pv = !cookieSessionId || expired;
+        const storedLastActivity = Number(data.last_activity || data.session_start || 0);
+        const storedExpired = storedLastActivity > 0 && now - storedLastActivity > SESSION_INACTIVITY_MS;
+        const cookieLastActivity = Number(readCookie(SESSION_ACTIVITY_COOKIE_NAME) || 0);
+        const cookieIsFresh = Boolean(
+          cookieSessionId &&
+          cookieLastActivity > 0 &&
+          now - cookieLastActivity <= SESSION_INACTIVITY_MS
+        );
+        const cookieIsNewer = Boolean(
+          cookieIsFresh &&
+          cookieSessionId !== storedSessionId &&
+          cookieLastActivity > storedLastActivity
+        );
+        if (!storedSessionId || storedExpired || cookieIsNewer) {
+          data.session_id = cookieIsFresh ? cookieSessionId : generateSessionId();
+          data.session_start = now;
+          data.first_pv = !cookieIsFresh;
         }
         data.last_activity = now;
         writeJson(sessionStorage, 'ristak', data);
         writeCookie(SESSION_COOKIE_NAME, data.session_id);
+        writeCookie(SESSION_ACTIVITY_COOKIE_NAME, String(now));
         return data.session_id;
       };
 
@@ -27128,7 +27141,9 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
       let playerJsLoader = null;
       const VISITOR_COOKIE_NAME = 'ristak_vid';
       const SESSION_COOKIE_NAME = 'ristak_sid';
+      const SESSION_ACTIVITY_COOKIE_NAME = 'ristak_sid_at';
       const VISITOR_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+      const SESSION_INACTIVITY_MS = 30 * 60 * 1000;
 
       const clean = value => String(value || '').trim();
       const num = value => {
@@ -27264,13 +27279,29 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
 
         const storedSessionId = normalizeIdentityValue(session.session_id);
         const cookieSessionId = normalizeIdentityValue(readCookie(SESSION_COOKIE_NAME));
-        if (!storedSessionId) {
-          session.session_id = cookieSessionId || makeId();
-          session.session_start = Date.now();
-          session.first_pv = !cookieSessionId;
+        const now = Date.now();
+        const storedLastActivity = Number(session.last_activity || session.session_start || 0);
+        const storedExpired = storedLastActivity > 0 && now - storedLastActivity > SESSION_INACTIVITY_MS;
+        const cookieLastActivity = Number(readCookie(SESSION_ACTIVITY_COOKIE_NAME) || 0);
+        const cookieIsFresh = Boolean(
+          cookieSessionId &&
+          cookieLastActivity > 0 &&
+          now - cookieLastActivity <= SESSION_INACTIVITY_MS
+        );
+        const cookieIsNewer = Boolean(
+          cookieIsFresh &&
+          cookieSessionId !== storedSessionId &&
+          cookieLastActivity > storedLastActivity
+        );
+        if (!storedSessionId || storedExpired || cookieIsNewer) {
+          session.session_id = cookieIsFresh ? cookieSessionId : makeId();
+          session.session_start = now;
+          session.first_pv = !cookieIsFresh;
         }
+        session.last_activity = now;
         writeJson(sessionStorage, 'ristak', session);
         writeCookie(SESSION_COOKIE_NAME, session.session_id);
+        writeCookie(SESSION_ACTIVITY_COOKIE_NAME, String(now));
         return {
           visitorId,
           sessionId: session.session_id,

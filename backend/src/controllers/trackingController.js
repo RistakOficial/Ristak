@@ -607,7 +607,9 @@ export async function servePixel(req, res) {
   var pageViewTimer = null;
   var VISITOR_COOKIE_NAME = 'ristak_vid';
   var SESSION_COOKIE_NAME = 'ristak_sid';
+  var SESSION_ACTIVITY_COOKIE_NAME = 'ristak_sid_at';
   var VISITOR_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+  var SESSION_INACTIVITY_MS = 30 * 60 * 1000;
   var metaParamBuilderPromise = null;
 
   function valueMeansNoTrack(value, trackingParam) {
@@ -752,17 +754,44 @@ export async function servePixel(req, res) {
       var sessionData = getSessionData();
       var storedSessionId = normalizeIdentityValue(sessionData.session_id);
       var cookieSessionId = normalizeIdentityValue(readCookie(SESSION_COOKIE_NAME));
-      if (!storedSessionId) {
-        sessionData.session_id = cookieSessionId || generateUUID();
-        sessionData.session_start = Date.now();
-        sessionData.first_pv = !cookieSessionId;
+      var now = Date.now();
+      var storedLastActivity = Number(sessionData.last_activity || sessionData.session_start || 0);
+      var storedExpired = storedLastActivity > 0 && now - storedLastActivity > SESSION_INACTIVITY_MS;
+      var cookieLastActivity = Number(readCookie(SESSION_ACTIVITY_COOKIE_NAME) || 0);
+      var cookieIsFresh = Boolean(
+        cookieSessionId &&
+        cookieLastActivity > 0 &&
+        now - cookieLastActivity <= SESSION_INACTIVITY_MS
+      );
+      var cookieIsNewer = Boolean(
+        cookieIsFresh &&
+        cookieSessionId !== storedSessionId &&
+        cookieLastActivity > storedLastActivity
+      );
+      if (!storedSessionId || storedExpired || cookieIsNewer) {
+        sessionData.session_id = cookieIsFresh ? cookieSessionId : generateUUID();
+        sessionData.session_start = now;
+        sessionData.first_pv = !cookieIsFresh;
       }
+      sessionData.last_activity = now;
       setSessionData(sessionData);
       writeCookie(SESSION_COOKIE_NAME, sessionData.session_id);
+      writeCookie(SESSION_ACTIVITY_COOKIE_NAME, String(now));
       return sessionData.session_id;
     } catch (e) {
-      var fallbackSessionId = normalizeIdentityValue(readCookie(SESSION_COOKIE_NAME)) || 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      var fallbackNow = Date.now();
+      var fallbackCookieSessionId = normalizeIdentityValue(readCookie(SESSION_COOKIE_NAME));
+      var fallbackCookieLastActivity = Number(readCookie(SESSION_ACTIVITY_COOKIE_NAME) || 0);
+      var fallbackCookieIsFresh = Boolean(
+        fallbackCookieSessionId &&
+        fallbackCookieLastActivity > 0 &&
+        fallbackNow - fallbackCookieLastActivity <= SESSION_INACTIVITY_MS
+      );
+      var fallbackSessionId = fallbackCookieIsFresh
+        ? fallbackCookieSessionId
+        : 'session_' + fallbackNow + '_' + Math.random().toString(36).substr(2, 9);
       writeCookie(SESSION_COOKIE_NAME, fallbackSessionId);
+      writeCookie(SESSION_ACTIVITY_COOKIE_NAME, String(fallbackNow));
       return fallbackSessionId;
     }
   }

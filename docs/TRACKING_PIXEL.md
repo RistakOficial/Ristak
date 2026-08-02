@@ -561,6 +561,12 @@ es un secret y no resuelve el problema.
 - No cuentes filas como sesiones. Los eventos se cuentan por `event_id`/fila y
   las sesiones se reconstruyen por identidad y brechas mayores a 30 minutos.
   `COUNT(DISTINCT session_id)` sólo sirve como diagnóstico del runtime.
+- `ristak_sid` no prueba por sí solo que una visita siga activa. Los runtimes del
+  pixel, Sites y video acompañan ese ID con `ristak_sid_at`; una pestaña nueva
+  sólo hereda la cookie compartida si su actividad tiene como máximo 30 minutos.
+  Una cookie antigua o sin evidencia temporal genera otra sesión. El Journey
+  aplica la misma brecha al histórico, por lo que un navegador restaurado no
+  puede juntar semanas de visitas bajo el primer día del ID reciclado.
 
 ### Prueba End-To-End Obligatoria
 
@@ -629,6 +635,12 @@ Los eventos publicados de video usan `tracking_source = native_site_video` y
 `/video-event`. La fuente analítica es `video_playback_events`; la tabla
 `video_playback_sessions` es una proyección para Journey/identidad y no debe
 usarse para recomponer métricas históricas.
+
+El Journey del contacto asocia esa proyección con la visita lógica más cercana
+en tiempo. Si un `session_id` aparece a ambos lados de una brecha mayor a 30
+minutos, cada tramo es una visita distinta y el video se adjunta al tramo donde
+ocurrió; no se mueve a la primera fecha histórica que usó la misma cookie. Esta
+reconstrucción es de lectura y corrige el histórico sin reescribir eventos.
 
 En ingesta v2 son obligatorios `event_id`, `event_sequence` monotónica por
 `playback_id`, versión y hash de payload. El ledger se inserta antes de mutar la

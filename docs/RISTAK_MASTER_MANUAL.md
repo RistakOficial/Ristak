@@ -2301,7 +2301,15 @@ la facultad de cambiar JavaScript publicado.
 - El Viaje del contacto en la ficha debe titularse con el nombre configurable de
   la cuenta (por ejemplo, `Viaje del paciente`) y mostrar cada actividad con una
   etiqueta legible: visitas, contactos, WhatsApp, Messenger, Instagram, correo, citas y
-  compras. Si un evento trae metadata de mensaje social o email, el tooltip debe
+  compras. Las visitas se reconstruyen por `session_id` y brechas de actividad:
+  más de 30 minutos inicia otro tramo aunque el navegador haya restaurado una
+  cookie vieja con el mismo ID. Los videos de `video_playback_sessions` se
+  adjuntan a la visita temporalmente más cercana de ese tramo, no a la primera
+  aparición histórica del ID; así una reproducción nueva nunca queda enterrada
+  semanas atrás. Esta lectura corrige también datos existentes sin backfill.
+  El pixel externo, Sites y el fallback de video sólo comparten `ristak_sid`
+  entre pestañas cuando la cookie compañera `ristak_sid_at` demuestra actividad
+  dentro de esos 30 minutos. Si un evento trae metadata de mensaje social o email, el tooltip debe
   explicar canal, contenido, perfil/usuario, estado e identificadores utiles; no
   debe quedarse como "Evento" sin detalle. Los mensajes de WhatsApp se resumen
   en un solo marcador por dia local; si el mismo dia existe un WhatsApp directo y

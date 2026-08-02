@@ -2717,6 +2717,124 @@ test('contact journey annotates page visits with matched video playback', async 
   }
 })
 
+test('contact journey splits a recycled session after inactivity and keeps video on the recent visit', async () => {
+  const id = randomUUID()
+  const contactId = `journey_recycled_session_${id}`
+  const phone = `+52996${Date.now().toString().slice(-7)}`
+  const visitorId = `visitor_recycled_${id}`
+  const recycledSessionId = `session_recycled_${id}`
+  const playbackId = `playback_recycled_${id}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      email: `recycled-${id}@ristak.test`,
+      full_name: 'Cliente Sesión Reciclada',
+      first_name: 'Cliente',
+      source: 'native_site',
+      visitor_id: visitorId,
+      created_at: '2026-06-20T09:00:00.000Z',
+      updated_at: '2026-08-02T12:20:00.000Z'
+    })
+
+    await insertRow('sessions', {
+      id: `session_recycled_old_${id}`,
+      session_id: recycledSessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      full_name: 'Cliente Sesión Reciclada',
+      email: `recycled-${id}@ristak.test`,
+      event_name: 'page_view',
+      started_at: '2026-06-20T10:00:00.000Z',
+      created_at: '2026-06-20T10:00:00.000Z',
+      page_url: 'https://demo.ristak.test/visita-antigua',
+      tracking_source: 'external_pixel'
+    })
+
+    await insertRow('sessions', {
+      id: `session_recycled_recent_start_${id}`,
+      session_id: recycledSessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      full_name: 'Cliente Sesión Reciclada',
+      email: `recycled-${id}@ristak.test`,
+      event_name: 'native_site_view',
+      started_at: '2026-08-02T11:56:00.000Z',
+      created_at: '2026-08-02T11:56:00.000Z',
+      page_url: 'https://demo.ristak.test/video-principal',
+      tracking_source: 'native_site',
+      site_id: `site_recycled_${id}`,
+      public_page_id: `page_recycled_${id}`
+    })
+
+    await insertRow('sessions', {
+      id: `session_recycled_recent_next_${id}`,
+      session_id: recycledSessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      full_name: 'Cliente Sesión Reciclada',
+      email: `recycled-${id}@ristak.test`,
+      event_name: 'native_site_view',
+      started_at: '2026-08-02T12:11:00.000Z',
+      created_at: '2026-08-02T12:11:00.000Z',
+      page_url: 'https://demo.ristak.test/calendario',
+      tracking_source: 'native_site',
+      site_id: `site_recycled_${id}`,
+      public_page_id: `page_calendar_${id}`
+    })
+
+    await insertRow('video_playback_sessions', {
+      id: `video_recycled_${id}`,
+      playback_id: playbackId,
+      visitor_id: visitorId,
+      session_id: recycledSessionId,
+      contact_id: contactId,
+      full_name: 'Cliente Sesión Reciclada',
+      email: `recycled-${id}@ristak.test`,
+      media_asset_id: `asset_recycled_${id}`,
+      video_title: 'Video reciente',
+      tracking_source: 'native_site_video',
+      site_id: `site_recycled_${id}`,
+      public_page_id: `page_recycled_${id}`,
+      page_url: 'https://demo.ristak.test/video-principal',
+      duration_seconds: 854,
+      max_position_seconds: 854,
+      last_position_seconds: 854,
+      watched_seconds: 853,
+      max_progress_percent: 100,
+      play_count: 1,
+      ended: 0,
+      match_method: 'direct_contact_id',
+      first_event_at: '2026-08-02T11:56:05.000Z',
+      started_at: '2026-08-02T11:56:05.000Z',
+      last_event_at: '2026-08-02T12:10:18.000Z'
+    })
+
+    const journey = await readJourney(contactId)
+    const pageVisits = journey.filter(event => event.type === 'page_visit' && event.data.session_id === recycledSessionId)
+
+    assert.equal(pageVisits.length, 2)
+    assert.equal(new Set(pageVisits.map(event => event.cursorKey)).size, 2)
+
+    const oldVisit = pageVisits.find(event => event.date === '2026-06-20T10:00:00.000Z')
+    const recentVisit = pageVisits.find(event => event.date === '2026-08-02T11:56:00.000Z')
+
+    assert.ok(oldVisit)
+    assert.ok(recentVisit)
+    assert.equal(oldVisit.data.video_engagements, undefined)
+    assert.equal(recentVisit.data.video_engagements?.length, 1)
+    assert.equal(recentVisit.data.video_engagements[0].playback_id, playbackId)
+    assert.equal(recentVisit.data.video_engagements[0].watched_seconds, 853)
+    assert.equal(recentVisit.data.video_engagements[0].max_progress_percent, 100)
+    assert.equal(journey.some(event => event.type === 'video_playback' && event.data.playback_id === playbackId), false)
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
 test('contact journey summarizes tracking rows into one page visit per session', async () => {
   const id = randomUUID()
   const contactId = `journey_session_summary_${id}`

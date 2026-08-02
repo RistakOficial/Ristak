@@ -550,6 +550,7 @@ const isTruthyQueryValue = (value) => ['1', 'true', 'yes', 'si', 'sí'].includes
 const hasTextValue = (value) => cleanString(value).length > 0
 const JOURNEY_MESSAGE_MAX_LIMIT = 500
 const JOURNEY_DEFAULT_PAGE_LIMIT = 100
+const JOURNEY_SESSION_INACTIVITY_SECONDS = 30 * 60
 const CONVERSATION_DEFAULT_PAGE_LIMIT = 50
 const META_COMMENT_DELETED_TEXT = 'Comentario eliminado'
 const META_COMMENT_EMPTY_TEXT = 'Comentario sin texto'
@@ -1546,6 +1547,70 @@ const journeySessionLogicalKeySqlExpression = (alias = 'sessions') => (
   `COALESCE(NULLIF(TRIM(CAST(${alias}.session_id AS TEXT)), ''), CAST(${alias}.id AS TEXT))`
 )
 
+const journeySessionGapSecondsSqlExpression = (currentExpression, previousExpression) => {
+  const difference = `(${currentExpression} - ${previousExpression})`
+  return isPostgresDatabase ? difference : `(${difference} * 86400.0)`
+}
+
+const buildJourneySessionSegmentationCte = ({ matchCondition }) => {
+  const baseKeyExpression = journeySessionLogicalKeySqlExpression('sessions')
+  const startedSortExpression = timestampSortExpression('sessions.started_at')
+  const previousStartedSortExpression = `LAG(${startedSortExpression}) OVER (
+        PARTITION BY ${baseKeyExpression}
+        ORDER BY ${startedSortExpression} ASC, sessions.id ASC
+      )`
+  const gapSecondsExpression = journeySessionGapSecondsSqlExpression(
+    'candidate_session_rows.journey_started_sort',
+    'candidate_session_rows.previous_journey_started_sort'
+  )
+
+  return `
+    candidate_session_rows AS (
+      SELECT
+        sessions.*,
+        ${baseKeyExpression} AS journey_session_base_key,
+        ${startedSortExpression} AS journey_started_sort,
+        ${previousStartedSortExpression} AS previous_journey_started_sort
+      FROM sessions
+      WHERE ${matchCondition}
+    ), journey_session_breaks AS (
+      SELECT
+        candidate_session_rows.*,
+        CASE
+          WHEN candidate_session_rows.previous_journey_started_sort IS NULL THEN 1
+          WHEN ${gapSecondsExpression} > ${JOURNEY_SESSION_INACTIVITY_SECONDS} THEN 1
+          ELSE 0
+        END AS journey_session_break
+      FROM candidate_session_rows
+    ), numbered_journey_sessions AS (
+      SELECT
+        journey_session_breaks.*,
+        SUM(journey_session_break) OVER (
+          PARTITION BY journey_session_base_key
+          ORDER BY journey_started_sort ASC, id ASC
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS journey_session_segment
+      FROM journey_session_breaks
+    ), journey_session_metadata AS (
+      SELECT
+        numbered_journey_sessions.*,
+        MAX(journey_session_segment) OVER (
+          PARTITION BY journey_session_base_key
+        ) AS journey_session_segment_count
+      FROM numbered_journey_sessions
+    ), keyed_session_rows AS (
+      SELECT
+        journey_session_metadata.*,
+        journey_session_base_key || CASE
+          WHEN journey_session_segment_count > 1
+          THEN '@' || CAST(journey_session_segment AS TEXT)
+          ELSE ''
+        END AS journey_session_key
+      FROM journey_session_metadata
+    )
+  `
+}
+
 const loadJourneySessionRowsForIdentity = async ({
   matchCondition,
   matchParams,
@@ -1553,10 +1618,10 @@ const loadJourneySessionRowsForIdentity = async ({
   beforeDate,
   beforeCursor
 }) => {
-  const logicalKeyExpression = journeySessionLogicalKeySqlExpression('sessions')
   const groupedTimestampExpression = 'journey_session_groups.journey_session_started_at'
   const groupedKeyExpression = 'journey_session_groups.journey_session_key'
   const groupedCursorExpression = journeyMessageCursorSqlExpression('page_visit', groupedKeyExpression)
+  const segmentationCte = buildJourneySessionSegmentationCte({ matchCondition })
   const normalizedLimit = Math.max(
     1,
     Math.min(Number(limit) || JOURNEY_DEFAULT_PAGE_LIMIT, JOURNEY_MESSAGE_MAX_LIMIT)
@@ -1565,21 +1630,13 @@ const loadJourneySessionRowsForIdentity = async ({
   // Primero pagina sesiones lógicas, no filas crudas. Así una sesión con miles
   // de page_view ocupa exactamente un lugar y su cursor nunca apunta a media sesión.
   const sessionGroups = await db.all(`
-    WITH candidate_session_rows AS (
-      SELECT
-        ${logicalKeyExpression} AS journey_session_key,
-        sessions.started_at AS journey_session_started_at,
-        ROW_NUMBER() OVER (
-          PARTITION BY ${logicalKeyExpression}
-          ORDER BY ${timestampSortExpression('sessions.started_at')} ASC, sessions.id ASC
-        ) AS journey_session_row_rank
-      FROM sessions
-      WHERE ${matchCondition}
-    ),
+    WITH ${segmentationCte},
     journey_session_groups AS (
-      SELECT journey_session_key, journey_session_started_at
-      FROM candidate_session_rows
-      WHERE journey_session_row_rank = 1
+      SELECT
+        journey_session_key,
+        MIN(started_at) AS journey_session_started_at
+      FROM keyed_session_rows
+      GROUP BY journey_session_key
     )
     SELECT
       ${groupedKeyExpression} AS journey_session_key,
@@ -1616,16 +1673,15 @@ const loadJourneySessionRowsForIdentity = async ({
   // Ya seleccionadas las sesiones de esta página, hidrata todas sus filas. El
   // límite pertenece a los grupos; aplicarlo aquí volvería a truncar el resumen.
   const rows = await db.all(`
+    WITH ${segmentationCte}
     SELECT
-      sessions.*,
-      ${logicalKeyExpression} AS journey_session_key
-    FROM sessions
-    WHERE (${matchCondition})
-      AND ${logicalKeyExpression} IN (${sessionKeyPlaceholders})
+      keyed_session_rows.*
+    FROM keyed_session_rows
+    WHERE journey_session_key IN (${sessionKeyPlaceholders})
     ORDER BY
-      ${logicalKeyExpression} ASC,
-      ${timestampSortExpression('sessions.started_at')} ASC,
-      sessions.id ASC
+      journey_session_key ASC,
+      journey_started_sort ASC,
+      id ASC
   `, [...matchParams, ...logicalSessionKeys])
 
   return rows.map(row => ({
