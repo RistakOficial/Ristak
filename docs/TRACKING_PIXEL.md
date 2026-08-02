@@ -636,11 +636,25 @@ Los eventos publicados de video usan `tracking_source = native_site_video` y
 `video_playback_sessions` es una proyección para Journey/identidad y no debe
 usarse para recomponer métricas históricas.
 
-El Journey del contacto asocia esa proyección con la visita lógica más cercana
-en tiempo. Si un `session_id` aparece a ambos lados de una brecha mayor a 30
-minutos, cada tramo es una visita distinta y el video se adjunta al tramo donde
-ocurrió; no se mueve a la primera fecha histórica que usó la misma cookie. Esta
-reconstrucción es de lectura y corrige el histórico sin reescribir eventos.
+El Journey del contacto muestra cada reproducción como evento propio con el
+`first_event_at`, `site_id`, `public_page_id` y `page_url` guardados por el
+reproductor. No reemplaza esa fecha por el inicio de la sesión ni esconde el
+video dentro de una visita resumida. La relación opcional con una fila de
+`sessions` es estricta: primero exige el mismo sitio/página pública o la misma
+URL canónica, descarta IDs de sitio o página contradictorios y sólo después usa
+la cercanía temporal dentro de una ventana de 30 minutos. Coincidir únicamente
+por `session_id`, por pathname o por ser la visita anterior/más cercana no es
+suficiente.
+
+Para URL canónica se eliminan exclusivamente parámetros de tracking, identidad,
+preview y atribución (`utm_*`, click IDs, `rstk_*`, etc.); cualquier parámetro de
+negocio restante sigue formando parte de la identidad de página. En filas
+históricas nativas con `timestamp_adjusted = 0`, `client_started_at` puede servir
+como evidencia temporal de la relación si conserva el instante original más
+preciso. Esto no cambia el instante visible del video, que siempre sale de su
+propio ledger. Si falta evidencia inequívoca, el video permanece como evento
+independiente con su contexto original en vez de atribuirse a una página falsa.
+La reconstrucción es de lectura y no reescribe ni duplica eventos históricos.
 
 En ingesta v2 son obligatorios `event_id`, `event_sequence` monotónica por
 `playback_id`, versión y hash de payload. El ledger se inserta antes de mutar la

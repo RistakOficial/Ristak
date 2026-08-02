@@ -2303,10 +2303,15 @@ la facultad de cambiar JavaScript publicado.
   etiqueta legible: visitas, contactos, WhatsApp, Messenger, Instagram, correo, citas y
   compras. Las visitas se reconstruyen por `session_id` y brechas de actividad:
   más de 30 minutos inicia otro tramo aunque el navegador haya restaurado una
-  cookie vieja con el mismo ID. Los videos de `video_playback_sessions` se
-  adjuntan a la visita temporalmente más cercana de ese tramo, no a la primera
-  aparición histórica del ID; así una reproducción nueva nunca queda enterrada
-  semanas atrás. Esta lectura corrige también datos existentes sin backfill.
+  cookie vieja con el mismo ID. Cada reproducción de
+  `video_playback_sessions` se muestra como un evento propio en su
+  `first_event_at` y conserva el sitio, página pública y URL del reproductor; no
+  hereda la fecha ni la página principal de una visita resumida. La relación con
+  `sessions` sólo se marca cuando coinciden página/sitio o URL canónica y además
+  existe cercanía temporal. Una visita de otra página queda descartada aunque
+  sea la anterior o la más cercana. Si el histórico no permite comprobar una
+  relación exacta, el video queda independiente en vez de inventar el vínculo.
+  Esta lectura corrige también datos existentes sin backfill.
   El pixel externo, Sites y el fallback de video sólo comparten `ristak_sid`
   entre pestañas cuando la cookie compañera `ristak_sid_at` demuestra actividad
   dentro de esos 30 minutos. Si un evento trae metadata de mensaje social o email, el tooltip debe

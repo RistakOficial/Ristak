@@ -2519,7 +2519,7 @@ test('contact journey exposes image and video media from raw payload', async () 
   }
 })
 
-test('contact journey annotates page visits with matched video playback', async () => {
+test('contact journey emits video at its exact timestamp and verifies its source page visit', async () => {
   const id = randomUUID()
   const contactId = `journey_video_${id}`
   const phone = `+52995${Date.now().toString().slice(-7)}`
@@ -2700,24 +2700,36 @@ test('contact journey annotates page visits with matched video playback', async 
 
     const journey = await readJourney(contactId)
     const pageVisit = journey.find(event => event.type === 'page_visit')
-    const standaloneVideo = journey.find(event => event.type === 'video_playback')
+    const matchedVideo = journey.find(event => event.type === 'video_playback' && event.data.playback_id === playbackId)
+    const standaloneVideo = journey.find(event => event.type === 'video_playback' && event.data.playback_id === orphanPlaybackId)
 
     assert.ok(pageVisit)
-    assert.equal(pageVisit.data.video_engagements?.length, 1)
-    assert.equal(pageVisit.data.video_engagements[0].playback_id, playbackId)
-    assert.equal(pageVisit.data.video_engagements[0].video_title, 'Video de Oferta')
-    assert.equal(pageVisit.data.video_engagements[0].max_progress_percent, 75)
-    assert.equal(pageVisit.data.video_engagements[0].end_position_seconds, 90)
+    assert.equal(pageVisit.data.video_engagements, undefined)
+
+    assert.ok(matchedVideo)
+    assert.equal(matchedVideo.date, '2026-06-16T12:01:15.000Z')
+    assert.equal(matchedVideo.data.video_title, 'Video de Oferta')
+    assert.equal(matchedVideo.data.public_page_id, `page_${id}`)
+    assert.equal(matchedVideo.data.page_url, 'https://demo.ristak.test/landing?utm_source=instagram&rstk_play_id=temp')
+    assert.equal(matchedVideo.data.max_progress_percent, 75)
+    assert.equal(matchedVideo.data.end_position_seconds, 90)
+    assert.equal(matchedVideo.data.page_visit_relation_verified, true)
+    assert.equal(matchedVideo.data.page_match_method, 'site_public_page_id')
+    assert.equal(matchedVideo.data.related_tracking_session_id, `session_row_${id}`)
+    assert.equal(matchedVideo.data.related_page_visit_cursor_key, `page_visit:${sessionId}`)
+    assert.equal(matchedVideo.data.related_page_event_at, '2026-06-16T12:01:00.000Z')
+    assert.equal(matchedVideo.data.related_page_timestamp_source, 'started_at')
+    assert.equal(matchedVideo.data.standalone, false)
 
     assert.ok(standaloneVideo)
-    assert.equal(standaloneVideo.data.playback_id, orphanPlaybackId)
     assert.equal(standaloneVideo.data.standalone, true)
+    assert.equal(standaloneVideo.data.page_visit_relation_verified, undefined)
   } finally {
     await cleanup(contactId, phone)
   }
 })
 
-test('contact journey splits a recycled session after inactivity and keeps video on the recent visit', async () => {
+test('contact journey splits a recycled session and relates video only to its exact recent page row', async () => {
   const id = randomUUID()
   const contactId = `journey_recycled_session_${id}`
   const phone = `+52996${Date.now().toString().slice(-7)}`
@@ -2821,15 +2833,192 @@ test('contact journey splits a recycled session after inactivity and keeps video
 
     const oldVisit = pageVisits.find(event => event.date === '2026-06-20T10:00:00.000Z')
     const recentVisit = pageVisits.find(event => event.date === '2026-08-02T11:56:00.000Z')
+    const videoEvent = journey.find(event => event.type === 'video_playback' && event.data.playback_id === playbackId)
 
     assert.ok(oldVisit)
     assert.ok(recentVisit)
     assert.equal(oldVisit.data.video_engagements, undefined)
-    assert.equal(recentVisit.data.video_engagements?.length, 1)
-    assert.equal(recentVisit.data.video_engagements[0].playback_id, playbackId)
-    assert.equal(recentVisit.data.video_engagements[0].watched_seconds, 853)
-    assert.equal(recentVisit.data.video_engagements[0].max_progress_percent, 100)
-    assert.equal(journey.some(event => event.type === 'video_playback' && event.data.playback_id === playbackId), false)
+    assert.equal(recentVisit.data.video_engagements, undefined)
+    assert.ok(videoEvent)
+    assert.equal(videoEvent.date, '2026-08-02T11:56:05.000Z')
+    assert.equal(videoEvent.data.related_tracking_session_id, `session_recycled_recent_start_${id}`)
+    assert.equal(videoEvent.data.related_page_visit_cursor_key, recentVisit.cursorKey)
+    assert.equal(videoEvent.data.related_page_visit_cursor_key === oldVisit.cursorKey, false)
+    assert.equal(videoEvent.data.watched_seconds, 853)
+    assert.equal(videoEvent.data.max_progress_percent, 100)
+    assert.equal(videoEvent.data.standalone, false)
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
+test('contact journey never assigns video to a closer event from another page', async () => {
+  const id = randomUUID()
+  const contactId = `journey_exact_video_page_${id}`
+  const phone = `+52994${Date.now().toString().slice(-7)}`
+  const visitorId = `visitor_exact_video_page_${id}`
+  const sessionId = `session_exact_video_page_${id}`
+  const siteId = `site_exact_video_page_${id}`
+  const exactPlaybackId = `playback_exact_video_page_${id}`
+  const canonicalUrlPlaybackId = `playback_canonical_url_${id}`
+  const unmatchedPlaybackId = `playback_unmatched_video_page_${id}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      email: `exact-video-page-${id}@ristak.test`,
+      full_name: 'Cliente Página Exacta',
+      first_name: 'Cliente',
+      source: 'native_site',
+      visitor_id: visitorId,
+      created_at: '2026-08-02T11:00:00.000Z',
+      updated_at: '2026-08-02T12:10:00.000Z'
+    })
+
+    await insertRow('sessions', {
+      id: `session_exact_page_a_${id}`,
+      session_id: sessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      event_name: 'native_site_view',
+      started_at: '2026-08-02T11:45:00.000Z',
+      client_started_at: '2026-08-02T12:00:00.000Z',
+      timestamp_adjusted: 0,
+      created_at: '2026-08-02T11:45:00.000Z',
+      page_url: 'https://demo.ristak.test/oferta?utm_source=facebook&plan=premium',
+      tracking_source: 'native_site',
+      site_id: siteId,
+      public_page_id: `page_a_${id}`,
+      public_page_title: 'Oferta'
+    })
+
+    await insertRow('sessions', {
+      id: `session_wrong_nearer_page_b_${id}`,
+      session_id: sessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      event_name: 'native_site_view',
+      started_at: '2026-08-02T12:00:04.000Z',
+      client_started_at: '2026-08-02T12:00:04.000Z',
+      timestamp_adjusted: 0,
+      created_at: '2026-08-02T12:00:04.000Z',
+      page_url: 'https://demo.ristak.test/calendario?utm_source=facebook',
+      tracking_source: 'native_site',
+      site_id: siteId,
+      public_page_id: `page_b_${id}`,
+      public_page_title: 'Calendario'
+    })
+
+    await insertRow('sessions', {
+      id: `session_wrong_site_${id}`,
+      session_id: sessionId,
+      visitor_id: visitorId,
+      contact_id: contactId,
+      event_name: 'native_site_view',
+      started_at: '2026-08-02T12:00:03.000Z',
+      client_started_at: '2026-08-02T12:00:03.000Z',
+      timestamp_adjusted: 0,
+      created_at: '2026-08-02T12:00:03.000Z',
+      page_url: 'https://otro-sitio.ristak.test/oferta?plan=premium',
+      tracking_source: 'native_site',
+      site_id: `other_site_${id}`,
+      public_page_id: `page_a_${id}`,
+      public_page_title: 'Oferta de otro sitio'
+    })
+
+    await insertRow('video_playback_sessions', {
+      id: `video_exact_page_${id}`,
+      playback_id: exactPlaybackId,
+      visitor_id: visitorId,
+      session_id: sessionId,
+      contact_id: contactId,
+      video_title: 'Video de la oferta',
+      tracking_source: 'native_site_video',
+      site_id: siteId,
+      public_page_id: `page_a_${id}`,
+      public_page_title: 'Oferta',
+      page_url: 'https://demo.ristak.test/oferta?utm_source=instagram&plan=premium&rstk_play_id=temporary',
+      duration_seconds: 120,
+      max_position_seconds: 90,
+      last_position_seconds: 90,
+      watched_seconds: 85,
+      max_progress_percent: 75,
+      play_count: 1,
+      ended: 0,
+      first_event_at: '2026-08-02T12:00:05.000Z',
+      started_at: '2026-08-02T12:00:05.000Z',
+      last_event_at: '2026-08-02T12:01:30.000Z'
+    })
+
+    await insertRow('video_playback_sessions', {
+      id: `video_canonical_url_${id}`,
+      playback_id: canonicalUrlPlaybackId,
+      visitor_id: visitorId,
+      session_id: sessionId,
+      contact_id: contactId,
+      video_title: 'Video enlazado por URL canónica',
+      tracking_source: 'native_site_video',
+      page_url: 'https://demo.ristak.test/oferta?utm_source=instagram&plan=premium&rstk_play_id=temporary',
+      duration_seconds: 60,
+      max_position_seconds: 30,
+      last_position_seconds: 30,
+      watched_seconds: 30,
+      max_progress_percent: 50,
+      play_count: 1,
+      ended: 0,
+      first_event_at: '2026-08-02T12:00:07.000Z',
+      started_at: '2026-08-02T12:00:07.000Z',
+      last_event_at: '2026-08-02T12:00:37.000Z'
+    })
+
+    await insertRow('video_playback_sessions', {
+      id: `video_unmatched_page_${id}`,
+      playback_id: unmatchedPlaybackId,
+      visitor_id: visitorId,
+      session_id: sessionId,
+      contact_id: contactId,
+      video_title: 'Video sin página comprobable',
+      tracking_source: 'native_site_video',
+      page_url: 'https://demo.ristak.test/oferta?utm_source=instagram&plan=basic',
+      duration_seconds: 60,
+      max_position_seconds: 20,
+      last_position_seconds: 20,
+      watched_seconds: 20,
+      max_progress_percent: 33.3,
+      play_count: 1,
+      ended: 0,
+      first_event_at: '2026-08-02T12:00:06.000Z',
+      started_at: '2026-08-02T12:00:06.000Z',
+      last_event_at: '2026-08-02T12:00:26.000Z'
+    })
+
+    const journey = await readJourney(contactId)
+    const exactVideo = journey.find(event => event.type === 'video_playback' && event.data.playback_id === exactPlaybackId)
+    const canonicalUrlVideo = journey.find(event => event.type === 'video_playback' && event.data.playback_id === canonicalUrlPlaybackId)
+    const unmatchedVideo = journey.find(event => event.type === 'video_playback' && event.data.playback_id === unmatchedPlaybackId)
+
+    assert.ok(exactVideo)
+    assert.equal(exactVideo.date, '2026-08-02T12:00:05.000Z')
+    assert.equal(exactVideo.data.related_tracking_session_id, `session_exact_page_a_${id}`)
+    assert.equal(exactVideo.data.related_tracking_session_id === `session_wrong_nearer_page_b_${id}`, false)
+    assert.equal(exactVideo.data.related_tracking_session_id === `session_wrong_site_${id}`, false)
+    assert.equal(exactVideo.data.page_match_method, 'site_public_page_id')
+    assert.equal(exactVideo.data.related_page_event_at, '2026-08-02T12:00:00.000Z')
+    assert.equal(exactVideo.data.related_page_timestamp_source, 'client_started_at')
+    assert.equal(exactVideo.data.standalone, false)
+
+    assert.ok(canonicalUrlVideo)
+    assert.equal(canonicalUrlVideo.data.page_match_method, 'canonical_page_url')
+    assert.equal(canonicalUrlVideo.data.related_tracking_session_id, `session_exact_page_a_${id}`)
+    assert.equal(canonicalUrlVideo.data.standalone, false)
+
+    assert.ok(unmatchedVideo)
+    assert.equal(unmatchedVideo.data.page_url, 'https://demo.ristak.test/oferta?utm_source=instagram&plan=basic')
+    assert.equal(unmatchedVideo.data.related_tracking_session_id, undefined)
+    assert.equal(unmatchedVideo.data.standalone, true)
   } finally {
     await cleanup(contactId, phone)
   }
@@ -3371,6 +3560,7 @@ test('contact journey exposes pre-registration tracking attribution and match ev
 
     const journey = await readJourney(contactId)
     const preVisit = journey.find(event => event.type === 'page_visit' && event.data.session_id === preSessionId)
+    const preVideo = journey.find(event => event.type === 'video_playback' && event.data.playback_id === playbackId)
     const conversion = journey.find(event => event.type === 'contact_created')
 
     assert.ok(preVisit)
@@ -3394,10 +3584,13 @@ test('contact journey exposes pre-registration tracking attribution and match ev
     assert.equal(preVisit.data.network_signature, undefined)
     assert.equal(preVisit.data.ip, undefined)
 
-    assert.equal(preVisit.data.video_engagements?.length, 1)
-    assert.equal(preVisit.data.video_engagements[0].playback_id, playbackId)
-    assert.equal(preVisit.data.video_engagements[0].is_pre_registration, true)
-    assert.equal(preVisit.data.video_engagements[0].match_confidence, 90)
+    assert.equal(preVisit.data.video_engagements, undefined)
+    assert.ok(preVideo)
+    assert.equal(preVideo.date, '2026-06-16T09:16:00.000Z')
+    assert.equal(preVideo.data.is_pre_registration, true)
+    assert.equal(preVideo.data.match_confidence, 90)
+    assert.equal(preVideo.data.related_tracking_session_id, `session_row_pre_${id}`)
+    assert.equal(preVideo.data.related_page_visit_cursor_key, preVisit.cursorKey)
 
     assert.ok(conversion)
     assert.equal(conversion.data.conversion_channel, 'web')

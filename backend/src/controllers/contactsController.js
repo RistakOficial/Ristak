@@ -1142,6 +1142,48 @@ const buildPreRegistrationJourneyMeta = (eventDate, contactCreatedAt) => {
   }
 }
 
+const JOURNEY_VOLATILE_PAGE_QUERY_PARAMS = new Set([
+  '_gl',
+  'ad_id',
+  'adset_id',
+  'campaign_id',
+  'cmc_adid',
+  'dclid',
+  'email',
+  'fbclid',
+  'fbc',
+  'fbp',
+  'full_name',
+  'gad_source',
+  'gbraid',
+  'gclid',
+  'igshid',
+  'mc_cid',
+  'mc_eid',
+  'msclkid',
+  'no_track',
+  'phone',
+  'phone_number',
+  'placement',
+  'preview',
+  'preview_mode',
+  'rkvi_id',
+  'rstk_contact_id',
+  'rstk_email',
+  'rstk_name',
+  'rstk_phone',
+  'rstk_play_id',
+  'site_source_name',
+  'srsltid',
+  'ttclid',
+  'wbraid'
+])
+
+const isJourneyVolatilePageQueryParam = (key) => {
+  const normalized = cleanString(key).toLowerCase()
+  return JOURNEY_VOLATILE_PAGE_QUERY_PARAMS.has(normalized) || normalized.startsWith('utm_')
+}
+
 const normalizeJourneyPageUrl = (value) => {
   const raw = cleanString(value)
   if (!raw) return ''
@@ -1161,16 +1203,25 @@ const normalizeJourneyPageUrl = (value) => {
   }
 }
 
-const normalizeJourneyPagePath = (value) => {
+const normalizeJourneyPageIdentityUrl = (value) => {
   const raw = cleanString(value)
   if (!raw) return ''
 
   try {
     const parsed = new URL(raw, 'https://ristak.local')
-    return (parsed.pathname.replace(/\/+$/, '') || '/').toLowerCase()
+    const stableQueryEntries = [...parsed.searchParams.entries()]
+      .filter(([key]) => !isJourneyVolatilePageQueryParam(key))
+      .map(([key, entryValue]) => [key.toLowerCase(), entryValue])
+      .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
+        leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue)
+      )
+    const stableHash = /^#!?\//.test(parsed.hash) ? parsed.hash : ''
+    const host = parsed.hostname === 'ristak.local' ? '' : parsed.host.toLowerCase()
+    const pathname = parsed.pathname.replace(/\/+$/, '') || '/'
+    const stableQuery = new URLSearchParams(stableQueryEntries).toString()
+    return `${host}${pathname}${stableQuery ? `?${stableQuery}` : ''}${stableHash}`
   } catch {
-    const withoutQuery = raw.split('?')[0].split('#')[0]
-    return (withoutQuery.replace(/\/+$/, '') || '/').toLowerCase()
+    return raw.split('#')[0].replace(/\/+$/, '')
   }
 }
 
@@ -1229,54 +1280,100 @@ const buildVideoEngagementJourneyData = (row = {}, contact = {}) => {
 
 const getVideoEngagementKey = (video = {}) => cleanString(video.playback_id || video.id)
 
-const getJourneyRowTime = (row = {}, fallback = 0) => {
-  const raw = row.first_event_at || row.started_at || row.last_event_at || row.created_at || row.date
-  const time = parseSortableTimestamp(raw)
-  return Number.isFinite(time) ? time : fallback
-}
+const JOURNEY_VIDEO_PAGE_EVENT_NAMES = new Set(['session_start', 'page_view', 'native_site_view'])
+const JOURNEY_VIDEO_PAGE_MATCH_AFTER_TOLERANCE_MS = 5 * 60 * 1000
 
-const pickNearestSessionEntry = (video, sessionEntries, predicate) => {
-  const candidates = sessionEntries.filter(({ session }) => predicate(session))
-  if (!candidates.length) return null
+const getJourneyPageIdentityMatch = (video = {}, session = {}) => {
+  const videoSessionId = cleanString(video.session_id)
+  const sessionId = cleanString(session.session_id)
+  if (videoSessionId && sessionId && videoSessionId !== sessionId) return null
 
-  const videoTime = getJourneyRowTime(video)
-  return candidates
-    .map(entry => ({
-      entry,
-      distance: Math.abs(getJourneyRowTime(entry.session) - videoTime)
-    }))
-    .sort((left, right) => left.distance - right.distance)[0]?.entry || null
-}
+  const videoSiteId = cleanString(video.site_id)
+  const sessionSiteId = cleanString(session.site_id)
+  if (videoSiteId && sessionSiteId && videoSiteId !== sessionSiteId) return null
 
-const findVideoSessionEntry = (video, sessionEntries) => {
-  const sessionId = cleanString(video.session_id)
-  if (sessionId) {
-    const match = pickNearestSessionEntry(video, sessionEntries, session => cleanString(session.session_id) === sessionId)
-    if (match) return match
+  const videoPageId = cleanString(video.public_page_id)
+  const sessionPageId = cleanString(session.public_page_id)
+  const videoPageUrl = normalizeJourneyPageIdentityUrl(video.page_url)
+  const sessionPageUrl = normalizeJourneyPageIdentityUrl(session.page_url || session.landing_page)
+  const exactUrl = Boolean(videoPageUrl && sessionPageUrl && videoPageUrl === sessionPageUrl)
+
+  if (videoPageId && sessionPageId) {
+    if (videoPageId !== sessionPageId) return null
+    if (videoSiteId && sessionSiteId) return 'site_public_page_id'
+    return exactUrl ? 'public_page_id_and_url' : null
   }
 
-  const publicPageId = cleanString(video.public_page_id)
-  if (publicPageId) {
-    const match = pickNearestSessionEntry(video, sessionEntries, session => cleanString(session.public_page_id) === publicPageId)
-    if (match) return match
-  }
-
-  const normalizedUrl = normalizeJourneyPageUrl(video.page_url)
-  if (normalizedUrl) {
-    const match = pickNearestSessionEntry(video, sessionEntries, session =>
-      normalizeJourneyPageUrl(session.page_url || session.landing_page) === normalizedUrl
-    )
-    if (match) return match
-  }
-
-  const normalizedPath = normalizeJourneyPagePath(video.page_url)
-  if (normalizedPath) {
-    return pickNearestSessionEntry(video, sessionEntries, session =>
-      normalizeJourneyPagePath(session.page_url || session.landing_page) === normalizedPath
-    )
-  }
-
+  if (exactUrl) return 'canonical_page_url'
   return null
+}
+
+const getJourneyPageEvidenceTimes = (session = {}) => {
+  const evidence = []
+  const canonicalRaw = session.started_at || session.created_at
+  const canonicalTime = parseSortableTimestamp(canonicalRaw)
+  if (canonicalRaw && canonicalTime > 0) {
+    evidence.push({ raw: canonicalRaw, time: canonicalTime, source: 'started_at' })
+  }
+
+  // Algunas filas históricas de Sites conservaron el instante correcto del
+  // navegador en client_started_at aunque started_at se hubiera persistido como
+  // hora de pared. Sólo se usa como evidencia de relación cuando el backend no
+  // marcó ese reloj como ajustado; el instante visible del video sigue saliendo
+  // de su propio ledger.
+  if (!Boolean(Number(session.timestamp_adjusted)) && session.client_started_at) {
+    const clientTime = parseSortableTimestamp(session.client_started_at)
+    if (clientTime > 0 && !evidence.some(item => item.time === clientTime)) {
+      evidence.push({ raw: session.client_started_at, time: clientTime, source: 'client_started_at' })
+    }
+  }
+
+  return evidence
+}
+
+const findVideoPageVisitRelation = (video, sessionRows, sessionEntryByKey) => {
+  const videoTime = parseSortableTimestamp(video.first_event_at || video.started_at || video.last_event_at)
+  if (!(videoTime > 0)) return null
+
+  const candidates = sessionRows.flatMap(session => {
+    if (!JOURNEY_VIDEO_PAGE_EVENT_NAMES.has(cleanString(session.event_name).toLowerCase())) return []
+    const pageMatchMethod = getJourneyPageIdentityMatch(video, session)
+    if (!pageMatchMethod) return []
+
+    return getJourneyPageEvidenceTimes(session)
+      .map(evidence => ({
+        session,
+        evidence,
+        pageMatchMethod,
+        distance: Math.abs(evidence.time - videoTime),
+        occursAfterVideo: evidence.time > videoTime
+      }))
+      .filter(candidate =>
+        candidate.distance <= JOURNEY_SESSION_INACTIVITY_SECONDS * 1000 &&
+        (!candidate.occursAfterVideo || candidate.distance <= JOURNEY_VIDEO_PAGE_MATCH_AFTER_TOLERANCE_MS)
+      )
+  })
+
+  const selected = candidates.sort((left, right) =>
+    left.distance - right.distance ||
+    Number(left.occursAfterVideo) - Number(right.occursAfterVideo) ||
+    String(left.session.id).localeCompare(String(right.session.id))
+  )[0]
+  if (!selected) return null
+
+  const journeySessionKey = cleanString(
+    selected.session.journey_session_key || selected.session.session_id || selected.session.id
+  )
+  const sessionEntry = sessionEntryByKey.get(journeySessionKey)
+
+  return {
+    page_visit_relation_verified: true,
+    page_match_method: selected.pageMatchMethod,
+    related_tracking_session_id: selected.session.id,
+    related_page_visit_cursor_key: sessionEntry?.event?.cursorKey || null,
+    related_page_event_at: selected.evidence.raw,
+    related_page_timestamp_source: selected.evidence.source
+  }
 }
 
 const buildPageVisitJourneyEvent = (session, { contactCreatedAt } = {}) => {
@@ -1724,24 +1821,6 @@ const loadContactJourneySessionRows = async (contact, {
   }
 
   return { rows, matchedByEmail, ignoredVisitorId: contactVisitorId && !trustedVisitorId ? contactVisitorId : '' }
-}
-
-const attachVideoEngagementsToPageVisits = (sessionEntries, videoEngagements) => {
-  const attached = new Set()
-
-  videoEngagements.forEach(video => {
-    const key = getVideoEngagementKey(video)
-    const match = findVideoSessionEntry(video, sessionEntries)
-    if (!key || !match) return
-
-    const existing = Array.isArray(match.event.data.video_engagements)
-      ? match.event.data.video_engagements
-      : []
-    match.event.data.video_engagements = [...existing, video]
-    attached.add(key)
-  })
-
-  return attached
 }
 
 const loadContactVideoEngagements = async (contact = {}, { limit = JOURNEY_DEFAULT_PAGE_LIMIT, beforeDate = null, beforeCursor = null } = {}) => {
@@ -6847,19 +6926,23 @@ export const getContactJourney = async (req, res) => {
         session,
         event: buildPageVisitJourneyEvent(session, { contactCreatedAt: contact.created_at })
       }))
-      const attachedVideoKeys = attachVideoEngagementsToPageVisits(sessionJourneyEntries, videoEngagements)
+      const sessionEntryByKey = new Map(sessionJourneyEntries.map(entry => [
+        cleanString(entry.session.journey_session_key || entry.session.session_id || entry.session.id),
+        entry
+      ]))
 
-      // Agregar todas las visitas al journey, enriquecidas con video si el tracking
-      // detectó reproducción en la misma sesión/página.
+      // Cada visita conserva su resumen de sesión. La reproducción es un evento
+      // de primer nivel porque tiene hora y página propias; esconderla dentro de
+      // la visita movería su fecha al inicio de la sesión y vuelve ambiguo un
+      // recorrido que pasó por varias páginas.
       sessionJourneyEntries.forEach(({ event }) => {
         journey.push(event)
       })
 
-      // Si el video se enlazó al contacto pero no hay visita exacta para colgarlo,
-      // no se pierde: queda como evento propio de video dentro del viaje.
       videoEngagements.forEach(video => {
         const key = getVideoEngagementKey(video)
-        if (key && attachedVideoKeys.has(key)) return
+        if (!key) return
+        const pageVisitRelation = findVideoPageVisitRelation(video, sessions, sessionEntryByKey)
 
         journey.push({
           type: 'video_playback',
@@ -6868,7 +6951,8 @@ export const getContactJourney = async (req, res) => {
           cursorKey: `video_playback:${getVideoEngagementKey(video)}`,
           data: {
             ...video,
-            standalone: true
+            ...pageVisitRelation,
+            standalone: !pageVisitRelation
           }
         })
       })
