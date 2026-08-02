@@ -546,20 +546,6 @@ const channelOptions = [
   { value: 'both', label: 'WhatsApp API y correo electrónico' }
 ]
 
-const channelLabelById: Record<PaymentAutomationSettings['reminderChannel'], string> = {
-  whatsapp: 'WhatsApp API',
-  whatsapp_qr: 'WhatsApp QR solo',
-  email: 'correo electrónico',
-  both: 'WhatsApp API y correo electrónico'
-}
-
-const afterPaymentActionLabelById: Record<PaymentAutomationSettings['afterPaymentAction'], string> = {
-  send_receipt: 'Enviar comprobante',
-  start_automation: 'Iniciar automatización',
-  tag_contact: 'Etiquetar contacto',
-  none: 'No hacer nada'
-}
-
 const paymentAutomationTemplateDefaults: Record<PaymentAutomationTemplateKind, {
   label: string
   defaultName: string
@@ -3470,15 +3456,6 @@ export const PaymentsConfiguration: React.FC = () => {
     patchAutomationValues({ [template.messageTextKey]: value } as Partial<PaymentAutomationSettings>)
   }
 
-  const getAutomationContentSummary = (
-    kind: PaymentAutomationTemplateKind,
-    channel: PaymentAutomationSettings['reminderChannel']
-  ) => {
-    if (getAutomationContentMode(kind) === 'direct') return 'mensaje directo'
-    if (channelUsesWhatsApp(channel)) return getAutomationTemplateName(kind)
-    return 'mensaje predeterminado'
-  }
-
   const setAutomationTemplateValue = (kind: PaymentAutomationTemplateKind, value: string) => {
     const config = paymentAutomationTemplateDefaults[kind]
     const selectedTemplate = paymentWhatsappTemplates.find((template) => (
@@ -3607,17 +3584,6 @@ export const PaymentsConfiguration: React.FC = () => {
         )}
       </div>
     )
-  }
-
-  const getAutomationTransportSummary = (
-    channel: PaymentAutomationSettings['reminderChannel'],
-    qrFallbackEnabled: boolean
-  ) => {
-    if (!channelUsesWhatsApp(channel)) return ''
-    if (channelUsesWhatsappQrOnly(channel)) return ' · QR solo'
-    if (whatsappAvailability.canShowQrFallbackSwitch && qrFallbackEnabled) return ' · QR respaldo'
-    if (whatsappAvailability.hasQrConnected && !whatsappAvailability.hasApiConnected) return ' · QR'
-    return ''
   }
 
   const renderAutomationsSection = () => (
@@ -3765,24 +3731,6 @@ export const PaymentsConfiguration: React.FC = () => {
 
         {renderSectionSaveBar('Guardar automatizaciones')}
       </Card>
-
-      <div className={styles.summaryStrip}>
-        <div>
-          <Clock size={17} />
-          <strong>{automations.remindersEnabled ? `${automations.reminderDaysBefore} días antes` : 'Recordatorios apagados'}</strong>
-          <span>{channelLabelById[automations.reminderChannel]} · {getAutomationContentSummary('reminder', automations.reminderChannel)}{getAutomationTransportSummary(automations.reminderChannel, automations.reminderQrFallbackEnabled)}</span>
-        </div>
-        <div>
-          <CheckCircle size={17} />
-          <strong>{automations.receiptDeliveryEnabled ? 'Comprobante activo' : 'Comprobante apagado'}</strong>
-          <span>{afterPaymentActionLabelById[automations.afterPaymentAction]} · {channelLabelById[automations.receiptDeliveryChannel]} · {getAutomationContentSummary('receipt', automations.receiptDeliveryChannel)}{getAutomationTransportSummary(automations.receiptDeliveryChannel, automations.receiptQrFallbackEnabled)}</span>
-        </div>
-        <div>
-          <AlertTriangle size={17} />
-          <strong>{automations.failedPaymentEnabled ? `${automations.failedPaymentDelayHours} h tras fallo` : 'Sin seguimiento'}</strong>
-          <span>{channelLabelById[automations.failedPaymentChannel]} · {getAutomationContentSummary('failed', automations.failedPaymentChannel)}{getAutomationTransportSummary(automations.failedPaymentChannel, automations.failedPaymentQrFallbackEnabled)}</span>
-        </div>
-      </div>
     </div>
   )
 

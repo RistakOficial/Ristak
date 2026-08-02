@@ -4432,6 +4432,8 @@ requerido` no deben aparecer como si fueran el resultado del pago.
 
 Configuracion > Pagos > Automatizaciones controla recordatorios, comprobantes y
 avisos de cobro fallido desde `payments_settings.automations`.
+La pantalla termina en su barra de guardado y no repite esos tres estados en
+tarjetas-resumen independientes debajo del formulario.
 
 Esta sección y todo su despacho en segundo plano requieren
 `payment_automations`. Tener el módulo `payments` no basta.

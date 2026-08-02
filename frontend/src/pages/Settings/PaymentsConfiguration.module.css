@@ -1454,13 +1454,6 @@
   animation: spin 0.8s linear infinite;
 }
 
-.summaryStrip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.summaryStrip > div,
 .noticeCard {
   display: flex;
   align-items: flex-start;
@@ -1471,13 +1464,11 @@
   background: var(--surface);
 }
 
-.summaryStrip svg,
 .noticeCard svg {
   flex: 0 0 auto;
   color: var(--accent);
 }
 
-.summaryStrip strong,
 .noticeCard strong {
   display: block;
   color: var(--text);
@@ -1485,7 +1476,6 @@
   font-weight: 700;
 }
 
-.summaryStrip span,
 .noticeCard p {
   display: block;
   margin: 4px 0 0;
@@ -2212,7 +2202,6 @@
     position: static;
   }
 
-  .summaryStrip,
   .connectionSummary,
   .mercadoPagoTestLayout,
   .taxSettingsLayout .gigstackDefaultsGrid,
