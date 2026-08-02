@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   getAutomationNodeRequiredFeatures,
+  getAutomationTriggerRequiredFeatures,
   normalizeFlow,
   validateFlowForPublish,
   START_NODE_TYPE
@@ -72,6 +73,29 @@ test('publicar acepta un flujo lineal válido', () => {
     edges: [edge('e1', 'start', 'a1')]
   }
   assert.deepEqual(validateFlowForPublish(flow), [])
+})
+
+test('publicar acepta la acción de cita y exige la función de citas', () => {
+  const appointmentAction = actionNode('appointment', 'action-appointment-upsert')
+  appointmentAction.config = { mode: 'mark_attendance', calendar: 'calendar_123' }
+  const flow = {
+    nodes: [startNode(), appointmentAction],
+    edges: [edge('e1', 'start', 'appointment')]
+  }
+
+  assert.deepEqual(validateFlowForPublish(flow), [])
+  assert.deepEqual(getAutomationNodeRequiredFeatures(appointmentAction), ['appointments'])
+})
+
+test('el enlace de disparo exige la función de trigger links y no Formularios', () => {
+  assert.deepEqual(
+    getAutomationTriggerRequiredFeatures({ type: 'trigger-activation-link' }),
+    ['trigger_links']
+  )
+  assert.deepEqual(
+    getAutomationTriggerRequiredFeatures({ type: 'trigger-link-clicked' }),
+    ['trigger_links']
+  )
 })
 
 test('publicar valida la acción de canal predeterminado y exige número sólo para WhatsApp', () => {

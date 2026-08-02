@@ -1120,22 +1120,22 @@ const TRIGGERS: NodeDefinition[] = [
   {
     type: 'trigger-activation-link',
     kind: 'trigger',
-    label: 'Clic de disparo',
+    label: 'Enlace de disparo',
     category: 'trigger-events',
-    description: 'Se activa cuando alguien abre una URL pública de disparo',
+    description: 'Se activa cuando el contacto abre uno de tus enlaces de disparo',
     icon: MousePointerClick,
     accent: 'green',
-    addButtonLabel: 'Seleccionar clic',
+    addButtonLabel: 'Seleccionar enlace',
     defaultConfig: () => ({ link: '', linkName: '' }),
     fields: [
-      { key: 'link', label: 'Clic de disparo', type: 'catalogSelect', catalog: 'links', required: true }
+      { key: 'link', label: 'Enlace de disparo', type: 'catalogSelect', catalog: 'links', required: true }
     ],
     outputs: () => SINGLE_OUTPUT,
     variableOutput: (config) => {
       const linkName = triggerLinkLabel(config.linkName)
       return {
         baseId: 'enlace_disparo',
-        baseLabel: linkName ? `Clic de disparo - ${linkName}` : 'Clic de disparo',
+        baseLabel: linkName ? `Enlace de disparo - ${linkName}` : 'Enlace de disparo',
         fields: TRIGGER_LINK_FIELDS
       }
     },
@@ -1144,9 +1144,9 @@ const TRIGGERS: NodeDefinition[] = [
       const hasSelectedLink = Boolean(linkName || str(config.link))
       return {
         text: hasSelectedLink
-          ? `Cuando ocurra el clic de disparo${linkName ? ` "${linkName}"` : ' seleccionado'}${triggerFiltersSentence(config.filters)}`
+          ? `Cuando el contacto abra el enlace de disparo${linkName ? ` "${linkName}"` : ' seleccionado'}${triggerFiltersSentence(config.filters)}`
           : undefined,
-        empty: 'Selecciona el clic de disparo'
+        empty: 'Selecciona el enlace de disparo'
       }
     }
   },
@@ -3272,7 +3272,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     kind: 'action',
     label: 'Crear / actualizar cita',
     category: 'action-data',
-    description: 'Genera o modifica una cita y expone sus datos',
+    description: 'Crea, consulta, actualiza o marca la asistencia de una cita',
     icon: CalendarCheck,
     accent: 'teal',
     addButtonLabel: 'Configurar cita',
@@ -3285,22 +3285,83 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         options: [
           { value: 'create', label: 'Crear cita' },
           { value: 'read', label: 'Consultar cita' },
-          { value: 'update', label: 'Actualizar cita' }
+          { value: 'update', label: 'Actualizar cita' },
+          { value: 'mark_attendance', label: 'Marcar asistencia de cita' }
         ]
       },
-      { key: 'calendar', label: 'Calendario', type: 'catalogSelect', catalog: 'calendars' },
-      { key: 'date', label: 'Fecha', type: 'text', placeholder: '{{formateador_fecha_1.fecha_original}}', showVariables: true },
-      { key: 'time', label: 'Hora', type: 'text', placeholder: '15:00', showVariables: true },
-      { key: 'service', label: 'Servicio', type: 'text', placeholder: 'Consulta', showVariables: true }
+      {
+        key: 'attendanceTargetInfo',
+        label: 'Cita que se marcará',
+        type: 'info',
+        text: 'Se usa primero la cita que inició esta automatización. Si el disparador no trae una cita, se toma la próxima cita activa del contacto dentro del calendario seleccionado.',
+        showIf: (config) => str(config.mode) === 'mark_attendance'
+      },
+      {
+        key: 'calendar',
+        label: 'Calendario',
+        type: 'catalogSelect',
+        catalog: 'calendars',
+        help: 'En consultar, actualizar o marcar asistencia funciona como filtro de seguridad opcional.'
+      },
+      {
+        key: 'date',
+        label: 'Fecha',
+        type: 'text',
+        placeholder: '{{formateador_fecha_1.fecha_original}}',
+        showVariables: true,
+        showIf: (config) => ['create', 'update'].includes(str(config.mode))
+      },
+      {
+        key: 'time',
+        label: 'Hora',
+        type: 'text',
+        placeholder: '15:00',
+        showVariables: true,
+        showIf: (config) => ['create', 'update'].includes(str(config.mode))
+      },
+      {
+        key: 'service',
+        label: 'Servicio',
+        type: 'text',
+        placeholder: 'Consulta',
+        showVariables: true,
+        showIf: (config) => ['create', 'update'].includes(str(config.mode))
+      }
     ],
     outputs: () => SINGLE_OUTPUT,
-    variableOutput: (config) => ({
-      baseId: str(config.mode) === 'create' ? 'crear_cita' : 'cita',
-      baseLabel: str(config.mode) === 'create' ? 'Crear cita' : 'Cita',
-      fields: APPOINTMENT_FIELDS
-    }),
+    validate: (config) => {
+      const mode = str(config.mode) || 'create'
+      if (mode === 'create') {
+        return [
+          !str(config.calendar) ? 'Selecciona el calendario de la cita' : '',
+          !str(config.date) ? 'Define la fecha de la cita' : '',
+          !str(config.time) ? 'Define la hora de la cita' : ''
+        ].filter(Boolean)
+      }
+      if (mode === 'update' && !str(config.date) && !str(config.time) && !str(config.service)) {
+        return ['Define al menos una fecha, hora o servicio para actualizar la cita']
+      }
+      return []
+    },
+    variableOutput: (config) => {
+      const mode = str(config.mode) || 'create'
+      return {
+        baseId: mode === 'create' ? 'crear_cita' : 'cita',
+        baseLabel: mode === 'create'
+          ? 'Crear cita'
+          : mode === 'mark_attendance'
+            ? 'Asistencia de cita'
+            : 'Cita',
+        fields: APPOINTMENT_FIELDS
+      }
+    },
     summary: (config) => {
-      const modes: Record<string, string> = { create: 'Crear', read: 'Consultar', update: 'Actualizar' }
+      const modes: Record<string, string> = {
+        create: 'Crear',
+        read: 'Consultar',
+        update: 'Actualizar',
+        mark_attendance: 'Marcar asistencia de'
+      }
       return {
         text: `${modes[str(config.mode)] || 'Crear'} cita${str(config.date) ? ` · ${str(config.date)}` : ''}${str(config.time) ? ` ${str(config.time)}` : ''}`,
         empty: 'Configura la cita'

@@ -7246,6 +7246,38 @@ valido siempre que exista al menos un paso conectado al inicio; si el flujo debe
 arrancar solo ante un evento, entonces se agrega y valida el disparador
 correspondiente.
 
+El disparador **Enlace de disparo** permite elegir una definicion activa del
+catalogo de trigger links. Cuando un contacto abre la URL opaca que Ristak
+materializo para el, `triggerLinksService` registra el clic, emite
+`trigger-link-clicked` con el contacto y el enlace exactos, y el motor inscribe
+al contacto solamente en los flujos publicados que seleccionaron ese enlace.
+La ruta generica compartida puede seguir registrando clics anonimos, pero no
+inventa identidad ni ejecuta acciones de contacto: para una automatizacion
+accionable se debe enviar `{{trigger_link.<public_id>}}` dentro de un contexto
+que ya conoce al contacto. Este disparador exige la funcion `trigger_links`; no
+depende incorrectamente de la licencia de Formularios.
+
+La accion **Crear / actualizar cita** es ejecutable por el motor y ofrece cuatro
+modos: crear, consultar, actualizar y **Marcar asistencia de cita**. Crear exige
+calendario, fecha y hora en la zona horaria del negocio y reutiliza el controller
+canonico de calendarios para disponibilidad, persistencia y sincronizacion.
+Consultar, actualizar o marcar asistencia resuelven la cita sin pedir IDs en el
+editor: primero usan el `appointmentId` exacto del disparador, despues la cita
+activa recordada en el contexto y, como fallback, la proxima cita activa del
+contacto dentro del calendario seleccionado. La cita siempre debe pertenecer al
+contacto de la ejecucion y, si se eligio calendario, tambien a ese calendario;
+el motor no puede marcar por coincidencia aproximada. Los eventos de cita que
+nacen de esta accion propagan la profundidad de cascada para que una
+automatizacion no pueda crear un ciclo ilimitado de citas o cambios de estado.
+
+**Marcar asistencia de cita** cambia el estado canonico a `showed` mediante la
+misma ruta que usa Calendarios y guarda una señal idempotente en
+`appointment_attendance_signals` ligada a `contact_id + appointment_id`. Si la
+cita ya tenia un estado equivalente a asistencia, no repite la mutacion pero si
+reconcilia la señal. Reportes y Publicidad cruzan esa señal con la cita antes de
+contarla cuando `attribution_calendar_ids` limita los calendarios: una señal de
+otro calendario no se atribuye aunque pertenezca al mismo contacto.
+
 Al crear o duplicar automatizaciones, el backend asigna nombres numerados y
 unicos a partir del nombre base: `Automatización sin título 1`,
 `Automatización sin título 2`, etc. La numeracion evita que varias

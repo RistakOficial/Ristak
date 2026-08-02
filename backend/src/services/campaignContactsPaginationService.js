@@ -327,6 +327,12 @@ export async function listCampaignContactsPage({
   const calendarCondition = calendarIds.length
     ? `AND person_appointment.calendar_id IN (${sqlList(calendarIds)})`
     : ''
+  const signalCalendarJoin = calendarIds.length
+    ? 'INNER JOIN appointments signal_appointment ON signal_appointment.id = person_signal.appointment_id'
+    : ''
+  const signalCalendarCondition = calendarIds.length
+    ? `AND signal_appointment.calendar_id IN (${sqlList(calendarIds)})`
+    : ''
   const personHasAppointmentExpression = `EXISTS (
     SELECT 1 ${personProbePrefix}
       AND (
@@ -346,7 +352,9 @@ export async function listCampaignContactsPage({
         EXISTS (
           SELECT 1
           FROM appointment_attendance_signals person_signal
+          ${signalCalendarJoin}
           WHERE person_signal.contact_id = person_contact.id
+            ${signalCalendarCondition}
         ) OR EXISTS (
           SELECT 1
           FROM appointments person_appointment

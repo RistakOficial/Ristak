@@ -5413,6 +5413,318 @@ async function sendCommentReplyFromNode(node, ctx, fallbackReplyType = 'public',
   return { detail: `Respuesta ${kind} al comentario enviada (${target.label})${note}`, target }
 }
 
+const AUTOMATION_APPOINTMENT_ATTENDED_STATUSES = new Set([
+  'showed', 'show', 'attended', 'completed', 'complete'
+])
+const AUTOMATION_APPOINTMENT_FALLBACK_EXCLUDED_STATUSES = [
+  'cancelled', 'canceled', 'no_show', 'no-show', 'noshow', 'invalid', 'deleted'
+]
+
+function normalizeAppointmentActionMode(value) {
+  const mode = cleanString(value || 'create').toLowerCase().replace(/[\s-]+/g, '_')
+  if (['attendance', 'attend', 'mark_attendance', 'showed'].includes(mode)) return 'mark_attendance'
+  if (['create', 'read', 'update'].includes(mode)) return mode
+  return 'create'
+}
+
+function appointmentRecordValue(appointment = {}, camelCase, snakeCase) {
+  return appointment?.[camelCase] ?? appointment?.[snakeCase] ?? null
+}
+
+function appointmentRecordStatus(appointment = {}) {
+  return cleanString(
+    appointmentRecordValue(appointment, 'appointmentStatus', 'appointment_status') ||
+    appointment.status
+  ).toLowerCase()
+}
+
+function parseAppointmentInstant(value, timezone = DEFAULT_TIMEZONE) {
+  const raw = cleanString(value)
+  if (!raw) return null
+  let parsed = DateTime.fromISO(raw, { setZone: true })
+  if (!parsed.isValid) parsed = DateTime.fromSQL(raw, { zone: 'utc' })
+  return parsed.isValid ? parsed.setZone(timezone) : null
+}
+
+function normalizeAutomationAppointmentTime(value) {
+  const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(cleanString(value))
+  if (!match) return ''
+  const hour = Number(match[1])
+  const minute = Number(match[2])
+  const second = Number(match[3] || 0)
+  if (hour > 23 || minute > 59 || second > 59) return ''
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}${match[3] ? `:${String(second).padStart(2, '0')}` : ''}`
+}
+
+function automationAppointmentStart({ date, time, timezone, fallbackStart = null } = {}) {
+  const rawDate = cleanString(date)
+  const rawTime = normalizeAutomationAppointmentTime(time)
+  const fallback = parseAppointmentInstant(fallbackStart, timezone)
+
+  if (cleanString(time) && !rawTime) {
+    throw engineError(400, 'La hora de la cita debe usar el formato HH:mm')
+  }
+
+  if (rawDate && !/^\d{4}-\d{2}-\d{2}$/.test(rawDate) && !rawTime) {
+    return normalizeToUtcIso(rawDate, timezone)
+  }
+
+  const dateOnly = /^\d{4}-\d{2}-\d{2}/.exec(rawDate)?.[0] || fallback?.toFormat('yyyy-MM-dd') || ''
+  const timeOnly = rawTime || fallback?.toFormat('HH:mm:ss') || ''
+  if (!dateOnly) throw engineError(400, 'Define la fecha de la cita')
+  if (!timeOnly) throw engineError(400, 'Define la hora de la cita')
+  return normalizeToUtcIso(`${dateOnly}T${timeOnly}`, timezone)
+}
+
+async function invokeAutomationCalendarController(handlerName, {
+  body = {},
+  params = {},
+  query = {},
+  userId = null,
+  automationEventContext = {}
+} = {}) {
+  const [{ invokeController }, controller] = await Promise.all([
+    import('../agents/invokeController.js'),
+    import('../controllers/calendarsController.js')
+  ])
+  const handler = controller?.[handlerName]
+  if (typeof handler !== 'function') throw new Error(`No existe la operación de calendario ${handlerName}`)
+  const response = await invokeController(handler, {
+    body,
+    params,
+    query,
+    user: userId ? { id: userId, userId } : null,
+    internalContext: { automationEventContext }
+  })
+  const payload = response?.payload || {}
+  if (Number(response?.statusCode || 500) >= 400 || payload?.success === false) {
+    const error = engineError(
+      Number(response?.statusCode || 500),
+      cleanString(payload?.error) || 'No se pudo completar la operación de cita'
+    )
+    if (payload?.code) error.code = payload.code
+    throw error
+  }
+  return payload?.data !== undefined ? payload.data : payload
+}
+
+async function loadAutomationAppointmentTarget(config = {}, ctx = {}) {
+  const contactId = cleanString(ctx.contact?.id || ctx.contactId || ctx.contact_id)
+  if (!contactId) throw engineError(400, 'La acción de cita necesita un contacto identificado')
+
+  const configuredAppointmentId = cleanString(config.appointmentId || config.appointment_id)
+  const eventAppointmentId = cleanString(ctx.appointmentId || ctx.appointment_id)
+  const rememberedAppointmentId = cleanString(
+    ctx.contact?.activeAppointmentId ||
+    ctx.contact?.active_appointment_id ||
+    ctx.activeAppointmentId ||
+    ctx.active_appointment_id
+  )
+  let appointmentId = configuredAppointmentId || eventAppointmentId || rememberedAppointmentId
+
+  if (!appointmentId) {
+    const params = [contactId]
+    const calendarId = cleanString(config.calendar)
+    let calendarSql = ''
+    if (calendarId) {
+      calendarSql = 'AND calendar_id = ?'
+      params.push(calendarId)
+    }
+    const excluded = AUTOMATION_APPOINTMENT_FALLBACK_EXCLUDED_STATUSES
+    const row = await db.get(`
+      SELECT id
+      FROM appointments
+      WHERE contact_id = ?
+        ${calendarSql}
+        AND LOWER(COALESCE(appointment_status, status, '')) NOT IN (${excluded.map(() => '?').join(', ')})
+      ORDER BY
+        CASE WHEN start_time >= CURRENT_TIMESTAMP THEN 0 ELSE 1 END,
+        CASE WHEN start_time >= CURRENT_TIMESTAMP THEN start_time ELSE NULL END ASC,
+        CASE WHEN start_time < CURRENT_TIMESTAMP THEN start_time ELSE NULL END DESC,
+        date_added DESC,
+        id DESC
+      LIMIT 1
+    `, [...params, ...excluded])
+    appointmentId = cleanString(row?.id)
+  }
+
+  if (!appointmentId) throw engineError(404, 'No se encontró una cita activa para este contacto')
+  const localCalendarService = await import('./localCalendarService.js')
+  const appointment = await localCalendarService.getLocalAppointment(appointmentId)
+  if (!appointment?.id) throw engineError(404, 'La cita seleccionada ya no existe')
+
+  const appointmentContactId = cleanString(appointmentRecordValue(appointment, 'contactId', 'contact_id'))
+  if (appointmentContactId !== contactId) {
+    throw engineError(409, 'La cita seleccionada no pertenece al contacto de esta ejecución')
+  }
+
+  const selectedCalendarId = cleanString(config.calendar)
+  const appointmentCalendarId = cleanString(appointmentRecordValue(appointment, 'calendarId', 'calendar_id'))
+  if (selectedCalendarId && appointmentCalendarId !== selectedCalendarId) {
+    throw engineError(409, 'La cita seleccionada pertenece a otro calendario')
+  }
+  return appointment
+}
+
+async function appointmentActionOutput(appointment = {}, timezone = DEFAULT_TIMEZONE) {
+  const localCalendarService = await import('./localCalendarService.js')
+  const calendarId = cleanString(appointmentRecordValue(appointment, 'calendarId', 'calendar_id'))
+  const calendar = calendarId
+    ? await localCalendarService.getLocalCalendar(calendarId).catch(() => null)
+    : null
+  const start = parseAppointmentInstant(
+    appointmentRecordValue(appointment, 'startTime', 'start_time'),
+    timezone
+  )
+  return {
+    id_cita: appointment.id || '',
+    nombre_contacto: cleanString(
+      appointmentRecordValue(appointment, 'contactName', 'contact_name')
+    ),
+    fecha: start?.toFormat('yyyy-MM-dd') || '',
+    hora: start?.toFormat('HH:mm') || '',
+    servicio: cleanString(appointment.title),
+    estado: appointmentRecordStatus(appointment),
+    calendario: cleanString(calendar?.name || calendarId),
+    notas: cleanString(appointment.notes)
+  }
+}
+
+async function executeAppointmentAction(node, ctx, enrollment = {}) {
+  const config = node.config || {}
+  const mode = normalizeAppointmentActionMode(config.mode)
+  const timezone = isValidTimezone(cleanString(ctx.scheduleTimezone || ctx.timezone))
+    ? cleanString(ctx.scheduleTimezone || ctx.timezone)
+    : await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
+  const contactId = cleanString(ctx.contact?.id || ctx.contactId || ctx.contact_id)
+  if (!contactId) throw engineError(400, 'La acción de cita necesita un contacto identificado')
+  const automationEventContext = {
+    __cascadeDepth: (Number(ctx.__cascadeDepth) || 0) + 1
+  }
+
+  let appointment
+  if (mode === 'create') {
+    const localCalendarService = await import('./localCalendarService.js')
+    const calendarId = cleanString(config.calendar)
+    if (!calendarId) throw engineError(400, 'Selecciona el calendario de la cita')
+    const calendar = await localCalendarService.getLocalCalendar(calendarId)
+    if (!calendar?.id) throw engineError(404, 'El calendario seleccionado ya no existe')
+    const startTime = automationAppointmentStart({
+      date: config.date,
+      time: config.time,
+      timezone
+    })
+    const durationMinutes = Math.max(
+      1,
+      localCalendarService.calendarDurationToMinutes(
+        calendar.slotDuration,
+        calendar.slotDurationUnit,
+        60
+      )
+    )
+    const endTime = DateTime.fromISO(startTime, { setZone: true })
+      .plus({ minutes: durationMinutes })
+      .toUTC()
+      .toISO()
+    appointment = await invokeAutomationCalendarController('createAppointment', {
+      userId: ctx.userId || ctx.user_id,
+      automationEventContext,
+      body: {
+        clientRequestId: `automation:${
+          enrollment.id || `${enrollment.automationId || ctx.automationId || 'flow'}:${contactId}`
+        }:${node.id}`,
+        calendarId,
+        contactId,
+        title: cleanString(config.service) || calendar.eventTitle || calendar.name || 'Cita',
+        startTime,
+        endTime,
+        appointmentStatus: 'confirmed',
+        status: 'confirmed',
+        strictAvailabilityCheck: true,
+        timeZone: timezone,
+        source: 'automation'
+      }
+    })
+  } else {
+    appointment = await loadAutomationAppointmentTarget(config, ctx)
+  }
+
+  if (mode === 'update') {
+    const updates = {}
+    if (cleanString(config.service)) updates.title = cleanString(config.service)
+    if (cleanString(config.date) || cleanString(config.time)) {
+      const currentStart = appointmentRecordValue(appointment, 'startTime', 'start_time')
+      const currentEnd = appointmentRecordValue(appointment, 'endTime', 'end_time')
+      const startTime = automationAppointmentStart({
+        date: config.date,
+        time: config.time,
+        timezone,
+        fallbackStart: currentStart
+      })
+      const currentStartInstant = DateTime.fromISO(cleanString(currentStart), { setZone: true })
+      const currentEndInstant = DateTime.fromISO(cleanString(currentEnd), { setZone: true })
+      const currentDurationMs = currentStartInstant.isValid && currentEndInstant.isValid
+        ? currentEndInstant.diff(currentStartInstant).as('milliseconds')
+        : Number.NaN
+      const durationMs = Number.isFinite(currentDurationMs) && currentDurationMs > 0
+        ? currentDurationMs
+        : 60 * 60 * 1000
+      const updatedStart = DateTime.fromISO(startTime, { setZone: true })
+      updates.startTime = startTime
+      updates.endTime = updatedStart.plus({ milliseconds: durationMs }).toUTC().toISO()
+      updates.timeZone = timezone
+      updates.strictAvailabilityCheck = true
+    }
+    if (Object.keys(updates).length === 0) {
+      throw engineError(400, 'Define al menos una fecha, hora o servicio para actualizar la cita')
+    }
+    appointment = await invokeAutomationCalendarController('updateAppointment', {
+      userId: ctx.userId || ctx.user_id,
+      automationEventContext,
+      params: { id: appointment.id },
+      body: updates
+    })
+  }
+
+  if (mode === 'mark_attendance') {
+    const currentStatus = appointmentRecordStatus(appointment)
+    if (!AUTOMATION_APPOINTMENT_ATTENDED_STATUSES.has(currentStatus)) {
+      appointment = await invokeAutomationCalendarController('updateAppointment', {
+        userId: ctx.userId || ctx.user_id,
+        automationEventContext,
+        params: { id: appointment.id },
+        body: {
+          appointmentStatus: 'showed',
+          status: 'showed'
+        }
+      })
+    }
+    const { recordAttendanceAttributionSignal } = await import('./appointmentsMerge.js')
+    await recordAttendanceAttributionSignal({
+      contactId,
+      appointmentId: appointment.id,
+      source: 'automation_mark_attendance'
+    })
+    invalidateTrackingAnalyticsCache()
+    const { invalidateCampaignPerformanceCache } = await import('./campaignPerformanceService.js')
+    invalidateCampaignPerformanceCache()
+  }
+
+  const output = await appointmentActionOutput(appointment, timezone)
+  const details = {
+    create: `Cita creada en ${output.calendario || 'el calendario seleccionado'}`,
+    read: `Cita consultada: ${output.servicio || output.id_cita}`,
+    update: `Cita actualizada: ${output.servicio || output.id_cita}`,
+    mark_attendance: `Asistencia registrada para la cita ${output.servicio || output.id_cita}`
+  }
+  return {
+    handle: 'out',
+    detail: details[mode],
+    output,
+    outputBaseId: mode === 'create' ? 'crear_cita' : 'cita'
+  }
+}
+
 /**
  * Ejecuta un nodo. Devuelve:
  *  { handle, detail }            → continuar por esa salida
@@ -5767,6 +6079,9 @@ async function executeResolvedNode(node, ctx, enrollment) {
     case 'action-assign-user':
     case 'action-unassign-user':
       return { handle: 'out', detail: await applyContactUserAction(node, ctx) }
+
+    case 'action-appointment-upsert':
+      return executeAppointmentAction(node, ctx, enrollment)
 
     case 'action-system-notification':
       return executeSystemNotification(node, ctx, enrollment)

@@ -398,6 +398,13 @@ Config:
 - `app_config.default_calendar_id`
 - `app_config.attribution_calendar_ids`
 
+La acción **Crear / actualizar cita** de Automatizaciones reutiliza los
+controllers canónicos para crear y editar. Su modo **Marcar asistencia de cita**
+persiste `showed` sobre la cita exacta y una señal idempotente por
+`contact_id + appointment_id`. Cuando `attribution_calendar_ids` limita la
+atribución, Reportes y Publicidad cruzan esa señal con
+`appointments.calendar_id`; no basta con que coincida el contacto.
+
 La herramienta resuelve contacto por DB/GHL, usa `default_calendar_id` cuando no se proporciona calendario, calcula `endTime` con la duracion del calendario si falta, consulta y vuelve a validar `openHours` y las reglas del calendario en la zona del negocio, guarda espejo local en `appointments`, dispara los eventos de Automatizaciones `appointment-booked` y `appointment-status` al crear, y conserva el evento WhatsApp de cita agendada.
 
 ## Referencias

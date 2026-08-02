@@ -266,6 +266,7 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
   const dedup = rawContactDedup
   const contactRowsDedup = isPostgres ? rawContactDedup : 'c.person_key'
   const activeCalendar = calendarCondition('a', calendarIds)
+  const attendanceSignalCalendar = calendarCondition('signal_appointment', calendarIds)
   const attendedCalendar = calendarCondition('aa', calendarIds)
   const activeAppointment = `EXISTS (
     SELECT 1 FROM appointments a
@@ -276,7 +277,15 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
   const attendance = `(
     COALESCE(c.purchases_count, 0) > 0
     OR COALESCE(c.total_paid, 0) > 0
-    OR EXISTS (SELECT 1 FROM appointment_attendance_signals aas WHERE aas.contact_id = c.id)
+    OR EXISTS (
+      SELECT 1
+      FROM appointment_attendance_signals aas
+      ${attendanceSignalCalendar.sql
+        ? 'INNER JOIN appointments signal_appointment ON signal_appointment.id = aas.appointment_id'
+        : ''}
+      WHERE aas.contact_id = c.id
+        ${attendanceSignalCalendar.sql ? `AND ${attendanceSignalCalendar.sql}` : ''}
+    )
     OR EXISTS (
       SELECT 1 FROM appointments aa
       WHERE aa.contact_id = c.id
@@ -313,6 +322,7 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
   `, [
     ...contactParams,
     ...(useContactAttribution ? activeCalendar.params : []),
+    ...attendanceSignalCalendar.params,
     ...attendedCalendar.params
   ], queryOptions)
 

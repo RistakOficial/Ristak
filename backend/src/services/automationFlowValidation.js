@@ -47,6 +47,7 @@ const EXECUTABLE_NODE_TYPES = new Set([
   'action-contact-user',
   'action-assign-user',
   'action-unassign-user',
+  'action-appointment-upsert',
   'action-system-notification'
 ])
 
@@ -118,6 +119,7 @@ const AUTOMATION_NODE_REQUIRED_FEATURES = {
   'channel-comment-public-reply': ['campaigns'],
   'channel-comment-dm-reply': ['campaigns'],
   'action-change-whatsapp-number': ['whatsapp'],
+  'action-appointment-upsert': ['appointments'],
   'action-webhook': ['developers'],
   'ai-step': ['ai_agent'],
   'ai-gpt-openai': ['ai_agent']
@@ -137,8 +139,8 @@ const AUTOMATION_TRIGGER_REQUIRED_FEATURES = {
   'trigger-payment-received': ['payments'],
   'trigger-refund': ['payments'],
   'trigger-incoming-webhook': ['developers'],
-  'trigger-activation-link': ['forms'],
-  'trigger-link-clicked': ['forms']
+  'trigger-activation-link': ['trigger_links'],
+  'trigger-link-clicked': ['trigger_links']
 }
 
 function asArray(value) {

@@ -66,6 +66,15 @@ deduplicacion por persona. El detalle debe listar exactamente a las personas que
 forman el conteo. Un error de consulta no se convierte en una lista vacia; la UI
 debe distinguir entre "cero contactos" y "no se pudo cargar".
 
+Una asistencia puede provenir del estado canonico de `appointments` o de la
+señal idempotente `appointment_attendance_signals`. Cuando
+`attribution_calendar_ids` contiene calendarios, la señal no se filtra solamente
+por contacto: se cruza obligatoriamente por `appointment_id` contra
+`appointments.calendar_id`. Reportes, la tabla paginada de Publicidad y sus
+modales deben aplicar exactamente ese mismo filtro. Una señal sin cita o ligada
+a un calendario excluido conserva su historial operativo, pero no recibe
+credito de marketing dentro de esa seleccion.
+
 ## Recomendaciones entre contactos
 
 `contacts.referred_by_contact_id` expresa que el contacto fue recomendado por

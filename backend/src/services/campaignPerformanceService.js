@@ -390,6 +390,11 @@ export async function getCampaignPerformancePage({
   const calendarCondition = appointmentCalendars?.length
     ? `AND a.calendar_id IN (${appointmentCalendars.map(() => '?').join(', ')})`
     : ''
+  const signalCalendarJoin = appointmentCalendars?.length
+    ? `INNER JOIN appointments signal_appointment
+        ON signal_appointment.id = signals.appointment_id
+       AND signal_appointment.calendar_id IN (${appointmentCalendars.map(() => '?').join(', ')})`
+    : ''
   const visitorIdentity = getVisitorIdentityExpression('s')
   const visitorCte = includeVisitors
     ? `,
@@ -491,6 +496,7 @@ export async function getCampaignPerformancePage({
         SELECT cc.entity_id, cc.contact_id, 1 AS has_signal
         FROM candidate_contacts cc
         INNER JOIN appointment_attendance_signals signals ON signals.contact_id = cc.contact_id
+        ${signalCalendarJoin}
         GROUP BY cc.entity_id, cc.contact_id
       ),
       person_metrics AS (
@@ -567,6 +573,7 @@ export async function getCampaignPerformancePage({
     adsEnd,
     range.startUtc,
     range.endUtc,
+    ...(appointmentCalendars || []),
     ...(appointmentCalendars || []),
     ...(includeVisitors ? [range.startUtc, range.endUtc] : []),
     ...(metricSort ? [pageSize, offset] : [])

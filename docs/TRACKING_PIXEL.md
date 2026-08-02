@@ -187,6 +187,12 @@ emite `trigger-link-clicked` y responde `302` al destino final. La respuesta usa
 noindex, nofollow, noarchive` para no cachear, indexar ni reenviar el token como
 referrer.
 
+`trigger-link-clicked` también es el evento canónico del disparador
+**Enlace de disparo** en Automatizaciones. El flujo compara el ID estable del
+enlace seleccionado y sólo puede inscribir o actuar sobre el contacto cuando el
+evento trae una identidad resuelta por el token opaco; un clic anónimo conserva
+su analítica, pero no obtiene autoridad para modificar un contacto.
+
 La ruta compatible `/trigger-links/<public_id>` sigue aceptando clics anónimos,
 pero `contact_id`, teléfono, correo, nombre o `visitor_id` crudos recibidos por
 query no son autoridad y se eliminan del evento. Como transición para botones

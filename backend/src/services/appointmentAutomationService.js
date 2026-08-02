@@ -123,12 +123,12 @@ export async function dispatchAppointmentAutomationEvent(eventType, appointment 
  * estado inicial (por ejemplo, confirmada). Se mantiene aquí para que las
  * rutas pública, admin y agente compartan exactamente el mismo contrato.
  */
-export async function dispatchAppointmentCreatedAutomations(appointment = {}) {
+export async function dispatchAppointmentCreatedAutomations(appointment = {}, extra = {}) {
   const status = normalizeAppointmentStatus(appointment)
   if (CANCELLED_STATUSES.has(status)) return { dispatched: false, reason: 'cancelled' }
 
-  const booked = await dispatchAppointmentAutomationEvent('appointment-booked', appointment)
-  const statusEvent = await dispatchAppointmentAutomationEvent('appointment-status', appointment)
+  const booked = await dispatchAppointmentAutomationEvent('appointment-booked', appointment, extra)
+  const statusEvent = await dispatchAppointmentAutomationEvent('appointment-status', appointment, extra)
   const reminders = Boolean(appointmentValue(appointment, 'isTest', 'is_test'))
     ? await executeSafeTestAppointmentReminders(appointment).catch((error) => {
         logger.warn(`[Recordatorios] No se pudo ejecutar la prueba segura para la cita ${appointment.id || 'sin_id'}: ${error.message}`)

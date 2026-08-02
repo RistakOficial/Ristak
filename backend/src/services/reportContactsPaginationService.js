@@ -246,6 +246,11 @@ function activeAppointmentExists(range, params, calendarIds, {
 }
 
 function attendedAppointmentExists(params, calendarIds, { contactAlias = 'c' } = {}) {
+  const signalCalendarCondition = appointmentCalendarCondition(
+    calendarIds,
+    params,
+    'signal_appointment'
+  )
   const appointmentConditions = [
     `a.contact_id = ${contactAlias}.id`,
     `${normalizedAppointmentStatus('a')} IN (${sqlList(ATTENDED_APPOINTMENT_STATUSES)})`
@@ -253,7 +258,15 @@ function attendedAppointmentExists(params, calendarIds, { contactAlias = 'c' } =
   const calendarCondition = appointmentCalendarCondition(calendarIds, params)
   if (calendarCondition) appointmentConditions.push(calendarCondition)
   return `(
-    EXISTS (SELECT 1 FROM appointment_attendance_signals aas WHERE aas.contact_id = ${contactAlias}.id) OR
+    EXISTS (
+      SELECT 1
+      FROM appointment_attendance_signals aas
+      ${signalCalendarCondition
+        ? 'INNER JOIN appointments signal_appointment ON signal_appointment.id = aas.appointment_id'
+        : ''}
+      WHERE aas.contact_id = ${contactAlias}.id
+        ${signalCalendarCondition ? `AND ${signalCalendarCondition}` : ''}
+    ) OR
     EXISTS (SELECT 1 FROM appointments a WHERE ${appointmentConditions.join(' AND ')})
   )`
 }
@@ -472,14 +485,12 @@ export async function listReportContactsPage({
     WHERE detail_appointment.contact_id = c.id
       AND ${normalizedAppointmentStatus('detail_appointment')} NOT IN (${sqlList(INACTIVE_APPOINTMENT_STATUSES)})
   )`
-  const attendedAppointmentExpression = `(
-    EXISTS (SELECT 1 FROM appointment_attendance_signals detail_signal WHERE detail_signal.contact_id = c.id) OR
-    EXISTS (
-      SELECT 1 FROM appointments detail_attendance
-      WHERE detail_attendance.contact_id = c.id
-        AND ${normalizedAppointmentStatus('detail_attendance')} IN (${sqlList(ATTENDED_APPOINTMENT_STATUSES)})
-    )
-  )`
+  const detailAttendanceParams = []
+  const attendedAppointmentExpression = attendedAppointmentExists(
+    detailAttendanceParams,
+    calendarIds,
+    { contactAlias: 'c' }
+  )
   const usePeriodPaymentDetails = cleanType === 'sales' && !eligibility.useContactAttribution
   const periodPaymentConditions = []
   const detailPaymentParams = []
@@ -534,6 +545,7 @@ export async function listReportContactsPage({
     [
       ...detailPaymentParams,
       ...detailPaymentParams,
+      ...detailAttendanceParams,
       ...eligibility.params,
       ...newerEligibility.params,
       ...cursorParams,

@@ -3091,7 +3091,10 @@ export async function createAppointment(req, res) {
       logger.warn(`[Calendars Controller] Cita local confirmada; espejo Google pendiente/error: ${error.message}`);
     }
 
-    const automationResult = await dispatchAppointmentCreatedAutomations(appointment).catch(error => {
+    const automationResult = await dispatchAppointmentCreatedAutomations(
+      appointment,
+      internalAppointmentContext.automationEventContext || {}
+    ).catch(error => {
       logger.warn(`[Calendars Controller] La cita local quedó confirmada, pero falló una automatización posterior: ${error.message}`);
       return { ok: false, error: error.message };
     });
@@ -3536,6 +3539,7 @@ export async function updateAppointment(req, res) {
 
     if ((nextStatus && nextStatus !== previousStatus) || appointmentStartChanged) {
       await dispatchAppointmentAutomationEvent('appointment-status', appointment, {
+        ...(internalAppointmentContext.automationEventContext || {}),
         previousStatus,
         appointmentChange: nextCancelled && !previousCancelled
           ? 'cancelled'
