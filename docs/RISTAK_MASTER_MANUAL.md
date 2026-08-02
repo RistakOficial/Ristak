@@ -3092,6 +3092,20 @@ fuera de su ruta critica. Meta Direct inserta un job `push` en el outbox backend
 el ACK del relay no espera APNs, FCM ni Installer. No confundir esta tabla con el
 outbox local de mensajes optimistas de cada app.
 
+Las preferencias móviles de push tienen un valor efectivo único aunque todavía
+no exista una fila en `app_config` o `user_app_config`: chat, confirmaciones de
+cita, pagos, sonido y vibración nacen activos; calendario nace inactivo y una
+lista vacía de calendarios significa todos. API, MCP, web móvil y clientes
+nativos deben leer esos mismos defaults, nunca interpretar un valor ausente de
+forma distinta. Un `false` guardado explícitamente sí manda sobre el default.
+Cada cambio propio o administrativo se registra en `audit_log` como
+`user_notification_preferences`, con usuario afectado, actor y valores anterior
+y nuevo; así soporte puede distinguir una desactivación humana de una preferencia
+que simplemente nunca se había guardado. Las notificaciones internas creadas por
+una automatización conservan su propio selector de destinatarios y canales; no se
+deben diagnosticar como “chat apagado” sin revisar primero la inscripción, el
+nodo ejecutado y su recibo de entrega.
+
 APNs, FCM y OAuth FCM locales tienen deadline end-to-end de 8 s, incluida la
 lectura del body; Web Push usa el mismo timeout. Installer central conserva su
 propio presupuesto end-to-end de 5 s en `licenseService`. La seleccion por
@@ -6727,8 +6741,23 @@ su `name` o `id` normal para el submit. Las opciones radio o checkbox que forman
 un solo campo se agrupan en un `fieldset` con `legend` (o una etiqueta accesible
 equivalente) y comparten esa identidad logica; otro campo distinto no puede
 reutilizarla en el mismo formulario. Desde la fila de cada campo el usuario
-elige un campo del sistema, un campo personalizado existente, crear un campo
-personalizado nuevo (`destinationType/saveMode = new_custom`) o no guardarlo.
+puede corregir la detección y elegir un campo del sistema, un campo personalizado
+existente, crear otro campo personalizado (`destinationType/saveMode = new_custom`)
+o no guardarlo. Sin embargo, crear, pegar, regenerar o resubir el HTML ya resuelve
+cada campo automáticamente antes de construir el formulario fuente: los campos
+de sistema se asocian a su destino canónico y cualquier otro campo reutiliza una
+definición activa con la misma llave y tipo o crea la definición faltante. El
+mapping queda convertido a `destinationType/saveMode = custom` con su
+`customFieldDefinitionId`, y ese mismo ID se copia inmediatamente al bloque del
+formulario ejecutable. Contactos, submissions y automatizaciones leen así la
+misma respuesta desde el primer envío, sin exigir una visita manual al Panel de
+contenido. Guardar manualmente `new_custom` también lo materializa de inmediato.
+Un `textarea` sólo se interpreta como `message` cuando su nombre, etiqueta o
+atributos realmente representan mensaje/comentarios; una pregunta larga con
+identidad propia crea un campo `textarea`. Si una llave ya existe con un tipo
+incompatible, Ristak no pisa la definición: crea o reutiliza una llave tipada
+estable. Reescribir o resubir el mismo campo conserva su definición y no la
+duplica.
 El selector coloca primero la asociacion ya detectada o guardada y ordena los
 destinos del sistema por prioridad operativa: nombre completo, correo,
 telefono/WhatsApp, ciudad, direccion, empresa, nombre, apellido y mensaje. Los

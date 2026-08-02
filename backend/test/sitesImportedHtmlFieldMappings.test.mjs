@@ -38,6 +38,125 @@ async function deleteSites(siteIds = []) {
   }
 }
 
+test('HTML import automatically creates or reuses custom fields and syncs their definition ids', async () => {
+  const suffix = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`.toLowerCase()
+  const existingDefinitionId = `contact_field_existing_${suffix}`
+  const existingKey = `inversion_minima_${suffix}`
+  const requestKey = `solicitud_espacio_${suffix}`
+  const challengesKey = `retos_atraccion_pacientes_${suffix}`
+  const createdDefinitionIds = []
+  let siteId = ''
+  let sourceFormId = ''
+
+  try {
+    await db.run(`
+      INSERT INTO contact_custom_field_definitions (
+        id, field_key, label, data_type, options_json, sync_target, source_type,
+        archived, created_at, updated_at
+      ) VALUES (?, ?, 'Inversión mínima', 'radio', '[]', 'local', 'manual', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [existingDefinitionId, existingKey])
+    createdDefinitionIds.push(existingDefinitionId)
+
+    const created = await createImportedSiteFromHtml({
+      filename: 'formulario-autoconectado.html',
+      name: `Formulario autoconectado ${suffix}`,
+      siteType: 'landing_page',
+      fileBase64: Buffer.from(`<!doctype html><html><body>
+        <form data-rstk-form-id="solicitud-medicos" data-rstk-label="Solicitud médicos">
+          <label>Nombre <input name="full_name" data-rstk-field-id="nombre"></label>
+          <fieldset>
+            <legend>¿Quieres solicitar tu entrevista?</legend>
+            <label><input type="radio" name="${requestKey}" value="si" data-rstk-field-id="solicitud"> Sí</label>
+            <label><input type="radio" name="${requestKey}" value="no" data-rstk-field-id="solicitud"> No</label>
+          </fieldset>
+          <fieldset>
+            <legend>¿Cuentas con la inversión mínima?</legend>
+            <label><input type="radio" name="${existingKey}" value="si" data-rstk-field-id="inversion"> Sí</label>
+            <label><input type="radio" name="${existingKey}" value="no" data-rstk-field-id="inversion"> No</label>
+          </fieldset>
+          <label>¿Cuál es tu principal reto?
+            <textarea name="${challengesKey}" data-rstk-field-id="retos"></textarea>
+          </label>
+          <button type="submit">Enviar</button>
+        </form>
+      </body></html>`, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    const form = activeMapping(created.import, '', 'solicitud_medicos')
+    sourceFormId = form.formSiteId
+
+    assert.equal(created.import.status, 'mapping_confirmed')
+    assertIncludes(mappingField(form, 'nombre'), {
+      destinationType: 'standard',
+      destinationKey: 'full_name'
+    })
+
+    for (const [fieldId, expectedKey, expectedType] of [
+      ['solicitud', requestKey, 'radio'],
+      ['inversion', existingKey, 'radio'],
+      ['retos', challengesKey, 'textarea']
+    ]) {
+      const field = mappingField(form, fieldId)
+      assertIncludes(field, {
+        destinationType: 'custom',
+        destinationKey: expectedKey,
+        saveMode: 'custom',
+        customFieldKey: expectedKey,
+        customFieldDataType: expectedType
+      })
+      assert.ok(field.customFieldDefinitionId)
+    }
+
+    assert.equal(mappingField(form, 'inversion').customFieldDefinitionId, existingDefinitionId)
+    createdDefinitionIds.push(
+      mappingField(form, 'solicitud').customFieldDefinitionId,
+      mappingField(form, 'retos').customFieldDefinitionId
+    )
+
+    const sourceForm = await getSite(sourceFormId, { includeBlocks: true, includeSubmissions: false })
+    const blocksByFieldId = new Map(
+      sourceForm.blocks
+        .filter(block => block.settings?.importedHtmlSource === true)
+        .map(block => [block.settings.importedHtmlSourceFieldId, block])
+    )
+    for (const fieldId of ['solicitud', 'inversion', 'retos']) {
+      const field = mappingField(form, fieldId)
+      const block = blocksByFieldId.get(fieldId)
+      assert.equal(block.settings.importedDestinationType, 'custom')
+      assert.equal(block.settings.customFieldDefinitionId, field.customFieldDefinitionId)
+      assert.equal(block.settings.customFieldKey, field.customFieldKey)
+    }
+
+    const rewritten = await updateImportedSiteCodeFiles(siteId, {
+      files: [{
+        path: '',
+        content: created.import.codeFiles[0].content.replace('Solicitud médicos', 'Solicitud médica actualizada')
+      }]
+    })
+    const rewrittenForm = activeMapping(rewritten.import, '', 'solicitud_medicos')
+    for (const fieldId of ['solicitud', 'inversion', 'retos']) {
+      assert.equal(
+        mappingField(rewrittenForm, fieldId).customFieldDefinitionId,
+        mappingField(form, fieldId).customFieldDefinitionId,
+        'reescribir el HTML no debe duplicar ni perder la definición canónica'
+      )
+    }
+
+    const definitionRows = await db.all(`
+      SELECT id, field_key
+      FROM contact_custom_field_definitions
+      WHERE LOWER(field_key) IN (LOWER(?), LOWER(?), LOWER(?)) AND archived = 0
+    `, [requestKey, existingKey, challengesKey])
+    assert.equal(definitionRows.length, 3)
+  } finally {
+    await deleteSites([siteId, sourceFormId])
+    for (const definitionId of new Set(createdDefinitionIds.filter(Boolean))) {
+      await db.run('DELETE FROM contact_custom_field_definition_sources WHERE definition_id = ?', [definitionId]).catch(() => undefined)
+      await db.run('DELETE FROM contact_custom_field_definitions WHERE id = ?', [definitionId]).catch(() => undefined)
+    }
+  }
+})
+
 test('an active HTML source form can only be removed by deleting its related HTML page', async () => {
   const suffix = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
   let siteId = ''

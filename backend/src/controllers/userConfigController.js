@@ -13,6 +13,7 @@ import {
   db
 } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { recordAudit } from '../utils/auditLog.js'
 
 // Claves móviles que SÍ se pueden personalizar por usuario.
 // Cualquier otra clave queda fuera (no se lee ni se escribe por este endpoint).
@@ -31,6 +32,30 @@ const USER_CONFIG_WHITELIST_SET = new Set(USER_CONFIG_WHITELIST)
 // Clave que guarda una lista (JSON) en vez de un escalar; la vista admin la devuelve
 // como array parseado para pintarla cómodamente.
 const CALENDAR_IDS_KEY = 'calendar_push_notification_calendar_ids'
+const USER_CONFIG_DEFAULTS = {
+  calendar_push_notifications_enabled: 'false',
+  appointment_confirmation_push_notifications_enabled: 'true',
+  chat_push_notifications_enabled: 'true',
+  payment_push_notifications_enabled: 'true',
+  push_notification_sound_enabled: 'true',
+  push_notification_vibration_enabled: 'true',
+  calendar_push_notification_calendar_ids: '[]',
+  mobile_chat_appointment_entry_mode: 'form'
+}
+
+function effectiveUserConfigValue(key, value) {
+  if (value !== null && value !== undefined && value !== '') return value
+  return Object.prototype.hasOwnProperty.call(USER_CONFIG_DEFAULTS, key)
+    ? USER_CONFIG_DEFAULTS[key]
+    : value
+}
+
+function withEffectiveUserConfigDefaults(config = {}, keys = []) {
+  return Object.fromEntries((Array.isArray(keys) ? keys : []).map(key => [
+    key,
+    effectiveUserConfigValue(key, config[key])
+  ]))
+}
 
 function isWhitelistedKey(key) {
   return USER_CONFIG_WHITELIST_SET.has(String(key || ''))
@@ -70,7 +95,8 @@ export async function getUserConfig(req, res) {
       ? requestedKeys
       : requestedKeys.filter(isWhitelistedKey)
 
-    const config = await getUserAppConfigMany(userId, allowedKeys)
+    const storedConfig = await getUserAppConfigMany(userId, allowedKeys)
+    const config = withEffectiveUserConfigDefaults(storedConfig, allowedKeys)
 
     res.json({ success: true, config })
   } catch (error) {
@@ -95,7 +121,15 @@ export async function saveUserConfig(req, res) {
       if (!isWhitelistedKey(key)) {
         return res.status(400).json({ success: false, error: `Clave no permitida: ${key}` })
       }
+      const previousValue = effectiveUserConfigValue(key, await getUserAppConfig(userId, key))
       await setUserAppConfig(userId, key, value)
+      await recordAudit({
+        entityType: 'user_notification_preferences',
+        entityId: userId,
+        action: 'update',
+        actor: req.user,
+        details: { changes: { [key]: { previousValue, value } } }
+      })
       return res.json({ success: true, message: 'Preferencia guardada' })
     }
 
@@ -107,9 +141,22 @@ export async function saveUserConfig(req, res) {
           return res.status(400).json({ success: false, error: `Clave no permitida: ${k}` })
         }
       }
+      const previous = await getUserAppConfigMany(userId, entries.map(([k]) => k))
       for (const [k, v] of entries) {
         await setUserAppConfig(userId, k, v)
       }
+      await recordAudit({
+        entityType: 'user_notification_preferences',
+        entityId: userId,
+        action: 'update',
+        actor: req.user,
+        details: {
+          changes: Object.fromEntries(entries.map(([k, v]) => [k, {
+            previousValue: effectiveUserConfigValue(k, previous[k]),
+            value: v
+          }]))
+        }
+      })
       return res.json({ success: true, message: 'Preferencias guardadas' })
     }
 
@@ -128,7 +175,7 @@ function formatAdminValue(key, value) {
 }
 
 /**
- * Construye el objeto config por-usuario para la vista admin: por cada una de las 7
+ * Construye el objeto config por-usuario para la vista admin: por cada una de las 8
  * claves, el valor EFECTIVO (override propio o global heredado) y si es override.
  */
 async function buildUserAdminConfig(userId) {
@@ -140,7 +187,7 @@ async function buildUserAdminConfig(userId) {
   const config = {}
   for (const key of USER_CONFIG_WHITELIST) {
     config[key] = {
-      value: formatAdminValue(key, effective[key]),
+      value: formatAdminValue(key, effectiveUserConfigValue(key, effective[key])),
       isOverride: Boolean(flags[key])
     }
   }
@@ -150,7 +197,7 @@ async function buildUserAdminConfig(userId) {
 /**
  * GET /api/user-config/admin (admin)
  * Devuelve los globales (default heredado) y, por cada usuario activo, el valor
- * efectivo de las 7 claves más el flag isOverride. Query opcional ?userId= para uno.
+ * efectivo de las 8 claves más el flag isOverride. Query opcional ?userId= para uno.
  */
 export async function getUserConfigAdmin(req, res) {
   try {
@@ -159,7 +206,7 @@ export async function getUserConfigAdmin(req, res) {
     const globals = {}
     for (const key of USER_CONFIG_WHITELIST) {
       const value = await getAppConfig(key)
-      globals[key] = formatAdminValue(key, value)
+      globals[key] = formatAdminValue(key, effectiveUserConfigValue(key, value))
     }
 
     let sql = `SELECT id, username, email, first_name, last_name, full_name, role
@@ -223,6 +270,7 @@ export async function patchUserConfigAdmin(req, res) {
       }
     }
 
+    const previous = await getUserAppConfigMany(targetUserId, entries.map(([k]) => k))
     for (const [k, v] of entries) {
       if (v === null) {
         await deleteUserAppConfig(targetUserId, k)
@@ -230,6 +278,21 @@ export async function patchUserConfigAdmin(req, res) {
         await setUserAppConfig(targetUserId, k, v)
       }
     }
+
+    const effectiveAfter = await getUserAppConfigMany(targetUserId, entries.map(([k]) => k))
+    await recordAudit({
+      entityType: 'user_notification_preferences',
+      entityId: targetUserId,
+      action: 'admin_update',
+      actor: req.user,
+      details: {
+        changes: Object.fromEntries(entries.map(([k, requestedValue]) => [k, {
+          previousValue: effectiveUserConfigValue(k, previous[k]),
+          requestedValue,
+          value: effectiveUserConfigValue(k, effectiveAfter[k])
+        }]))
+      }
+    })
 
     const resultConfig = await buildUserAdminConfig(targetUserId)
     res.json({ success: true, config: resultConfig })

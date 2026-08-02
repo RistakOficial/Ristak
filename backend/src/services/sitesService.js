@@ -32,7 +32,11 @@ import {
   sqliteTimezoneModifierExpression
 } from '../utils/dateUtils.js'
 import { getAIRuntimeConfig, requireOpenAIApiKey } from './aiRuntimeService.js'
-import { prepareContactCustomFieldsForStorage } from './contactCustomFieldDefinitionsService.js'
+import {
+  listContactCustomFieldDefinitions,
+  prepareContactCustomFieldsForStorage,
+  upsertContactCustomFieldDefinition
+} from './contactCustomFieldDefinitionsService.js'
 import {
   finalizePreparedPhoneUpsert,
   findContactByPhoneCandidates,
@@ -4471,10 +4475,6 @@ function inferImportedFieldDestination(field = {}) {
   const contactCustom = getImportedCustomHintDestination(haystack, IMPORTED_CONTACT_CUSTOM_FIELD_KEYS)
   if (contactCustom) return contactCustom
 
-  if (field.tag === 'textarea') {
-    return { destinationType: 'standard', destinationKey: 'message', confidence: 0.72 }
-  }
-
   const customHint = getImportedCustomHintDestination(haystack)
   if (customHint) return customHint
 
@@ -4814,6 +4814,228 @@ function mergeImportedFormMappings(existingMappings = [], nextMappings = []) {
   return [...next, ...dormantForms]
 }
 
+function importedFieldDefinitionDataType(field = {}) {
+  return inferImportedDataType(field, '')
+}
+
+function importedDefinitionAcceptsField(definition = {}, field = {}) {
+  const definitionType = inferImportedDataType({
+    type: definition.dataType || definition.data_type || 'text'
+  }, '')
+  return definitionType === importedFieldDefinitionDataType(field)
+}
+
+function isImportedDefinitionUniqueConflict(error) {
+  const code = cleanString(error?.code).toUpperCase()
+  const message = cleanString(error?.message).toLowerCase()
+  return code === '23505' || code.includes('SQLITE_CONSTRAINT') || (
+    message.includes('unique') && message.includes('contact_custom_field_definitions')
+  )
+}
+
+function importedDefinitionMapping(field = {}, definition = {}) {
+  const fieldKey = normalizeImportedFieldKey(
+    definition.fieldKey || definition.key || definition.field_key,
+    field.destinationKey || field.customFieldKey || 'custom_field'
+  )
+
+  return {
+    ...field,
+    destinationType: 'custom',
+    destinationKey: fieldKey,
+    saveMode: 'custom',
+    ignored: false,
+    customFieldDefinitionId: cleanString(
+      definition.definitionId || definition.id || definition.definition_id
+    ),
+    customFieldKey: fieldKey,
+    customFieldLabel: cleanString(definition.label || definition.name || field.label) || fieldKey,
+    customFieldDataType: cleanString(definition.dataType || definition.data_type) || importedFieldDefinitionDataType(field),
+    customFieldSyncTarget: cleanString(definition.syncTarget || definition.sync_target) || 'local'
+  }
+}
+
+function importedAutomaticFieldDefinitionCandidates(field = {}, definitionsByKey = new Map()) {
+  const baseKey = normalizeImportedFieldKey(
+    field.destinationKey || field.customFieldKey || field.sourceName || field.fieldId || field.label,
+    'custom_field'
+  )
+  const dataType = importedFieldDefinitionDataType(field)
+  const candidates = [baseKey]
+  const typedKey = normalizeImportedFieldKey(`${baseKey}_${dataType}`, 'custom_field')
+  if (typedKey !== baseKey) candidates.push(typedKey)
+
+  for (let suffix = 2; suffix <= 100; suffix += 1) {
+    const candidate = normalizeImportedFieldKey(`${typedKey}_${suffix}`, 'custom_field')
+    if (!definitionsByKey.has(candidate)) {
+      candidates.push(candidate)
+      break
+    }
+    candidates.push(candidate)
+  }
+
+  return candidates
+}
+
+async function materializeImportedCustomFieldMappings({ site, imported, mappings = [] } = {}) {
+  const definitions = await listContactCustomFieldDefinitions()
+  const definitionsByKey = new Map(definitions.map(definition => [
+    normalizeImportedFieldKey(definition.fieldKey || definition.key, ''),
+    definition
+  ]))
+  const definitionsById = new Map(definitions.map(definition => [
+    cleanString(definition.definitionId || definition.id),
+    definition
+  ]))
+
+  const nextMappings = []
+  for (const mapping of Array.isArray(mappings) ? mappings : []) {
+    if (mapping?.present === false || isImportedRuntimeAmbiguousFormMapping(mapping)) {
+      nextMappings.push(mapping)
+      continue
+    }
+
+    const nextFields = []
+    for (const field of Array.isArray(mapping?.fields) ? mapping.fields : []) {
+      if (field?.present === false || isImportedAmbiguousFieldMapping(field)) {
+        nextFields.push(field)
+        continue
+      }
+
+      const destinationType = field.ignored
+        ? 'ignored'
+        : cleanString(field.destinationType || field.saveMode || '').toLowerCase()
+      if (destinationType === 'standard' || destinationType === 'ignored') {
+        nextFields.push(field)
+        continue
+      }
+
+      const destinationKey = normalizeImportedFieldKey(
+        field.destinationKey || field.customFieldKey || field.sourceName || field.fieldId || field.label,
+        'custom_field'
+      )
+      if (IMPORTED_FORM_SYSTEM_FIELDS.has(destinationKey)) {
+        nextFields.push({
+          ...field,
+          destinationType: 'standard',
+          destinationKey,
+          saveMode: 'standard',
+          ignored: false,
+          customFieldDefinitionId: undefined,
+          customFieldKey: undefined,
+          customFieldLabel: undefined,
+          customFieldDataType: undefined,
+          customFieldSyncTarget: undefined
+        })
+        continue
+      }
+
+      const configuredDefinitionId = cleanString(
+        field.customFieldDefinitionId || field.custom_field_definition_id
+      )
+      const configuredDefinition = configuredDefinitionId
+        ? definitionsById.get(configuredDefinitionId)
+        : null
+      if (destinationType === 'custom' && configuredDefinition) {
+        nextFields.push(importedDefinitionMapping(field, configuredDefinition))
+        continue
+      }
+
+      let materializedDefinition = null
+      const candidates = importedAutomaticFieldDefinitionCandidates(field, definitionsByKey)
+      for (const candidateKey of candidates) {
+        const existing = definitionsByKey.get(candidateKey)
+        if (existing && !importedDefinitionAcceptsField(existing, field)) continue
+
+        try {
+          materializedDefinition = await upsertContactCustomFieldDefinition({
+            fieldKey: candidateKey,
+            label: cleanString(field.customFieldLabel || field.label) || candidateKey,
+            dataType: importedFieldDefinitionDataType(field),
+            options: normalizeImportedFieldOptions(field.options || []),
+            syncTarget: cleanString(field.customFieldSyncTarget) || 'local',
+            sourceType: 'imported_html',
+            sourceId: imported?.id || '',
+            sourceSiteId: site?.id || '',
+            sourcePageId: cleanString(mapping.pagePath || mapping.page_path),
+            sourceFormId: cleanString(mapping.formId || mapping.form_id),
+            sourceFormName: cleanString(mapping.formTitle || mapping.form_title),
+            sourceFieldId: cleanString(field.fieldId || field.field_id),
+            sourceFieldName: cleanString(field.sourceName || field.source_name),
+            sourceLabel: cleanString(field.label),
+            sourceContext: {
+              imported: true,
+              originalFilename: imported?.originalFilename || '',
+              confidence: field.confidence ?? null
+            }
+          }, {
+            sourceType: 'imported_html',
+            sourceId: imported?.id || '',
+            sourceSiteId: site?.id || '',
+            syncTarget: 'local'
+          })
+        } catch (error) {
+          // Otro import puede crear la misma llave entre la lectura y el INSERT.
+          // Releer en la siguiente vuelta permite reutilizarla sin duplicar campos.
+          const refreshed = await listContactCustomFieldDefinitions()
+          for (const definition of refreshed) {
+            definitionsByKey.set(
+              normalizeImportedFieldKey(definition.fieldKey || definition.key, ''),
+              definition
+            )
+            definitionsById.set(cleanString(definition.definitionId || definition.id), definition)
+          }
+          const concurrent = definitionsByKey.get(candidateKey)
+          if (!concurrent || !importedDefinitionAcceptsField(concurrent, field)) {
+            if (isImportedDefinitionUniqueConflict(error)) continue
+            throw error
+          }
+          materializedDefinition = concurrent
+        }
+
+        if (materializedDefinition && importedDefinitionAcceptsField(materializedDefinition, field)) break
+        materializedDefinition = null
+      }
+
+      if (!materializedDefinition) {
+        nextFields.push(field)
+        continue
+      }
+
+      definitionsByKey.set(
+        normalizeImportedFieldKey(materializedDefinition.fieldKey || materializedDefinition.key, ''),
+        materializedDefinition
+      )
+      definitionsById.set(
+        cleanString(materializedDefinition.definitionId || materializedDefinition.id),
+        materializedDefinition
+      )
+      nextFields.push(importedDefinitionMapping(field, materializedDefinition))
+    }
+
+    nextMappings.push({ ...mapping, fields: nextFields })
+  }
+
+  return nextMappings
+}
+
+function importedMappingsAreFullyResolved(mappings = []) {
+  return (Array.isArray(mappings) ? mappings : []).every(mapping => {
+    if (mapping?.present === false) return true
+    if (isImportedRuntimeAmbiguousFormMapping(mapping)) return false
+    return (Array.isArray(mapping?.fields) ? mapping.fields : []).every(field => {
+      if (field?.present === false) return true
+      const destinationType = field.ignored
+        ? 'ignored'
+        : cleanString(field.destinationType || field.saveMode || '').toLowerCase()
+      if (destinationType === 'standard' || destinationType === 'ignored') return true
+      return destinationType === 'custom' && Boolean(cleanString(
+        field.customFieldDefinitionId || field.custom_field_definition_id
+      ))
+    })
+  })
+}
+
 function getImportedFormMappingSourceSiteId(mapping = {}) {
   return cleanString(mapping.formSiteId || mapping.form_site_id)
 }
@@ -4910,9 +5132,13 @@ function getImportedSourceFieldSettings({ site, imported, mapping, fieldMapping,
   if (destinationType === 'standard' && IMPORTED_FORM_SYSTEM_FIELDS.has(destinationKey)) {
     settings.systemFieldKey = destinationKey
   } else if (destinationType !== 'ignored') {
+    const customFieldDefinitionId = cleanString(
+      fieldMapping?.customFieldDefinitionId || fieldMapping?.custom_field_definition_id
+    )
     const configuredDataType = cleanString(
       fieldMapping?.customFieldDataType || fieldMapping?.custom_field_data_type
     )
+    if (customFieldDefinitionId) settings.customFieldDefinitionId = customFieldDefinitionId
     settings.customFieldKey = normalizeImportedFieldKey(fieldMapping?.customFieldKey || destinationKey, 'custom_field')
     settings.customFieldLabel = cleanString(fieldMapping?.customFieldLabel || fieldMapping?.label || detectedField?.label) || settings.customFieldKey
     settings.customFieldDataType = destinationType === 'custom' && configuredDataType
@@ -5148,11 +5374,38 @@ async function syncAndPersistImportedFormSourceSites(siteId) {
 
   if (!site || !imported) return imported
 
-  const syncedMappings = await syncImportedFormSourceSites({
+  // La detección no termina en un "campo nuevo" virtual. Antes de construir el
+  // formulario ejecutable, cada destino personalizado se reutiliza o se crea en
+  // el catálogo canónico y la asociación completa queda persistida en el import.
+  // Así el HTML, el formulario fuente y Contactos comparten el mismo definitionId
+  // desde el primer envío, sin una visita manual al panel de mapeo.
+  const materializedMappings = await materializeImportedCustomFieldMappings({
     site,
     imported,
-    detectedForms: imported.detectedForms,
     mappings: imported.formMappings
+  })
+  const materializedStatus = importedMappingsAreFullyResolved(materializedMappings)
+    ? 'mapping_confirmed'
+    : 'mapping_pending'
+  await db.run(`
+    UPDATE public_site_imports SET
+      form_mappings_json = ?,
+      status = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE site_id = ?
+  `, [jsonString(materializedMappings), materializedStatus, siteId])
+
+  const materializedImport = {
+    ...imported,
+    formMappings: materializedMappings,
+    status: materializedStatus
+  }
+
+  const syncedMappings = await syncImportedFormSourceSites({
+    site,
+    imported: materializedImport,
+    detectedForms: materializedImport.detectedForms,
+    mappings: materializedMappings
   })
 
   // El sync crea/actualiza formularios relacionados fuera de la transacción.
@@ -5178,7 +5431,7 @@ async function syncAndPersistImportedFormSourceSites(siteId) {
   })
 
   return {
-    ...imported,
+    ...materializedImport,
     formMappings: persistedMappings
   }
 }
