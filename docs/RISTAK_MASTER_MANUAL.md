@@ -891,6 +891,18 @@ demas y el ultimo si aborta la consulta. Backend corta a 18 segundos y frontend 
 20. Reportes no repite una segunda consulta de visitantes despues de recibir el
 agregado principal.
 
+El editor de columnas de la tabla principal usa una sola preferencia compartida,
+`app_config.table_reports_metrics`, para `Todos`, `Al momento de registro` e
+`Identificados de anuncios`, tanto en Dia como en Mes y Año. Ocultar, mostrar o
+reordenar una columna se refleja en todos esos tabs; cambiar de alcance nunca
+restaura columnas por su cuenta. El catalogo visible es el mismo entre alcances,
+incluida la columna contextual `Transacciones`/`Ventas`; solamente se retiran
+columnas cuya capacidad real esta desactivada, como las metricas de visitantes
+sin acceso a Analiticas web. Al actualizar una instalacion legacy, el arranque
+migra a la preferencia compartida la configuracion valida modificada mas
+recientemente y conserva las llaves anteriores unicamente como compatibilidad
+historica.
+
 La apertura web y movil de Reportes usa un solo read-model:
 `GET /api/reports/snapshot`. La respuesta incluye buckets, rango y los KPIs
 financieros comparables. Los totales actuales se derivan de los mismos buckets;

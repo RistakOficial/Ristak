@@ -25,6 +25,7 @@
     "test:calendar-commercial-reports": "node scripts/test-calendar-commercial-reports.mjs",
     "test:calendar-offline-contract": "node scripts/test-calendar-offline-contract.mjs",
     "test:table-pagination": "node --experimental-strip-types --test scripts/test-table-pagination.mjs",
+    "test:reports-column-visibility": "node --experimental-strip-types --test scripts/test-reports-column-visibility.mjs",
     "test:time-picker-live-preview": "node scripts/test-time-picker-live-preview.mjs",
     "test:floating-layer-viewport": "node scripts/test-floating-layer-viewport.mjs",
     "test:phone-date-field-viewport": "node scripts/test-phone-date-field-viewport.mjs",

@@ -6,16 +6,13 @@ import { Plus, X, Pencil, DollarSign, Loader2, TrendingDown, Info } from 'lucide
 import { useNotification } from '@/contexts/NotificationContext'
 import { costsService, type Cost, type CreateCostDto } from '@/services/costsService'
 import { useAppConfig } from '@/hooks'
+import { REPORTS_TABLE_CONFIG_KEY } from '@/utils/reportTableConfig'
 import styles from './Costs.module.css'
 
 const MANUAL_BUSINESS_EXPENSES_CONFIG_KEY = 'report_manual_business_expenses_enabled'
 const MANUAL_BUSINESS_EXPENSES_COLUMN_KEY = 'businessExpenses'
 const FIXED_BUSINESS_EXPENSES_COLUMN_KEY = 'fixedBusinessExpenses'
-const REPORT_TYPES = ['cashflow', 'attribution', 'campaigns']
-const REPORT_VIEW_TYPES = ['day', 'month', 'year']
-const REPORT_TABLE_CONFIG_KEYS = REPORT_TYPES.flatMap((reportType) => (
-  REPORT_VIEW_TYPES.map((viewType) => `table_reports_metrics_${reportType}_${viewType}`)
-))
+const REPORT_TABLE_CONFIG_KEYS = [REPORTS_TABLE_CONFIG_KEY]
 
 type TableColumnConfig = { id: string; visible?: boolean; order?: number }
 type CostTypeGroup = {

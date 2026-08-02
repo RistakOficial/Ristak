@@ -34,6 +34,7 @@ import {
 import {
   ensureSqliteSitesPublicationDomainSchema
 } from '../startup/sitesPublicationDomainSchemaCompatibility.js'
+import { ensureSharedReportTableConfig } from '../utils/reportTableConfig.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -52,39 +53,6 @@ let db
 const databaseTransactionContext = new AsyncLocalStorage()
 const databaseConnectionContext = new AsyncLocalStorage()
 
-const DEFAULT_REPORT_TABLE_COLUMN_CONFIG = [
-  ['date', true],
-  ['profit', true],
-  ['revenue', true],
-  ['fixedBusinessExpenses', true],
-  ['businessExpenses', true],
-  ['spend', true],
-  ['roas', true],
-  ['new_customers', true],
-  ['cac', true],
-  ['appointments', true],
-  ['leads', true],
-  ['attendances', false],
-  ['transactions', false],
-  ['clicks', false],
-  ['reach', false],
-  ['cpc', false],
-  ['cpl', false],
-  ['cpa', false],
-  ['cpaAttendance', false],
-  ['visitors', false],
-  ['cpv', false],
-  ['webToInteresadosRate', false],
-  ['interesadosToApptsRate', false],
-  ['apptsToAttendanceRate', false],
-  ['attendanceToSalesRate', false],
-  ['attendanceToCustomersRate', false],
-  ['apptsToSalesRate', false]
-].map(([id, visible], order) => ({ id, visible, order }))
-
-const DEFAULT_REPORT_TABLE_CONFIG_VALUE = JSON.stringify(DEFAULT_REPORT_TABLE_COLUMN_CONFIG)
-const DEFAULT_REPORT_TABLE_CONFIG_KEYS = ['cashflow', 'attribution', 'campaigns']
-  .flatMap(reportType => ['day', 'month', 'year'].map(viewType => `table_reports_metrics_${reportType}_${viewType}`))
 const DEFAULT_OPENAI_MODEL_COLUMN = `TEXT DEFAULT '${DEFAULT_OPENAI_MODEL}'`
 const DEFAULT_BUSINESS_TIMEZONE = 'America/Mexico_City'
 const ACCOUNT_TIMEZONE_CONFIG_KEY = 'account_timezone'
@@ -2542,6 +2510,19 @@ async function initTablesUnlocked() {
       logger.warn('Advertencia al asegurar unicidad de app_config.config_key:', err.message)
     }
 
+    try {
+      const reportTableConfig = await ensureSharedReportTableConfig(db)
+      if (reportTableConfig.created) {
+        logger.info(
+          reportTableConfig.sourceKey
+            ? `[Esquema] Configuración de columnas de Reportes unificada desde ${reportTableConfig.sourceKey}.`
+            : '[Esquema] Configuración compartida de columnas de Reportes inicializada.'
+        )
+      }
+    } catch (err) {
+      logger.warn('Advertencia al unificar la configuración de columnas de Reportes:', err.message)
+    }
+
     const sitesAnalyticsSchemaRepair = await ensureSqliteSitesAnalyticsTrackingSchema({
       database: db,
       dialect: databaseDialect
@@ -3036,18 +3017,6 @@ async function initTablesUnlocked() {
       `)
     } catch (err) {
       // Ignore si ya existe
-    }
-
-    for (const configKey of DEFAULT_REPORT_TABLE_CONFIG_KEYS) {
-      try {
-        await db.run(`
-          INSERT INTO app_config (config_key, config_value)
-          VALUES (?, ?)
-          ON CONFLICT (config_key) DO NOTHING
-        `, [configKey, DEFAULT_REPORT_TABLE_CONFIG_VALUE])
-      } catch (err) {
-        // Ignore si ya existe
-      }
     }
 
     // Almacenamiento multimedia centralizado. Estas tablas son seguras para

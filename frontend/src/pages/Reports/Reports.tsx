@@ -40,6 +40,7 @@ import { useAppConfig, useChartHover, useMetaTimezone, useTableConfig, useUrlDat
 import { hasWebAnalyticsAccess } from '@/utils/accessControl'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { readNumberParam, setSearchParam } from '@/utils/urlState'
+import { REPORTS_TABLE_ID, filterAvailableReportColumns } from '@/utils/reportTableConfig'
 import { DEFAULT_BAR_RADIUS, getTopRoundedBarPath } from '@/components/common/chartShapes'
 import { ChartTooltip } from '@/components/common/ChartTooltip/ChartTooltip'
 import styles from './Reports.module.css'
@@ -2052,7 +2053,7 @@ export const Reports: React.FC = () => {
   // 'attribution' = agrupa por fecha de creación del contacto (todos los contactos)
   // 'campaigns' = agrupa por fecha de creación del contacto (solo con ad_id)
   const scopeParam = reportType === 'campaigns' ? 'campaigns' : reportType === 'attribution' ? 'attribution' : 'all'
-  const reportsTableId = `reports_metrics_${reportType}_${viewType}`
+  const reportsTableId = REPORTS_TABLE_ID
   const [reportsTableConfig] = useTableConfig<Array<{ id: string; visible: boolean; order?: number }>>(reportsTableId)
 
   const manualBusinessExpensesEnabled = parseAnalyticsFlag(manualBusinessExpensesEnabledConfig)
@@ -3200,16 +3201,7 @@ export const Reports: React.FC = () => {
       (columnOrder.get(String(b.key)) ?? DEFAULT_REPORTS_COLUMN_ORDER.length)
     ))
 
-    // Filtrar columnas de visitantes si analytics no está habilitado
-    if (!analyticsEnabled) {
-      const visitorKeys = new Set(['visitors', 'cpv', 'webToInteresadosRate'])
-      filteredColumns = filteredColumns.filter((column) => !visitorKeys.has(String(column.key)))
-    }
-
-    // Filtrar columna de transacciones: solo en vista "Todos"
-    if (reportType !== 'cashflow') {
-      filteredColumns = filteredColumns.filter((column) => column.key !== 'transactions')
-    }
+    filteredColumns = filterAvailableReportColumns(filteredColumns, { analyticsEnabled })
 
     return filteredColumns
   }, [
