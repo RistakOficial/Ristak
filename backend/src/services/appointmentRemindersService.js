@@ -97,6 +97,7 @@ const CONFIRMATION_TIMEOUT_UNITS = new Set(['minutes', 'hours', 'days'])
 const CONFIRMATION_RESPONSE_WINDOW_UNITS = new Set(['minutes', 'hours'])
 const CONFIRMATION_TIMEOUT_MODES = new Set(['elapsed', 'response_window'])
 const MAX_CONFIRMATION_TIMEOUT_MS = 30 * OFFSET_UNIT_MS.days
+const MAX_CONFIRMATION_REPLY_TEXT_LENGTH = 4096
 const DEFAULT_CONFIRMATION_RESPONSE_START = '09:00'
 const DEFAULT_CONFIRMATION_RESPONSE_END = '21:00'
 const DEFAULT_TEMPLATE_NAME_BY_PURPOSE = {
@@ -558,6 +559,7 @@ function normalizeReminderRow(row = {}) {
     smartOverflow: SMART_OVERFLOWS.has(cleanString(row.smart_overflow)) ? cleanString(row.smart_overflow) : 'before',
     noConfirmAction,
     ...confirmationTimeout,
+    confirmationReplyText: cleanString(row.confirmation_reply_text),
     confirmationSuccessActions,
     // Compatibilidad temporal para clientes anteriores que todavía esperan un
     // único valor. El backend nuevo usa siempre confirmationSuccessActions.
@@ -1100,6 +1102,12 @@ function sanitizeReminderInput(input = {}, base = {}) {
     confirmationSuccessActionsSource,
     DEFAULT_CONFIRMATION_SUCCESS_ACTIONS
   )
+  const confirmationReplyText = cleanString(merged.confirmationReplyText)
+  if (confirmationReplyText.length > MAX_CONFIRMATION_REPLY_TEXT_LENGTH) {
+    throw createServiceError(
+      `El mensaje de respuesta al confirmar no puede superar ${MAX_CONFIRMATION_REPLY_TEXT_LENGTH} caracteres.`
+    )
+  }
   const noConfirmAction = normalizeNoConfirmAction(merged.noConfirmAction)
   const timeoutConfigurationWasSubmitted = [
     'noConfirmAction',
@@ -1175,6 +1183,7 @@ function sanitizeReminderInput(input = {}, base = {}) {
     smartOverflow: SMART_OVERFLOWS.has(cleanString(merged.smartOverflow)) ? cleanString(merged.smartOverflow) : 'before',
     noConfirmAction,
     ...confirmationTimeout,
+    confirmationReplyText,
     confirmationSuccessActions,
     confirmationSuccessAction: serializeConfirmationSuccessActions(
       confirmationSuccessActions,
@@ -1206,8 +1215,8 @@ async function insertAppointmentReminder(input = {}, { systemKey = null, ignoreC
       smart_enabled, smart_start, smart_end, smart_overflow, no_confirm_action,
       confirmation_timeout_value, confirmation_timeout_unit,
       confirmation_timeout_mode, confirmation_response_start, confirmation_response_end,
-      confirmation_success_action, bypass_automations, position
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      confirmation_success_action, confirmation_reply_text, bypass_automations, position
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ${ignoreConflict ? 'ON CONFLICT DO NOTHING' : ''}
   `, [
     id, calendarId, cleanString(systemKey) || null, scheduleKey, data.name, data.enabled, data.messageType, data.aiEnabled, data.channel,
@@ -1216,7 +1225,7 @@ async function insertAppointmentReminder(input = {}, { systemKey = null, ignoreC
     data.messageText, data.smartEnabled, data.smartStart, data.smartEnd,
     data.smartOverflow, data.noConfirmAction, data.confirmationTimeoutValue, data.confirmationTimeoutUnit,
     data.confirmationTimeoutMode, data.confirmationResponseStart, data.confirmationResponseEnd,
-    data.confirmationSuccessAction, data.bypassAutomations,
+    data.confirmationSuccessAction, data.confirmationReplyText, data.bypassAutomations,
     Number(positionRow?.next || 0)
   ])
 
@@ -1279,7 +1288,7 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
         smart_enabled = ?, smart_start = ?, smart_end = ?, smart_overflow = ?,
         no_confirm_action = ?, confirmation_timeout_value = ?, confirmation_timeout_unit = ?,
         confirmation_timeout_mode = ?, confirmation_response_start = ?, confirmation_response_end = ?,
-        confirmation_success_action = ?, bypass_automations = ?, updated_at = CURRENT_TIMESTAMP
+        confirmation_success_action = ?, confirmation_reply_text = ?, bypass_automations = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [
       calendarId, scheduleKey, name, data.enabled, data.messageType, data.aiEnabled, data.channel, data.senderMode,
@@ -1288,7 +1297,7 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
       data.smartEnabled, data.smartStart, data.smartEnd, data.smartOverflow,
       data.noConfirmAction, data.confirmationTimeoutValue, data.confirmationTimeoutUnit,
       data.confirmationTimeoutMode, data.confirmationResponseStart, data.confirmationResponseEnd,
-      data.confirmationSuccessAction, data.bypassAutomations, id
+      data.confirmationSuccessAction, data.confirmationReplyText, data.bypassAutomations, id
     ])
   } catch (error) {
     await rethrowReminderScheduleConflict(error, calendarId, scheduleKey, id)

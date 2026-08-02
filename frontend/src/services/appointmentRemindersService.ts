@@ -58,6 +58,7 @@ export interface AppointmentReminder {
   confirmationTimeoutMode: ReminderConfirmationTimeoutMode
   confirmationResponseStart: string
   confirmationResponseEnd: string
+  confirmationReplyText: string
   confirmationSuccessActions: ReminderConfirmationSuccessAction[]
   /** Compatibilidad con servidores/clientes anteriores al multiselect. */
   confirmationSuccessAction?: ReminderConfirmationSuccessAction

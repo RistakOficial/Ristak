@@ -2082,6 +2082,71 @@ test('la migracion 143 de PostgreSQL conserva horas de pared y defaults compatib
   assert.doesNotMatch(migration, /\bDATETIME\b/i)
 })
 
+test('la migracion 150 converge cuando el bootstrap ya reparó la respuesta libre y su auditoría', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-appointment-confirmation-reply-'))
+  const database = openMemoryDatabase()
+  const migrationFiles = [
+    '150_appointment_confirmation_reply_text.sqlite.sql',
+    '150a_appointment_confirmation_reply_text.postgres.sql'
+  ]
+
+  try {
+    await database.exec(`
+      CREATE TABLE appointment_reminders (
+        id TEXT PRIMARY KEY,
+        confirmation_reply_text TEXT
+      );
+      CREATE TABLE appointment_reminder_sends (
+        id TEXT PRIMARY KEY,
+        confirmation_reply_sent_at DATETIME,
+        confirmation_reply_message_id TEXT
+      );
+    `)
+    for (const file of migrationFiles) {
+      await copyFile(
+        new URL(`../migrations/versioned/${file}`, import.meta.url),
+        join(directory, file)
+      )
+    }
+
+    const firstRun = await runVersionedMigrations({
+      database,
+      dialect: 'sqlite',
+      directory
+    })
+    assert.deepEqual(firstRun, { applied: 1, skipped: 1 })
+
+    const reminderColumns = await database.all('PRAGMA table_info("appointment_reminders")')
+    assert.ok(reminderColumns.some((row) => row.name === 'confirmation_reply_text'))
+
+    const sendColumns = await database.all('PRAGMA table_info("appointment_reminder_sends")')
+    assert.ok(sendColumns.some((row) => row.name === 'confirmation_reply_sent_at'))
+    assert.ok(sendColumns.some((row) => row.name === 'confirmation_reply_message_id'))
+
+    const secondRun = await runVersionedMigrations({
+      database,
+      dialect: 'sqlite',
+      directory
+    })
+    assert.deepEqual(secondRun, { applied: 0, skipped: 0 })
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+
+  const postgresMigration = await readFile(
+    new URL(
+      '../migrations/versioned/150a_appointment_confirmation_reply_text.postgres.sql',
+      import.meta.url
+    ),
+    'utf8'
+  )
+  assert.match(postgresMigration, /ADD COLUMN IF NOT EXISTS confirmation_reply_text TEXT/i)
+  assert.match(postgresMigration, /ADD COLUMN IF NOT EXISTS confirmation_reply_sent_at TIMESTAMPTZ/i)
+  assert.match(postgresMigration, /ADD COLUMN IF NOT EXISTS confirmation_reply_message_id TEXT/i)
+  assert.doesNotMatch(postgresMigration, /\bDATETIME\b/i)
+})
+
 test('la migracion 141 de PostgreSQL protege inserts de writers anteriores al rolling deploy', async () => {
   const activationMigration = await readFile(
     new URL(

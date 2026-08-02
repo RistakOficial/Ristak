@@ -7,7 +7,8 @@ import {
   handleInboundForConfirmation,
   maybeConfirmAppointmentFromReply,
   processExpiredConfirmationTimeouts,
-  processExpiredConfirmationWindows
+  processExpiredConfirmationWindows,
+  setAppointmentConfirmationReplySenderForTest
 } from '../src/services/appointmentConfirmationService.js'
 import { createAppointmentReminder } from '../src/services/appointmentRemindersService.js'
 import { setAppNotificationPayloadSenderForTest } from '../src/services/pushNotificationsService.js'
@@ -94,6 +95,7 @@ async function withConfirmationFixture({
   confirmationTimeoutUnit = 'hours',
   aiEnabled = true,
   bypassAutomations = true,
+  confirmationReplyText = '',
   appointmentStatus = 'pending',
   reminderCalendarId = TEST_CALENDAR_ID,
   appointmentCalendarId = reminderCalendarId
@@ -146,6 +148,7 @@ async function withConfirmationFixture({
         ? { confirmationSuccessActions }
         : { confirmationSuccessAction }),
       noConfirmAction,
+      confirmationReplyText,
       ...(noConfirmAction === 'cancel_appointment'
         ? { confirmationTimeoutValue, confirmationTimeoutUnit }
         : {}),
@@ -175,7 +178,9 @@ async function withConfirmationFixture({
     return await callback({ contactId, appointmentId, sendId, reminderId, startTime })
   } finally {
     setAppointmentConfirmationClassifierForTest(null)
+    setAppointmentConfirmationReplySenderForTest(null)
     setAppNotificationPayloadSenderForTest(null)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [contactId])
     await db.run('DELETE FROM appointment_confirmation_windows WHERE contact_id = ? OR appointment_id = ?', [contactId, appointmentId])
     await db.run('DELETE FROM appointment_reminder_sends WHERE id = ?', [sendId])
     if (reminderId) {
@@ -239,6 +244,156 @@ test('confirmacion IA espera el ultimo mensaje del contacto y clasifica tras 2 m
     assert.equal(appointment.status, 'confirmed')
     assert.equal(appointment.appointment_status, 'confirmed')
     assert.equal(appointment.confirmation_badge_until, startTime)
+  })
+})
+
+test('confirmacion IA envia una sola respuesta libre por la misma linea de WhatsApp', async () => {
+  await withConfirmationFixture({
+    confirmationReplyText: 'Perfecto {{contact.first_name}}, te esperamos para {{cita.titulo}} el {{cita.fecha}} a las {{cita.hora}}.'
+  }, async ({ contactId, appointmentId, sendId }) => {
+    const inboundMessageId = `wa_inbound_confirmation_${randomUUID()}`
+    const businessPhoneNumberId = `wa_phone_confirmation_${randomUUID()}`
+    const contact = await db.get('SELECT phone FROM contacts WHERE id = ?', [contactId])
+    const captures = []
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, contact_id, phone, from_phone, to_phone, business_phone,
+        business_phone_number_id, transport, direction, message_type,
+        message_text, message_timestamp
+      ) VALUES (?, ?, ?, ?, '+526561234567', '+526561234567', ?, 'api', 'inbound', 'text', 'Sí confirmo', ?)
+    `, [
+      inboundMessageId,
+      contactId,
+      contact.phone,
+      contact.phone,
+      businessPhoneNumberId,
+      isoAgo(3 * 60 * 1000)
+    ])
+
+    setAppointmentConfirmationClassifierForTest(async () => ({
+      result: 'confirmed',
+      confidence: 'high',
+      reason: 'Confirmó su asistencia'
+    }))
+    setAppointmentConfirmationReplySenderForTest(async (payload) => {
+      captures.push(payload)
+      return { id: 'provider_confirmation_reply', localMessageId: 'local_confirmation_reply' }
+    })
+
+    await handleInboundForConfirmation({
+      contactId,
+      text: 'Sí confirmo',
+      receivedAt: isoAgo(3 * 60 * 1000),
+      messageId: inboundMessageId
+    })
+    const window = await db.get(
+      'SELECT id FROM appointment_confirmation_windows WHERE contact_id = ? AND appointment_id = ?',
+      [contactId, appointmentId]
+    )
+    await expireWindow(window.id)
+    await processExpiredConfirmationWindows()
+
+    assert.equal(captures.length, 1)
+    assert.equal(captures[0].to, contact.phone)
+    assert.equal(captures[0].from, '+526561234567')
+    assert.equal(captures[0].phoneNumberId, businessPhoneNumberId)
+    assert.equal(captures[0].transport, 'api')
+    assert.equal(captures[0].allowQrFallback, true)
+    assert.equal(captures[0].preferOfficialApiWhenReplyWindowOpen, true)
+    assert.equal(captures[0].variablesResolved, true)
+    assert.match(captures[0].text, /Perfecto Ana/)
+    assert.match(captures[0].text, /Consulta dental/)
+    assert.doesNotMatch(captures[0].text, /\{\{/)
+
+    const send = await db.get(`
+      SELECT confirmation_reply_sent_at, confirmation_reply_message_id
+      FROM appointment_reminder_sends
+      WHERE id = ?
+    `, [sendId])
+    assert.ok(send.confirmation_reply_sent_at)
+    assert.equal(send.confirmation_reply_message_id, 'local_confirmation_reply')
+
+    const secondInboundMessageId = `${inboundMessageId}_second`
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, contact_id, phone, from_phone, to_phone, business_phone,
+        business_phone_number_id, transport, direction, message_type,
+        message_text, message_timestamp
+      ) VALUES (?, ?, ?, ?, '+526561234567', '+526561234567', ?, 'api', 'inbound', 'text', 'Confirmado', ?)
+    `, [
+      secondInboundMessageId,
+      contactId,
+      contact.phone,
+      contact.phone,
+      businessPhoneNumberId,
+      isoAgo(3 * 60 * 1000)
+    ])
+    await handleInboundForConfirmation({
+      contactId,
+      text: 'Confirmado',
+      receivedAt: isoAgo(3 * 60 * 1000),
+      messageId: secondInboundMessageId
+    })
+    await expireWindow(window.id)
+    await processExpiredConfirmationWindows()
+
+    assert.equal(captures.length, 1, 'la cortesía configurada debe enviarse una sola vez por confirmación')
+  })
+})
+
+test('un fallo del mensaje de respuesta no revierte la confirmacion de la cita', async () => {
+  await withConfirmationFixture({
+    confirmationReplyText: 'Gracias por confirmar, te esperamos.'
+  }, async ({ contactId, appointmentId, sendId }) => {
+    const inboundMessageId = `wa_inbound_reply_failure_${randomUUID()}`
+    const contact = await db.get('SELECT phone FROM contacts WHERE id = ?', [contactId])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, contact_id, phone, from_phone, to_phone, business_phone,
+        transport, direction, message_type, message_text, message_timestamp
+      ) VALUES (?, ?, ?, ?, '+526561234567', '+526561234567', 'api', 'inbound', 'text', 'Sí', ?)
+    `, [inboundMessageId, contactId, contact.phone, contact.phone, isoAgo(3 * 60 * 1000)])
+
+    setAppointmentConfirmationClassifierForTest(async () => ({
+      result: 'confirmed',
+      confidence: 'high',
+      reason: 'Confirmó su asistencia'
+    }))
+    setAppointmentConfirmationReplySenderForTest(async () => {
+      throw new Error('WhatsApp temporalmente no disponible')
+    })
+
+    await handleInboundForConfirmation({
+      contactId,
+      text: 'Sí',
+      receivedAt: isoAgo(3 * 60 * 1000),
+      messageId: inboundMessageId
+    })
+    const window = await db.get(
+      'SELECT id FROM appointment_confirmation_windows WHERE contact_id = ? AND appointment_id = ?',
+      [contactId, appointmentId]
+    )
+    await expireWindow(window.id)
+    await processExpiredConfirmationWindows()
+
+    const appointment = await db.get(
+      'SELECT appointment_status FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    const doneWindow = await db.get(
+      'SELECT status, result FROM appointment_confirmation_windows WHERE id = ?',
+      [window.id]
+    )
+    const send = await db.get(
+      'SELECT confirmation_reply_sent_at FROM appointment_reminder_sends WHERE id = ?',
+      [sendId]
+    )
+    assert.equal(appointment.appointment_status, 'confirmed')
+    assert.equal(doneWindow.status, 'done')
+    assert.equal(doneWindow.result, 'confirmed')
+    assert.equal(send.confirmation_reply_sent_at, null)
   })
 })
 

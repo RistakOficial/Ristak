@@ -8272,6 +8272,7 @@ async function initTablesUnlocked() {
         confirmation_response_start TEXT DEFAULT '09:00',
         confirmation_response_end TEXT DEFAULT '21:00',
         confirmation_success_action TEXT DEFAULT 'chat_card',
+        confirmation_reply_text TEXT,
         bypass_automations INTEGER DEFAULT 0,
         position INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -8297,6 +8298,8 @@ async function initTablesUnlocked() {
         confirmation_deadline_at DATETIME,
         confirmation_timeout_status TEXT,
         confirmation_timeout_processed_at DATETIME,
+        confirmation_reply_sent_at DATETIME,
+        confirmation_reply_message_id TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(reminder_id, appointment_id)
       )
@@ -8331,6 +8334,10 @@ async function initTablesUnlocked() {
 
     try {
       await db.run("ALTER TABLE appointment_reminders ADD COLUMN confirmation_success_action TEXT DEFAULT 'chat_card'")
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminders ADD COLUMN confirmation_reply_text TEXT')
     } catch (_) { /* columna ya existe */ }
 
     try {
@@ -8422,6 +8429,14 @@ async function initTablesUnlocked() {
 
     try {
       await db.run('ALTER TABLE appointment_reminder_sends ADD COLUMN confirmation_timeout_processed_at DATETIME')
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminder_sends ADD COLUMN confirmation_reply_sent_at DATETIME')
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminder_sends ADD COLUMN confirmation_reply_message_id TEXT')
     } catch (_) { /* columna ya existe */ }
 
     await db.run(`

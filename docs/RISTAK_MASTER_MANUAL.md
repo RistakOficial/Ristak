@@ -4602,6 +4602,21 @@ acciones sí se procesan. Una respuesta de reagendamiento no busca ni reserva po
 si sola otro horario; la politica de vencimiento sólo decide si conservar o
 cancelar la cita actual.
 
+Una regla con IA puede guardar `confirmation_reply_text`, un cierre opcional de
+hasta 4096 caracteres. Después de clasificar `confirmed`, Ristak lo renderiza con
+las variables del contacto y de la cita usando la zona horaria del negocio, y lo
+envia como texto libre por la misma identidad nativa de WhatsApp que recibió el
+ultimo inbound. No selecciona plantilla ni inventa otro remitente: si el mensaje
+que cerró la clasificación vino de correo, Instagram, Messenger o una copia de
+HighLevel sin identidad nativa de WhatsApp, el cierre se omite. La entrega usa la
+ventana de conversación recién abierta y conserva el fallback canónico al QR del
+mismo número sólo ante indisponibilidad real de la API. Las columnas
+`appointment_reminder_sends.confirmation_reply_sent_at` y
+`confirmation_reply_message_id` impiden repetir el cierre para el mismo envío y
+dejan auditoría del mensaje local. Un error de transporte se registra, pero no
+revierte el estado `confirmed`, no cambia el resultado del clasificador y no deja
+la ventana en error.
+
 Toda confirmacion con IA configura un plazo, no sólo las que cancelan. El editor
 muestra `no_action` como **Conservar la cita** y `cancel_appointment` como
 **Cancelar la cita**; `notify_push` deja de ser una opcion porque el aviso no es

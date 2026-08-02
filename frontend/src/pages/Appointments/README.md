@@ -227,6 +227,15 @@ asíncronas que pertenezcan a la selección previa.
   editor usa `CheckboxMultiSelect` sólo para combinar tarjeta en el chat y
   etiqueta temporal `Asistirá a cita`; **Marcar la cita como confirmada**
   permanece seleccionado porque es el resultado obligatorio de este modo.
+- **Mensaje de respuesta al confirmar** permite guardar un texto opcional de
+  hasta 4096 caracteres. Después de que la IA clasifica `confirmed`, Ristak lo
+  renderiza con las variables del contacto y de esa cita y lo manda como texto
+  libre por la misma línea nativa de WhatsApp que recibió el último mensaje. No
+  usa plantilla: la respuesta acaba de abrir la ventana de conversación. Si el
+  inbound más reciente pertenece a correo, Instagram, Messenger o HighLevel, no
+  desvía la cortesía a WhatsApp. Cada envío de confirmación la manda como máximo
+  una vez; un fallo del proveedor se registra pero no revierte la cita ni deja la
+  ventana de IA atorada.
 - El push de confirmaciones se procesa por defecto al confirmar, detectar una
   respuesta no afirmativa, vencer el plazo o requerir revisión. Su única
   compuerta de producto está en **Configuración → Notificaciones →

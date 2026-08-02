@@ -1,6 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Bell, CalendarCheck, Sparkles, Trash2 } from 'lucide-react'
-import { Modal, Button, CheckboxMultiSelect, CustomSelect, NumberInput, Switch } from '@/components/common'
+import {
+  Modal,
+  Button,
+  CheckboxMultiSelect,
+  CustomSelect,
+  ExpandableTextareaField,
+  NumberInput,
+  Switch
+} from '@/components/common'
 import { Badge, type BadgeVariant } from '@/components/common/Badge'
 import {
   type AppointmentReminder,
@@ -152,6 +160,7 @@ const CONFIRMATION_TIMEOUT_UNIT_MS: Record<ReminderConfirmationTimeoutUnit, numb
 }
 
 const MAX_CONFIRMATION_TIMEOUT_MS = 30 * CONFIRMATION_TIMEOUT_UNIT_MS.days
+const MAX_CONFIRMATION_REPLY_TEXT_LENGTH = 4096
 
 const maxConfirmationTimeoutValue = (unit: ReminderConfirmationTimeoutUnit) => (
   Math.floor(MAX_CONFIRMATION_TIMEOUT_MS / CONFIRMATION_TIMEOUT_UNIT_MS[unit])
@@ -276,6 +285,7 @@ const createNewReminderDraft = (): AppointmentReminderInput => ({
   smartOverflow: 'before',
   noConfirmAction: 'no_action',
   ...getDefaultConfirmationTimeout('before_appointment', 1, 'days'),
+  confirmationReplyText: '',
   confirmationSuccessActions: [...DEFAULT_CONFIRMATION_SUCCESS_ACTIONS]
 })
 
@@ -337,6 +347,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
             defaultConfirmationTimeout.confirmationResponseStart,
           confirmationResponseEnd: reminder.confirmationResponseEnd ||
             defaultConfirmationTimeout.confirmationResponseEnd,
+          confirmationReplyText: reminder.confirmationReplyText || '',
           confirmationSuccessActions: normalizeConfirmationSuccessActions(
             reminder.confirmationSuccessActions,
             reminder.confirmationSuccessAction
@@ -467,6 +478,8 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
     confirmationTimeoutTooLong ||
     confirmationTimeoutExceedsReminderWindow ||
     confirmationResponseWindowInvalid
+  const confirmationReplyTooLong = String(draft.confirmationReplyText || '').length >
+    MAX_CONFIRMATION_REPLY_TEXT_LENGTH
 
   // El tipo visible (Recordatorio/Aviso) define el ancla de envío. La confirmación
   // es una capacidad aparte y no debe cambiarse automáticamente al mover el ancla.
@@ -651,6 +664,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
         channel: selectedChannelId,
         contentMode,
         qrFallbackEnabled: isWhatsAppApiChannel,
+        confirmationReplyText: String(draft.confirmationReplyText || '').trim(),
         confirmationSuccessActions: normalizeConfirmationSuccessActions(
           draft.confirmationSuccessActions,
           draft.confirmationSuccessAction
@@ -680,6 +694,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
   const saveDisabled = saving || deleting ||
     confirmationTimeoutInvalid ||
+    confirmationReplyTooLong ||
     (contentMode === 'template' ? !draft.templateId : !String(draft.messageText || '').trim())
 
   return (
@@ -801,6 +816,23 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                           visuales que aparecerán dentro del chat.
                         </span>
                       </div>
+                    </div>
+
+                    <div className={styles.confirmationActionBox}>
+                      <ExpandableTextareaField
+                        id="appointment-confirmation-reply-text"
+                        label="Mensaje de respuesta al confirmar (opcional)"
+                        description="Cuando la IA confirme la cita, Ristak enviará este texto por la misma conversación de WhatsApp que recibió la respuesta. Es un mensaje normal, sin plantilla. Si la confirmación llegó por otro canal, no se enviará."
+                        value={draft.confirmationReplyText || ''}
+                        onChange={(value) => set('confirmationReplyText', value)}
+                        expandedTitle="Editar mensaje de respuesta al confirmar"
+                        characterLimit={MAX_CONFIRMATION_REPLY_TEXT_LENGTH}
+                        rows={4}
+                        placeholder="Ejemplo: ¡Perfecto! Te esperamos en tu cita. Nos vemos pronto."
+                      />
+                      <span className={styles.helpText}>
+                        Puedes usar {'{{contact.first_name}}'}, {'{{contact.name}}'}, {'{{cita.titulo}}'}, {'{{cita.fecha}}'} y {'{{cita.hora}}'}.
+                      </span>
                     </div>
                   </>
                 )}

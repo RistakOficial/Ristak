@@ -1,6 +1,7 @@
 import { db, databaseDialect } from '../config/database.js'
 import { logger } from '../utils/logger.js'
-import { isAffirmativeReply } from './appointmentReminderLogic.js'
+import { getAccountTimezone } from '../utils/dateUtils.js'
+import { isAffirmativeReply, renderMessageText } from './appointmentReminderLogic.js'
 import { classifyConfirmationResponse } from '../agents/appointmentConfirmationAgent.js'
 import { sendAppointmentConfirmationNotification } from './pushNotificationsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
@@ -15,6 +16,12 @@ export { isAffirmativeReply }
 
 // Tiempo de espera tras el último mensaje del contacto antes de clasificar (2 minutos).
 const DEBOUNCE_MS = 2 * 60 * 1000
+const MAX_CONFIRMATION_REPLY_TEXT_LENGTH = 4096
+let confirmationReplySenderForTest = null
+
+export function setAppointmentConfirmationReplySenderForTest(sender = null) {
+  confirmationReplySenderForTest = typeof sender === 'function' ? sender : null
+}
 
 function makeWindowId() {
   return createRistakId('confirmation_window')
@@ -61,7 +68,7 @@ async function dispatchAppointmentStatusAutomation(appointmentId, extra = {}) {
   }
 }
 
-function parseMessages(raw) {
+function parseStoredMessages(raw) {
   try {
     const parsed = JSON.parse(raw || '[]')
     if (!Array.isArray(parsed)) return []
@@ -69,13 +76,14 @@ function parseMessages(raw) {
     return parsed
       .map((entry, index) => {
         if (typeof entry === 'string') {
-          return { text: entry.trim(), receivedAtMs: null, index }
+          return { text: entry.trim(), messageId: '', receivedAtMs: null, index }
         }
 
         const text = String(entry?.text || '').trim()
         const receivedAtMs = new Date(entry?.receivedAt || '').getTime()
         return {
           text,
+          messageId: String(entry?.messageId || '').trim(),
           receivedAtMs: Number.isNaN(receivedAtMs) ? null : receivedAtMs,
           index
         }
@@ -94,7 +102,6 @@ function parseMessages(raw) {
         }
         return left.index - right.index
       })
-      .map(entry => entry.text)
   } catch {
     return []
   }
@@ -660,13 +667,21 @@ async function processConfirmationWindow(candidate, cutoff) {
   if (!win) return { processed: false, deferred: true }
 
   const revision = Number(win.message_revision || 0)
-  const messages = parseMessages(win.accumulated_messages)
+  const storedMessages = parseStoredMessages(win.accumulated_messages)
+  const messages = storedMessages.map(entry => entry.text)
   const contactId = String(win.contact_id || '')
   const appointmentId = String(win.appointment_id || '')
 
   // Obtener datos del recordatorio para la acción configurada.
   const reminderData = await db.get(`
-    SELECT r.no_confirm_action, r.bypass_automations, r.confirmation_success_action, c.phone, c.first_name
+    SELECT
+      r.no_confirm_action,
+      r.bypass_automations,
+      r.confirmation_success_action,
+      r.confirmation_reply_text,
+      s.confirmation_reply_sent_at,
+      c.phone,
+      c.first_name
     FROM appointment_reminder_sends s
     JOIN appointment_reminders r ON r.id = s.reminder_id
     JOIN contacts c ON c.id = s.contact_id
@@ -758,7 +773,7 @@ async function processConfirmationWindow(candidate, cutoff) {
     `, [appointmentId])
     publishAppointmentChanged(contactId, appointmentId)
     await resyncAppointmentToGoogle(appointmentId)
-    await executeConfirmationSuccessActions({
+    const confirmedAppointment = await executeConfirmationSuccessActions({
       contactId,
       appointmentId,
       actions: normalizeConfirmationSuccessActions(
@@ -767,6 +782,26 @@ async function processConfirmationWindow(candidate, cutoff) {
       ),
       resultDetail,
       reminderData
+    })
+    await sendConfiguredConfirmationReply({
+      windowId: win.id,
+      reminderSendId: win.reminder_send_id,
+      contactId,
+      appointmentId,
+      confirmationReplyText: reminderData?.confirmation_reply_text,
+      storedMessages,
+      appointment: confirmedAppointment,
+      reminderData
+    }).then(outcome => {
+      if (outcome?.sent) {
+        logger.info(`[Confirmación IA] Mensaje de respuesta enviado por WhatsApp para cita ${appointmentId}`)
+      } else if (String(reminderData?.confirmation_reply_text || '').trim()) {
+        logger.info(`[Confirmación IA] Mensaje de respuesta omitido para cita ${appointmentId}: ${outcome?.reason || 'ruta no disponible'}`)
+      }
+    }).catch(error => {
+      // La cortesía de cierre es secundaria: una falla de WhatsApp nunca puede
+      // revertir la confirmación real ni dejar la ventana en error.
+      logger.warn(`[Confirmación IA] No se pudo enviar el mensaje de respuesta para cita ${appointmentId}: ${error.message}`)
     })
     logger.info(`[Confirmación IA] Cita ${appointmentId} confirmada automáticamente`)
   } else {
@@ -818,13 +853,114 @@ async function processConfirmationWindow(candidate, cutoff) {
   }
 }
 
+async function sendConfiguredConfirmationReply({
+  windowId,
+  reminderSendId,
+  contactId,
+  appointmentId,
+  confirmationReplyText,
+  storedMessages,
+  appointment,
+  reminderData
+}) {
+  const configuredText = String(confirmationReplyText || '').trim()
+  if (!configuredText) return { sent: false, reason: 'sin mensaje configurado' }
+  if (reminderData?.confirmation_reply_sent_at) {
+    return { sent: false, reason: 'el mensaje ya se envió' }
+  }
+  if (configuredText.length > MAX_CONFIRMATION_REPLY_TEXT_LENGTH) {
+    return { sent: false, reason: 'el texto supera el límite permitido' }
+  }
+
+  const latestMessage = [...(Array.isArray(storedMessages) ? storedMessages : [])]
+    .reverse()
+    .find(entry => String(entry?.messageId || '').trim())
+  if (!latestMessage) return { sent: false, reason: 'la respuesta no tiene identidad de mensaje' }
+
+  // La respuesta sólo sale si el último inbound que confirmó la cita pertenece
+  // a la tubería nativa de WhatsApp. Así no desviamos confirmaciones de correo,
+  // Instagram, Messenger o HighLevel hacia un teléfono por accidente.
+  const inbound = await db.get(`
+    SELECT
+      id,
+      business_phone_number_id,
+      phone,
+      from_phone,
+      to_phone,
+      business_phone,
+      transport
+    FROM whatsapp_api_messages
+    WHERE id = ?
+      AND contact_id = ?
+      AND LOWER(COALESCE(direction, '')) = 'inbound'
+    LIMIT 1
+  `, [latestMessage.messageId, contactId])
+  if (!inbound) return { sent: false, reason: 'la confirmación llegó por otro canal' }
+
+  const destinationPhone = String(inbound.from_phone || inbound.phone || reminderData?.phone || '').trim()
+  if (!destinationPhone) return { sent: false, reason: 'la respuesta no tiene teléfono destino' }
+
+  const businessPhone = String(inbound.to_phone || inbound.business_phone || '').trim()
+  const timezone = await getAccountTimezone()
+  const renderedText = renderMessageText(configuredText, {
+    contact: {
+      id: contactId,
+      first_name: appointment?.first_name || reminderData?.first_name,
+      last_name: appointment?.last_name,
+      full_name: appointment?.full_name,
+      phone: destinationPhone
+    },
+    appointment: appointment || { id: appointmentId },
+    timezone
+  })
+  if (!renderedText) return { sent: false, reason: 'el texto quedó vacío al renderizarse' }
+
+  const sendText = confirmationReplySenderForTest || (await import('./whatsappApiService.js'))
+    .sendWhatsAppApiTextMessage
+  const response = await sendText({
+    to: destinationPhone,
+    text: renderedText,
+    from: businessPhone || undefined,
+    contactId,
+    phoneNumberId: inbound.business_phone_number_id || undefined,
+    transport: String(inbound.transport || '').toLowerCase() === 'qr' ? 'qr' : 'api',
+    allowQrFallback: true,
+    preferOfficialApiWhenReplyWindowOpen: true,
+    externalId: `appointment_confirmation_reply_${reminderSendId || windowId}`,
+    variablesResolved: true
+  })
+
+  const messageId = response?.localMessageId || response?.id || null
+  await db.run(`
+    UPDATE appointment_reminder_sends
+    SET confirmation_reply_sent_at = ?,
+        confirmation_reply_message_id = ?
+    WHERE id = ?
+      AND confirmation_reply_sent_at IS NULL
+  `, [nowIso(), messageId, reminderSendId])
+
+  return {
+    sent: true,
+    messageId
+  }
+}
+
 async function executeConfirmationSuccessActions({ contactId, appointmentId, actions, resultDetail, reminderData }) {
   const normalizedActions = normalizeConfirmationSuccessActions(
     actions,
     LEGACY_CONFIRMATION_SUCCESS_ACTIONS
   )
   const appointment = await db.get(`
-    SELECT a.id, a.title, a.start_time, a.calendar_id, a.contact_id, c.first_name, c.full_name
+    SELECT
+      a.id,
+      a.title,
+      a.start_time,
+      a.calendar_id,
+      a.contact_id,
+      c.first_name,
+      c.last_name,
+      c.full_name,
+      c.phone
     FROM appointments a
     LEFT JOIN contacts c ON c.id = a.contact_id
     WHERE a.id = ?
@@ -859,6 +995,8 @@ async function executeConfirmationSuccessActions({ contactId, appointmentId, act
   if (normalizedActions.includes('chat_card')) {
     logger.info(`[Confirmación IA] Tarjeta de confirmación disponible en journey para cita ${appointmentId}`)
   }
+
+  return appointment
 }
 
 async function executeNoConfirmAction({ contactId, appointmentId, action, result, resultDetail, reminderData }) {

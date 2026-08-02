@@ -1569,6 +1569,47 @@ test('el horario de respuesta se guarda separado del horario de envío y conserv
   }
 })
 
+test('el mensaje libre posterior a la confirmacion se guarda, se conserva al editar y valida su limite', async () => {
+  let reminderId = ''
+  try {
+    const reminder = await createAppointmentReminder({
+      name: `Confirmación con respuesta ${randomUUID()}`,
+      messageType: 'confirmation',
+      aiEnabled: true,
+      timingAnchor: 'before_appointment',
+      offsetValue: 1,
+      offsetUnit: 'days',
+      confirmationReplyText: 'Perfecto {{contact.first_name}}, te esperamos el {{cita.fecha}}.'
+    })
+    reminderId = reminder.id
+    assert.equal(
+      reminder.confirmationReplyText,
+      'Perfecto {{contact.first_name}}, te esperamos el {{cita.fecha}}.'
+    )
+
+    const paused = await updateAppointmentReminder(reminder.id, { enabled: false })
+    assert.equal(
+      paused.confirmationReplyText,
+      'Perfecto {{contact.first_name}}, te esperamos el {{cita.fecha}}.'
+    )
+
+    const cleared = await updateAppointmentReminder(reminder.id, { confirmationReplyText: '   ' })
+    assert.equal(cleared.confirmationReplyText, '')
+
+    await assert.rejects(
+      () => updateAppointmentReminder(reminder.id, {
+        confirmationReplyText: 'x'.repeat(4097)
+      }),
+      /no puede superar 4096 caracteres/
+    )
+  } finally {
+    if (reminderId) {
+      await db.run('DELETE FROM appointment_reminder_sends WHERE reminder_id = ?', [reminderId])
+      await db.run('DELETE FROM appointment_reminders WHERE id = ?', [reminderId])
+    }
+  }
+})
+
 test('avisos de cita después de agendar usan plantilla de cita programada sin activar confirmación', async () => {
   const existingReminders = await db.all('SELECT id, enabled FROM appointment_reminders')
   let reminderId = ''
