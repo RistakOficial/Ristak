@@ -224,6 +224,12 @@ export interface ContactListItem {
   campaign_name?: string | null
   adset_id?: string | null
   adset_name?: string | null
+  referredByContactId?: string | null
+  referred_by_contact_id?: string | null
+  referredByContact?: { id: string; name?: string; email?: string; phone?: string } | null
+  attributionContactId?: string | null
+  attributionContactName?: string | null
+  attributionInheritedFromReferral?: boolean
   metaAttribution?: ContactMetaAttribution | null
   lifetimeLtv?: number
   lifetimePurchases?: number

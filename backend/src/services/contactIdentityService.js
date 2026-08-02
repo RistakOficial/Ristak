@@ -485,6 +485,27 @@ async function mergeContactIdsUnderCommitLocks({ fromId, toId, canonicalPhone = 
   const mergedPreferredWhatsApp = (toContact.preferred_whatsapp_phone_number_id && String(toContact.preferred_whatsapp_phone_number_id).trim())
     ? toContact.preferred_whatsapp_phone_number_id
     : (fromContact.preferred_whatsapp_phone_number_id || null)
+  const candidateReferrerId = cleanString(toContact.referred_by_contact_id) || cleanString(fromContact.referred_by_contact_id)
+  let mergedReferrerId = candidateReferrerId && candidateReferrerId !== fromId && candidateReferrerId !== toId
+    ? candidateReferrerId
+    : null
+  if (mergedReferrerId) {
+    const seen = new Set([toId])
+    let cursor = mergedReferrerId
+    for (let depth = 1; cursor; depth += 1) {
+      if (depth > 25) {
+        mergedReferrerId = null
+        break
+      }
+      if (seen.has(cursor)) {
+        mergedReferrerId = null
+        break
+      }
+      seen.add(cursor)
+      const row = await db.get('SELECT referred_by_contact_id FROM contacts WHERE id = ? LIMIT 1', [cursor])
+      cursor = cleanString(row?.referred_by_contact_id)
+    }
+  }
 
   await db.run('UPDATE contacts SET phone = NULL, email = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [fromId])
 
@@ -505,6 +526,28 @@ async function mergeContactIdsUnderCommitLocks({ fromId, toId, canonicalPhone = 
 
   await updateContactReferences(fromId, toId)
 
+  // La autorreferencia no forma parte del registro genérico de tablas hijas.
+  // Conservamos a quienes fueron recomendados por el contacto absorbido, pero
+  // cortamos cualquier borde que al fusionar pudiera cerrarse sobre el ganador.
+  const winnerAncestors = new Set()
+  let ancestorCursor = cleanString(toContact.referred_by_contact_id)
+  for (let depth = 0; ancestorCursor && depth <= 25; depth += 1) {
+    if (winnerAncestors.has(ancestorCursor)) break
+    winnerAncestors.add(ancestorCursor)
+    const row = await db.get('SELECT referred_by_contact_id FROM contacts WHERE id = ? LIMIT 1', [ancestorCursor])
+    ancestorCursor = cleanString(row?.referred_by_contact_id)
+  }
+  for (const ancestorId of winnerAncestors) {
+    await db.run(
+      'UPDATE contacts SET referred_by_contact_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND referred_by_contact_id = ?',
+      [ancestorId, fromId]
+    )
+  }
+  await db.run(
+    'UPDATE contacts SET referred_by_contact_id = ?, updated_at = CURRENT_TIMESTAMP WHERE referred_by_contact_id = ? AND id != ?',
+    [toId, fromId, toId]
+  )
+
   await db.run(`
     UPDATE contacts SET
       phone = COALESCE(?, phone),
@@ -520,6 +563,7 @@ async function mergeContactIdsUnderCommitLocks({ fromId, toId, canonicalPhone = 
       attribution_ctwa_clid = COALESCE(NULLIF(attribution_ctwa_clid, ''), ?),
       attribution_ad_name = COALESCE(NULLIF(attribution_ad_name, ''), ?),
       attribution_ad_id = COALESCE(NULLIF(attribution_ad_id, ''), ?),
+      referred_by_contact_id = ?,
       ghl_contact_id = ?,
       preferred_whatsapp_phone_number_id = ?,
       tags = ?,
@@ -542,6 +586,7 @@ async function mergeContactIdsUnderCommitLocks({ fromId, toId, canonicalPhone = 
     fromContact.attribution_ctwa_clid || null,
     fromContact.attribution_ad_name || null,
     fromContact.attribution_ad_id || null,
+    mergedReferrerId,
     mergedGhlContactId,
     mergedPreferredWhatsApp,
     mergedTagsJson,

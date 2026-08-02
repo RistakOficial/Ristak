@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './ContactSearchInput.module.css';
 import { Icon } from '../Icon/Icon';
@@ -27,6 +27,7 @@ interface ContactSearchInputProps {
   disabled?: boolean;
   portal?: boolean;
   allowCreate?: boolean;
+  excludeContactIds?: string[];
 }
 
 const CONTACT_SEARCH_DELAY_MS = 90;
@@ -72,7 +73,8 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
   error,
   disabled = false,
   portal = true,
-  allowCreate = true
+  allowCreate = true,
+  excludeContactIds = []
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(false);
@@ -80,6 +82,11 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [showNewContactForm, setShowNewContactForm] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
+  const excludedContactIdsKey = excludeContactIds.map(String).sort().join('\u0000');
+  const excludedContactIdSet = useMemo(
+    () => new Set(excludedContactIdsKey ? excludedContactIdsKey.split('\u0000') : []),
+    [excludedContactIdsKey]
+  );
 
   // New contact form state
   const [newContact, setNewContact] = useState(emptyNewContact);
@@ -142,7 +149,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
       try {
         const results = await contactsService.searchContacts(term, controller.signal);
         if (!controller.signal.aborted) {
-          setSuggestions(results);
+          setSuggestions(results.filter(contact => !excludedContactIdSet.has(String(contact.id))));
         }
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -162,7 +169,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [searchTerm, value]);
+  }, [excludedContactIdSet, searchTerm, value]);
 
   // Keyboard navigation
   useEffect(() => {

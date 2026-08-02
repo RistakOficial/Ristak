@@ -328,6 +328,20 @@ const normalizeContact = <T extends Record<string, any>>(contact: T): T => {
     (result as any).contactName = formatName((result as any).contactName)
   }
 
+  const referredByContactId = String(
+    (result as any).referredByContactId ?? (result as any).referred_by_contact_id ?? ''
+  ).trim() || null
+  ;(result as any).referredByContactId = referredByContactId
+  ;(result as any).referred_by_contact_id = referredByContactId
+  if ((result as any).referredByContact && typeof (result as any).referredByContact === 'object') {
+    ;(result as any).referredByContact = {
+      ...(result as any).referredByContact,
+      name: formatName((result as any).referredByContact.name || '')
+    }
+  } else {
+    ;(result as any).referredByContact = null
+  }
+
   const rawPhones = Array.isArray((result as any).phones)
     ? (result as any).phones
     : Array.isArray((result as any).phoneNumbers)

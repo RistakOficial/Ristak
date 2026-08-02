@@ -203,7 +203,7 @@ async function buildCampaignOverview({ range, hiddenFilters, calendarIds, includ
   const previousEnd = previous.endZoned.toISODate()
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
   const dedupExpression = buildDedupExpression('c')
-  const contactsDay = dayExpression('c.created_at', range.appliedTimezone, {
+  const contactsDay = dayExpression('ac.created_at', range.appliedTimezone, {
     ...range,
     startUtc: previous.startUtc
   })
@@ -236,22 +236,30 @@ async function buildCampaignOverview({ range, hiddenFilters, calendarIds, includ
         COUNT(DISTINCT CASE WHEN COALESCE(c.purchases_count, 0) > 0 THEN ${dedupExpression} END) AS sales,
         COALESCE(SUM(c.total_paid), 0) AS revenue
       FROM contacts c
-      WHERE c.created_at >= ?
-        AND c.created_at <= ?
-        AND ${attributionMatchCondition('c', { ...range, startUtc: previous.startUtc })}
+      INNER JOIN contact_effective_ad_attribution effective_attribution
+        ON effective_attribution.contact_id = c.id
+      INNER JOIN contacts ac
+        ON ac.id = effective_attribution.attribution_contact_id
+      WHERE ac.created_at >= ?
+        AND ac.created_at <= ?
+        AND ${attributionMatchCondition('ac', { ...range, startUtc: previous.startUtc })}
         ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
       GROUP BY day
       ORDER BY day
     `, [previous.startUtc, range.endUtc], queryOptions),
     db.all(`
       SELECT
-        ${dayExpression('c.created_at', range.appliedTimezone, range)} AS day,
+        ${dayExpression('ac.created_at', range.appliedTimezone, range)} AS day,
         COUNT(DISTINCT ${dedupExpression}) AS appointments
       FROM contacts c
+      INNER JOIN contact_effective_ad_attribution effective_attribution
+        ON effective_attribution.contact_id = c.id
+      INNER JOIN contacts ac
+        ON ac.id = effective_attribution.attribution_contact_id
       INNER JOIN appointments a ON a.contact_id = c.id
-      WHERE c.created_at >= ?
-        AND c.created_at <= ?
-        AND ${attributionMatchCondition('c', range)}
+      WHERE ac.created_at >= ?
+        AND ac.created_at <= ?
+        AND ${attributionMatchCondition('ac', range)}
         ${calendarCondition}
         ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
       GROUP BY day

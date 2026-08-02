@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Card, Button, Table, TableSelectionToolbar, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactAvatar, Loading, PhoneCountryCodeSelect, Modal, SearchField } from '@/components/common'
+import { Card, Button, Table, TableSelectionToolbar, DateRangePicker, PageContainer, PageHeader, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactAvatar, ContactSearchInput, Loading, PhoneCountryCodeSelect, Modal, SearchField } from '@/components/common'
 import { KpiCard } from '@/components/common/KpiCard/KpiCard'
 import { ContactDetailsModal } from '@/components/common/ContactDetailsModal/ContactDetailsModal'
 import type { Column } from '@/components/common'
@@ -32,7 +32,7 @@ import { parseSortableDateValue } from '@/utils/dateSort'
 import { contactsService, type Contact, type ContactsPagination, type ContactStats, type TrashedContact } from '@/services/contactsService'
 import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
 import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
-import type { ContactAppointment, ContactCustomField, ContactCustomFieldDefinition, ContactPayment, ContactPhoneNumber } from '@/types'
+import type { ContactAppointment, ContactCustomField, ContactCustomFieldDefinition, ContactPayment, ContactPhoneNumber, ContactReferralSummary } from '@/types'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { hasLicenseFeature } from '@/utils/accessControl'
@@ -440,6 +440,27 @@ const mergeContactDetailRecords = (
     if (!merged.ad_id && contact.ad_id) merged.ad_id = contact.ad_id
     merged.customFields = mergeCustomFields(merged.customFields, contact.customFields)
 
+    const canUseContactRelationship = !hasAuthoritativeDetails || authoritativeContactIds.has(contact.id)
+    if (canUseContactRelationship) {
+      const referredByContactId = contact.referredByContactId ?? contact.referred_by_contact_id
+      if (referredByContactId !== undefined) {
+        merged.referredByContactId = referredByContactId
+        merged.referred_by_contact_id = referredByContactId
+      }
+      if (contact.referredByContact !== undefined) {
+        merged.referredByContact = contact.referredByContact
+      }
+      if (contact.attributionContactId !== undefined) {
+        merged.attributionContactId = contact.attributionContactId
+      }
+      if (contact.attributionContactName !== undefined) {
+        merged.attributionContactName = contact.attributionContactName
+      }
+      if (contact.attributionInheritedFromReferral !== undefined) {
+        merged.attributionInheritedFromReferral = contact.attributionInheritedFromReferral
+      }
+    }
+
     if (!hasAuthoritativeDetails) {
       merged.purchases = Math.max(merged.purchases ?? 0, contact.purchases ?? 0)
       merged.ltv = Math.max(merged.ltv ?? 0, contact.ltv ?? 0)
@@ -557,6 +578,8 @@ const ContactsTable: React.FC = () => {
   const [contactDetailsLoading, setContactDetailsLoading] = useState(false)
   const [showNewContactModal, setShowNewContactModal] = useState(false)
   const [editingContact, setEditingContact] = useState<Contact | null>(null)
+  const [newContactReferrer, setNewContactReferrer] = useState<ContactReferralSummary | null>(null)
+  const [editingContactReferrer, setEditingContactReferrer] = useState<ContactReferralSummary | null>(null)
   const [selectedContactIds, setSelectedContactIds] = useState<string[]>([])
   const [contactsPendingDeletion, setContactsPendingDeletion] = useState<Contact[]>([])
   const [whatsappPhoneNumbers, setWhatsappPhoneNumbers] = useState<WhatsAppApiPhoneNumber[]>([])
@@ -564,7 +587,7 @@ const ContactsTable: React.FC = () => {
   // (CNT-001) Confirmación de fusión cuando al editar el teléfono/email choca con otro contacto.
   const [mergeConfirm, setMergeConfirm] = useState<{
     contactId: string
-    updates: { full_name: string; email: string; phone: string; source: string }
+    updates: { full_name: string; email: string; phone: string; source: string; referredByContactId?: string | null }
     conflict: { field: string; contact: { id: string; full_name?: string | null; phone?: string | null; email?: string | null } }
   } | null>(null)
   const [mergeSaving, setMergeSaving] = useState(false)
@@ -872,12 +895,14 @@ const ContactsTable: React.FC = () => {
 
   useEffect(() => {
     setShowNewContactModal(routeState.create)
+    if (!routeState.create) setNewContactReferrer(null)
   }, [routeState.create])
 
   useEffect(() => {
     const contactId = routeState.editContactId
     if (!contactId) {
       if (editingContact) setEditingContact(null)
+      setEditingContactReferrer(null)
       return
     }
 
@@ -885,6 +910,7 @@ const ContactsTable: React.FC = () => {
     const existingContact = contacts.find(contact => contact.id === contactId)
     if (existingContact) {
       setEditingContact(existingContact)
+      setEditingContactReferrer(existingContact.referredByContact || null)
       return () => {
         mounted = false
       }
@@ -892,7 +918,10 @@ const ContactsTable: React.FC = () => {
 
     contactsService.getContactDetails(contactId)
       .then(contact => {
-        if (mounted) setEditingContact(contact)
+        if (mounted) {
+          setEditingContact(contact)
+          setEditingContactReferrer(contact.referredByContact || null)
+        }
       })
       .catch(() => {
         if (mounted) showToast('error', 'No se pudo abrir el contacto', 'No se pudo cargar la información para editar.')
@@ -1114,6 +1143,12 @@ const ContactsTable: React.FC = () => {
       metaAttribution: contactData.metaAttribution || null,
       ad_name: contactData.ad_name,
       ad_id: contactData.ad_id,
+      referredByContactId: contactData.referredByContactId,
+      referred_by_contact_id: contactData.referred_by_contact_id,
+      referredByContact: contactData.referredByContact,
+      attributionContactId: contactData.attributionContactId,
+      attributionContactName: contactData.attributionContactName,
+      attributionInheritedFromReferral: contactData.attributionInheritedFromReferral,
       preferredWhatsAppPhoneNumberId: contactData.preferredWhatsAppPhoneNumberId || contactData.preferred_whatsapp_phone_number_id || '',
       preferred_whatsapp_phone_number_id: contactData.preferred_whatsapp_phone_number_id || contactData.preferredWhatsAppPhoneNumberId || '',
       customFields: contactData.customFields || [],
@@ -1151,7 +1186,14 @@ const ContactsTable: React.FC = () => {
 
   const handleUpdateContactIdentity = async (
     contactId: string,
-    updates: Partial<Record<'name' | 'email' | 'phone', string | null>>
+    updates: Partial<{
+      name: string | null
+      email: string | null
+      phone: string | null
+      referredByContactId: string | null
+      referred_by_contact_id: string | null
+      referredByContact: ContactReferralSummary | null
+    }>
   ): Promise<Partial<Contact>> => {
     try {
       const updatedContact = await contactsService.updateContact(contactId, updates as Partial<Contact>)
@@ -1451,7 +1493,7 @@ const ContactsTable: React.FC = () => {
   // confirmMerge=true (el backend conserva toda la información de ambos contactos).
   const persistContactEdit = async (
     contactId: string,
-    updates: { full_name: string; email: string; phone: string; source: string },
+    updates: { full_name: string; email: string; phone: string; source: string; referredByContactId?: string | null },
     confirmMerge: boolean
   ) => {
     try {
@@ -1459,6 +1501,7 @@ const ContactsTable: React.FC = () => {
       await contactsService.updateContact(contactId, updates, confirmMerge ? { confirmMerge: true } : undefined)
       setMergeConfirm(null)
       setEditingContact(null)
+      setEditingContactReferrer(null)
       navigateContactsPath(buildContactsPath(viewMode, filter), { replace: true })
       showToast('success', '¡Contacto actualizado!', 'Los cambios se guardaron correctamente')
       refreshContactsAndStats()
@@ -2278,6 +2321,7 @@ const ContactsTable: React.FC = () => {
                 email: String(formData.get('email') || '').trim(),
                 phone: String(formData.get('phone') || '').trim(),
                 source: String(formData.get('source') || '').trim() || 'Manual',
+                referredByContactId: newContactReferrer?.id || null,
                 status: 'lead' as const
               }
               handleCreateContact(contact)
@@ -2298,6 +2342,13 @@ const ContactsTable: React.FC = () => {
                 <label>Fuente</label>
                 <input name="source" type="text" placeholder="Manual, WhatsApp, referido..." />
               </div>
+              <ContactSearchInput
+                value={newContactReferrer}
+                onChange={setNewContactReferrer}
+                label="Recomendado por"
+                placeholder="Buscar contacto que lo recomendó..."
+                allowCreate={false}
+              />
               <div className={styles.formActions} data-modal-footer="">
 	                <Button type="button" variant="ghost" onClick={() => {
                     setShowNewContactModal(false)
@@ -2347,7 +2398,8 @@ const ContactsTable: React.FC = () => {
                 full_name: formData.get('name') as string,
                 email: formData.get('email') as string,
                 phone: formData.get('phone') as string,
-                source: formData.get('source') as string
+                source: formData.get('source') as string,
+                referredByContactId: editingContactReferrer?.id || null
               }
 
               await persistContactEdit(editingContact.id, updatedContact, false)
@@ -2381,6 +2433,14 @@ const ContactsTable: React.FC = () => {
                   defaultValue={editingContact.source || ''}
                 />
               </div>
+              <ContactSearchInput
+                value={editingContactReferrer}
+                onChange={setEditingContactReferrer}
+                label="Recomendado por"
+                placeholder="Buscar contacto que lo recomendó..."
+                allowCreate={false}
+                excludeContactIds={[editingContact.id]}
+              />
               <div className={styles.formActions} data-modal-footer="">
 	                <Button type="button" variant="ghost" onClick={() => {
                     setEditingContact(null)

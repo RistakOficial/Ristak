@@ -9,6 +9,7 @@ import { ContactAvatar } from '../ContactAvatar/ContactAvatar'
 import { ContactCustomFieldsPanel } from '../ContactCustomFieldsPanel/ContactCustomFieldsPanel'
 import { ContactJourney } from '../ContactJourney/ContactJourney'
 import { ContactPhoneSelector } from '../ContactPhoneSelector/ContactPhoneSelector'
+import { ContactSearchInput, type ContactSearchInputContact } from '../ContactSearchInput/ContactSearchInput'
 import { CustomSelect } from '../CustomSelect/CustomSelect'
 import {
   EmailChatMessageBubble,
@@ -144,6 +145,12 @@ interface ContactDetail {
   campaign_name?: string | null
   adset_id?: string | null
   adset_name?: string | null
+  referredByContactId?: string | null
+  referred_by_contact_id?: string | null
+  referredByContact?: ContactSearchInputContact | null
+  attributionContactId?: string | null
+  attributionContactName?: string | null
+  attributionInheritedFromReferral?: boolean
   metaAttribution?: ContactMetaAttribution | null
   lifetimeLtv?: number
   lifetimePurchases?: number
@@ -233,7 +240,9 @@ interface ContactDetailsModalProps {
 }
 
 type ContactIdentityField = 'name' | 'email' | 'phone'
-type ContactIdentityUpdate = Partial<Pick<ContactDetail, ContactIdentityField>>
+type ContactIdentityUpdate = Partial<Pick<ContactDetail,
+  ContactIdentityField | 'referredByContactId' | 'referred_by_contact_id' | 'referredByContact'
+>>
 
 const getContactPhoneEntries = (contact?: ContactDetail | null): ContactPhoneNumber[] => {
   const byPhone = new Map<string, ContactPhoneNumber>()
@@ -1431,6 +1440,38 @@ export function ContactDetailsModal({
       )
     } catch (error) {
       setSelectedContact(prev => prev?.id === contactId ? { ...prev, [field]: previousValue } : prev)
+      throw error
+    }
+  }
+
+  const saveContactReferrer = async (referrer: ContactSearchInputContact | null) => {
+    if (!selectedContact || !onUpdateContact) return
+
+    const contactId = selectedContact.id
+    const previousReferrer = selectedContact.referredByContact || null
+    const previousReferrerId = selectedContact.referredByContactId || selectedContact.referred_by_contact_id || null
+    const nextReferrerId = referrer?.id || null
+    const patch: ContactIdentityUpdate = {
+      referredByContactId: nextReferrerId,
+      referred_by_contact_id: nextReferrerId,
+      referredByContact: referrer
+    }
+
+    setSelectedContact(current => current?.id === contactId ? { ...current, ...patch } : current)
+
+    try {
+      const updatedContact = await onUpdateContact(contactId, { referredByContactId: nextReferrerId })
+      setSelectedContact(current => current?.id === contactId
+        ? { ...current, ...patch, ...(updatedContact || {}) }
+        : current
+      )
+    } catch (error) {
+      setSelectedContact(current => current?.id === contactId ? {
+        ...current,
+        referredByContactId: previousReferrerId,
+        referred_by_contact_id: previousReferrerId,
+        referredByContact: previousReferrer
+      } : current)
       throw error
     }
   }
@@ -2717,6 +2758,23 @@ export function ContactDetailsModal({
                         <Icon name="calendar" size={16} />
                         <span>{formatLocalDateShort(selectedContact.created_at)}</span>
                       </div>
+                      {(onUpdateContact || selectedContact.referredByContact) && (
+                        <ContactSearchInput
+                          value={selectedContact.referredByContact || null}
+                          onChange={saveContactReferrer}
+                          label="Recomendado por"
+                          placeholder="Buscar contacto que lo recomendó..."
+                          allowCreate={false}
+                          disabled={!onUpdateContact}
+                          excludeContactIds={[selectedContact.id]}
+                        />
+                      )}
+                      {selectedContact.attributionInheritedFromReferral && selectedContact.attributionContactName && (
+                        <div className={styles.detailItem}>
+                          <Icon name="user" size={16} />
+                          <span>Atribución heredada de {selectedContact.attributionContactName}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 

@@ -442,11 +442,15 @@ export async function getCampaignPerformancePage({
           COALESCE(c.total_paid, 0) AS total_paid,
           CASE WHEN c.appointment_date IS NOT NULL THEN 1 ELSE 0 END AS has_contact_appointment
         FROM entity_ad_dates e
+        INNER JOIN contacts ac
+          ON ac.attribution_ad_id = e.ad_id
+          AND ${timestampDateExpression('ac.created_at', range.appliedTimezone, range.startUtc)} = e.ad_date
+        INNER JOIN contact_effective_ad_attribution effective_attribution
+          ON effective_attribution.attribution_contact_id = ac.id
         INNER JOIN contacts c
-          ON c.attribution_ad_id = e.ad_id
-          AND ${timestampDateExpression('c.created_at', range.appliedTimezone, range.startUtc)} = e.ad_date
-        WHERE c.created_at >= ?
-          AND c.created_at <= ?
+          ON c.id = effective_attribution.contact_id
+        WHERE ac.created_at >= ?
+          AND ac.created_at <= ?
           ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
       ),
       payment_facts AS (
