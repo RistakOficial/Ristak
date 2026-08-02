@@ -66,7 +66,9 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useAccountCurrency } from '@/hooks'
 import { hasLicenseFeature } from '@/utils/accessControl'
+import { formatCurrency as formatAccountCurrency } from '@/utils/format'
 import type { ContactCustomField, ContactMetaAttribution, ContactPhoneNumber } from '@/types'
 import styles from './ContactDetailsModal.module.css'
 
@@ -124,6 +126,7 @@ interface ContactDetail {
   created_at: string | Date
   ltv?: number
   purchases?: number
+  successfulPaymentsCount?: number
   payments?: ContactPaymentDetail[]
   paymentsTotal?: number
   hasPaymentRecords?: boolean
@@ -832,6 +835,7 @@ export function ContactDetailsModal({
   const { labels } = useLabels()
   const { showToast } = useNotification()
   const { formatLocalDateShort, formatLocalDateTime, timezone } = useTimezone()
+  const [accountCurrency] = useAccountCurrency()
 
   // Seleccionar automáticamente el primer contacto cuando se abre el modal
   useEffect(() => {
@@ -1371,10 +1375,7 @@ export function ContactDetailsModal({
   }
 
   const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('es-MX', {
-      style: 'currency',
-      currency: 'MXN'
-    }).format(value)
+    return formatAccountCurrency(value, accountCurrency)
   }
 
   const getStatusLabel = (status?: string | null): { text: string; variant: BadgeVariant } => {
@@ -1552,6 +1553,7 @@ export function ContactDetailsModal({
     ) || []
   }, [selectedContact])
   const paymentsTotalCount = selectedContact?.paymentsTotal ?? (payments.length + refunds.length)
+  const successfulPaymentsTotalCount = selectedContact?.successfulPaymentsCount ?? selectedContact?.purchases ?? payments.length
   const appointmentsTotalCount = selectedContact?.appointmentsTotal ?? selectedContact?.appointments?.length ?? 0
   const resolvedAttribution = useMemo(
     () => getResolvedAttributionDisplay(selectedContact),
@@ -3193,7 +3195,7 @@ export function ContactDetailsModal({
                       >
                         <div className={styles.summaryCardContent}>
                           <div>
-                            <h5 className={styles.summaryTitle}>Pagos</h5>
+                            <h5 className={styles.summaryTitle}>Pagos · {successfulPaymentsTotalCount}</h5>
                             <p className={styles.summaryAmount}>{formatCurrency(selectedContact.ltv || payments.reduce((sum, payment) => sum + payment.amount, 0))}</p>
                           </div>
                           <Icon

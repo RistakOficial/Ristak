@@ -2183,12 +2183,16 @@ la facultad de cambiar JavaScript publicado.
   debe reutilizar los mismos filtros de `/api/contacts`, para
   que totales, clientes, LTV y promedio sigan siendo correctos aunque la tabla
   muestre solo un batch. La ficha/modal pinta primero el snapshot local del
-  contacto; no descarga pagos, citas, conversacion ni journey como requisito
-  para abrirse. Pagos y citas se piden al expandir su seccion mediante
-  `/api/contacts/:id/payments` y `/api/contacts/:id/appointments`, en paginas
-  keyset de 20 filas con cursor opaco ligado al contacto. Conversacion y journey
-  tambien usan paginas acotadas y permiten cargar historial anterior. Cerrar el
-  modal o cambiar de contacto aborta las solicitudes obsoletas.
+  contacto; el resumen visible conserva el total pagado, la cantidad de pagos
+  exitosos y el total de citas que entrega `GET /api/contacts/:id`, aunque las
+  colecciones paginadas todavia no se hayan descargado. El importe se formatea
+  con `account_currency`. La ficha no descarga pagos, citas, conversacion ni
+  journey como requisito para abrirse. Pagos y citas se piden al expandir su
+  seccion mediante `/api/contacts/:id/payments` y
+  `/api/contacts/:id/appointments`, en paginas keyset de 20 filas con cursor
+  opaco ligado al contacto. Conversacion y journey tambien usan paginas acotadas
+  y permiten cargar historial anterior. Cerrar el modal o cambiar de contacto
+  aborta las solicitudes obsoletas.
 - `GET /api/contacts/:id`, `/journey` y `/conversation` son lecturas locales:
   nunca deben calentar avatares, consultar HighLevel/Meta en vivo ni escribir en
   base de datos. La renovacion externa se solicita explicitamente con
