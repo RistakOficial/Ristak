@@ -111,6 +111,10 @@ import {
 import { resolveTagIds, tagNamesForIds, listContactTags } from '../services/contactTagsService.js'
 import { getEmailStatus } from '../services/emailService.js'
 import { hasFeature } from '../services/licenseService.js'
+import {
+  getRequestedReferrerId,
+  validateContactReferrer
+} from '../services/contactReferralService.js'
 import fetch from 'node-fetch'
 import { randomUUID } from 'crypto'
 import { performance } from 'node:perf_hooks'
@@ -2288,6 +2292,49 @@ const attachContactPhoneNumbers = async (contacts = []) => {
   }))
 }
 
+const attachContactReferralSummaries = async (contacts = []) => {
+  if (!Array.isArray(contacts) || contacts.length === 0) return contacts
+
+  const referrerIds = [...new Set(
+    contacts.map(contact => cleanString(contact?.referred_by_contact_id)).filter(Boolean)
+  )]
+  if (!referrerIds.length) {
+    return contacts.map(contact => ({ ...contact, referredByContact: null }))
+  }
+
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'referrer', false)
+  const referrers = await db.all(
+    `SELECT id, full_name, first_name, last_name, email, phone
+     FROM contacts referrer
+     WHERE referrer.id IN (${referrerIds.map(() => '?').join(', ')})
+       AND referrer.deleted_at IS NULL
+       ${hiddenCondition ? `AND ${hiddenCondition}` : ''}`,
+    referrerIds
+  )
+  const byId = new Map(referrers.map(referrer => [String(referrer.id), {
+    id: referrer.id,
+    name: getContactDisplayName(referrer),
+    email: referrer.email || '',
+    phone: referrer.phone || ''
+  }]))
+
+  return contacts.map(contact => ({
+    ...contact,
+    referredByContact: byId.get(cleanString(contact?.referred_by_contact_id)) || null
+  }))
+}
+
+const attachContactResponseDetails = async (contacts = []) => (
+  attachContactReferralSummaries(await attachContactPhoneNumbers(contacts))
+)
+
+const buildContactReferralFields = (contact = {}) => ({
+  referredByContactId: contact.referredByContact?.id || null,
+  referred_by_contact_id: contact.referredByContact?.id || null,
+  referredByContact: contact.referredByContact || null
+})
+
 const getCustomerPaymentsCount = (contact = {}) => {
   const raw = contact.customer_payments_count ??
     contact.customerPaymentsCount ??
@@ -2333,6 +2380,7 @@ const mapContactRowForResponse = (contact = {}) => {
     profilePhotoUrl: getContactProfilePhotoUrl(contact) || null,
     ad_name: adFields.ad_name,
     ad_id: adFields.ad_id,
+    ...buildContactReferralFields(contact),
     preferredWhatsAppPhoneNumberId: contact.preferred_whatsapp_phone_number_id || '',
     preferred_whatsapp_phone_number_id: contact.preferred_whatsapp_phone_number_id || '',
     phones,
@@ -3162,6 +3210,7 @@ export const getChatContacts = async (req, res) => {
           c.source,
           c.attribution_ad_name,
           c.attribution_ad_id,
+          c.referred_by_contact_id,
           c.preferred_whatsapp_phone_number_id,
           c.custom_fields,
           c.tags,
@@ -3206,7 +3255,7 @@ export const getChatContacts = async (req, res) => {
           }
         })
       }
-      const responseRowsWithPhones = await attachContactPhoneNumbers(fallbackRows)
+      const responseRowsWithPhones = await attachContactResponseDetails(fallbackRows)
       return res.json({
         success: true,
         data: responseRowsWithPhones.map(row => mapChatContactRowForResponse({
@@ -3570,6 +3619,7 @@ export const getChatContacts = async (req, res) => {
         c.source,
         c.attribution_ad_name,
         c.attribution_ad_id,
+        c.referred_by_contact_id,
         c.preferred_whatsapp_phone_number_id,
         c.custom_fields,
         c.tags,
@@ -3656,7 +3706,7 @@ ${CONTACT_META_MESSAGE_FLAGS_SELECT},
     if (shouldWarmProfilePictures) {
       queueWhatsAppProfilePictureWarmup(rows, { limit: Math.min(limitNumber, 60) })
     }
-    const responseRowsWithPhones = await attachContactPhoneNumbers(rows)
+    const responseRowsWithPhones = await attachContactResponseDetails(rows)
     const unreadCounts = await getChatUnreadCountsForUser({
       userId: getRequestUserId(req),
       contactIds: responseRowsWithPhones.map(row => row.id)
@@ -4017,6 +4067,7 @@ export const getContacts = async (req, res) => {
         c.attribution_ctwa_clid,
         c.attribution_ad_name,
         c.attribution_ad_id,
+        c.referred_by_contact_id,
         c.preferred_whatsapp_phone_number_id,
         c.custom_fields,
         c.tags,
@@ -4069,7 +4120,7 @@ ${CONTACT_META_PROFILE_SELECT},
     if (shouldWarmProfilePictures) {
       queueWhatsAppProfilePictureWarmup(contacts, { limit: Math.min(limitNumber, 80) })
     }
-    const contactsWithPhones = await attachContactPhoneNumbers(contacts)
+    const contactsWithPhones = await attachContactResponseDetails(contacts)
 
     const contactIds = Array.from(new Set(contactsWithPhones.map(c => c.id).filter(Boolean)))
     const firstSessionsByContact = await loadFirstSessionsForContactPage(contactsWithPhones)
@@ -4123,6 +4174,7 @@ ${CONTACT_META_PROFILE_SELECT},
         whatsappAttributionPlatform: attributionFields.whatsappAttributionPlatform,
         ad_name: adFields.ad_name,
         ad_id: adFields.ad_id,
+        ...buildContactReferralFields(c),
         preferredWhatsAppPhoneNumberId: c.preferred_whatsapp_phone_number_id || '',
         preferred_whatsapp_phone_number_id: c.preferred_whatsapp_phone_number_id || '',
         profilePhotoUrl: getContactProfilePhotoUrl(c) || null,
@@ -4280,7 +4332,7 @@ export const getContactById = async (req, res) => {
           total: '(SELECT COUNT(*) FROM appointments WHERE contact_id = c.id)'
         }
 
-    const contact = await db.get(
+    const rawContact = await db.get(
       `${detailPaymentStatsCte}
       SELECT
         c.id,
@@ -4297,6 +4349,7 @@ export const getContactById = async (req, res) => {
         c.attribution_ctwa_clid,
         c.attribution_ad_name,
         c.attribution_ad_id,
+        c.referred_by_contact_id,
         c.preferred_whatsapp_phone_number_id,
         c.custom_fields,
         c.tags,
@@ -4326,12 +4379,14 @@ ${CONTACT_META_PROFILE_SELECT},
       useProjectedDetailActivity ? [id] : [id, id]
     )
 
-    if (!contact) {
+    if (!rawContact) {
       return res.status(404).json({
         success: false,
         error: 'Contacto no encontrado'
       })
     }
+
+    const [contact] = await attachContactReferralSummaries([rawContact])
 
     // Las colecciones pesadas se solicitan por sus endpoints keyset. El flag
     // legacy conserva compatibilidad acotada para consumidores antiguos.
@@ -4479,6 +4534,7 @@ ${CONTACT_META_PROFILE_SELECT},
       campaign_name: resolvedAdFields.campaign_name,
       adset_id: resolvedAdFields.adset_id,
       adset_name: resolvedAdFields.adset_name,
+      ...buildContactReferralFields(contact),
       preferredWhatsAppPhoneNumberId: contact.preferred_whatsapp_phone_number_id || '',
       preferred_whatsapp_phone_number_id: contact.preferred_whatsapp_phone_number_id || '',
       profilePhotoUrl: getContactProfilePhotoUrl(contact) || null,
@@ -4943,6 +4999,7 @@ ${CONTACT_META_PROFILE_SELECT}
         c.source,
         c.attribution_ad_name,
         c.attribution_ad_id,
+        c.referred_by_contact_id,
 ${CONTACT_WHATSAPP_PROFILE_SELECTS},
 ${CONTACT_META_PROFILE_SELECT},
         ${useProjectedActivity
@@ -4970,7 +5027,7 @@ ${CONTACT_META_PROFILE_SELECT},
       [...searchClause.params, ...searchRank.params]
     )
     queueWhatsAppProfilePictureWarmup(contacts, { limit: 20 })
-    const contactsWithPhones = await attachContactPhoneNumbers(contacts)
+    const contactsWithPhones = await attachContactResponseDetails(contacts)
 
     // Mapear campos de base de datos a nombres esperados por frontend
     const mappedContacts = contactsWithPhones.map(c => {
@@ -5001,6 +5058,7 @@ ${CONTACT_META_PROFILE_SELECT},
         source: c.source,
         ad_name: c.attribution_ad_name,
         ad_id: c.attribution_ad_id,
+        ...buildContactReferralFields(c),
         profilePhotoUrl: getContactProfilePhotoUrl(c) || null,
         phones: buildContactPhonesForResponse(c),
         phoneNumbers: buildContactPhonesForResponse(c),
@@ -5228,6 +5286,10 @@ export const createContact = async (req, res) => {
     }
 
     const id = createManualContactId()
+    const referredByContactId = await validateContactReferrer({
+      contactId: id,
+      referredByContactId: getRequestedReferrerId(req.body)
+    })
     const nameParts = fullName ? splitName(fullName) : contactNameFields
     const createdAtTimestamp = parseSortableTimestamp(createdAt)
     const createdAtValue = createdAt && createdAtTimestamp > 0
@@ -5237,8 +5299,9 @@ export const createContact = async (req, res) => {
 
     await db.run(
       `INSERT INTO contacts (
-        id, phone, email, full_name, first_name, last_name, source, custom_fields, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ${process.env.DATABASE_URL ? '?::jsonb' : '?'}, ?, CURRENT_TIMESTAMP)`,
+        id, phone, email, full_name, first_name, last_name, source,
+        referred_by_contact_id, custom_fields, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${process.env.DATABASE_URL ? '?::jsonb' : '?'}, ?, CURRENT_TIMESTAMP)`,
       [
         id,
         normalizedPhone,
@@ -5247,6 +5310,7 @@ export const createContact = async (req, res) => {
         nameParts.firstName || null,
         nameParts.lastName || null,
         sourceValue,
+        referredByContactId,
         serializeContactCustomFieldsForDb([]),
         createdAtValue
       ]
@@ -5264,7 +5328,7 @@ export const createContact = async (req, res) => {
         logger.warn(`No se pudo registrar teléfono principal para ${id}: ${error.message}`)
       })
     }
-    const [contactWithPhones] = await attachContactPhoneNumbers([contact])
+    const [contactWithPhones] = await attachContactResponseDetails([contact])
 
     logger.info(`Contacto manual creado: ${id} (${contact.full_name || contact.email || contact.phone || 'sin nombre'})`)
 
@@ -5294,9 +5358,13 @@ export const createContact = async (req, res) => {
         conflictError = 'Ya existe un contacto con ese teléfono. Búscalo en la lista y edítalo si necesitas cambiar algo.'
       }
     }
-    res.status(isUniqueError ? 409 : 500).json({
+    const requestStatus = Number(error?.status) === 400 ? 400 : null
+    res.status(requestStatus || (isUniqueError ? 409 : 500)).json({
       success: false,
-      error: isUniqueError
+      code: error?.code,
+      error: requestStatus
+        ? error.message
+        : isUniqueError
         ? conflictError
         : 'Error creando contacto'
     })
@@ -5435,6 +5503,8 @@ export const updateContact = async (req, res) => {
     // (CNT-001) Bandera explícita para autorizar la fusión destructiva al editar
     // teléfono/email. Sin ella NO se fusiona en silencio.
     const mergeConfirmed = confirmMerge === true || confirmMerge === 'true'
+    const requestedReferrerId = getRequestedReferrerId(req.body)
+    const hasReferrerUpdate = requestedReferrerId !== undefined
     const hasPreferredWhatsAppPhoneNumberUpdate = hasOwn(req.body, 'preferredWhatsAppPhoneNumberId') ||
       hasOwn(req.body, 'preferred_whatsapp_phone_number_id')
     const preferredWhatsAppPhoneNumberInput = hasOwn(req.body, 'preferredWhatsAppPhoneNumberId')
@@ -5442,7 +5512,7 @@ export const updateContact = async (req, res) => {
       : req.body.preferred_whatsapp_phone_number_id
 
     // Verificar que el contacto existe
-    const existing = await db.get('SELECT id, custom_fields, preferred_whatsapp_phone_number_id, tags, full_name, email, phone, source FROM contacts WHERE id = ?', [id])
+    const existing = await db.get('SELECT id, custom_fields, preferred_whatsapp_phone_number_id, referred_by_contact_id, tags, full_name, email, phone, source FROM contacts WHERE id = ?', [id])
     if (!existing) {
       return res.status(404).json({
         success: false,
@@ -5477,6 +5547,9 @@ export const updateContact = async (req, res) => {
     const normalizedFullName = full_name !== undefined ? formatContactName(full_name) : undefined
     const normalizedPhone = phone !== undefined
       ? (await normalizePhoneForAccount(phone) || phone || null)
+      : undefined
+    const normalizedReferrerId = hasReferrerUpdate
+      ? await validateContactReferrer({ contactId: id, referredByContactId: requestedReferrerId })
       : undefined
 
     // (CNT-001) NO fusionar+borrar en silencio al editar teléfono/email.
@@ -5568,6 +5641,10 @@ export const updateContact = async (req, res) => {
     if (attribution_ad_id !== undefined) {
       updates.push('attribution_ad_id = ?')
       params.push(attribution_ad_id)
+    }
+    if (hasReferrerUpdate) {
+      updates.push('referred_by_contact_id = ?')
+      params.push(normalizedReferrerId)
     }
     if (hasPreferredWhatsAppPhoneNumberUpdate) {
       const preferredWhatsAppPhoneNumberId = cleanString(preferredWhatsAppPhoneNumberInput)
@@ -5727,6 +5804,9 @@ export const updateContact = async (req, res) => {
       if (source !== undefined && source !== existing.source) changedFields.push('source')
       if (attribution_ad_name !== undefined) changedFields.push('attributionAd')
       if (attribution_ad_id !== undefined) changedFields.push('attributionAd')
+      if (hasReferrerUpdate && cleanString(existing.referred_by_contact_id) !== cleanString(normalizedReferrerId)) {
+        changedFields.push('referredByContactId', 'referred_by_contact_id')
+      }
       if (hasPreferredWhatsAppPhoneNumberUpdate && cleanString(existing.preferred_whatsapp_phone_number_id) !== cleanString(preferredWhatsAppPhoneNumberInput)) {
         changedFields.push('preferredWhatsAppPhoneNumberId', 'preferred_whatsapp_phone_number_id')
       }
@@ -5748,11 +5828,12 @@ export const updateContact = async (req, res) => {
       `SELECT * FROM contacts WHERE id = ?`,
       [id]
     )
-    const [updatedWithPhones] = await attachContactPhoneNumbers([updated])
+    const [updatedWithPhones] = await attachContactResponseDetails([updated])
     const responseContact = updatedWithPhones || updated
     const phones = buildContactPhonesForResponse(responseContact)
     const updatedData = {
       ...responseContact,
+      ...buildContactReferralFields(responseContact),
       preferredWhatsAppPhoneNumberId: responseContact.preferred_whatsapp_phone_number_id || '',
       phones,
       phoneNumbers: phones,
@@ -5772,6 +5853,14 @@ export const updateContact = async (req, res) => {
     // constraint UNIQUE. Lo mapeamos a un 409 claro y accionable (consistente
     // con la pre-validación de email/teléfono de más arriba), para que el
     // usuario sepa que el email ya pertenece a otro contacto.
+    if (Number(error?.status) === 400) {
+      return res.status(400).json({
+        success: false,
+        code: error?.code,
+        error: error.message
+      })
+    }
+
     const code = String(error?.code || '')
     const message = String(error?.message || '')
     const isUniqueConflict = code === 'SQLITE_CONSTRAINT' ||

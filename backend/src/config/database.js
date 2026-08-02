@@ -1105,6 +1105,15 @@ async function updateContactReferences(fromId, toId) {
       logger.warn(`Advertencia al fusionar referencias ${reference.table}.contact_id: ${err.message}`)
     }
   }
+
+  await db.run(
+    'UPDATE contacts SET referred_by_contact_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND referred_by_contact_id = ?',
+    [toId, fromId]
+  ).catch(() => undefined)
+  await db.run(
+    'UPDATE contacts SET referred_by_contact_id = ?, updated_at = CURRENT_TIMESTAMP WHERE referred_by_contact_id = ? AND id != ?',
+    [toId, fromId, toId]
+  ).catch(() => undefined)
 }
 
 async function syncContactPhoneColumns(contactId, canonicalPhone) {
@@ -1129,7 +1138,7 @@ async function reconcileCanonicalContactPhones() {
   const rows = await db.all(`
     SELECT id, phone, email, full_name, first_name, last_name, source, visitor_id,
       attribution_url, attribution_session_source, attribution_medium, attribution_ctwa_clid,
-      attribution_ad_name, attribution_ad_id, total_paid, purchases_count, created_at
+      attribution_ad_name, attribution_ad_id, referred_by_contact_id, total_paid, purchases_count, created_at
     FROM contacts
     WHERE phone IS NOT NULL AND phone != ''
   `)
@@ -1175,9 +1184,13 @@ async function reconcileCanonicalContactPhones() {
         'attribution_medium',
         'attribution_ctwa_clid',
         'attribution_ad_name',
-        'attribution_ad_id'
+        'attribution_ad_id',
+        'referred_by_contact_id'
       ]) {
         if (!merged[field] && loser[field]) merged[field] = loser[field]
+      }
+      if (merged.referred_by_contact_id === loser.id || merged.referred_by_contact_id === winner.id) {
+        merged.referred_by_contact_id = null
       }
 
       // (DB-007) Al fusionar contactos duplicados se SUMAN los acumulados, no se toma el MAX:
@@ -1209,6 +1222,7 @@ async function reconcileCanonicalContactPhones() {
         attribution_ctwa_clid = ?,
         attribution_ad_name = ?,
         attribution_ad_id = ?,
+        referred_by_contact_id = CASE WHEN ? = id THEN NULL ELSE ? END,
         total_paid = ?,
         purchases_count = ?,
         updated_at = CURRENT_TIMESTAMP
@@ -1227,6 +1241,8 @@ async function reconcileCanonicalContactPhones() {
       merged.attribution_ctwa_clid || null,
       merged.attribution_ad_name || null,
       merged.attribution_ad_id || null,
+      merged.referred_by_contact_id || null,
+      merged.referred_by_contact_id || null,
       Number(merged.total_paid || 0),
       Number(merged.purchases_count || 0),
       winner.id
@@ -3570,6 +3586,7 @@ async function initTablesUnlocked() {
         attribution_ctwa_clid TEXT,
         attribution_ad_name TEXT,
         attribution_ad_id TEXT,
+        referred_by_contact_id TEXT,
         total_paid REAL DEFAULT 0,
         purchases_count INTEGER DEFAULT 0,
         last_purchase_date DATETIME,
@@ -3589,7 +3606,8 @@ async function initTablesUnlocked() {
         custom_fields ${usePostgres ? "JSONB DEFAULT '[]'::jsonb" : "TEXT DEFAULT '[]'"},
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        deleted_at DATETIME
+        deleted_at DATETIME,
+        FOREIGN KEY (referred_by_contact_id) REFERENCES contacts(id) ON DELETE SET NULL
       )
     `)
 
@@ -3649,6 +3667,14 @@ async function initTablesUnlocked() {
       }
     }
 
+    try {
+      await db.run('ALTER TABLE contacts ADD COLUMN referred_by_contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL')
+    } catch (err) {
+      if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+        throw err
+      }
+    }
+
     // Índices para contacts
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_ghl_contact_id ON contacts(ghl_contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone)')
@@ -3656,6 +3682,44 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_stripe_customer ON contacts(stripe_customer_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_conekta_customer ON contacts(conekta_customer_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_created_at ON contacts(created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_referred_by ON contacts(referred_by_contact_id)')
+    await db.run(`
+      CREATE VIEW IF NOT EXISTS contact_effective_ad_attribution AS
+      WITH RECURSIVE referral_chain(contact_id, candidate_contact_id, referral_depth) AS (
+        SELECT id, id, 0
+        FROM contacts
+        UNION ALL
+        SELECT chain.contact_id, referrer.id, chain.referral_depth + 1
+        FROM referral_chain chain
+        INNER JOIN contacts current_contact ON current_contact.id = chain.candidate_contact_id
+        INNER JOIN contacts referrer ON referrer.id = current_contact.referred_by_contact_id
+        WHERE chain.referral_depth < 25
+      ), ranked_candidates AS (
+        SELECT
+          chain.contact_id,
+          chain.candidate_contact_id,
+          chain.referral_depth,
+          ROW_NUMBER() OVER (
+            PARTITION BY chain.contact_id
+            ORDER BY
+              CASE
+                WHEN NULLIF(TRIM(candidate.attribution_ad_id), '') IS NOT NULL THEN 0
+                ELSE 1
+              END,
+              chain.referral_depth,
+              chain.candidate_contact_id
+          ) AS attribution_rank
+        FROM referral_chain chain
+        INNER JOIN contacts candidate ON candidate.id = chain.candidate_contact_id
+      )
+      SELECT
+        contact_id,
+        candidate_contact_id AS attribution_contact_id,
+        referral_depth,
+        CASE WHEN referral_depth > 0 THEN 1 ELSE 0 END AS inherited_from_referral
+      FROM ranked_candidates
+      WHERE attribution_rank = 1
+    `)
     await db.run(`
       CREATE TABLE IF NOT EXISTS contact_reply_channel_preferences (
         contact_id TEXT PRIMARY KEY,

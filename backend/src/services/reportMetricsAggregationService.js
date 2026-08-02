@@ -242,13 +242,26 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
   throwIfReportQueryAborted(signal)
   const queryOptions = reportQueryOptions(signal)
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+  const attributionContactAlias = isAttributed ? 'ac' : 'c'
+  const effectiveAttributionJoins = isAttributed
+    ? `INNER JOIN contact_effective_ad_attribution effective_attribution
+         ON effective_attribution.contact_id = c.id
+       INNER JOIN contacts ac
+         ON ac.id = effective_attribution.attribution_contact_id`
+    : ''
   const contactConditions = []
   const contactParams = []
-  appendRangeConditions(contactConditions, contactParams, 'c.created_at', range)
-  if (isAttributed) contactConditions.push(attributionMatchCondition('c', timezone, range))
+  appendRangeConditions(contactConditions, contactParams, `${attributionContactAlias}.created_at`, range)
+  if (isAttributed) contactConditions.push(attributionMatchCondition('ac', timezone, range))
   if (hiddenCondition) contactConditions.push(hiddenCondition)
 
   const contactPeriod = periodExpression('c.created_at', cleanGroup, timezone, { range })
+  const directContactPeriod = periodExpression(
+    `${attributionContactAlias}.created_at`,
+    cleanGroup,
+    timezone,
+    { range }
+  )
   const rawContactDedup = contactDedupExpression('c')
   const dedup = rawContactDedup
   const contactRowsDedup = isPostgres ? rawContactDedup : 'c.person_key'
@@ -280,9 +293,10 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
         c.phone,
         c.purchases_count,
         c.total_paid,
-        c.created_at
+        ${attributionContactAlias}.created_at AS created_at
         ${isPostgres ? '' : `, ${rawContactDedup} AS person_key`}
       FROM contacts c
+      ${effectiveAttributionJoins}
       ${whereClause(contactConditions)}
     )
     SELECT
@@ -372,10 +386,11 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
   const paymentRowsTask = useContactAttribution
     ? () => db.all(`
         SELECT
-          ${contactPeriod} AS period,
+          ${directContactPeriod} AS period,
           COUNT(DISTINCT ${dedup}) AS sales,
           COALESCE(SUM(p.amount), 0) AS revenue
         FROM contacts c
+        ${effectiveAttributionJoins}
         INNER JOIN payments p ON p.contact_id = c.id
         ${whereClause(attributedPaymentConditions)}
         GROUP BY period
@@ -429,10 +444,11 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
   const visitorRowsTask = useContactAttribution
     ? () => db.all(`
         SELECT
-          ${contactPeriod} AS period,
+          ${directContactPeriod} AS period,
           COUNT(DISTINCT ${getVisitorIdentityExpression('s')}) AS visitors
         FROM sessions s
         INNER JOIN contacts c ON c.id = s.contact_id
+        ${effectiveAttributionJoins}
         ${whereClause(contactConditions)}
         GROUP BY period
         ORDER BY period
@@ -541,8 +557,9 @@ export async function buildReportComparisonTotals({ startDate, endDate, scope = 
     ? () => {
         const conditions = []
         const params = []
-        appendRangeConditions(conditions, params, 'c.created_at', range)
-        if (isAttributed) conditions.push(attributionMatchCondition('c', timezone, range))
+        const attributionContactAlias = isAttributed ? 'ac' : 'c'
+        appendRangeConditions(conditions, params, `${attributionContactAlias}.created_at`, range)
+        if (isAttributed) conditions.push(attributionMatchCondition('ac', timezone, range))
         if (hiddenCondition) conditions.push(hiddenCondition)
         conditions.push(`LOWER(COALESCE(p.status, '')) IN (${statusPlaceholders})`)
         conditions.push(nonTestPaymentCondition('p'))
@@ -553,6 +570,12 @@ export async function buildReportComparisonTotals({ startDate, endDate, scope = 
             COUNT(DISTINCT ${contactDedupExpression('c')}) AS sales,
             COALESCE(SUM(p.amount), 0) AS revenue
           FROM contacts c
+          ${isAttributed
+            ? `INNER JOIN contact_effective_ad_attribution effective_attribution
+                 ON effective_attribution.contact_id = c.id
+               INNER JOIN contacts ac
+                 ON ac.id = effective_attribution.attribution_contact_id`
+            : ''}
           INNER JOIN payments p ON p.contact_id = c.id
           ${whereClause(conditions)}
         `, params, queryOptions)

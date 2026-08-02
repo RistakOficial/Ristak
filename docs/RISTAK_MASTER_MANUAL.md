@@ -2210,10 +2210,29 @@ la facultad de cambiar JavaScript publicado.
   local del negocio: gana el unico ID que exista ese dia; si ambos existen, gana
   el `source_id` oficial; si ninguno existe, queda el oficial como default y el
   payload crudo se conserva para auditoria/backfill.
-- Reportes en vista `Identificados de anuncios` y Publicidad miden registros por
-  `contacts.created_at` + `contacts.attribution_ad_id`, validando que el anuncio
-  exista en `meta_ads` el mismo dia local de creacion del contacto. Por eso ese
-  `ad_id` debe quedarse congelado como origen de registro. En Publicidad, los
+- Cada contacto puede guardar opcionalmente `referred_by_contact_id` mediante el
+  selector **Recomendado por** de Contactos, la ficha compartida o el panel del
+  Chat desktop. El selector busca un contacto activo ya existente; no permite
+  elegir el mismo contacto ni formar ciclos. `POST /api/contacts` y
+  `PUT /api/contacts/:id` aceptan `referredByContactId` o
+  `referred_by_contact_id`; `null`/cadena vacia elimina la relacion. Las fusiones
+  de identidad repuntan a los recomendados hacia el contacto sobreviviente y
+  cortan cualquier borde que pudiera convertirse en autorreferencia.
+- Reportes en vista `Identificados de anuncios` y Publicidad resuelven primero
+  `contact_effective_ad_attribution`: la atribucion propia del contacto gana si
+  tiene `attribution_ad_id`; si no la tiene, se recorre **Recomendado por** hasta
+  encontrar el primer contacto con anuncio (maximo 25 niveles). El rango y el
+  dia local del anuncio se toman de ese contacto de atribucion, pero pagos,
+  citas, asistencia, cliente y LTV siguen perteneciendo y consultandose desde el
+  contacto real. Asi el ingreso del recomendado suma al anuncio del recomendador
+  sin mover el pago ni falsificar quien compro. Los desgloses devuelven al
+  comprador real junto con `referredByContact`, `attributionContactId` y la marca
+  `attributionInheritedFromReferral`, para mostrar la asociacion y auditar el
+  total. Un contacto recomendado que ya trae anuncio propio conserva su propia
+  atribucion y no hereda la del recomendador.
+- La atribucion efectiva valida que el anuncio exista en `meta_ads` el mismo dia
+  local de creacion del contacto que aporta la atribucion. Por eso ese `ad_id`
+  debe quedarse congelado como origen de registro. En Publicidad, los
   conteos de interesados, citas, asistencias y ventas y el modal que abre cada
   cifra deben reutilizar el mismo rango, nivel (campana, conjunto o anuncio),
   atribucion, calendarios y deduplicacion por persona. Un fallo al cargar el

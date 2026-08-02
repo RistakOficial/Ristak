@@ -136,6 +136,26 @@ function attributionMatchCondition(alias, timezone, referenceDate) {
   )`
 }
 
+function effectiveAttributionDateExpression(alias) {
+  return `(SELECT attribution_contact.created_at
+    FROM contact_effective_ad_attribution effective_attribution
+    INNER JOIN contacts attribution_contact
+      ON attribution_contact.id = effective_attribution.attribution_contact_id
+    WHERE effective_attribution.contact_id = ${alias}.id
+    LIMIT 1)`
+}
+
+function effectiveAttributionMatchCondition(alias, timezone, referenceDate) {
+  return `EXISTS (
+    SELECT 1
+    FROM contact_effective_ad_attribution effective_attribution
+    INNER JOIN contacts attribution_contact
+      ON attribution_contact.id = effective_attribution.attribution_contact_id
+    WHERE effective_attribution.contact_id = ${alias}.id
+      AND ${attributionMatchCondition('attribution_contact', timezone, referenceDate)}
+  )`
+}
+
 async function getAttributionCalendarIds(signal) {
   const config = await db.get(
     'SELECT config_value FROM app_config WHERE config_key = ? LIMIT 1',
@@ -251,13 +271,18 @@ function buildEligibility({
   const conditions = [`${alias}.deleted_at IS NULL`]
   const useContactAttribution = scope === 'attribution' || scope === 'campaigns' || scope === 'attributed'
   const scopeAttributed = scope === 'campaigns' || scope === 'attributed'
+  const attributionDate = scopeAttributed
+    ? effectiveAttributionDateExpression(alias)
+    : `${alias}.created_at`
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, alias, false)
 
   if (hiddenCondition) conditions.push(hiddenCondition)
-  if (scopeAttributed) conditions.push(attributionMatchCondition(alias, range.appliedTimezone, range.startUtc))
+  if (scopeAttributed) {
+    conditions.push(effectiveAttributionMatchCondition(alias, range.appliedTimezone, range.startUtc))
+  }
 
   if (type === 'sales') {
-    if (useContactAttribution) addRangeCondition(conditions, params, `${alias}.created_at`, range)
+    if (useContactAttribution) addRangeCondition(conditions, params, attributionDate, range)
     conditions.push(successfulPaymentExists(range, params, {
       useContactCreatedAt: useContactAttribution,
       contactAlias: alias
@@ -279,16 +304,16 @@ function buildEligibility({
     addRangeCondition(firstPaymentConditions, params, 'first_payment.date', range)
     conditions.push(`EXISTS (SELECT 1 FROM payments first_payment WHERE ${firstPaymentConditions.join(' AND ')})`)
   } else if (type === 'appointments') {
-    if (useContactAttribution) addRangeCondition(conditions, params, `${alias}.created_at`, range)
+    if (useContactAttribution) addRangeCondition(conditions, params, attributionDate, range)
     conditions.push(activeAppointmentExists(range, params, calendarIds, {
       useContactCreatedAt: useContactAttribution,
       contactAlias: alias
     }))
   } else if (type === 'attendances') {
-    addRangeCondition(conditions, params, `${alias}.created_at`, range)
+    addRangeCondition(conditions, params, attributionDate, range)
     conditions.push(attendedAppointmentExists(params, calendarIds, { contactAlias: alias }))
   } else {
-    addRangeCondition(conditions, params, `${alias}.created_at`, range)
+    addRangeCondition(conditions, params, attributionDate, range)
     if (type === 'customers') conditions.push(`COALESCE(${alias}.purchases_count, 0) > 0`)
   }
 
@@ -317,6 +342,17 @@ function mapContactRow(row) {
     ltv: Number(row.ltv || 0),
     purchases: Number(row.purchases || 0),
     attributed: Boolean(row.attribution_ad_id),
+    referredByContactId: row.referred_by_contact_id || null,
+    referred_by_contact_id: row.referred_by_contact_id || null,
+    referredByContact: row.referred_by_contact_id ? {
+      id: row.referred_by_contact_id,
+      name: row.referred_by_contact_name || '',
+      email: row.referred_by_contact_email || '',
+      phone: row.referred_by_contact_phone || ''
+    } : null,
+    attributionContactId: row.attribution_contact_id || (row.inherited_from_referral ? null : row.id),
+    attributionContactName: row.attribution_contact_name || (row.inherited_from_referral ? '' : row.full_name || ''),
+    attributionInheritedFromReferral: Boolean(row.inherited_from_referral),
     source: row.source || null,
     ad_name: row.attribution_ad_name || null,
     ad_id: row.attribution_ad_id || null,
@@ -379,6 +415,19 @@ export async function listReportContactsPage({
     search,
     alias: 'c'
   })
+  const scopeAttributed = cleanScope === 'campaigns' || cleanScope === 'attributed'
+  const responseAttributionJoins = scopeAttributed
+    ? `INNER JOIN contact_effective_ad_attribution response_attribution
+         ON response_attribution.contact_id = c.id
+       INNER JOIN contacts response_attribution_contact
+         ON response_attribution_contact.id = response_attribution.attribution_contact_id
+       LEFT JOIN contacts visible_attribution_contact
+         ON visible_attribution_contact.id = response_attribution.attribution_contact_id
+         ${buildHiddenContactsCondition(hiddenFilters, 'visible_attribution_contact', false)
+           ? `AND ${buildHiddenContactsCondition(hiddenFilters, 'visible_attribution_contact', false)}`
+           : ''}`
+    : ''
+  const referrerHiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'referrer', false)
   const newerEligibility = dedupeByPerson
     ? buildEligibility({
         type: cleanType,
@@ -458,13 +507,26 @@ export async function listReportContactsPage({
   const rowsPromise = db.all(
     `SELECT
        c.id, c.full_name, c.email, c.phone, c.created_at, c.total_paid, c.purchases_count,
-       c.attribution_ad_id, c.attribution_ad_name, c.source,
+       ${scopeAttributed ? 'response_attribution_contact.attribution_ad_id' : 'c.attribution_ad_id'} AS attribution_ad_id,
+       ${scopeAttributed ? 'response_attribution_contact.attribution_ad_name' : 'c.attribution_ad_name'} AS attribution_ad_name,
+       referrer.id AS referred_by_contact_id,
+       referrer.full_name AS referred_by_contact_name,
+       referrer.email AS referred_by_contact_email,
+       referrer.phone AS referred_by_contact_phone,
+       ${scopeAttributed ? 'visible_attribution_contact.id' : 'c.id'} AS attribution_contact_id,
+       ${scopeAttributed ? 'response_attribution.inherited_from_referral' : '0'} AS inherited_from_referral,
+       ${scopeAttributed ? 'visible_attribution_contact.full_name' : 'c.full_name'} AS attribution_contact_name,
+       c.source,
        ${contactCursorProjectionExpression('c')} AS cursor_created_at,
        ${ltvExpression} AS ltv,
        ${purchasesExpression} AS purchases,
        ${activeAppointmentExpression} AS has_appointments,
        ${attendedAppointmentExpression} AS has_attended_appointment
      FROM ${pageContactsFrom}
+     ${responseAttributionJoins}
+     LEFT JOIN contacts referrer
+       ON referrer.id = c.referred_by_contact_id
+       ${referrerHiddenCondition ? `AND ${referrerHiddenCondition}` : ''}
      ${identityJoin}
      WHERE ${pageConditions.join(' AND ')}
      ORDER BY ${cursorSortExpression} DESC, c.id DESC

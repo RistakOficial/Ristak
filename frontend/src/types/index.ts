@@ -161,6 +161,13 @@ export interface ContactPhoneNumber {
   updatedAt?: string | null
 }
 
+export interface ContactReferralSummary {
+  id: string
+  name?: string
+  email?: string
+  phone?: string
+}
+
 export interface Contact {
   id: string
   createdAt: string
@@ -189,6 +196,12 @@ export interface Contact {
   whatsappAttributionPlatform?: string | null
   ad_name?: string
   ad_id?: string
+  referredByContactId?: string | null
+  referred_by_contact_id?: string | null
+  referredByContact?: ContactReferralSummary | null
+  attributionContactId?: string | null
+  attributionContactName?: string | null
+  attributionInheritedFromReferral?: boolean
   preferredWhatsAppPhoneNumberId?: string | null
   preferred_whatsapp_phone_number_id?: string | null
   lastBusinessPhone?: string

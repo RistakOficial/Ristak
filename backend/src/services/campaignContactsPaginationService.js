@@ -184,19 +184,22 @@ function metaMatchCondition({ contactAlias, metaAlias, argsAlias, entityColumn, 
 
 function candidateContactCondition({ alias, argsAlias, entityColumn, range, hiddenFilters }) {
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, alias, false)
-  return `${alias}.created_at >= ${argsAlias}.contact_start_at
-    AND ${alias}.created_at <= ${argsAlias}.contact_end_at
-    ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
-    AND EXISTS (
+  return `${hiddenCondition ? `${hiddenCondition} AND ` : ''}EXISTS (
       SELECT 1
-      FROM meta_ads candidate_ad
-      WHERE ${metaMatchCondition({
-        contactAlias: alias,
-        metaAlias: 'candidate_ad',
-        argsAlias,
-        entityColumn,
-        range
-      })}
+      FROM contact_effective_ad_attribution candidate_attribution
+      INNER JOIN contacts attribution_contact
+        ON attribution_contact.id = candidate_attribution.attribution_contact_id
+      INNER JOIN meta_ads candidate_ad
+        ON ${metaMatchCondition({
+          contactAlias: 'attribution_contact',
+          metaAlias: 'candidate_ad',
+          argsAlias,
+          entityColumn,
+          range
+        })}
+      WHERE candidate_attribution.contact_id = ${alias}.id
+        AND attribution_contact.created_at >= ${argsAlias}.contact_start_at
+        AND attribution_contact.created_at <= ${argsAlias}.contact_end_at
     )`
 }
 
@@ -208,6 +211,17 @@ function mapContactRow(row) {
     phone: row.phone || '',
     created_at: row.created_at,
     ltv: Number(row.person_ltv || 0),
+    referredByContactId: row.referred_by_contact_id || null,
+    referred_by_contact_id: row.referred_by_contact_id || null,
+    referredByContact: row.referred_by_contact_id ? {
+      id: row.referred_by_contact_id,
+      name: row.referred_by_contact_name || '',
+      email: row.referred_by_contact_email || '',
+      phone: row.referred_by_contact_phone || ''
+    } : null,
+    attributionContactId: row.attribution_contact_id || (row.inherited_from_referral ? null : row.id),
+    attributionContactName: row.attribution_contact_name || (row.inherited_from_referral ? '' : row.full_name || ''),
+    attributionInheritedFromReferral: Boolean(row.inherited_from_referral),
     ad_id: row.attribution_ad_id || null,
     ad_name: row.ad_name || row.attribution_ad_name || null,
     campaign_id: row.campaign_id || null,
@@ -368,7 +382,7 @@ export async function listCampaignContactsPage({
     SELECT MAX(metadata_ad.${column})
     FROM meta_ads metadata_ad
     WHERE ${metaMatchCondition({
-      contactAlias: 'c',
+      contactAlias: 'attribution_contact',
       metaAlias: 'metadata_ad',
       argsAlias: 'query_args',
       entityColumn: entityFilter.column,
@@ -393,8 +407,15 @@ export async function listCampaignContactsPage({
       c.total_paid,
       c.purchases_count,
       c.appointment_date,
-      c.attribution_ad_id,
-      c.attribution_ad_name,
+      referrer.id AS referred_by_contact_id,
+      referrer.full_name AS referred_by_contact_name,
+      referrer.email AS referred_by_contact_email,
+      referrer.phone AS referred_by_contact_phone,
+      visible_attribution_contact.id AS attribution_contact_id,
+      effective_attribution.inherited_from_referral,
+      visible_attribution_contact.full_name AS attribution_contact_name,
+      attribution_contact.attribution_ad_id,
+      attribution_contact.attribution_ad_name,
       c.source,
       ${metadataExpression('campaign_id')} AS campaign_id,
       ${metadataExpression('campaign_name')} AS campaign_name,
@@ -407,6 +428,20 @@ export async function listCampaignContactsPage({
       ${personLtvExpression} AS person_ltv,
       ${campaignContactCursorProjectionExpression('c.created_at')} AS cursor_created_at
     FROM contacts c${isPostgres ? '' : ' INDEXED BY idx_campaign_contacts_cursor_created_at_id'}
+    INNER JOIN contact_effective_ad_attribution effective_attribution
+      ON effective_attribution.contact_id = c.id
+    INNER JOIN contacts attribution_contact
+      ON attribution_contact.id = effective_attribution.attribution_contact_id
+    LEFT JOIN contacts visible_attribution_contact
+      ON visible_attribution_contact.id = effective_attribution.attribution_contact_id
+      ${buildHiddenContactsCondition(hiddenFilters, 'visible_attribution_contact', false)
+        ? `AND ${buildHiddenContactsCondition(hiddenFilters, 'visible_attribution_contact', false)}`
+        : ''}
+    LEFT JOIN contacts referrer
+      ON referrer.id = c.referred_by_contact_id
+      ${buildHiddenContactsCondition(hiddenFilters, 'referrer', false)
+        ? `AND ${buildHiddenContactsCondition(hiddenFilters, 'referrer', false)}`
+        : ''}
     INNER JOIN contact_person_identity identity_projection
       ON identity_projection.contact_id = c.id
     CROSS JOIN query_args

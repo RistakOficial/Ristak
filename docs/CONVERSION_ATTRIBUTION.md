@@ -66,6 +66,33 @@ deduplicacion por persona. El detalle debe listar exactamente a las personas que
 forman el conteo. Un error de consulta no se convierte en una lista vacia; la UI
 debe distinguir entre "cero contactos" y "no se pudo cargar".
 
+## Recomendaciones entre contactos
+
+`contacts.referred_by_contact_id` expresa que el contacto fue recomendado por
+otro contacto ya existente. Es una relacion opcional y auditable; no cambia la
+identidad del comprador, no repunta pagos y no modifica el historial de touches.
+
+Para Reportes en `Identificados de anuncios` y Publicidad, la vista derivada
+`contact_effective_ad_attribution` aplica este orden:
+
+1. Si el contacto comprador tiene `attribution_ad_id`, conserva su atribucion
+   propia.
+2. Si no la tiene, recorre `referred_by_contact_id` hasta el primer contacto con
+   anuncio, con un maximo defensivo de 25 niveles.
+3. El anuncio y la fecha de adquisicion usados para el rango/agrupacion salen de
+   ese contacto de atribucion; el pago, LTV, cita, asistencia y estado de cliente
+   se leen siempre del contacto que realmente realizo la accion.
+
+La API rechaza autorreferencias, contactos recomendadores inexistentes o
+eliminados y ciclos. Los desgloses conservan al comprador como fila principal y
+anexan el recomendador directo y el contacto efectivo de atribucion. Esto permite
+ver, por ejemplo, dos compras de 100 atribuidas al mismo anuncio sin fingir que
+ambos pagos pertenecen al contacto original.
+
+Esta herencia es exclusivamente analitica. No cambia `action_source`,
+`event_source_url`, `ctwa_clid`, `fbp`/`fbc`, `user_data` ni ninguna otra parte
+del payload Meta CAPI: la superficie real de la conversion sigue mandando.
+
 Para datos historicos afectados por imports o retouches anteriores, el backend
 agenda una vez el backfill
 `repairWhatsAppApiContactIdentityFromMessages({ limit: 0 })` en segundo plano,

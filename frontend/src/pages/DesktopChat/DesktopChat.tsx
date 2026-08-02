@@ -48,6 +48,7 @@ import {
   ContactAvatar,
   ContentFocusModal,
   ContactCustomFieldsPanel,
+  ContactSearchInput,
   CustomSelect,
   ContactPhoneSelector,
   DropdownMenu,
@@ -144,7 +145,7 @@ import {
   type WhatsAppApiStatus,
   type WhatsAppApiTemplate
 } from '@/services/whatsappApiService'
-import type { Contact, ContactAppointment, ContactCustomField, ContactPayment, ContactPhoneNumber } from '@/types'
+import type { Contact, ContactAppointment, ContactCustomField, ContactPayment, ContactPhoneNumber, ContactReferralSummary } from '@/types'
 import { formatChatDayLabel, formatChatListTimestamp, formatChatMessageTime, getChatTimestampDayKey, isChatTimestampToday } from '@/utils/chatTimestamps'
 import { mergeContactCustomFields } from '@/utils/contactCustomFields'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
@@ -6191,6 +6192,41 @@ export const DesktopChat: React.FC = () => {
     }
   }, [activeContact, contactInfoData, showToast])
 
+  const handleUpdateContactReferrer = useCallback(async (referrer: ContactReferralSummary | null) => {
+    if (!activeContact?.id) return
+
+    const contactId = activeContact.id
+    const previousContact = contactInfoData || activeContact
+    const nextReferrerId = referrer?.id || null
+    const patch: Partial<Contact> = {
+      referredByContactId: nextReferrerId,
+      referred_by_contact_id: nextReferrerId,
+      referredByContact: referrer
+    }
+
+    setContactInfoData(current => current?.id === contactId ? { ...current, ...patch } : current)
+    setChats(current => current.map(contact => contact.id === contactId ? { ...contact, ...patch } : contact))
+
+    try {
+      const updatedContact = await contactsService.updateContact(contactId, {
+        referredByContactId: nextReferrerId
+      })
+      setContactInfoData(current => current?.id === contactId ? { ...current, ...patch, ...updatedContact } : current)
+      setChats(current => current.map(contact => contact.id === contactId
+        ? { ...contact, ...patch, ...updatedContact }
+        : contact
+      ))
+      showToast('success', 'Recomendación guardada', referrer
+        ? `La atribución puede heredarse desde ${referrer.name || referrer.email || referrer.phone || 'el contacto seleccionado'}.`
+        : 'El contacto ya no tiene una recomendación asociada.')
+    } catch (error: any) {
+      setContactInfoData(current => current?.id === contactId ? { ...current, ...previousContact } : current)
+      setChats(current => current.map(contact => contact.id === contactId ? { ...contact, ...previousContact } : contact))
+      showToast('error', 'No se guardó la recomendación', error?.message || 'Intenta otra vez.')
+      throw error
+    }
+  }, [activeContact, contactInfoData, showToast])
+
   const handleMakePrimaryPhone = useCallback(async (phone: string) => {
     const nextPhone = String(phone || '').trim()
     const currentContact = contactInfoData || activeContact
@@ -10332,6 +10368,14 @@ export const DesktopChat: React.FC = () => {
                   </div>
                   <div><dt><Tag size={14} /> Estado</dt><dd>{stageLabel}</dd></div>
                 </dl>
+                <ContactSearchInput
+                  value={(contactInfoData || activeContact).referredByContact || null}
+                  onChange={handleUpdateContactReferrer}
+                  label="Recomendado por"
+                  placeholder="Buscar contacto que lo recomendó..."
+                  allowCreate={false}
+                  excludeContactIds={[activeContact.id]}
+                />
                 <div className={styles.contactTools}>
                   <div className={styles.contactTagTool}>
                     <TagPicker
