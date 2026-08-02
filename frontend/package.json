@@ -27,6 +27,7 @@
     "test:table-pagination": "node --experimental-strip-types --test scripts/test-table-pagination.mjs",
     "test:time-picker-live-preview": "node scripts/test-time-picker-live-preview.mjs",
     "test:floating-layer-viewport": "node scripts/test-floating-layer-viewport.mjs",
+    "test:phone-date-field-viewport": "node scripts/test-phone-date-field-viewport.mjs",
     "test:web-analytics-plan-access": "node --test scripts/test-web-analytics-plan-access.cjs",
     "test:payment-links-plan-access": "node --test scripts/test-payment-links-plan-access.cjs",
     "test:highlevel-chat-send": "node scripts/test-highlevel-chat-send.mjs",

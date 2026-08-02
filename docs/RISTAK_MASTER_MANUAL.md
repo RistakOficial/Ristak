@@ -3982,6 +3982,13 @@ chatbot y MCP vuelven a validar `payment_links`; una licencia stale no
 puede crear ni enviar un enlace. Los links públicos creados antes del downgrade
 siguen disponibles para que el pagador no reciba una URL rota.
 
+En escritorio, los calendarios de las fechas de cobro dentro del plan de pagos
+se portalean sobre el modal y usan el posicionamiento flotante compartido. Deben
+alinearse dentro del viewport, cambiar arriba o abajo según el espacio real y
+mantener scroll interno cuando la ventana no permite mostrar el panel completo;
+ninguna parcialidad puede dejar su calendario recortado por el modal o por el
+borde de la pantalla.
+
 La ruta de Configuracion > Pagos siempre carga primero su configuracion local.
 Variables Meta se piden solo al abrir `Meta`; estado y plantillas de WhatsApp,
 solo al abrir `Automatizaciones`. En `Pasarelas`, la vista general puede leer los

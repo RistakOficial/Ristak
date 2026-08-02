@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import { PhoneSheet } from './ui/PhoneSheet'
 import styles from './PhoneDateField.module.css'
 
@@ -118,6 +120,8 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
   inlineOnWide = false
 }) => {
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
   const selectedDate = useMemo(() => parseDateInput(value), [value])
   const minDate = useMemo(() => parseDateInput(min), [min])
   const selectedDateIsBlocked = Boolean(selectedDate && minDate && isDateBefore(selectedDate, minDate))
@@ -136,6 +140,19 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
   ))
   const todayBlocked = Boolean(minDate && isDateBefore(today, minDate))
   const useInlinePanel = inlineOnWide && wideViewport
+  const {
+    style: popoverStyle,
+    placement: popoverPlacement
+  } = useAnchoredPortal(triggerRef, open && useInlinePanel, {
+    align: 'end',
+    gap: 8,
+    matchWidth: false,
+    minWidth: 340,
+    maxWidth: 340,
+    maxHeight: 460,
+    panelRef,
+    viewportPadding: 12
+  })
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -156,7 +173,10 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target
-      if (target instanceof Node && hostRef.current?.contains(target)) return
+      if (
+        target instanceof Node &&
+        (hostRef.current?.contains(target) || panelRef.current?.contains(target))
+      ) return
       setOpen(false)
     }
 
@@ -251,6 +271,7 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
   return (
     <div ref={hostRef} className={hostClassName}>
       <button
+        ref={triggerRef}
         type="button"
         className={`${styles.trigger} ${buttonClassName}`}
         disabled={disabled}
@@ -266,8 +287,16 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
       </button>
 
       {useInlinePanel ? (
-        open && (
-          <div className={styles.popoverPanel} role="dialog" aria-label={ariaLabel || title}>
+        open && typeof document !== 'undefined' && createPortal(
+          <div
+            ref={panelRef}
+            className={styles.popoverPanel}
+            style={popoverStyle}
+            role="dialog"
+            aria-label={ariaLabel || title}
+            data-placement={popoverPlacement}
+            data-ristak-dropdown-panel
+          >
             <div className={styles.popoverHeader}>
               <strong>{title}</strong>
               <button
@@ -280,7 +309,8 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
               </button>
             </div>
             {calendarPanel}
-          </div>
+          </div>,
+          document.body
         )
       ) : (
         <PhoneSheet
