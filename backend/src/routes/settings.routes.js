@@ -12,7 +12,11 @@ import {
   updateCustomField,
   updateCustomFieldFolder
 } from '../controllers/settingsController.js';
-import { getNotificationsView } from '../controllers/notificationsController.js';
+import {
+  getNotificationsView,
+  markAllNotificationsReadView,
+  markNotificationsReadView
+} from '../controllers/notificationsController.js';
 import { requireAuth } from '../middleware/authMiddleware.js';
 import { requireFeature } from '../middleware/licenseMiddleware.js';
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js';
@@ -110,6 +114,8 @@ router.get('/trigger-links/:triggerLinkId/events', requireCustomFieldsAccess, re
 
 // GET /api/settings/notifications
 router.get('/notifications', requireAccountAccess, getNotificationsView);
+router.post('/notifications/read', requireAccountAccess, markNotificationsReadView);
+router.post('/notifications/read-all', requireAccountAccess, markAllNotificationsReadView);
 
 // Payment settings
 router.get('/payments', requirePaymentsAccess, getPaymentSettingsView);

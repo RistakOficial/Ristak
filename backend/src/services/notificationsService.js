@@ -1,4 +1,5 @@
 import fetch from 'node-fetch'
+import { createHash } from 'node:crypto'
 import { db, getAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { getMetaConfig, getMetaSyncProgress } from './metaAdsService.js'
@@ -70,6 +71,64 @@ function cleanString(value) {
   return String(value).trim()
 }
 
+function stableNotificationHash(parts = []) {
+  return createHash('sha256')
+    .update(JSON.stringify(parts.map((part) => cleanString(part))))
+    .digest('hex')
+}
+
+function parseNotificationMetadata(value) {
+  if (!value) return {}
+  if (typeof value === 'object' && !Array.isArray(value)) return value
+
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function buildInternalNotificationDedupeKey({
+  source = 'Ristak',
+  title = '',
+  actionUrl = '',
+  category = 'internal',
+  contactId = '',
+  automationId = '',
+  automationNodeId = '',
+  enrollmentId = '',
+  metadata = {}
+} = {}) {
+  const normalizedMetadata = parseNotificationMetadata(metadata)
+  const explicitEventKey = cleanString(
+    normalizedMetadata.dedupeKey ||
+    normalizedMetadata.testEffectId ||
+    normalizedMetadata.safetyEventId ||
+    normalizedMetadata.eventId ||
+    normalizedMetadata.testRunId
+  )
+  const entityParts = [contactId, automationId, automationNodeId, enrollmentId]
+    .map((part) => cleanString(part))
+  const hasEntityIdentity = entityParts.some(Boolean)
+  const identityParts = explicitEventKey
+    ? ['event', category, explicitEventKey]
+    : hasEntityIdentity
+      ? ['entity', category, ...entityParts]
+      : ['content', category, source, title, actionUrl]
+
+  return `internal:${stableNotificationHash(identityParts)}`
+}
+
+function buildNotificationVersion(notification = {}) {
+  return stableNotificationHash([
+    notification.source,
+    notification.severity,
+    notification.title,
+    notification.actionUrl
+  ])
+}
+
 function makeInternalNotificationId() {
   return createRistakId('internal_notification')
 }
@@ -100,6 +159,7 @@ function toIsoDate(value) {
 
 function createNotification({
   id,
+  readKey,
   source,
   severity = 'info',
   title,
@@ -111,6 +171,7 @@ function createNotification({
 }) {
   return {
     id,
+    readKey: cleanString(readKey || id),
     source,
     severity: SEVERITY_RANK[severity] ? severity : 'info',
     title,
@@ -123,8 +184,21 @@ function createNotification({
 }
 
 function internalNotificationFromRow(row = {}) {
+  const readKey = cleanString(row.dedupe_key) || buildInternalNotificationDedupeKey({
+    source: row.source,
+    title: row.title,
+    actionUrl: row.action_url || row.actionUrl,
+    category: row.category,
+    contactId: row.contact_id,
+    automationId: row.automation_id,
+    automationNodeId: row.automation_node_id,
+    enrollmentId: row.enrollment_id,
+    metadata: row.metadata_json
+  })
+
   return createNotification({
     id: row.id,
+    readKey,
     source: row.source || 'Ristak',
     severity: row.severity || 'info',
     title: row.title || 'Notificación interna',
@@ -169,19 +243,74 @@ export async function createInternalNotification({
     }
   }
 
+  const metadataJson = JSON.stringify(metadata || {})
+  const dedupeKey = buildInternalNotificationDedupeKey({
+    source,
+    title: cleanTitle,
+    actionUrl,
+    category,
+    contactId,
+    automationId,
+    automationNodeId,
+    enrollmentId,
+    metadata
+  })
   const ids = []
+  const insertedIds = []
+  const insertedRecipientUserIds = []
   if (createBellNotification) {
     for (const recipientUserId of recipientTargets) {
-      const id = makeInternalNotificationId()
-      ids.push(id)
+      const existing = recipientUserId === null
+        ? await db.get(
+            `SELECT id FROM internal_notifications
+             WHERE recipient_user_id IS NULL AND dedupe_key = ?
+             ORDER BY updated_at DESC LIMIT 1`,
+            [dedupeKey]
+          )
+        : await db.get(
+            `SELECT id FROM internal_notifications
+             WHERE recipient_user_id = ? AND dedupe_key = ?
+             ORDER BY updated_at DESC LIMIT 1`,
+            [recipientUserId, dedupeKey]
+          )
+
+      if (existing?.id) {
+        ids.push(existing.id)
+        await db.run(
+          `UPDATE internal_notifications
+           SET source = ?, severity = ?, title = ?, message = ?, action_url = ?, action_label = ?,
+               category = ?, contact_id = ?, automation_id = ?, automation_node_id = ?,
+               enrollment_id = ?, metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [
+            cleanString(source) || 'Ristak',
+            SEVERITY_RANK[severity] ? severity : 'info',
+            cleanTitle,
+            cleanMessage,
+            cleanString(actionUrl),
+            cleanString(actionLabel) || 'Abrir',
+            cleanString(category) || 'internal',
+            cleanString(contactId) || null,
+            cleanString(automationId) || null,
+            cleanString(automationNodeId) || null,
+            cleanString(enrollmentId) || null,
+            metadataJson,
+            existing.id
+          ]
+        )
+        continue
+      }
+
+      const candidateId = makeInternalNotificationId()
       await db.run(
         `INSERT INTO internal_notifications (
           id, recipient_user_id, source, severity, title, message, action_url, action_label,
           category, contact_id, automation_id, automation_node_id, enrollment_id, metadata_json,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          dedupe_key, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT DO NOTHING`,
         [
-          id,
+          candidateId,
           recipientUserId,
           cleanString(source) || 'Ristak',
           SEVERITY_RANK[severity] ? severity : 'info',
@@ -194,30 +323,64 @@ export async function createInternalNotification({
           cleanString(automationId) || null,
           cleanString(automationNodeId) || null,
           cleanString(enrollmentId) || null,
-          JSON.stringify(metadata || {})
+          metadataJson,
+          dedupeKey
         ]
       )
+
+      const stored = recipientUserId === null
+        ? await db.get(
+            `SELECT id FROM internal_notifications
+             WHERE recipient_user_id IS NULL AND dedupe_key = ?
+             ORDER BY updated_at DESC LIMIT 1`,
+            [dedupeKey]
+          )
+        : await db.get(
+            `SELECT id FROM internal_notifications
+             WHERE recipient_user_id = ? AND dedupe_key = ?
+             ORDER BY updated_at DESC LIMIT 1`,
+            [recipientUserId, dedupeKey]
+          )
+      const storedId = cleanString(stored?.id || candidateId)
+      ids.push(storedId)
+      if (storedId === candidateId) {
+        insertedIds.push(storedId)
+        if (recipientUserId !== null) insertedRecipientUserIds.push(recipientUserId)
+      }
     }
   }
 
   let push = { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'disabled' }
-  if (sendPushNotification) {
+  const shouldSendPush = sendPushNotification && (!createBellNotification || insertedIds.length > 0)
+  if (shouldSendPush) {
     const pushPayload = {
       title: pushTitle || cleanTitle,
       body: pushBody || cleanMessage || cleanTitle,
       url: actionUrl || '/movil',
       category,
-      tag: ids[0] || `internal-${Date.now()}`,
+      tag: insertedIds[0] || ids[0] || `internal-${Date.now()}`,
       contactId: cleanString(contactId)
     }
-    const pushOptions = broadcast ? {} : { userIds: normalizedRecipients }
+    const pushOptions = broadcast
+      ? {}
+      : { userIds: createBellNotification ? insertedRecipientUserIds : normalizedRecipients }
     push = await sendAppNotificationPayload(pushPayload, pushOptions).catch((error) => {
       logger.warn(`[Notificaciones] No se pudo enviar push interno: ${error.message}`)
       return { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'push_error' }
     })
   }
 
-  return { created: ids.length, ids, push }
+  if (sendPushNotification && !shouldSendPush) {
+    push = { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'duplicate' }
+  }
+
+  return {
+    created: ids.length,
+    inserted: insertedIds.length,
+    deduplicated: Math.max(0, ids.length - insertedIds.length),
+    ids,
+    push
+  }
 }
 
 function sortNotifications(left, right) {
@@ -1224,7 +1387,9 @@ async function getInternalNotifications({ userId = null, limit = 30 } = {}) {
     const max = Math.max(1, Math.min(Number(limit) || 30, 100))
     const rows = cleanUserId
       ? await db.all(
-          `SELECT id, source, severity, title, message, action_url, action_label, created_at, updated_at
+          `SELECT id, source, severity, title, message, action_url, action_label, category,
+             contact_id, automation_id, automation_node_id, enrollment_id, metadata_json,
+             dedupe_key, created_at, updated_at
            FROM internal_notifications
            WHERE recipient_user_id IS NULL OR recipient_user_id = ?
            ORDER BY updated_at DESC
@@ -1232,7 +1397,9 @@ async function getInternalNotifications({ userId = null, limit = 30 } = {}) {
           [cleanUserId, max]
         )
       : await db.all(
-          `SELECT id, source, severity, title, message, action_url, action_label, created_at, updated_at
+          `SELECT id, source, severity, title, message, action_url, action_label, category,
+             contact_id, automation_id, automation_node_id, enrollment_id, metadata_json,
+             dedupe_key, created_at, updated_at
            FROM internal_notifications
            WHERE recipient_user_id IS NULL
            ORDER BY updated_at DESC
@@ -1247,9 +1414,135 @@ async function getInternalNotifications({ userId = null, limit = 30 } = {}) {
   }
 }
 
+async function getAllInternalNotifications({ userId = null } = {}) {
+  try {
+    const cleanUserId = cleanString(userId)
+    const selectSql = `SELECT id, source, severity, title, message, action_url, action_label, category,
+      contact_id, automation_id, automation_node_id, enrollment_id, metadata_json,
+      dedupe_key, created_at, updated_at
+      FROM internal_notifications`
+    const rows = cleanUserId
+      ? await db.all(
+          `${selectSql}
+           WHERE recipient_user_id IS NULL OR recipient_user_id = ?
+           ORDER BY updated_at DESC`,
+          [cleanUserId]
+        )
+      : await db.all(
+          `${selectSql}
+           WHERE recipient_user_id IS NULL
+           ORDER BY updated_at DESC`
+        )
+
+    return rows.map(internalNotificationFromRow)
+  } catch (error) {
+    logger.warn(`No se pudo leer el historial completo de notificaciones internas: ${error.message}`)
+    return []
+  }
+}
+
+function deduplicateNotifications(notifications = []) {
+  const unique = new Map()
+
+  notifications.forEach((notification) => {
+    const readKey = cleanString(notification?.readKey || notification?.id)
+    if (!readKey) return
+
+    const normalized = {
+      ...notification,
+      readKey,
+      version: buildNotificationVersion(notification)
+    }
+    const current = unique.get(readKey)
+    if (!current || sortNotifications(current, normalized) > 0) {
+      unique.set(readKey, normalized)
+    }
+  })
+
+  return [...unique.values()]
+}
+
+async function getNotificationReadStates(userId, readKeys = []) {
+  const cleanUserId = cleanString(userId)
+  const keys = [...new Set(readKeys.map((key) => cleanString(key)).filter(Boolean))]
+  if (!cleanUserId || !keys.length) return new Map()
+
+  const placeholders = keys.map(() => '?').join(', ')
+  const rows = await db.all(
+    `SELECT notification_key, notification_version, read_at
+     FROM notification_read_states
+     WHERE user_id = ? AND notification_key IN (${placeholders})`,
+    [cleanUserId, ...keys]
+  )
+
+  return new Map(rows.map((row) => [cleanString(row.notification_key), row]))
+}
+
+async function attachNotificationReadStates(notifications = [], userId = null) {
+  const states = await getNotificationReadStates(userId, notifications.map((item) => item.readKey))
+  return notifications.map((notification) => {
+    const state = states.get(notification.readKey)
+    const isRead = Boolean(state && cleanString(state.notification_version) === notification.version)
+    return {
+      ...notification,
+      isRead,
+      readAt: isRead ? toIsoDate(state.read_at) : null
+    }
+  })
+}
+
+export async function markNotificationsRead({ userId, notifications = [] } = {}) {
+  const cleanUserId = cleanString(userId)
+  if (!cleanUserId) {
+    const error = new Error('Falta el usuario que leerá las notificaciones')
+    error.code = 'notification_user_required'
+    throw error
+  }
+
+  const normalized = new Map()
+  notifications.forEach((notification) => {
+    const readKey = cleanString(notification?.readKey || notification?.id).slice(0, 160)
+    const version = cleanString(notification?.version).slice(0, 64)
+    if (readKey && version) normalized.set(readKey, version)
+  })
+
+  if (!normalized.size) return { marked: 0 }
+
+  await db.transaction(async (transaction) => {
+    for (const [readKey, version] of normalized) {
+      await transaction.run(
+        `INSERT INTO notification_read_states (
+           user_id, notification_key, notification_version, read_at, created_at, updated_at
+         ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT(user_id, notification_key) DO UPDATE SET
+           notification_version = excluded.notification_version,
+           read_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP`,
+        [cleanUserId, readKey, version]
+      )
+    }
+  })
+
+  return { marked: normalized.size }
+}
+
+export async function markAllSystemNotificationsRead({ userId, notifications = [] } = {}) {
+  const [current, allInternal] = await Promise.all([
+    getSystemNotifications({ liveMetaCheck: false, limit: 100, userId }),
+    getAllInternalNotifications({ userId })
+  ])
+  const allNotifications = deduplicateNotifications([
+    ...current.items,
+    ...allInternal,
+    ...notifications
+  ])
+  return markNotificationsRead({ userId, notifications: allNotifications })
+}
+
 export async function getSystemNotifications({ liveMetaCheck = true, limit = 30, userId = null } = {}) {
+  const requestedLimit = Math.max(1, Math.min(Number(limit) || 30, 100))
   const groups = await Promise.all([
-    getInternalNotifications({ userId, limit }),
+    getInternalNotifications({ userId, limit: 100 }),
     getWhatsAppNotifications(),
     getMetaNotifications({ liveMetaCheck }),
     getStorageNotifications(),
@@ -1258,14 +1551,19 @@ export async function getSystemNotifications({ liveMetaCheck = true, limit = 30,
     getAiNotifications()
   ])
 
-  const items = groups
-    .flat()
-    .sort(sortNotifications)
-    .slice(0, Math.max(1, Math.min(Number(limit) || 30, 100)))
+  const uniqueItems = deduplicateNotifications(groups.flat())
+  const allItems = await attachNotificationReadStates(uniqueItems, userId)
+  const items = allItems
+    .sort((left, right) => {
+      if (left.isRead !== right.isRead) return left.isRead ? 1 : -1
+      return sortNotifications(left, right)
+    })
+    .slice(0, requestedLimit)
 
-  const summary = items.reduce((acc, item) => {
+  const summary = allItems.reduce((acc, item) => {
     acc.total += 1
     acc[item.severity] = (acc[item.severity] || 0) + 1
+    if (!item.isRead) acc.unread += 1
     if (!acc.highestSeverity || (SEVERITY_RANK[item.severity] || 0) > (SEVERITY_RANK[acc.highestSeverity] || 0)) {
       acc.highestSeverity = item.severity
     }
@@ -1275,6 +1573,7 @@ export async function getSystemNotifications({ liveMetaCheck = true, limit = 30,
     critical: 0,
     warning: 0,
     info: 0,
+    unread: 0,
     highestSeverity: ''
   })
 

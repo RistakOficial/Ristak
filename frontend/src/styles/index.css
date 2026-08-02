@@ -1325,14 +1325,6 @@ body [data-ristak-notification-menu] {
   border-radius: 0.9rem !important;
 }
 
-body [data-ristak-notification-item] {
-  background: color-mix(in srgb, var(--color-background-tertiary) 84%, var(--color-background-secondary) 16%) !important;
-}
-
-body [data-ristak-notification-item][data-unread='true'] {
-  background: color-mix(in srgb, var(--color-background-tertiary) 78%, rgb(var(--color-primary-rgb)) 22%) !important;
-}
-
 body[data-design-preset] {
   --design-border: rgba(148, 163, 184, 0.18);
   --design-card-bg: var(--effect-glassMorphism-background);

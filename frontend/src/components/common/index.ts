@@ -132,6 +132,7 @@ export { Loading } from './Loading'
 export { AppStartupLoader } from './AppStartupLoader'
 export { GoogleLoginButton } from './GoogleLoginButton'
 export { LazyLoadErrorBoundary } from './LazyLoadErrorBoundary/LazyLoadErrorBoundary'
+export { NotificationCenter } from './NotificationCenter'
 export { MediaUploadTray } from './MediaUploadTray'
 export type { MediaUploadTask, MediaUploadTaskStatus } from './MediaUploadTray'
 export {

@@ -1751,6 +1751,25 @@ Shell desktop protegido:
 - `/mdp-program`
 - `/settings`
 
+La campana del topbar usa el centro compartido `NotificationCenter`. Su vista
+inicial muestra sólo avisos sin leer y nunca los marca por el simple hecho de
+abrir el menú. Cada usuario puede marcar un aviso o todos los avisos actuales
+como leídos; **Ver historial** carga hasta los 100 más recientes dentro del
+mismo dropdown. El estado vive por usuario en `notification_read_states`, no en
+`localStorage`, y se conserva entre recargas, navegadores y dispositivos.
+`GET /api/settings/notifications` entrega `readKey`, `version`, `isRead` y el
+conteo `summary.unread`; `POST /api/settings/notifications/read` y
+`POST /api/settings/notifications/read-all` persisten la lectura sin aceptar un
+usuario desde el body. Una alerta sólo vuelve a quedar sin leer cuando cambia de
+forma material su severidad, título o destino.
+
+Las notificaciones internas guardan `dedupe_key` en `internal_notifications`.
+La identidad combina el evento explícito o, cuando aplica, categoría, contacto,
+automatización, nodo e inscripción; una repetición del mismo evento actualiza la
+fila existente y no vuelve a disparar campana ni push. La colección final también
+deduplica por esa identidad antes de ordenar y limitar, incluyendo filas legacy
+que todavía no tenían `dedupe_key` persistido.
+
 El shell de `/mdp-program` consulta su navegacion remota una sola vez por
 montaje. Cuando el iframe sincroniza la URL de `/mdp-program` a un item interno,
 la ruta vuelve a seleccionar ese item sobre el snapshot ya recibido; no repite
