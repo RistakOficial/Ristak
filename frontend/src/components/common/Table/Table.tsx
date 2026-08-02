@@ -15,6 +15,7 @@ import { getDateSortValueForKey } from '@/utils/dateSort'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { TabList } from '../TabList'
 import { SearchField } from '../SearchField'
+import { getTableLoadingIndicators } from './loadingIndicators'
 import { getTablePaginationItems } from './pagination'
 import styles from './Table.module.css'
 
@@ -438,6 +439,11 @@ export function Table<T extends Record<string, any>>({
     rawData.length === 0 &&
     lastSettledDataRef.current.length === 0
   const isRefreshing = loading && !showInitialSkeleton
+  const loadingIndicators = getTableLoadingIndicators({
+    isRefreshing,
+    hasSearchControl: searchable,
+    hasSearchTerm: Boolean(resolvedSearchTerm)
+  })
   const tableData =
     isRefreshing && rawData.length === 0 && lastSettledDataRef.current.length > 0
       ? lastSettledDataRef.current
@@ -682,12 +688,12 @@ export function Table<T extends Record<string, any>>({
         value={resolvedSearchTerm}
         onChange={handleSearchTermChange}
         onClear={() => handleSearchTermChange('')}
-        loading={isRefreshing && Boolean(resolvedSearchTerm)}
+        loading={loadingIndicators.search}
       />
     </div>
   ) : null
 
-  const refreshIndicator = isRefreshing ? (
+  const refreshIndicator = loadingIndicators.standalone ? (
     <span
       className={styles.refreshIndicator}
       role="status"

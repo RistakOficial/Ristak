@@ -369,6 +369,11 @@ la ventana se muestran puntos suspensivos. Las listas keyset/cursor conservan su
 lectura escalable: un salto numérico hacia adelante recorre secuencialmente los
 cursores necesarios y no debe degradarse a paginación offset para pintar el pie.
 
+Durante una búsqueda remota, `<Table>` muestra un solo indicador de carga dentro
+de su `<SearchField>`. El indicador independiente del toolbar se reserva para
+actualizaciones sin un término de búsqueda activo; nunca deben aparecer ambos a
+la vez.
+
 ---
 
 ## 7. Variantes funcionales permitidas (deben sentirse intencionales)
