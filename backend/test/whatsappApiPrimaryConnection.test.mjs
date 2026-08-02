@@ -10,7 +10,8 @@ import {
   getWhatsAppApiConfigKeys,
   promoteConnectedWhatsAppApiPhoneNumber,
   setMetaDirectFetchForTest,
-  setYCloudFetchForTest
+  setYCloudFetchForTest,
+  testMetaDirectConnection
 } from '../src/services/whatsappApiService.js'
 import { getWhatsAppProviderDefinitions } from '../src/services/whatsapp/providers/providerRegistry.js'
 
@@ -83,7 +84,7 @@ async function readPhoneRows(ids = []) {
   const placeholders = ids.map(() => '?').join(', ')
   return db.all(`
     SELECT id, provider, is_default_sender, api_send_enabled,
-      qr_send_enabled, qr_status, qr_connected_phone
+      qr_send_enabled, qr_status, qr_connected_phone, quality_rating, messaging_limit
     FROM whatsapp_api_phone_numbers
     WHERE id IN (${placeholders})
     ORDER BY id
@@ -207,6 +208,7 @@ test('conectar Meta Direct después de QR deja Meta principal y conserva el QR c
   const phoneNumberId = 'meta_direct_after_qr'
   const wabaId = 'waba_meta_after_qr'
   const nonce = `meta-primary-${crypto.randomUUID()}`
+  let requestedPhoneFields = ''
   const configKeys = [
     ...Object.values(keys),
     'license_key',
@@ -219,12 +221,14 @@ test('conectar Meta Direct después de QR deja Meta principal y conserva el QR c
     const url = new URL(String(input))
     const method = String(options.method || 'GET').toUpperCase()
     if (url.pathname.endsWith(`/${wabaId}/phone_numbers`) && method === 'GET') {
+      requestedPhoneFields = url.searchParams.get('fields') || ''
       return jsonResponse({
         data: [{
           id: phoneNumberId,
           display_phone_number: phone,
           verified_name: 'Meta después de QR',
-          quality_rating: 'GREEN'
+          quality_rating: 'GREEN',
+          whatsapp_business_manager_messaging_limit: 'TIER_2K'
         }]
       })
     }
@@ -265,6 +269,8 @@ test('conectar Meta Direct después de QR deja Meta principal y conserva el QR c
       assert.equal(status.metaDirect.connected, true)
       assert.equal(apiRow?.provider, 'meta_direct')
       assert.equal(apiRow?.is_default_sender, 1)
+      assert.equal(apiRow?.quality_rating, 'GREEN')
+      assert.equal(apiRow?.messaging_limit, 'TIER_2K')
       assert.equal(qrRow?.is_default_sender, 0)
       assert.equal(qrRow?.qr_send_enabled, 1)
       assert.equal(qrRow?.qr_status, 'connected')
@@ -272,6 +278,25 @@ test('conectar Meta Direct después de QR deja Meta principal y conserva el QR c
       assert.equal(await getAppConfig(keys.phoneNumberId), phoneNumberId)
       assert.equal(await getAppConfig(keys.senderPhone), phone)
       assert.equal(await getAppConfig(keys.wabaId), wabaId)
+      assert.match(requestedPhoneFields, /quality_rating/)
+      assert.match(requestedPhoneFields, /whatsapp_business_manager_messaging_limit/)
+      assert.doesNotMatch(requestedPhoneFields, /messaging_limit_tier/)
+
+      await db.run(`
+        UPDATE whatsapp_api_phone_numbers
+        SET quality_rating = NULL, messaging_limit = NULL
+        WHERE id = ?
+      `, [phoneNumberId])
+      await testMetaDirectConnection()
+      const refreshedPhone = await db.get(`
+        SELECT quality_rating, messaging_limit
+        FROM whatsapp_api_phone_numbers
+        WHERE id = ?
+      `, [phoneNumberId])
+      assert.deepEqual(refreshedPhone, {
+        quality_rating: 'GREEN',
+        messaging_limit: 'TIER_2K'
+      })
     })
   } finally {
     setMetaDirectFetchForTest(null)

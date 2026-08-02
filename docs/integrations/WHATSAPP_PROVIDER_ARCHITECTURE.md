@@ -1,6 +1,6 @@
 # Arquitectura de proveedores WhatsApp
 
-Ultima actualizacion: 2026-07-31.
+Ultima actualizacion: 2026-08-02.
 
 ## Proposito
 
@@ -587,6 +587,18 @@ muestra además el error normalizado y una acción directa para iniciar de nuevo
 Embedded Signup. `connected_at` es histórico y no puede ocultar el estado
 operativo actual. El QR conserva su propio badge y puede seguir conectado como
 respaldo sin hacer pasar a la API por sana.
+
+Las columnas **Calidad** y **Límite compartido** aplican únicamente a una
+conexión oficial. Meta directo consulta `quality_rating` y el campo vigente
+`whatsapp_business_manager_messaging_limit`; `messaging_limit_tier` es legado y
+no debe usarse en llamadas nuevas. La calidad pertenece al número, mientras que
+el límite corresponde al Business Portfolio y se comparte entre sus números,
+aunque Graph permita consultarlo desde cada Phone Number ID. Al conectar y al
+presionar **Sincronizar**, Ristak vuelve a consultar cada proveedor oficial,
+persiste esos valores y no borra un valor conocido porque un payload parcial lo
+omita. Una fila sólo QR muestra `No aplica` en ambas columnas. En una fila API,
+`NA`/`UNKNOWN` significa `Aún sin calificación`; la ausencia inesperada del campo
+se muestra como `No disponible`, no como si QR y API fueran equivalentes.
 
 El token termina cifrado sólo en la base del tenant. Installer conserva metadata
 de sesión y ruteo; un payload de entrega pendiente queda cifrado temporalmente y

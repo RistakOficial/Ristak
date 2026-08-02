@@ -44,6 +44,7 @@ import { invalidateIntegrationsStatus } from '@/services/integrationsService'
 import { formatInTimezone, getStoredBusinessTimezone } from '@/utils/timezone'
 import { hasLicenseFeature } from '@/utils/accessControl'
 import { getWhatsAppOfficialConnectionStatus } from '@/utils/whatsappConnectionStatus'
+import { getWhatsAppMessagingLimitLabel, getWhatsAppQualityLabel } from '@/utils/whatsappPhoneMetrics'
 import { MessageTemplates } from './MessageTemplates'
 import styles from './WhatsAppSettings.module.css'
 
@@ -517,7 +518,7 @@ export const WhatsAppSettings: React.FC = () => {
   }
 
   const refreshWhatsAppStatus = async () => {
-    if (ycloudConnected) {
+    if (apiConnected) {
       await refreshApi()
       return
     }
@@ -1108,8 +1109,8 @@ export const WhatsAppSettings: React.FC = () => {
         row.phone.label,
         row.phone.id,
         row.displayName,
-        row.phone.quality_rating,
-        row.phone.messaging_limit,
+        getWhatsAppQualityLabel(row.phone),
+        getWhatsAppMessagingLimitLabel(row.phone),
         row.officialStatus.label,
         getQrStatusLabel(row.qrStatus)
       ].some((value) => String(value || '').toLowerCase().includes(query))
@@ -1205,7 +1206,7 @@ export const WhatsAppSettings: React.FC = () => {
                     <th>Envío oficial</th>
                     <th>Respaldo QR</th>
                     <th>Calidad</th>
-                    <th>Límite</th>
+                    <th>Límite compartido</th>
                     <th aria-label="Acciones" />
                   </tr>
                 </thead>
@@ -1251,8 +1252,8 @@ export const WhatsAppSettings: React.FC = () => {
                               )}
                             </div>
                           </td>
-                          <td>{phone.quality_rating || 'Sin dato'}</td>
-                          <td>{phone.messaging_limit || 'Sin dato'}</td>
+                          <td>{getWhatsAppQualityLabel(phone)}</td>
+                          <td>{getWhatsAppMessagingLimitLabel(phone)}</td>
                           <td>
                             <div className={styles.rowActions}>
                               <DropdownMenu>

@@ -209,7 +209,16 @@ export async function connectWhatsAppApiView(req, res) {
 
 export async function refreshWhatsAppApiView(req, res) {
   try {
-    await refreshWhatsAppApi()
+    const currentStatus = await getWhatsAppApiStatus()
+    const refreshYCloud = Boolean(currentStatus.connected)
+    const refreshMetaDirect = Boolean(currentStatus.metaDirect?.connected)
+
+    if (!refreshYCloud && !refreshMetaDirect) {
+      throw new Error('No hay una conexión de WhatsApp API para sincronizar')
+    }
+
+    if (refreshYCloud) await refreshWhatsAppApi()
+    if (refreshMetaDirect) await testMetaDirectConnection()
     await ensureDefaultTemplatesForActiveWhatsAppProvider(req)
     await syncRegisteredIntegrationCronsForProvider('whatsapp-api', { reason: 'whatsapp-api-refreshed' })
     res.json({ success: true, data: await getWhatsAppApiStatus() })

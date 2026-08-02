@@ -105,6 +105,13 @@ const DEFAULT_INSTALLER_PUBLIC_URL = 'https://www.ristak.com'
 const META_EMBEDDED_SIGNUP_TIMEOUT_MS = 20_000
 const META_DIRECT_GRAPH_TIMEOUT_MS = 20_000
 const META_DIRECT_INBOUND_MEDIA_TIMEOUT_MS = 8_000
+const META_DIRECT_PHONE_STATUS_FIELDS = [
+  'id',
+  'display_phone_number',
+  'verified_name',
+  'quality_rating',
+  'whatsapp_business_manager_messaging_limit'
+].join(',')
 const WEBHOOK_DESCRIPTION = 'Ristak WhatsApp API'
 const GENERIC_CONTACT_NAME = GENERIC_WHATSAPP_API_CONTACT_NAME
 const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY = 'whatsapp_protocol_identity_repair_version'
@@ -2802,9 +2809,9 @@ async function listYCloudWebhookEndpoints(apiKey) {
 }
 
 function normalizePhoneNumberRecord(record = {}) {
-  const phoneNumber = normalizePhoneForStorage(record.phoneNumber || record.displayPhoneNumber) ||
-    cleanString(record.phoneNumber || record.displayPhoneNumber)
-  const wabaId = cleanString(record.wabaId)
+  const sourcePhoneNumber = record.phoneNumber || record.phone_number || record.displayPhoneNumber || record.display_phone_number
+  const phoneNumber = normalizePhoneForStorage(sourcePhoneNumber) || cleanString(sourcePhoneNumber)
+  const wabaId = cleanString(record.wabaId || record.waba_id)
   const id = cleanString(record.id) || hashId('waapi_phone', `${wabaId}|${phoneNumber}`)
   const businessProfile = record.businessProfile || record.profile || null
 
@@ -2813,13 +2820,20 @@ function normalizePhoneNumberRecord(record = {}) {
     provider: cleanString(record.provider) || PROVIDER_NAME,
     wabaId,
     phoneNumber,
-    displayPhoneNumber: cleanString(record.displayPhoneNumber) || phoneNumber,
-    verifiedName: cleanString(record.verifiedName || businessProfile?.verifiedName || record.requestedVerifiedName || record.newName),
-    profilePictureUrl: cleanString(record.profilePictureUrl || businessProfile?.profilePictureUrl),
+    displayPhoneNumber: cleanString(record.displayPhoneNumber || record.display_phone_number) || phoneNumber,
+    verifiedName: cleanString(record.verifiedName || record.verified_name || businessProfile?.verifiedName || record.requestedVerifiedName || record.newName),
+    profilePictureUrl: cleanString(record.profilePictureUrl || record.profile_picture_url || businessProfile?.profilePictureUrl),
     businessProfile,
-    qualityRating: cleanString(record.qualityRating),
-    messagingLimit: cleanString(record.messagingLimit || record.whatsappBusinessManagerMessagingLimit),
-    status: cleanString(record.status || record.nameStatus || record.codeVerificationStatus),
+    qualityRating: cleanString(record.qualityRating || record.quality_rating).toUpperCase(),
+    messagingLimit: cleanString(
+      record.whatsappBusinessManagerMessagingLimit ||
+      record.whatsapp_business_manager_messaging_limit ||
+      record.messagingLimit ||
+      record.messaging_limit ||
+      record.messagingLimitTier ||
+      record.messaging_limit_tier
+    ).toUpperCase(),
+    status: cleanString(record.status || record.nameStatus || record.name_status || record.codeVerificationStatus || record.code_verification_status),
     raw: record
   }
 }
@@ -3440,8 +3454,8 @@ async function syncPhoneNumbers(phoneNumbers = [], options = {}) {
         verified_name = excluded.verified_name,
         profile_picture_url = COALESCE(NULLIF(excluded.profile_picture_url, ''), whatsapp_api_phone_numbers.profile_picture_url),
         business_profile_json = COALESCE(excluded.business_profile_json, whatsapp_api_phone_numbers.business_profile_json),
-        quality_rating = excluded.quality_rating,
-        messaging_limit = excluded.messaging_limit,
+        quality_rating = COALESCE(NULLIF(excluded.quality_rating, ''), whatsapp_api_phone_numbers.quality_rating),
+        messaging_limit = COALESCE(NULLIF(excluded.messaging_limit, ''), whatsapp_api_phone_numbers.messaging_limit),
         status = excluded.status,
         api_send_enabled = CASE
           WHEN ? = 1 THEN 1
@@ -10575,6 +10589,12 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
     phoneNumberId,
     token: systemUserToken
   })
+  const normalizedAuthorizedPhone = normalizePhoneNumberRecord({
+    ...authorizedPhone,
+    id: phoneNumberId,
+    wabaId,
+    provider: META_DIRECT_PROVIDER_NAME
+  })
   await subscribeMetaDirectWaba({ wabaId, token: systemUserToken })
   await setAppConfig(CONFIG_KEYS.metaLastSubscriptionRefreshAt, nowIso())
 
@@ -10602,14 +10622,16 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
   await db.run(`
     INSERT INTO whatsapp_api_phone_numbers (
       id, provider, waba_id, phone_number, display_phone_number, verified_name,
-      status, api_send_enabled, raw_payload_json, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 'CONNECTED', 1, ?, CURRENT_TIMESTAMP)
+      quality_rating, messaging_limit, status, api_send_enabled, raw_payload_json, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CONNECTED', 1, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       provider = excluded.provider,
       waba_id = excluded.waba_id,
       phone_number = COALESCE(NULLIF(excluded.phone_number, ''), whatsapp_api_phone_numbers.phone_number),
       display_phone_number = COALESCE(NULLIF(excluded.display_phone_number, ''), whatsapp_api_phone_numbers.display_phone_number),
       verified_name = COALESCE(NULLIF(excluded.verified_name, ''), whatsapp_api_phone_numbers.verified_name),
+      quality_rating = COALESCE(NULLIF(excluded.quality_rating, ''), whatsapp_api_phone_numbers.quality_rating),
+      messaging_limit = COALESCE(NULLIF(excluded.messaging_limit, ''), whatsapp_api_phone_numbers.messaging_limit),
       status = 'CONNECTED',
       api_send_enabled = 1,
       raw_payload_json = excluded.raw_payload_json,
@@ -10621,7 +10643,10 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
     displayPhoneNumber || null,
     cleanString(authorizedPhone.display_phone_number || payload.displayPhoneNumber || payload.display_phone_number) || displayPhoneNumber || null,
     cleanString(authorizedPhone.verified_name || payload.verifiedName || payload.verified_name) || 'Meta directo',
+    normalizedAuthorizedPhone.qualityRating || null,
+    normalizedAuthorizedPhone.messagingLimit || null,
     safeJson({
+      ...authorizedPhone,
       appId,
       businessId,
       wabaId,
@@ -10823,7 +10848,7 @@ async function validateMetaDirectOperationalAccess({ wabaId, phoneNumberId, toke
 
   const response = await metaDirectGraphRequest(`/${encodeURIComponent(cleanWabaId)}/phone_numbers`, {
     token,
-    query: { fields: 'id,display_phone_number,verified_name,quality_rating,messaging_limit_tier', limit: 100 },
+    query: { fields: META_DIRECT_PHONE_STATUS_FIELDS, limit: 100 },
     operational,
     phoneNumberId: cleanPhoneNumberId
   })
@@ -10896,26 +10921,30 @@ export async function testMetaDirectConnection() {
     token: config.systemUserToken,
     operational: true
   })
+  const normalizedPhone = normalizePhoneNumberRecord({
+    ...phone,
+    id: config.phoneNumberId,
+    wabaId: config.wabaId,
+    provider: META_DIRECT_PROVIDER_NAME
+  })
 
-  if (phone.display_phone_number || phone.verified_name) {
-    await db.run(`
-      UPDATE whatsapp_api_phone_numbers
-      SET display_phone_number = COALESCE(?, display_phone_number),
-        verified_name = COALESCE(?, verified_name),
-        quality_rating = COALESCE(?, quality_rating),
-        messaging_limit = COALESCE(?, messaging_limit),
-        raw_payload_json = ?,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `, [
-      phone.display_phone_number || null,
-      phone.verified_name || null,
-      phone.quality_rating || null,
-      phone.messaging_limit_tier || null,
-      safeJson(phone),
-      config.phoneNumberId
-    ])
-  }
+  await db.run(`
+    UPDATE whatsapp_api_phone_numbers
+    SET display_phone_number = COALESCE(NULLIF(?, ''), display_phone_number),
+      verified_name = COALESCE(NULLIF(?, ''), verified_name),
+      quality_rating = COALESCE(NULLIF(?, ''), quality_rating),
+      messaging_limit = COALESCE(NULLIF(?, ''), messaging_limit),
+      raw_payload_json = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [
+    normalizedPhone.displayPhoneNumber || null,
+    normalizedPhone.verifiedName || null,
+    normalizedPhone.qualityRating || null,
+    normalizedPhone.messagingLimit || null,
+    safeJson(phone),
+    config.phoneNumberId
+  ])
 
   await setAppConfig(CONFIG_KEYS.metaLastError, '')
   return { ok: true, phone }

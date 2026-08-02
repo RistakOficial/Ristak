@@ -20,6 +20,18 @@ test('frontend resuelve la API oficial por cada numero y no por el estado global
   assert.match(source, /return Boolean\(status\?\.connected\)/)
 })
 
+test('Configuración sincroniza Meta directo contra el proveedor y no relee sólo el caché local', async () => {
+  const source = await readSource('frontend/src/pages/Settings/WhatsAppSettings.tsx')
+  const refreshStart = source.indexOf('const refreshWhatsAppStatus = async')
+  const refreshEnd = source.indexOf('const mergeQrDripSettings', refreshStart)
+
+  assert.ok(refreshStart >= 0 && refreshEnd > refreshStart, 'No se encontró la sincronización de WhatsApp')
+  const refreshSource = source.slice(refreshStart, refreshEnd)
+
+  assert.match(refreshSource, /if \(apiConnected\)[\s\S]*?await refreshApi\(\)/)
+  assert.doesNotMatch(refreshSource, /if \(ycloudConnected\)/)
+})
+
 test('PhoneChat conserva el numero nativo seleccionado y aplica plantillas fuera de 24 horas', async () => {
   const source = await readSource('frontend/src/pages/PhoneChat/PhoneChat.tsx')
 

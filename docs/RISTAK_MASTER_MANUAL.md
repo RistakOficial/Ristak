@@ -2548,6 +2548,17 @@ Installer conserva temporalmente el resultado cifrado y una sesión nueva de la
 misma instalación lo retoma sin volver a autorizar ni exponer el token al
 navegador.
 
+La tabla de números separa las métricas oficiales de los estados QR. Para Meta
+directo, **Calidad** muestra la calificación actual del número y **Límite
+compartido** muestra la capacidad del Business Portfolio consultada mediante
+`whatsapp_business_manager_messaging_limit`; ese límite se comparte entre todos
+los números del portafolio y no debe leerse desde el campo legado
+`messaging_limit_tier`. El botón **Sincronizar** consulta realmente Meta o
+YCloud, actualiza la fila local y conserva el último valor válido ante payloads
+parciales. Un número exclusivamente QR muestra `No aplica`; una API que todavía
+no tiene calificación dice `Aún sin calificación`, y un campo oficial ausente se
+presenta como `No disponible`.
+
 Al regresar de una conexión Meta exitosa, la pantalla abre un modal para
 configurar el método de pago de ese WABA. El usuario elige **Configurar después**
 como acción de texto o **Configurar ahora** como acción principal. La segunda
