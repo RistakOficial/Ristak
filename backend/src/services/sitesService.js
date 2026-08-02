@@ -37557,6 +37557,66 @@ export function renderDomainErrorHtml({ host, message }) {
 </html>`
 }
 
+export function renderDatabaseStorageErrorHtml({ host, offer = {}, managementUrl = '' }) {
+  const current = Math.max(1, Number(offer.current_disk_size_gb) || 1)
+  const target = Math.max(current, Number(offer.target_disk_size_gb) || current)
+  const percent = Math.max(0, Number(offer.usage_percent) || 0)
+  const pricing = offer.render_pricing || {}
+  const currentCost = Number(pricing.current_monthly_storage_cost || 0).toFixed(2)
+  const targetCost = Number(pricing.target_monthly_storage_cost || 0).toFixed(2)
+  const additionalCost = Number(pricing.additional_monthly_storage_cost || 0).toFixed(2)
+  let safeManagementUrl = ''
+  try {
+    const parsed = new URL(managementUrl)
+    if (['http:', 'https:'].includes(parsed.protocol)) safeManagementUrl = parsed.toString()
+  } catch {
+    // Sin URL válida mostramos la explicación, sin fabricar un destino.
+  }
+
+  return `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ristak necesita más espacio</title>
+  <style>
+    :root { color-scheme: light; --bg: #f7f8fa; --surface: #ffffff; --text: #17191d; --dim: #626873; --border: #dfe3e8; --accent: #ca562c; --accent-hover: #aa4525; --danger: #b42318; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(620px, calc(100% - 32px)); padding: 48px 0; }
+    .eyebrow { margin: 0 0 12px; color: var(--danger); font-size: .86rem; font-weight: 700; letter-spacing: .02em; }
+    h1 { margin: 0; max-width: 580px; font-size: clamp(2rem, 7vw, 3.15rem); line-height: 1.05; letter-spacing: -.04em; }
+    .lead { margin: 20px 0 30px; color: var(--dim); font-size: 1.05rem; line-height: 1.7; }
+    .costs { margin: 0 0 24px; padding: 20px 0; border-block: 1px solid var(--border); }
+    .costs div { display: flex; justify-content: space-between; gap: 24px; padding: 7px 0; }
+    .costs dt { color: var(--dim); }
+    .costs dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 700; text-align: right; }
+    .delta { color: var(--accent); }
+    .note { margin: 0 0 24px; color: var(--dim); font-size: .82rem; line-height: 1.6; }
+    .action { display: inline-flex; min-height: 48px; align-items: center; justify-content: center; border-radius: 8px; background: var(--accent); color: #fff; padding: 0 22px; font-weight: 700; text-decoration: none; }
+    .action:hover { background: var(--accent-hover); }
+    code { display: block; margin-top: 28px; color: var(--dim); font-size: .76rem; word-break: break-all; }
+    @media (prefers-color-scheme: dark) { :root { color-scheme: dark; --bg: #111315; --surface: #181b1f; --text: #f4f5f6; --dim: #a9afb8; --border: #30353b; --accent: #e8784e; --accent-hover: #f18a61; --danger: #ff8a80; } .action { color: #17191d; } }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Base de datos sin espacio · ${percent.toFixed(1)}% utilizado</p>
+    <h1>Ristak no puede funcionar hasta aumentar el almacenamiento</h1>
+    <p class="lead">Render suspendió o dejó sin capacidad la base de ${current} GB para proteger tus datos. Confirma el aumento a ${target} GB y el sistema reanudará la base automáticamente.</p>
+    <dl class="costs">
+      <div><dt>Capacidad actual · ${current} GB</dt><dd>$${currentCost} USD/mes</dd></div>
+      <div><dt>Capacidad nueva · ${target} GB</dt><dd>$${targetCost} USD/mes</dd></div>
+      <div class="delta"><dt>Aumento mensual estimado</dt><dd>+$${additionalCost} USD/mes</dd></div>
+    </dl>
+    <p class="note">Este cargo lo hace Render directamente y se prorratea. El disco no puede reducirse después. Por seguridad, debes iniciar sesión en el portal antes de confirmar.</p>
+    ${safeManagementUrl ? `<a class="action" href="${escapeHtml(safeManagementUrl)}">Revisar y aumentar espacio</a>` : '<p class="note">Entra al portal de Ristak Installer para autorizar el aumento.</p>'}
+    ${host ? `<code>${escapeHtml(host)}</code>` : ''}
+  </main>
+</body>
+</html>`
+}
+
 function getClientIp(req) {
   const forwarded = cleanString(req.headers['x-forwarded-for']).split(',')[0]
   return forwarded || req.ip || req.socket?.remoteAddress || ''

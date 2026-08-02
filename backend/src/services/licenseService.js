@@ -1305,6 +1305,11 @@ export async function getCentralDatabaseStorageStatus({ usedBytes = 0 } = {}) {
   })
 }
 
+export function getCentralDatabaseStorageManagementUrl() {
+  const baseUrl = getConfig().licenseServerUrl
+  return baseUrl ? `${baseUrl}/start?storage=1` : ''
+}
+
 export async function decideCentralDatabaseStorage({
   decision,
   currentDiskSizeGB,
@@ -1318,6 +1323,11 @@ export async function decideCentralDatabaseStorage({
     target_disk_size_gb: targetDiskSizeGB,
     used_bytes: Math.max(0, Number(usedBytes) || 0),
     requested_by_email: String(requestedByEmail || '').trim().toLowerCase()
+  }, {
+    // Reanudar una Postgres suspendida y confirmar el PATCH de disco requiere
+    // polling en Render. El timeout normal del portal (5 s) siempre vencería
+    // antes del primer ciclo de confirmación y mostraría un falso error.
+    timeoutMs: 190_000
   })
 }
 

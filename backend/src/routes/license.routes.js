@@ -53,11 +53,14 @@ function localStorageFallback(storage, message = '') {
     targetDiskSizeGB: null,
     percentUsed: Math.round(percentUsed * 10) / 10,
     warningThreshold: 80,
+    criticalThreshold: 90,
     autoscaleThreshold: 90,
     needsAttention: percentUsed >= 80,
     needsDecision: false,
     decision: 'unavailable',
     autoscalingEnabled: false,
+    postgresStatus: 'unknown',
+    storageFull: false,
     managementMessage: message
   }
 }
@@ -75,6 +78,7 @@ function managedStorageResponse(storage, central) {
     targetDiskSizeGB: Number(central.target_disk_size_gb),
     percentUsed: Number(central.usage_percent),
     warningThreshold: Number(central.warning_threshold_percent),
+    criticalThreshold: Number(central.critical_threshold_percent || central.autoscale_threshold_percent),
     autoscaleThreshold: Number(central.autoscale_threshold_percent),
     needsAttention: central.needs_attention === true,
     needsDecision: central.needs_decision === true,
@@ -82,6 +86,13 @@ function managedStorageResponse(storage, central) {
     decidedAt: central.decided_at || null,
     autoscalingEnabled: central.autoscaling_enabled === true,
     autoscalingPausedForDecision: central.autoscaling_paused_for_decision === true,
+    postgresStatus: central.postgres_status || 'unknown',
+    storageFull: central.storage_full === true,
+    operationStatus: central.operation_status || null,
+    operationError: central.operation_error || null,
+    upgradeCompleted: central.upgrade_completed === true,
+    upgradedFromDiskSizeGB: Number(central.upgraded_from_disk_size_gb || 0) || null,
+    upgradedToDiskSizeGB: Number(central.upgraded_to_disk_size_gb || 0) || null,
     renderPricing: central.render_pricing || null
   }
 }

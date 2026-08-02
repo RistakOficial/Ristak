@@ -46,11 +46,12 @@ Define:
 
 ### Consentimiento del cliente antes de aumentar el disco
 
-En instalaciones administradas por Ristak Installer, la base nace con autoscaling
-habilitado como seguro. Ristak mide el uso real de PostgreSQL y, al llegar al 80%,
-solicita al Installer la capacidad efectiva y el siguiente salto que aplicaría
-Render. Si no existe una decisión para ese salto, el Installer pausa el autoscaling
-antes de mostrar el aviso para impedir un aumento de precio sin autorización.
+En instalaciones administradas por Ristak Installer, la base creada por API nace
+con autoscaling apagado. El monitor central consulta cada cinco minutos las
+métricas de Render y guarda el snapshot fuera del tenant, así que puede detectar
+una base llena aunque PostgreSQL ya no acepte conexiones. Al llegar al 80%, Ristak
+muestra la capacidad efectiva y el siguiente salto; al 90%, el Installer manda
+un aviso de campana y push al celular con enlace al portal de recuperación.
 
 El modal sólo aparece a administradores con permiso de escritura sobre la cuenta y
 muestra en USD el costo de almacenamiento cobrado directamente por Render: tarifa
@@ -59,13 +60,17 @@ tarifa vive en la configuración interna del Installer bajo
 `render_postgres_storage_usd_per_gb_month`; no se infiere de la moneda de negocio
 de Ristak porque es un precio externo de Render.
 
-- **Autorizar aumento:** el Installer reactiva el autoscaling. Render puede ampliar
-  el disco al llegar a su umbral operativo del 90%.
+- **Autorizar aumento:** el Installer registra una operación idempotente, reanuda
+  PostgreSQL si está suspendido y aumenta `diskSizeGB` explícitamente. El
+  autoscaling queda apagado para que el siguiente salto vuelva a pedir permiso.
 - **No aumentar:** exige escribir `RECHAZAR`, conserva el límite y deja un aviso de
   riesgo persistente. Si el disco se llena, Render puede suspender PostgreSQL y
   Ristak dejará de guardar datos o funcionar hasta ampliar el espacio.
 - La decisión se registra por instalación y por salto de capacidad. Después de un
   aumento, el siguiente salto vuelve a requerir una decisión consciente.
+- Si el tenant ya no puede leer su base, la página pública responde 507 con la
+  causa, la cotización y un botón autenticado a `/start?storage=1`; no confunde la
+  caída con un dominio sin configurar.
 
 Este flujo depende de que el Installer conserve cifrada la Render API Key y el ID
 de la base. Si la instalación no es administrable, Ristak muestra el riesgo pero no

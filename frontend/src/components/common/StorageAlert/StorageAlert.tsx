@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import apiClient from '@/services/apiClient'
 import { hasModuleAccess } from '@/utils/accessControl'
+import { formatCurrency } from '@/utils/format'
 import { Button } from '../Button'
 import { Modal } from '../Modal'
 import styles from './StorageAlert.module.css'
@@ -34,17 +35,20 @@ interface StorageStatus {
   decision: 'pending' | 'approved' | 'declined' | 'unavailable'
   autoscalingEnabled: boolean
   autoscalingPausedForDecision?: boolean
+  postgresStatus?: string
+  storageFull?: boolean
+  operationStatus?: 'processing' | 'completed' | 'failed' | null
+  operationError?: string | null
+  upgradeCompleted?: boolean
+  upgradedFromDiskSizeGB?: number | null
+  upgradedToDiskSizeGB?: number | null
   renderPricing?: RenderStoragePricing | null
 }
 
 type Decision = 'approved' | 'declined'
 type DecisionStep = 'offer' | 'decline-confirmation' | null
 
-const formatUsd = (value: number) => new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 2
-}).format(Number(value || 0))
+const formatUsd = (value: number) => formatCurrency(Number(value || 0), 'USD')
 
 export const StorageAlert: React.FC = () => {
   const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null)
@@ -110,9 +114,9 @@ export const StorageAlert: React.FC = () => {
       setDismissed(false)
       showToast(
         decision === 'approved' ? 'success' : 'warning',
-        decision === 'approved' ? 'Aumento autorizado' : 'Límite conservado',
+        decision === 'approved' ? 'Espacio aumentado' : 'Límite conservado',
         decision === 'approved'
-          ? `Render podrá ampliar la base a ${nextStatus.targetDiskSizeGB} GB cuando llegue al ${nextStatus.autoscaleThreshold}%.`
+          ? `Render confirmó el aumento a ${nextStatus.upgradedToDiskSizeGB || nextStatus.currentDiskSizeGB} GB.`
           : `La base seguirá limitada a ${nextStatus.currentDiskSizeGB} GB y puede ser suspendida por Render si se llena.`
       )
       return true
@@ -156,7 +160,7 @@ export const StorageAlert: React.FC = () => {
             <p className={styles.usageLead}>
               Ristak está usando <strong>{storageStatus.sizePretty || `${storageStatus.sizeGB} GB`}</strong> de{' '}
               <strong>{storageStatus.currentDiskSizeGB} GB</strong>. Para evitar que Render suspenda la base,
-              puedes autorizar el siguiente aumento antes de llegar al {storageStatus.autoscaleThreshold}%.
+              puedes aumentar el espacio ahora y evitar que el sistema se suspenda.
             </p>
 
             <div className={styles.costPanel}>

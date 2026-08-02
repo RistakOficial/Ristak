@@ -45,7 +45,11 @@ import {
   repairDefaultAppointmentMessageTemplatesForCurrentConnection
 } from './services/messageTemplatesService.js'
 import { ensureDefaultLocalCalendar } from './services/localCalendarService.js'
-import { ensureCalendarBookingSystemFormOnce } from './services/sitesService.js'
+import {
+  ensureCalendarBookingSystemFormOnce,
+  getRequestHost,
+  renderDatabaseStorageErrorHtml
+} from './services/sitesService.js'
 import { shutdownWhatsAppQrService } from './services/whatsappQrService.js'
 import { repairWhatsAppProtocolMessageIdentities } from './services/whatsappApiService.js'
 import { startMetaOAuthPendingSessionCleanupScheduler } from './services/metaOAuthService.js'
@@ -119,7 +123,13 @@ import mdpProgramRoutes from './routes/mdpProgram.routes.js'
 import chatEventsRoutes from './routes/chatEvents.routes.js'
 import paymentEventsRoutes from './routes/paymentEvents.routes.js'
 import { publicSiteHostMiddleware } from './controllers/sitesController.js'
-import { getCentralBrokerHealthInfo, getHealthInfo, requestPortalUserRefresh } from './services/licenseService.js'
+import {
+  getCentralBrokerHealthInfo,
+  getCentralDatabaseStorageManagementUrl,
+  getCentralDatabaseStorageStatus,
+  getHealthInfo,
+  requestPortalUserRefresh
+} from './services/licenseService.js'
 import { requireFeature } from './middleware/licenseMiddleware.js'
 // (LIC-002) requireAuth se aplica ANTES de requireFeature en los mounts gateados
 // para que el tráfico no autenticado reciba 401 sin tocar el license server.
@@ -445,12 +455,41 @@ app.get('/health', async (req, res, next) => {
 // firma retos ligados al mismo origen público que recibió la petición.
 app.use('/api/central-broker', centralBrokerRoutes)
 
-app.use((req, res, next) => {
+let startupStorageOutageCache = { checkedAt: 0, offer: null }
+
+app.use(async (req, res, next) => {
   if (startupState.ready) {
     return next()
   }
 
   if (startupState.error) {
+    const now = Date.now()
+    if (now - startupStorageOutageCache.checkedAt > 30_000) {
+      const offer = await getCentralDatabaseStorageStatus().catch(() => null)
+      const storageFull = offer?.storage_full === true ||
+        String(offer?.postgres_status || '').toLowerCase() === 'suspended' ||
+        Number(offer?.usage_percent || 0) >= 99
+      startupStorageOutageCache = { checkedAt: now, offer: storageFull ? offer : null }
+    }
+
+    if (startupStorageOutageCache.offer) {
+      const managementUrl = getCentralDatabaseStorageManagementUrl()
+      if (req.path.startsWith('/api') || String(req.headers.accept || '').includes('application/json')) {
+        return res.status(507).json({
+          success: false,
+          code: 'database_storage_full',
+          error: 'La base de datos se quedó sin espacio.',
+          storage: startupStorageOutageCache.offer,
+          management_url: managementUrl
+        })
+      }
+      return res.status(507).type('html').send(renderDatabaseStorageErrorHtml({
+        host: getRequestHost(req),
+        offer: startupStorageOutageCache.offer,
+        managementUrl
+      }))
+    }
+
     return res.status(503).json({
       error: 'Aplicación no disponible',
       message: 'El arranque falló. Revisa los logs del servidor.'

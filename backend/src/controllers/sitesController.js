@@ -49,6 +49,7 @@ import {
   removeSitesPublicDomainById,
   removeSitesPublicDomain,
   renderDomainErrorHtml,
+  renderDatabaseStorageErrorHtml,
   renderPublicSiteHtml,
   reorderBlocks,
   resolveConnectedAppDomainForHost,
@@ -74,7 +75,11 @@ import {
   getPublicCalendarBySlug,
   renderPublicCalendarHtml
 } from '../services/localCalendarService.js'
-import { hasCalendarPaymentsFeature } from '../services/licenseService.js'
+import {
+  getCentralDatabaseStorageManagementUrl,
+  getCentralDatabaseStorageStatus,
+  hasCalendarPaymentsFeature
+} from '../services/licenseService.js'
 import {
   getMediaAssetBunnyStreamAnalytics,
   getMediaAssetDownloadFile
@@ -100,6 +105,33 @@ const MCP_HTML_LIVE_PREVIEW_TTL_SECONDS = 60 * 60
 const MCP_HTML_LIVE_PREVIEW_REFRESH_MS = 750
 const MCP_HTML_LIVE_PREVIEW_PURPOSE = 'sites.mcp_html_live_preview'
 const sitePreviewSessions = new Map()
+const DATABASE_STORAGE_OUTAGE_CACHE_MS = 30_000
+let databaseStorageOutageCache = { checkedAt: 0, offer: null, promise: null }
+
+async function getDatabaseStorageOutageOffer() {
+  const now = Date.now()
+  if (now - databaseStorageOutageCache.checkedAt < DATABASE_STORAGE_OUTAGE_CACHE_MS) {
+    return databaseStorageOutageCache.offer
+  }
+  if (databaseStorageOutageCache.promise) return databaseStorageOutageCache.promise
+
+  const promise = getCentralDatabaseStorageStatus()
+    .then((offer) => {
+      const isOutage = offer?.storage_full === true ||
+        String(offer?.postgres_status || '').toLowerCase() === 'suspended' ||
+        Number(offer?.usage_percent || 0) >= 99
+      databaseStorageOutageCache = { checkedAt: Date.now(), offer: isOutage ? offer : null, promise: null }
+      return databaseStorageOutageCache.offer
+    })
+    .catch((error) => {
+      logger.warn(`No se pudo confirmar si la base está llena: ${error.message}`)
+      databaseStorageOutageCache = { checkedAt: Date.now(), offer: null, promise: null }
+      return null
+    })
+
+  databaseStorageOutageCache.promise = promise
+  return promise
+}
 
 function createSitesAnalyticsAbortScope(req, res) {
   const controller = new AbortController()
@@ -1540,6 +1572,22 @@ function sendDomainError(req, res, status, message) {
   return res.status(status).type('html').send(renderDomainErrorHtml({ host, message }))
 }
 
+function sendDatabaseStorageOutage(req, res, offer) {
+  const host = getRequestHost(req)
+  const managementUrl = getCentralDatabaseStorageManagementUrl()
+  if (wantsJson(req)) {
+    return res.status(507).json({
+      success: false,
+      code: 'database_storage_full',
+      error: 'La base de datos se quedó sin espacio.',
+      host,
+      storage: offer,
+      management_url: managementUrl
+    })
+  }
+  return res.status(507).type('html').send(renderDatabaseStorageErrorHtml({ host, offer, managementUrl }))
+}
+
 function getRequestProtocol(req) {
   const forwardedProtocol = String(req.headers?.['x-forwarded-proto'] || req.protocol || 'https')
     .split(',')[0]
@@ -1762,6 +1810,8 @@ export async function publicSiteHostMiddleware(req, res, next) {
     return sendDomainError(req, res, 404, 'Este dominio no esta configurado como dashboard ni como Site público verificado')
   } catch (error) {
     logger.error(`Error resolviendo dominio público: ${error.message}`)
+    const storageOutage = await getDatabaseStorageOutageOffer()
+    if (storageOutage) return sendDatabaseStorageOutage(req, res, storageOutage)
     return sendDomainError(req, res, 500, 'Error resolviendo configuración del dominio')
   }
 }

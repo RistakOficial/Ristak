@@ -9729,22 +9729,33 @@ tambien oculta modulos o anticipa limites, pero el bloqueo real debe estar en
 backend.
 
 El límite de almacenamiento de PostgreSQL también se administra mediante el
-Installer central. La app local reporta el tamaño real de la base a
-`POST /api/license/database-storage/status`; el backend central consulta en Render
-la capacidad efectiva, el estado del autoscaling y la decisión guardada para el
-siguiente salto. Al 80% de uso, si todavía no hay decisión, el Installer pausa el
-autoscaling y la app muestra a un administrador con permiso `settings_account`
-un modal no descartable con los costos de almacenamiento de Render en USD.
+Installer central. Las bases managed nacen con autoscaling apagado porque cada
+aumento es permanente y genera un cargo directo en Render. El Installer revisa
+cada cinco minutos las métricas de disco de todas las instalaciones administrables
+y guarda el snapshot fuera de la base del cliente; por eso el diagnóstico y la
+recuperación siguen disponibles aunque PostgreSQL ya esté suspendido.
 
-La autorización por `POST /api/license/database-storage/decision` reactiva el
-autoscaling para que Render pueda ampliar el disco al 90%. Rechazar exige una
-segunda confirmación escrita, mantiene el autoscaling apagado y conserva un aviso
-de riesgo con opción de cambiar la decisión. Render factura ese almacenamiento
-directamente al cliente y sus discos no pueden reducirse. Si la base se llena,
-puede ser suspendida y Ristak dejará de guardar información o funcionar. Cada
-nuevo salto de capacidad requiere una decisión nueva. Las instalaciones sin
-credenciales administradas de Render sólo reciben el aviso de riesgo y nunca
-acciones falsas.
+Desde 80% de uso la app muestra a un administrador con permiso
+`settings_account` un modal no descartable con capacidad actual, siguiente salto,
+tarifa de Render, costo actual, costo nuevo y diferencia mensual en USD. Al 90%,
+el monitor central llama `POST /internal/database-storage/alert`: crea aviso de
+campana y push para los administradores activos, con una liga absoluta al portal central
+`/start?storage=1`. La deduplicación se guarda por salto de capacidad para no
+martillar al usuario.
+
+La autorización por `POST /api/license/database-storage/decision` ya no enciende
+autoscaling: hace el aumento explícito de `diskSizeGB` en Render y mantiene el
+autoscaling apagado. Si la base está suspendida, primero solicita `resume`, espera
+la transición y confirma el aumento. La operación persiste como `processing`,
+`completed` o `failed`, es idempotente ante reintentos y cada salto futuro vuelve
+a pedir permiso. Rechazar exige una segunda confirmación escrita y conserva el
+aviso de riesgo.
+
+Render factura el almacenamiento directamente al cliente y el disco no puede
+reducirse. Si la base se llena, el host público responde 507 con una página que
+explica la causa real, el costo y el enlace autenticado de recuperación; no debe
+mostrar el falso error “Dominio no configurado”. Las instalaciones sin credencial
+cifrada de Render sólo reciben el aviso de riesgo y nunca acciones falsas.
 
 Documento: `docs/LICENSING.md`.
 

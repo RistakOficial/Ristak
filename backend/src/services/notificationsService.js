@@ -1061,7 +1061,9 @@ export async function getStorageStatus() {
         pg_size_pretty(pg_database_size(current_database())) AS size_pretty
     `)
     const sizeBytes = Number(row?.size_bytes || 0)
-    const sizeGB = sizeBytes / (1024 * 1024 * 1024)
+    // Render factura y limita el disco en GB decimales (1 GB = 1,000,000,000
+    // bytes), no en GiB. Usar GiB retrasaba el aviso hasta después del corte.
+    const sizeGB = sizeBytes / 1_000_000_000
     const percentUsed = (sizeGB / limitGB) * 100
     return {
       sizeBytes,
@@ -1077,7 +1079,7 @@ export async function getStorageStatus() {
   const pageCount = Number(pageCountRow?.page_count || Object.values(pageCountRow || {})[0] || 0)
   const pageSize = Number(pageSizeRow?.page_size || Object.values(pageSizeRow || {})[0] || 0)
   const sizeBytes = pageCount * pageSize
-  const sizeGB = sizeBytes / (1024 * 1024 * 1024)
+  const sizeGB = sizeBytes / 1_000_000_000
   const percentUsed = (sizeGB / limitGB) * 100
 
   return {
