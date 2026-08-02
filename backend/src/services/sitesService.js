@@ -17651,6 +17651,14 @@ async function updateSiteUnlocked(siteId, input = {}) {
   const current = await getSite(siteId, { includeBlocks: false })
   if (!current) return null
 
+  const hasNameInput = Object.prototype.hasOwnProperty.call(input, 'name')
+  const nextName = hasNameInput ? cleanString(input.name) : current.name
+  if (hasNameInput && !nextName) {
+    const error = new Error('El nombre del sitio es obligatorio')
+    error.status = 400
+    throw error
+  }
+
   const hasDomainInput = Object.prototype.hasOwnProperty.call(input, 'domain')
   const rawDomain = hasDomainInput ? input.domain : current.domain
   const normalizedRequestedDomain = normalizeDomain(rawDomain)
@@ -17759,7 +17767,7 @@ async function updateSiteUnlocked(siteId, input = {}) {
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
-    cleanString(input.name) || current.name,
+    nextName,
     nextSlug,
     nextSiteType,
     nextStatus,

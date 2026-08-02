@@ -15707,6 +15707,35 @@
   white-space: nowrap;
 }
 
+.renameSiteForm {
+  min-width: 0;
+  display: grid;
+  gap: 18px;
+}
+
+.renameSiteDescription {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.renameSiteActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+@media (max-width: 520px) {
+  .renameSiteActions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+}
+
 .moveFolderModal {
   display: grid;
   gap: 16px;

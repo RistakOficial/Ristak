@@ -234,6 +234,7 @@ import {
   normalizeSiteRouteEditorInput,
   normalizeSiteRoutePath
 } from './siteRouteUtils'
+import { SITE_NAME_MAX_LENGTH, normalizeSiteNameInput } from './siteNameUtils'
 import { StageConversionTable } from './analytics/StageConversionTable'
 // Contrato de bloques compartido con el renderer público (Paquete C): las
 // variables/clases por bloque y los helpers de paridad vienen de UNA copia.
@@ -13774,6 +13775,29 @@ export const Sites: React.FC = () => {
     }
   }
 
+  const handleRenameLibrarySite = async (siteToRename: PublicSite, nextNameValue: string) => {
+    const nextName = normalizeSiteNameInput(nextNameValue)
+    if (!nextName) {
+      showToast('warning', 'Nombre requerido', 'Escribe un nombre para poder identificar este elemento.')
+      throw new Error('El nombre del sitio es obligatorio')
+    }
+
+    try {
+      const site = normalizeSiteForEditor(await sitesService.updateSite(siteToRename.id, {
+        name: nextName
+      }))
+      upsertSiteInEditorList(site)
+      if (selectedSiteRef.current?.id === site.id) {
+        selectedSiteRef.current = site
+        setSelectedSite(site)
+      }
+      showToast('success', 'Nombre actualizado', `Ahora aparece como "${site.name}" en tu biblioteca.`)
+    } catch (error) {
+      showToast('error', 'No se pudo cambiar el nombre', error instanceof Error ? error.message : 'Inténtalo otra vez.')
+      throw error
+    }
+  }
+
   const handleUpdateLibraryRoute = async (siteToUpdate: PublicSite, nextRoute: string) => {
     const nextSlug = normalizeSiteRoutePath(nextRoute) || getDefaultRoutePrefix(siteToUpdate.siteType)
 
@@ -16140,6 +16164,7 @@ export const Sites: React.FC = () => {
                 onCloseResponses={() => setFormResponsesOpen(false)}
                 onSelectResponsesForm={selectResponsesForm}
                 onRefreshResponses={() => void loadFormResponses(selectedResponsesFormId)}
+                onRename={handleRenameLibrarySite}
                 onUpdateRoute={handleUpdateLibraryRoute}
                 onSetDefaultRoute={handleSetDefaultDomainRoute}
                 onOpenSettings={(site) => { void openLibrarySettings(site) }}
@@ -27735,6 +27760,7 @@ interface SitesLibraryPanelProps {
   onCloseResponses: () => void
   onSelectResponsesForm: (siteId: string) => void
   onRefreshResponses: () => void
+  onRename: (site: PublicSite, name: string) => Promise<void>
   onUpdateRoute: (site: PublicSite, slug: string) => Promise<void>
   onSetDefaultRoute: (site: PublicSite) => Promise<void>
   onOpenSettings: (site: PublicSite) => void
@@ -27912,6 +27938,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   onCloseResponses,
   onSelectResponsesForm,
   onRefreshResponses,
+  onRename,
   onUpdateRoute,
   onSetDefaultRoute,
   onOpenSettings,
@@ -27926,6 +27953,9 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   const [routeEditingId, setRouteEditingId] = useState<string | null>(null)
   const [routeDraft, setRouteDraft] = useState('')
   const [routeSavingId, setRouteSavingId] = useState<string | null>(null)
+  const [nameEditingId, setNameEditingId] = useState<string | null>(null)
+  const [nameDraft, setNameDraft] = useState('')
+  const [nameSavingId, setNameSavingId] = useState<string | null>(null)
   const [folderDraft, setFolderDraft] = useState('')
   const [folderCreateOpen, setFolderCreateOpen] = useState(false)
   const [folderSaving, setFolderSaving] = useState(false)
@@ -27993,6 +28023,8 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
     setFolderCreateOpen(false)
     setFolderDraft('')
     setSelectedSiteIds([])
+    setNameEditingId(null)
+    setNameDraft('')
   }, [librarySection])
 
   useEffect(() => {
@@ -28074,6 +28106,35 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   }
   const routeEditingSite = routeEditingId ? sites.find(site => site.id === routeEditingId) || null : null
   const routeEditingDomainConfig = routeEditingSite ? getSiteDomainConfig(routeEditingSite, domainConfig) : domainConfig
+  const startNameEdit = useCallback((site: PublicSite) => {
+    setNameEditingId(site.id)
+    setNameDraft(site.name)
+  }, [])
+  const cancelNameEdit = () => {
+    if (nameSavingId) return
+    setNameEditingId(null)
+    setNameDraft('')
+  }
+  const saveNameEdit = async (site: PublicSite) => {
+    const nextName = normalizeSiteNameInput(nameDraft)
+    if (!nextName) return
+    if (nextName === site.name) {
+      cancelNameEdit()
+      return
+    }
+
+    setNameSavingId(site.id)
+    try {
+      await onRename(site, nextName)
+      setNameEditingId(null)
+      setNameDraft('')
+    } catch {
+      // El padre muestra el error. Dejamos el modal abierto para corregir o reintentar.
+    } finally {
+      setNameSavingId(null)
+    }
+  }
+  const nameEditingSite = nameEditingId ? sites.find(site => site.id === nameEditingId) || null : null
   const submitFolderCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const name = folderDraft.trim()
@@ -28143,6 +28204,10 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           <Pencil size={15} />
           Editar {siteKindLabel}
         </DropdownMenuItem>
+        <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); startNameEdit(site) }}>
+          <Type size={15} />
+          Cambiar nombre
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); startRouteEdit(site) }}>
           <Settings2 size={15} />
           Editar ruta
@@ -28186,7 +28251,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
-  ), [domainConfig, onDelete, onEdit, onOpenResponses, onOpenSettings, onSetDefaultRoute, startRouteEdit])
+  ), [domainConfig, onDelete, onEdit, onOpenResponses, onOpenSettings, onSetDefaultRoute, startNameEdit, startRouteEdit])
   const renderSiteStatus = useCallback((site: PublicSite) => (
     <Badge variant={getStatusVariant(site, domainConfig)}>{getStatusLabel(site, domainConfig)}</Badge>
   ), [domainConfig])
@@ -28681,6 +28746,60 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
             </div>
           </form>
         </div>
+      )}
+
+      {nameEditingSite && (
+        <Modal
+          isOpen={!!nameEditingSite}
+          onClose={cancelNameEdit}
+          title={`Cambiar nombre ${isLanding(nameEditingSite) ? 'del sitio' : 'del formulario'}`}
+          subtitle="Solo cambia cómo aparece en tu biblioteca"
+          size="sm"
+          closeOnBackdropClick={!nameSavingId}
+          closeOnEscape={!nameSavingId}
+        >
+          <form
+            className={styles.renameSiteForm}
+            onSubmit={(event) => {
+              event.preventDefault()
+              void saveNameEdit(nameEditingSite)
+            }}
+          >
+            <p className={styles.renameSiteDescription}>
+              La dirección pública y el título que ven tus visitantes se mantienen igual.
+            </p>
+            <label className={styles.editorSettingsField}>
+              <span>Nombre interno</span>
+              <input
+                value={nameDraft}
+                maxLength={SITE_NAME_MAX_LENGTH}
+                autoFocus
+                required
+                disabled={nameSavingId === nameEditingSite.id}
+                aria-label={`Nombre de ${nameEditingSite.name}`}
+                onFocus={(event) => event.currentTarget.select()}
+                onChange={(event) => setNameDraft(event.target.value)}
+              />
+            </label>
+            <div className={styles.renameSiteActions}>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={nameSavingId === nameEditingSite.id}
+                onClick={cancelNameEdit}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                loading={nameSavingId === nameEditingSite.id}
+                disabled={!normalizeSiteNameInput(nameDraft)}
+              >
+                Guardar nombre
+              </Button>
+            </div>
+          </form>
+        </Modal>
       )}
 
       {moveModalSite && (
@@ -33640,6 +33759,7 @@ const SiteSettingsPanelContent: React.FC<{
   onMakeActivePageOfficial,
   onBeforeOpenNested
 }) => {
+  const [nameDraft, setNameDraft] = useState(site.name)
   const domainOptions = getPublicDomainOptions(domainConfig)
   const siteDomainConfig = getSiteDomainConfig(site, domainConfig)
   const selectedDomainValue = normalizePublicDomainName(siteDomainConfig.domain)
@@ -33661,6 +33781,10 @@ const SiteSettingsPanelContent: React.FC<{
     ? metaDetectedPayments
     : getMetaDetectedPaymentSurfaces(site.blocks || [], pages, activePage)
 
+  useEffect(() => {
+    setNameDraft(site.name)
+  }, [site.id, site.name])
+
   const openNestedPanel = (callback: () => void) => {
     onBeforeOpenNested?.()
     callback()
@@ -33671,8 +33795,47 @@ const SiteSettingsPanelContent: React.FC<{
     void onSaveSite()
   }
 
+  const commitSiteName = () => {
+    const nextName = normalizeSiteNameInput(nameDraft)
+    if (!nextName) {
+      setNameDraft(site.name)
+      return
+    }
+    setNameDraft(nextName)
+    if (nextName === site.name) return
+    onPatchSite({ name: nextName })
+    void onSaveSite()
+  }
+
   return (
     <>
+      <section className={styles.editorSettingsSection}>
+        <div className={styles.editorSettingsSectionHeader}>
+          <span className={styles.editorSettingsSectionIcon}><Type size={15} /></span>
+          <div>
+            <strong>{isFormSite(site) ? 'Nombre del formulario' : 'Nombre del sitio'}</strong>
+            <small>Ordénalo sin cambiar lo que ve el visitante</small>
+          </div>
+        </div>
+        <label className={styles.editorSettingsField}>
+          <span>Nombre interno</span>
+          <input
+            value={nameDraft}
+            maxLength={SITE_NAME_MAX_LENGTH}
+            disabled={disabled}
+            aria-label={isFormSite(site) ? 'Nombre interno del formulario' : 'Nombre interno del sitio'}
+            onChange={(event) => setNameDraft(event.target.value)}
+            onBlur={commitSiteName}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                event.currentTarget.blur()
+              }
+            }}
+          />
+        </label>
+      </section>
+
       <section className={styles.editorSettingsSection}>
         <div className={styles.editorSettingsSectionHeader}>
           <span className={styles.editorSettingsSectionIcon}><Link2 size={15} /></span>

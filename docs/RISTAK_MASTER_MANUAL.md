@@ -5605,6 +5605,12 @@ solo despues de marcar al menos un elemento; en vista tabla viven dentro de la
 toolbar de seleccion comun de las tablas. Esta seleccion multiple no aparece
 dentro del selector de paginas del editor de sitios; ahi las paginas se eliminan
 una por una desde su menu.
+El nombre interno de cada sitio o formulario se puede cambiar desde la accion
+`Cambiar nombre` del menu de tres puntos en la biblioteca y desde el primer campo
+de `Ajustes` dentro del editor, antes de `Ruta publica`. Este nombre sirve para
+ordenar e identificar piezas en Ristak: cambiarlo no modifica el slug, la URL
+publica ni el titulo que ve el visitante. El backend rechaza nombres vacios para
+evitar elementos imposibles de identificar en la biblioteca.
 En vista galeria, la miniatura usa el mismo renderer de preview que el editor y el
 publicado, en un iframe inerte y sin tracking. Por eso una landing HTML enseña el
 layout completo del primer pliegue —copy, columnas, fondos y slots nativos— en vez
