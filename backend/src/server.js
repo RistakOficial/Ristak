@@ -9,6 +9,7 @@ import { dirname, join, relative, sep } from 'path'
 import {
   databaseReady,
   describePostgresConnectionError,
+  db,
   isTransientPostgresConnectionError,
   runStartupDataMaintenance
 } from './config/database.js'
@@ -145,6 +146,7 @@ import {
   isHealthRequest
 } from './utils/deployDrainPolicy.js'
 import {
+  createDatabaseStorageRecoveryWatchdog,
   isDatabaseStorageOutageOffer,
   isRuntimeReadyForTraffic,
   runtimeHealthStatusCode
@@ -460,6 +462,9 @@ app.get('/health', async (req, res, next) => {
 app.use('/api/central-broker', centralBrokerRoutes)
 
 let startupStorageOutageCache = { checkedAt: 0, offer: null }
+let databaseStorageRecoveryWatchdog = null
+let databaseStorageRecoveryRestartTimer = null
+let lastDatabaseStorageRecoveryError = { message: '', loggedAt: 0 }
 
 async function refreshStartupStorageOutageCache({ force = false } = {}) {
   const now = Date.now()
@@ -476,6 +481,66 @@ async function refreshStartupStorageOutageCache({ force = false } = {}) {
     offer: isDatabaseStorageOutageOffer(offer) ? offer : null
   }
   return startupStorageOutageCache.offer
+}
+
+function stopDatabaseStorageRecoveryWatchdog() {
+  databaseStorageRecoveryWatchdog?.stop()
+  databaseStorageRecoveryWatchdog = null
+}
+
+function startDatabaseStorageRecoveryWatchdog() {
+  if (databaseStorageRecoveryWatchdog) return
+
+  databaseStorageRecoveryWatchdog = createDatabaseStorageRecoveryWatchdog({
+    isRecoveryActive: () => (
+      startupState.recoveryMode === 'database_storage' &&
+      Boolean(startupState.error) &&
+      !shuttingDown
+    ),
+    probeDatabase: async () => {
+      const result = await db.get('SELECT 1 AS ok')
+      return Number(result?.ok) === 1
+    },
+    fetchStorageOffer: async () => {
+      const offer = await getCentralDatabaseStorageStatus()
+      startupStorageOutageCache = {
+        checkedAt: Date.now(),
+        offer: isDatabaseStorageOutageOffer(offer) ? offer : null
+      }
+      return offer
+    },
+    isStorageOutageOffer: isDatabaseStorageOutageOffer,
+    onHealthyCheck: ({ consecutiveHealthyChecks, requiredHealthyChecks }) => {
+      logger.info(
+        `[Storage recovery] PostgreSQL disponible; confirmación automática ` +
+        `${consecutiveHealthyChecks}/${requiredHealthyChecks}.`
+      )
+    },
+    onCheckError: (error) => {
+      const message = describePostgresConnectionError(error)
+      const now = Date.now()
+      if (
+        message !== lastDatabaseStorageRecoveryError.message ||
+        now - lastDatabaseStorageRecoveryError.loggedAt >= 60_000
+      ) {
+        logger.warn(`[Storage recovery] Aún no se puede confirmar la recuperación automática: ${message}`)
+        lastDatabaseStorageRecoveryError = { message, loggedAt: now }
+      }
+    },
+    onRecoveryStable: () => {
+      logger.success(
+        '[Storage recovery] PostgreSQL y el Installer confirmaron la recuperación. ' +
+        'Reiniciando el proceso para completar el arranque normal.'
+      )
+      process.exitCode = 1
+      if (!databaseStorageRecoveryRestartTimer) {
+        databaseStorageRecoveryRestartTimer = setTimeout(() => process.exit(1), 1000)
+        databaseStorageRecoveryRestartTimer.unref?.()
+      }
+    }
+  })
+
+  databaseStorageRecoveryWatchdog.start()
 }
 
 app.use(async (req, res, next) => {
@@ -907,6 +972,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     if (storageOutage) {
       startupState.recoveryMode = 'database_storage'
       logger.warn('[Storage recovery] La app seguirá en línea para mostrar la autorización de aumento de PostgreSQL.')
+      startDatabaseStorageRecoveryWatchdog()
       return
     }
 
@@ -918,6 +984,11 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 function handleShutdown(signal) {
   if (shuttingDown) return
   shuttingDown = true
+  stopDatabaseStorageRecoveryWatchdog()
+  if (databaseStorageRecoveryRestartTimer) {
+    clearTimeout(databaseStorageRecoveryRestartTimer)
+    databaseStorageRecoveryRestartTimer = null
+  }
   // No apagar startupState.ready: /health ya falla por shuttingDown, pero los
   // requests normales deben seguir pasando mientras la instancia vieja drena.
   markDeployShutdownStarted()

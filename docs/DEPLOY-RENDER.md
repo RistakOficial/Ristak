@@ -76,6 +76,12 @@ de Ristak porque es un precio externo de Render.
   para que Render acepte el contenedor nuevo, pero mantiene el resto de la app
   bloqueado detrás de la página 507. Cualquier otro error de arranque conserva el
   fail-fast normal y no puede disfrazarse como una recuperación de almacenamiento.
+- El modo `storage_recovery` se autorrepara: cada 15 segundos comprueba tanto una
+  consulta real a PostgreSQL como el estado central del Installer. Después de dos
+  confirmaciones sanas consecutivas termina el proceso para que Render lo reinicie
+  y ejecute el arranque completo. Si la base vuelve a fallar, el Installer todavía
+  reporta lleno/suspendido o una consulta queda en vuelo, no reinicia ni duplica
+  verificaciones; espera el siguiente ciclo y evita un crash loop.
 
 Este flujo depende de que el Installer conserve cifrada la Render API Key y el ID
 de la base. Si la instalación no es administrable, Ristak muestra el riesgo pero no

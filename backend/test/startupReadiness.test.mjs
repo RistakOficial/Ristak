@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  createDatabaseStorageRecoveryWatchdog,
   isDatabaseStorageOutageOffer,
   isRuntimeReadyForTraffic,
   runtimeHealthStatusCode
@@ -53,4 +54,96 @@ test('runtime health status blocks Render promotion while startup is running', (
     error: new Error('database unavailable'),
     recoveryMode: 'database_storage'
   }), 200)
+})
+
+test('storage recovery watchdog requests one restart after consecutive healthy confirmations', async () => {
+  let restartRequests = 0
+  const confirmations = []
+  const watchdog = createDatabaseStorageRecoveryWatchdog({
+    isRecoveryActive: () => true,
+    probeDatabase: async () => true,
+    fetchStorageOffer: async () => ({ postgres_status: 'available', usage_percent: 18 }),
+    isStorageOutageOffer: isDatabaseStorageOutageOffer,
+    onHealthyCheck: ({ consecutiveHealthyChecks }) => confirmations.push(consecutiveHealthyChecks),
+    onRecoveryStable: async () => { restartRequests += 1 }
+  })
+
+  assert.equal((await watchdog.check()).state, 'confirming')
+  assert.equal((await watchdog.check()).state, 'restart_requested')
+  assert.equal((await watchdog.check()).state, 'restart_requested')
+  assert.deepEqual(confirmations, [1, 2])
+  assert.equal(restartRequests, 1)
+  assert.equal(watchdog.getState().restartRequested, true)
+})
+
+test('storage recovery watchdog resets confirmations while database or storage remain unhealthy', async () => {
+  let databaseReachable = true
+  let offer = { postgres_status: 'available', usage_percent: 20 }
+  let restartRequests = 0
+  const watchdog = createDatabaseStorageRecoveryWatchdog({
+    isRecoveryActive: () => true,
+    probeDatabase: async () => databaseReachable,
+    fetchStorageOffer: async () => offer,
+    isStorageOutageOffer: isDatabaseStorageOutageOffer,
+    onRecoveryStable: async () => { restartRequests += 1 }
+  })
+
+  assert.equal((await watchdog.check()).state, 'confirming')
+  databaseReachable = false
+  assert.equal((await watchdog.check()).state, 'database_unavailable')
+  databaseReachable = true
+  assert.equal((await watchdog.check()).state, 'confirming')
+  offer = { postgres_status: 'suspended', storage_full: true }
+  assert.equal((await watchdog.check()).state, 'storage_outage')
+  offer = { postgres_status: 'available', usage_percent: 20 }
+  assert.equal((await watchdog.check()).state, 'confirming')
+  assert.equal((await watchdog.check()).state, 'restart_requested')
+  assert.equal(restartRequests, 1)
+})
+
+test('storage recovery watchdog retries after transient checks fail and stays inactive outside recovery', async () => {
+  let recoveryActive = false
+  let shouldFail = true
+  const errors = []
+  let restartRequests = 0
+  const watchdog = createDatabaseStorageRecoveryWatchdog({
+    isRecoveryActive: () => recoveryActive,
+    probeDatabase: async () => {
+      if (shouldFail) throw new Error('connection refused')
+      return true
+    },
+    fetchStorageOffer: async () => ({ postgres_status: 'available', usage_percent: 20 }),
+    isStorageOutageOffer: isDatabaseStorageOutageOffer,
+    onCheckError: (error) => errors.push(error.message),
+    onRecoveryStable: async () => { restartRequests += 1 }
+  })
+
+  assert.equal((await watchdog.check()).state, 'inactive')
+  recoveryActive = true
+  assert.equal((await watchdog.check()).state, 'check_failed')
+  assert.deepEqual(errors, ['connection refused'])
+  shouldFail = false
+  assert.equal((await watchdog.check()).state, 'confirming')
+  assert.equal((await watchdog.check()).state, 'restart_requested')
+  assert.equal(restartRequests, 1)
+})
+
+test('storage recovery watchdog does not overlap slow checks', async () => {
+  let releaseProbe
+  const probeBlocked = new Promise((resolve) => { releaseProbe = resolve })
+  const watchdog = createDatabaseStorageRecoveryWatchdog({
+    isRecoveryActive: () => true,
+    probeDatabase: async () => {
+      await probeBlocked
+      return true
+    },
+    fetchStorageOffer: async () => ({ postgres_status: 'available', usage_percent: 20 }),
+    isStorageOutageOffer: isDatabaseStorageOutageOffer,
+    onRecoveryStable: async () => {}
+  })
+
+  const firstCheck = watchdog.check()
+  assert.equal((await watchdog.check()).state, 'busy')
+  releaseProbe()
+  assert.equal((await firstCheck).state, 'confirming')
 })

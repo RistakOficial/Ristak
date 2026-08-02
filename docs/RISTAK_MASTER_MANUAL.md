@@ -9800,8 +9800,15 @@ versión aun cuando PostgreSQL no permita arrancar el CRM, el servidor entra en
 `storage_recovery`: `/health` sigue respondiendo 200 y todas las demás rutas quedan
 bloqueadas por la página 507. Este modo sólo se activa después de confirmar el
 estado lleno/suspendido contra el Installer; cualquier otro error de arranque
-conserva el fallo normal. Las instalaciones sin credencial cifrada de Render sólo
-reciben el aviso de riesgo y nunca acciones falsas.
+conserva el fallo normal. Mientras permanece en recuperación, un watchdog interno
+prueba la conexión local y consulta de nuevo al Installer cada 15 segundos. Cuando
+ambos confirman dos veces consecutivas que PostgreSQL ya está disponible y que la
+alerta de disco se despejó, el proceso termina de forma controlada para que Render
+lo levante de nuevo y complete el arranque normal. Una conexión aislada, una oferta
+que todavía marque lleno/suspendido o un error transitorio reinician el conteo; así
+se evita un bucle de reinicios mientras la base apenas está reanudándose. Las
+instalaciones sin credencial cifrada de Render sólo reciben el aviso de riesgo y
+nunca acciones falsas.
 
 Documento: `docs/LICENSING.md`.
 
