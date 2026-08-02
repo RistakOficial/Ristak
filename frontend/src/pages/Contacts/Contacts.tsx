@@ -64,6 +64,7 @@ import {
   serializeContactAdvancedConfig,
   type ContactAdvancedFilterConfig
 } from './contactAdvancedFilters'
+import { mergeAuthoritativeContactSummary } from './contactDetailSummary'
 
 const APPOINTMENT_CANCELED_STATUSES = new Set([
   'cancelled',
@@ -77,7 +78,6 @@ const APPOINTMENT_CANCELED_STATUSES = new Set([
   'void',
   'voided'
 ])
-const REVENUE_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const DELETE_CONFIRMATION_WORD = 'ELIMINAR'
 const CONTACTS_PAGE_SIZE = 20
 type ContactViewMode = 'all' | 'by-date'
@@ -182,42 +182,6 @@ const getAppointmentStatusValue = (appointment: { appointment_status?: string | 
 const isActiveAppointment = (appointment: { appointment_status?: string | null; appointmentStatus?: string | null; status?: string | null }) => {
   const statusValue = getAppointmentStatusValue(appointment)
   return !statusValue || !APPOINTMENT_CANCELED_STATUSES.has(statusValue)
-}
-
-const isRevenuePayment = (payment: ContactPayment) => {
-  const status = String(payment.status || '').trim().toLowerCase()
-  const paymentMode = payment.paymentMode || payment.payment_mode || 'live'
-  return Number(payment.amount || 0) > 0 && paymentMode !== 'test' && REVENUE_PAYMENT_STATUSES.has(status)
-}
-
-const summarizeRevenuePayments = (payments: ContactPayment[] = []) => {
-  return payments.reduce(
-    (summary, payment) => {
-      if (!isRevenuePayment(payment)) return summary
-
-      const amount = Number(payment.amount || 0)
-      const timestamp = payment.date ? parseSortableDateValue(payment.date) : Number.NaN
-
-      return {
-        purchases: summary.purchases + 1,
-        ltv: summary.ltv + amount,
-        lastPurchase:
-          !Number.isNaN(timestamp) && timestamp > summary.lastPurchaseTimestamp
-            ? payment.date
-            : summary.lastPurchase,
-        lastPurchaseTimestamp:
-          !Number.isNaN(timestamp) && timestamp > summary.lastPurchaseTimestamp
-            ? timestamp
-            : summary.lastPurchaseTimestamp
-      }
-    },
-    {
-      purchases: 0,
-      ltv: 0,
-      lastPurchase: null as string | null,
-      lastPurchaseTimestamp: Number.NEGATIVE_INFINITY
-    }
-  )
 }
 
 const STATUS_PRIORITY: Record<Contact['status'], number> = {
@@ -371,6 +335,7 @@ const mergeContactDetailRecords = (
   const template = allContacts[0]
   const hasAuthoritativeDetails = detailContacts.length > 0
   const authoritativeContactIds = new Set(detailContacts.map(contact => contact.id).filter(Boolean))
+  const authoritativeContact = detailContacts.find(contact => contact.id === primaryId) ?? detailContacts[0] ?? null
 
   const merged: Contact = {
     ...(template ?? {} as Contact),
@@ -503,6 +468,8 @@ const mergeContactDetailRecords = (
     })
   }
 
+  Object.assign(merged, mergeAuthoritativeContactSummary(merged, authoritativeContact))
+
   const appointments = Array.from(appointmentMap.values()).sort((a, b) =>
     parseSortableDateValue(a.start_time) - parseSortableDateValue(b.start_time)
   )
@@ -512,7 +479,9 @@ const mergeContactDetailRecords = (
   if (activeAppointments.length > 0) {
     merged.firstAppointmentDate = activeAppointments[0].start_time
   } else {
-    merged.firstAppointmentDate = appointments.length > 0 ? null : (baseContact?.firstAppointmentDate ?? merged.firstAppointmentDate ?? null)
+    merged.firstAppointmentDate = appointments.length > 0
+      ? null
+      : (authoritativeContact?.firstAppointmentDate ?? baseContact?.firstAppointmentDate ?? merged.firstAppointmentDate ?? null)
   }
 
   const now = Date.now()
@@ -526,24 +495,12 @@ const mergeContactDetailRecords = (
 
   merged.nextAppointmentDate = upcomingAppointment
     ? upcomingAppointment.start_time
-    : baseContact?.nextAppointmentDate ?? null
+    : authoritativeContact?.nextAppointmentDate ?? baseContact?.nextAppointmentDate ?? null
 
   const payments = Array.from(paymentMap.values()).filter(payment =>
     String(payment.status || '').trim().toLowerCase() !== 'deleted'
   )
   merged.payments = payments.length > 0 ? payments : undefined
-
-  if (hasAuthoritativeDetails) {
-    const paymentSummary = summarizeRevenuePayments(payments)
-    merged.purchases = paymentSummary.purchases
-    merged.ltv = paymentSummary.ltv
-    merged.lastPurchase = paymentSummary.lastPurchase ?? undefined
-    merged.status = paymentSummary.purchases > 0
-      ? 'customer'
-      : activeAppointments.length > 0
-        ? 'appointment'
-        : 'lead'
-  }
 
   merged.mergedContactIds = Array.from(mergedIds).filter(id => id && id !== merged.id)
   const mergedPhones = mergeContactPhoneNumbers(allContacts, merged.phone)
@@ -1120,6 +1077,7 @@ const ContactsTable: React.FC = () => {
       phoneNumbers: contactData.phoneNumbers || contactData.phones || [],
       ltv: contactData.ltv,
       purchases: contactData.purchases,
+      successfulPaymentsCount: contactData.successfulPaymentsCount,
       payments,
       paymentsTotal: contactData.paymentsTotal,
       hasPaymentRecords: contactData.hasPaymentRecords,
