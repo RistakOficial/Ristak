@@ -1977,7 +1977,9 @@ Capacidades:
   soporte, pero ninguna lectura funcional del producto debe devolverlos ni
   sumarlos. Por eso una consulta interna de soporte o SQL directo puede ver la
   evidencia cruda aunque el usuario del CRM no la vea.
-- Detalle con historial y actividad.
+- Detalle con historial y actividad. En la ficha desktop, los resúmenes de Citas
+  y Pagos conservan el espacio de sección respecto al divisor y a la información
+  anterior, aparezca uno solo o ambos.
 - Tags y carpetas.
 - Campos personalizados y variables. Ambos catalogos se administran desde
   Configuracion y usan una tabla de ancho completo: el buscador y el filtro por

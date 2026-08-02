@@ -77,3 +77,19 @@ test('la página de Contactos aplica el resumen canónico al abrir la ficha', as
     /Object\.assign\(merged, mergeAuthoritativeContactSummary\(merged, authoritativeContact\)\)/
   )
 })
+
+test('la ficha conserva espacio antes de los resúmenes de citas y pagos', async () => {
+  const modalStyles = await readFile(
+    new URL('../src/components/common/ContactDetailsModal/ContactDetailsModal.module.css', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(
+    modalStyles,
+    /\.singleContactInfoPanel \.contactDetails > \.detailSection:first-child\s*{\s*padding-top: 0;/
+  )
+  assert.doesNotMatch(
+    modalStyles,
+    /\.singleContactInfoPanel \.detailSection:first-child\s*{/
+  )
+})
