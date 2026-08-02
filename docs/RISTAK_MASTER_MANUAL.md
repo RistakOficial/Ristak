@@ -2683,6 +2683,12 @@ y marcadores de negocio se hidratan despues y no pueden retener ese primer paint
 El panel derecho conserva la ficha disponible del contacto mientras esa
 hidratacion termina en segundo plano: no inserta avisos temporales de
 `Actualizando` ni cambia la geometria del panel al cambiar de conversacion.
+En escritorio, bandeja y ficha usan anchos fluidos acotados; la ficha permanece
+entre 280 y 340 px segun el viewport y el historial recibe todo el espacio
+restante. Sus controles, textos y resumen se ajustan dentro de ese rango sin
+desbordar ni agregar un redimensionador manual. En viewports de hasta 1240 px la
+ficha deja paso a la bandeja y la conversacion como ya define el breakpoint del
+chat.
 Pagos/citas usan `GET /contacts/:id/journey?chatActivityOnly=true`, una lectura
 ligera que consulta en paralelo solo pagos, citas y confirmaciones; no recorre
 sesiones, video, atribucion ni el historial de mensajes. El resultado se conserva

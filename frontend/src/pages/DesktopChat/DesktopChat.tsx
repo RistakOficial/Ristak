@@ -10397,6 +10397,7 @@ export const DesktopChat: React.FC = () => {
                       <dt><FaWhatsapp aria-hidden="true" /> WhatsApp de respuesta</dt>
                       <dd>
                         <CustomSelect
+                          className={styles.whatsappReplySelect}
                           value={preferredWhatsAppPhoneNumberId}
                           options={[
                             { value: '', label: automaticWhatsAppPreferenceOptionLabel },
