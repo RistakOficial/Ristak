@@ -71,6 +71,11 @@ de Ristak porque es un precio externo de Render.
 - Si el tenant ya no puede leer su base, la página pública responde 507 con la
   causa, la cotización y un botón autenticado a `/start?storage=1`; no confunde la
   caída con un dominio sin configurar.
+- Cuando el arranque confirma con el Installer que PostgreSQL está suspendido o
+  lleno, el proceso entra en modo `storage_recovery`: conserva `/health` en 200
+  para que Render acepte el contenedor nuevo, pero mantiene el resto de la app
+  bloqueado detrás de la página 507. Cualquier otro error de arranque conserva el
+  fail-fast normal y no puede disfrazarse como una recuperación de almacenamiento.
 
 Este flujo depende de que el Installer conserve cifrada la Render API Key y el ID
 de la base. Si la instalación no es administrable, Ristak muestra el riesgo pero no

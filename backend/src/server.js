@@ -145,6 +145,7 @@ import {
   isHealthRequest
 } from './utils/deployDrainPolicy.js'
 import {
+  isDatabaseStorageOutageOffer,
   isRuntimeReadyForTraffic,
   runtimeHealthStatusCode
 } from './utils/startupReadiness.js'
@@ -164,7 +165,8 @@ const app = express()
 const PORT = process.env.PORT || 3001
 const startupState = {
   ready: false,
-  error: null
+  error: null,
+  recoveryMode: null
 }
 const DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 295_000
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = Math.max(
@@ -180,6 +182,7 @@ let activeDrainAllowedRequests = 0
 function getStartupStatus() {
   if (shuttingDown) return 'shutting_down'
   if (startupState.ready) return 'ready'
+  if (startupState.recoveryMode === 'database_storage') return 'storage_recovery'
   if (startupState.error) return 'error'
   return 'starting'
 }
@@ -188,6 +191,7 @@ function getRuntimeReadiness() {
   const state = {
     ready: startupState.ready,
     error: startupState.error,
+    recoveryMode: startupState.recoveryMode,
     shuttingDown
   }
 
@@ -457,20 +461,30 @@ app.use('/api/central-broker', centralBrokerRoutes)
 
 let startupStorageOutageCache = { checkedAt: 0, offer: null }
 
+async function refreshStartupStorageOutageCache({ force = false } = {}) {
+  const now = Date.now()
+  if (!force && now - startupStorageOutageCache.checkedAt <= 30_000) {
+    return startupStorageOutageCache.offer
+  }
+
+  const offer = await getCentralDatabaseStorageStatus().catch((error) => {
+    logger.warn(`No se pudo confirmar la recuperación de almacenamiento: ${error.message}`)
+    return null
+  })
+  startupStorageOutageCache = {
+    checkedAt: now,
+    offer: isDatabaseStorageOutageOffer(offer) ? offer : null
+  }
+  return startupStorageOutageCache.offer
+}
+
 app.use(async (req, res, next) => {
   if (startupState.ready) {
     return next()
   }
 
   if (startupState.error) {
-    const now = Date.now()
-    if (now - startupStorageOutageCache.checkedAt > 30_000) {
-      const offer = await getCentralDatabaseStorageStatus().catch(() => null)
-      const storageFull = offer?.storage_full === true ||
-        String(offer?.postgres_status || '').toLowerCase() === 'suspended' ||
-        Number(offer?.usage_percent || 0) >= 99
-      startupStorageOutageCache = { checkedAt: now, offer: storageFull ? offer : null }
-    }
+    await refreshStartupStorageOutageCache()
 
     if (startupStorageOutageCache.offer) {
       const managementUrl = getCentralDatabaseStorageManagementUrl()
@@ -885,9 +899,17 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   logger.success(`🚀 Servidor escuchando en puerto ${PORT}`)
   logger.info(`Entorno: ${process.env.NODE_ENV || 'development'}`)
 
-  startRuntimeServices().catch((error) => {
+  startRuntimeServices().catch(async (error) => {
     startupState.error = error
     logger.error('Error durante el arranque de la app:', error)
+
+    const storageOutage = await refreshStartupStorageOutageCache({ force: true })
+    if (storageOutage) {
+      startupState.recoveryMode = 'database_storage'
+      logger.warn('[Storage recovery] La app seguirá en línea para mostrar la autorización de aumento de PostgreSQL.')
+      return
+    }
+
     process.exitCode = 1
     setTimeout(() => process.exit(1), 1000)
   })

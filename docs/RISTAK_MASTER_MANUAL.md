@@ -9776,8 +9776,13 @@ aviso de riesgo.
 Render factura el almacenamiento directamente al cliente y el disco no puede
 reducirse. Si la base se llena, el host público responde 507 con una página que
 explica la causa real, el costo y el enlace autenticado de recuperación; no debe
-mostrar el falso error “Dominio no configurado”. Las instalaciones sin credencial
-cifrada de Render sólo reciben el aviso de riesgo y nunca acciones falsas.
+mostrar el falso error “Dominio no configurado”. Para que Render acepte esa
+versión aun cuando PostgreSQL no permita arrancar el CRM, el servidor entra en
+`storage_recovery`: `/health` sigue respondiendo 200 y todas las demás rutas quedan
+bloqueadas por la página 507. Este modo sólo se activa después de confirmar el
+estado lleno/suspendido contra el Installer; cualquier otro error de arranque
+conserva el fallo normal. Las instalaciones sin credencial cifrada de Render sólo
+reciben el aviso de riesgo y nunca acciones falsas.
 
 Documento: `docs/LICENSING.md`.
 
