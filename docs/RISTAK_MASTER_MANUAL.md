@@ -1317,6 +1317,11 @@ frontend aborta a los 20 segundos. Una base en recuperación o una lectura
 atascada debe producir un error reintentable y quitar el loader, no dejar una
 ráfaga de consultas concurrentes ni una espera infinita.
 
+En el detalle de video, las listas de retención conservan espacio interior en
+ambos lados del panel y permiten que los valores largos ocupen más de una línea.
+Iconos, etiquetas y cifras nunca deben montarse sobre el borde del contenedor ni
+forzar desbordamiento horizontal al reducir el ancho de la ventana.
+
 El heartbeat regular se envia cada 10 segundos y los hitos/pausa/seek/cierre
 siguen vaciando el acumulado. `payload_json` ya no duplica URL, dispositivo y
 contexto completo en cada progreso: esas dimensiones viven normalizadas y el
