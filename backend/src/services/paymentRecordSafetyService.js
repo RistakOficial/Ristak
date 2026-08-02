@@ -136,6 +136,10 @@ export function paymentHasLedgerActivity(payment = {}) {
 export function paymentHasExternalArtifact(payment = {}) {
   const provider = cleanString(payment.payment_provider).toLowerCase()
   const method = cleanString(payment.payment_method).toLowerCase()
+  // El proveedor es una clasificación abierta. Cualquier valor distinto de
+  // manual/offline se trata como integración externa para que una pasarela
+  // futura quede protegida sin depender de otra allowlist.
+  const hasExternalProvider = Boolean(provider && !['manual', 'offline'].includes(provider))
   return Boolean(
     cleanString(payment.public_payment_id) ||
     cleanString(payment.payment_url) ||
@@ -145,13 +149,48 @@ export function paymentHasExternalArtifact(payment = {}) {
     cleanString(payment.stripe_charge_id) ||
     cleanString(payment.mercadopago_payment_id) ||
     cleanString(payment.mercadopago_preference_id) ||
+    cleanString(payment.conekta_order_id) ||
+    cleanString(payment.conekta_charge_id) ||
+    cleanString(payment.conekta_payment_source_id) ||
     cleanString(payment.clip_payment_id) ||
     cleanString(payment.clip_receipt_no) ||
-    ['stripe', 'highlevel', 'mercadopago', 'conekta', 'clip'].includes(provider) ||
+    cleanString(payment.rebill_payment_id) ||
+    cleanString(payment.rebill_subscription_id) ||
+    cleanString(payment.rebill_customer_id) ||
+    cleanString(payment.rebill_card_id) ||
+    cleanString(payment.payment_link_request_key) ||
+    hasExternalProvider ||
     method.startsWith('stripe') ||
     method.startsWith('mercadopago') ||
     method.startsWith('conekta') ||
-    method.startsWith('clip')
+    method.startsWith('clip') ||
+    method.startsWith('rebill')
+  )
+}
+
+/**
+ * Un pago offline es un apunte creado por una persona dentro de Ristak, no una
+ * transacción emitida o confirmada por una pasarela. Puede tener estado paid,
+ * void o refunded porque esos estados describen el apunte local; no lo
+ * convierten por sí solos en evidencia externa inmutable.
+ */
+export function isManualOfflinePaymentRecord(payment = {}) {
+  const provider = cleanString(payment.payment_provider).toLowerCase()
+  return ['', 'manual', 'offline'].includes(provider) && !paymentHasExternalArtifact(payment)
+}
+
+async function getRemoteFiscalArtifact(paymentId) {
+  const cleanPaymentId = cleanString(paymentId)
+  if (!cleanPaymentId) return null
+
+  return db.get(
+    `SELECT payment_id, remote_payment_id
+     FROM gigstack_invoice_jobs
+     WHERE payment_id = ?
+       AND remote_payment_id IS NOT NULL
+       AND TRIM(remote_payment_id) != ''
+    LIMIT 1`,
+    [cleanPaymentId]
   )
 }
 
@@ -212,24 +251,39 @@ export async function getPaymentSubscriptionLinksForPayment(payment = {}) {
 }
 
 export async function getPaymentDeletionGuard(payment = {}) {
-  const planLinks = await getPaymentPlanLinksForPayment(payment.id)
-  const subscriptionLinks = await getPaymentSubscriptionLinksForPayment(payment)
+  const [planLinks, subscriptionLinks, fiscalArtifact] = await Promise.all([
+    getPaymentPlanLinksForPayment(payment.id),
+    getPaymentSubscriptionLinksForPayment(payment),
+    getRemoteFiscalArtifact(payment.id)
+  ])
   const hasLedgerActivity = paymentHasLedgerActivity(payment)
   const hasExternalArtifact = paymentHasExternalArtifact(payment)
+  const isManualOffline = isManualOfflinePaymentRecord(payment)
   const isTestMode = isTestPaymentRecord(payment)
   const isDeletedRecord = isDeletedPaymentRecord(payment)
+  const hasPlanLink = planLinks.length > 0
+  const hasSubscriptionLink = subscriptionLinks.length > 0
+  const hasFiscalArtifact = Boolean(fiscalArtifact)
+  const isDetached = !hasPlanLink && !hasSubscriptionLink
 
   return {
     planLinks,
     subscriptionLinks,
-    hasPlanLink: planLinks.length > 0,
-    hasSubscriptionLink: subscriptionLinks.length > 0,
+    fiscalArtifact,
+    hasPlanLink,
+    hasSubscriptionLink,
+    hasFiscalArtifact,
     hasLedgerActivity,
     hasExternalArtifact,
+    isManualOffline,
     isTestMode,
     isDeletedRecord,
-    canHardDelete: isTestMode || isDeletedRecord || (!planLinks.length && !subscriptionLinks.length && !hasLedgerActivity && !hasExternalArtifact),
-    shouldArchive: !isTestMode && !isDeletedRecord && !planLinks.length && !subscriptionLinks.length && !hasLedgerActivity && hasExternalArtifact
+    canHardDelete: isTestMode || isDeletedRecord || (
+      isDetached && !hasFiscalArtifact && (
+        isManualOffline || (!hasLedgerActivity && !hasExternalArtifact)
+      )
+    ),
+    shouldArchive: !isTestMode && !isDeletedRecord && isDetached && !hasFiscalArtifact && !hasLedgerActivity && hasExternalArtifact
   }
 }
 

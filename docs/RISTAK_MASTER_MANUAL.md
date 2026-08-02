@@ -4362,6 +4362,16 @@ metadata para distinguir credito/debito u otra categoria fina, la UI debe mostra
 un fallback honesto como `Tarjeta`, `Pendiente de seleccion` o
 `Metodo no especificado`; no debe inventar una categoria.
 
+La eliminacion desde Transacciones distingue el origen real del pago. Un pago
+manual/offline (`payment_provider=manual` u `offline`) sin IDs, liga, invoice,
+plan, suscripcion ni documento fiscal externo puede borrarse fisicamente aunque
+su estado local sea `paid`, `void` o `refunded`; despues se recalculan las
+estadisticas del contacto. Un cobro o artefacto de Stripe, Conekta, Mercado Pago,
+CLIP, Rebill o HighLevel nunca se vuelve borrable por cambiar solo el estado o
+el metodo: se conserva, archiva, anula o reembolsa segun el flujo de su
+proveedor. Los comprobantes de transferencia sujetos a revision humana y los
+pagos con documento fiscal emitido tambien permanecen protegidos por auditoria.
+
 ### Estados de links de pago
 
 Crear o enviar un link de pago no significa que el cobro fallo si el cliente no

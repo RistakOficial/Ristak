@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import { db } from '../src/config/database.js'
 import { deleteTransaction, voidTransaction } from '../src/controllers/transactionsController.js'
+import { paymentHasExternalArtifact } from '../src/services/paymentRecordSafetyService.js'
 import { deleteSubscription } from '../src/services/subscriptionsService.js'
 
 function suffix(label = 'payment_safety') {
@@ -143,15 +144,101 @@ async function seedSafetyRows(label = 'payment_safety') {
   return ids
 }
 
-test('seguridad pagos: no borra una transacción pagada', async () => {
+test('seguridad pagos: borra físicamente un pago manual/offline aunque esté pagado', async () => {
   const ids = await seedSafetyRows('paid_delete')
 
   try {
     const res = createResponse()
     await deleteTransaction({ params: { id: ids.paidPaymentId } }, res)
 
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.payload.success, true)
+
+    const row = await db.get('SELECT id FROM payments WHERE id = ?', [ids.paidPaymentId])
+    assert.equal(row, null)
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('seguridad pagos: borra físicamente un pago manual/offline anulado', async () => {
+  const ids = await seedSafetyRows('void_manual_delete')
+
+  try {
+    await db.run(
+      `UPDATE payments
+       SET status = 'void',
+           paid_at = NULL
+       WHERE id = ?`,
+      [ids.voidPaymentId]
+    )
+
+    const res = createResponse()
+    await deleteTransaction({ params: { id: ids.voidPaymentId } }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.payload.success, true)
+
+    const row = await db.get('SELECT id FROM payments WHERE id = ?', [ids.voidPaymentId])
+    assert.equal(row, null)
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('seguridad pagos: conserva registros live de pasarelas conocidas y futuras como historial', async () => {
+  for (const provider of ['stripe', 'mercadopago', 'conekta', 'clip', 'rebill', 'highlevel', 'openpay_future']) {
+    const ids = await seedSafetyRows(`gateway_${provider}`)
+
+    try {
+      await db.run(
+        `UPDATE payments
+         SET status = 'pending',
+             paid_at = NULL,
+             payment_provider = ?,
+             payment_method = ?
+         WHERE id = ?`,
+        [provider, `${provider}_checkout`, ids.paidPaymentId]
+      )
+
+      const res = createResponse()
+      await deleteTransaction({ params: { id: ids.paidPaymentId } }, res)
+
+      assert.equal(res.statusCode, 200, provider)
+      assert.equal(res.payload.success, true, provider)
+
+      const row = await db.get('SELECT status, payment_provider FROM payments WHERE id = ?', [ids.paidPaymentId])
+      assert.equal(row.status, 'deleted', provider)
+      assert.equal(row.payment_provider, provider, provider)
+    } finally {
+      await cleanup(ids)
+    }
+  }
+})
+
+test('seguridad pagos: detecta IDs de pasarela aunque el proveedor venga mal etiquetado como manual', () => {
+  assert.equal(paymentHasExternalArtifact({ payment_provider: 'manual', conekta_order_id: 'ord_guard' }), true)
+  assert.equal(paymentHasExternalArtifact({ payment_provider: 'manual', rebill_payment_id: 'rebill_guard' }), true)
+  assert.equal(paymentHasExternalArtifact({ payment_provider: 'manual', payment_link_request_key: 'link_guard' }), true)
+  assert.equal(paymentHasExternalArtifact({ payment_provider: 'manual', payment_method: 'cash' }), false)
+})
+
+test('seguridad pagos: no borra un pago manual con documento fiscal remoto', async () => {
+  const ids = await seedSafetyRows('manual_fiscal_guard')
+
+  try {
+    await db.run(
+      `INSERT INTO gigstack_invoice_jobs (
+        payment_id, payment_mode, status, remote_payment_id, created_at, updated_at
+      ) VALUES (?, 'live', 'completed', 'fiscal_remote_guard', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [ids.paidPaymentId]
+    )
+
+    const res = createResponse()
+    await deleteTransaction({ params: { id: ids.paidPaymentId } }, res)
+
     assert.equal(res.statusCode, 422)
-    assert.match(res.payload.error, /actividad de pago|no se puede borrar/i)
+    assert.match(res.payload.error, /documento fiscal/i)
 
     const row = await db.get('SELECT status FROM payments WHERE id = ?', [ids.paidPaymentId])
     assert.equal(row.status, 'paid')

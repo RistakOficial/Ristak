@@ -321,6 +321,13 @@ const sendPaymentDeletionGuardError = (res, guard) => {
     })
   }
 
+  if (guard.hasFiscalArtifact) {
+    return res.status(422).json({
+      success: false,
+      error: 'Este pago ya tiene un documento fiscal emitido. No se puede borrar; cancela o sustituye el documento fiscal y conserva el historial del pago.'
+    })
+  }
+
   if (guard.hasLedgerActivity) {
     return res.status(422).json({
       success: false,
