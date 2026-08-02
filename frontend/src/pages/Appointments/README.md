@@ -158,7 +158,20 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
 
 ## Mensajes Automáticos De Citas
 
-`AppointmentReminderModal` edita filas de `appointment_reminders`.
+`AppointmentReminderModal` edita filas de `appointment_reminders`. Cada fila
+lleva `calendar_id`: el selector activo de `/appointments` y el calendario
+abierto en Configuración son la fuente de verdad para listar, crear, editar y
+eliminar mensajes. `GET /api/appointment-reminders` exige `calendarId`; al
+cambiar de calendario la UI vacía la lista anterior y descarta respuestas
+asíncronas que pertenezcan a la selección previa.
+
+- El cron sólo combina una regla con citas cuyo `appointments.calendar_id`
+  coincide. Un mensaje de un calendario nunca se muestra ni se envía en otro.
+- Un ultimátum de confirmación heredado tampoco puede cancelar una cita ajena:
+  la migración y el procesador lo marcan `disabled` si los calendarios difieren.
+- La migración de filas globales anteriores las asigna al calendario
+  predeterminado válido de la cuenta; si falta, usa el primer calendario activo.
+  Así se conserva la configuración existente sin mantener el alcance global.
 
 - **Recordatorio de cita** usa `timingAnchor: 'before_appointment'` y se calcula
   hacia atrás desde la hora de la cita.
@@ -246,7 +259,8 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
   por QR, API-only sale por API y API+QR del mismo número intenta API primero y
   usa QR sólo si la API realmente pierde disponibilidad. Una plantilla sin
   aprobar o una ventana cerrada no cambian a QR.
-- Una cuenta nueva recibe únicamente dos mensajes automáticos, ambos pausados:
+- Una cuenta nueva recibe únicamente dos mensajes automáticos en su calendario
+  predeterminado, ambos pausados:
   `Aviso al agendar`, exactamente al crear la cita, sin horario inteligente y
   con la plantilla `cita_programada`; y `Confirmación 1 día antes`, con IA
   apagada y la plantilla `confirmacion_cita_dia_anterior`. Cada fila lleva una
@@ -269,13 +283,16 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
 - El editor principal no se cierra al tocar el fondo ni al pulsar Escape. Sólo
   las acciones explícitas **Cancelar**, **Guardar** y la **X** lo cierran, para
   evitar perder por accidente una configuración todavía no guardada.
-- Cada recordatorio o aviso guarda una `schedule_key` única construida con el
+- Cada recordatorio o aviso guarda una `schedule_key` única dentro de su
+  calendario, construida con el
   ancla y la duración normalizada. Por eso `60 minutos antes` y `1 hora antes`
   ocupan el mismo momento aunque cambien canal, plantilla, texto o modo de
   confirmación. Crear o mover otro mensaje a ese momento devuelve
   `409 appointment_reminder_schedule_conflict`; la UI mantiene abierto el editor
   y muestra un `<Modal type="alert">` para que el usuario elija otro horario.
-- El índice único cierra carreras entre pestañas o instancias. Si una instalación
+- El índice compuesto `(calendar_id, schedule_key)` cierra carreras entre
+  pestañas o instancias y permite usar el mismo momento en calendarios distintos.
+  Si una instalación
   ya tenía duplicados históricos, no se borran silenciosamente: la fila canónica
   ocupa la llave y las demás deben corregirse antes de volver a guardarse.
 

@@ -46,6 +46,23 @@ app.use('/api/calendars', calendarsRoutes)
 
 El orden importa: rutas específicas como `/events` y `/block-slots` van antes de `/:id`.
 
+## Mensajes Automáticos Por Calendario
+
+Las rutas `/api/appointment-reminders` pertenecen al mismo módulo de Citas y
+siempre reciben un `calendarId` explícito. `appointment_reminders.calendar_id`
+define el alcance canónico: overview, alta, edición, borrado, validación de
+horarios duplicados, modo test y cron de entrega sólo operan sobre ese
+calendario. El cron compara además la regla con `appointments.calendar_id` antes
+de reclamar o enviar cualquier mensaje. Los ultimátums pendientes heredados que
+apunten a una cita de otro calendario quedan desactivados antes de ejecutar una
+acción diferida como cancelar por falta de confirmación.
+
+Las llaves `system_key` y `schedule_key` son únicas por calendario, no por
+cuenta. Una instalación anterior sin `calendar_id` conserva sus reglas
+asignándolas al calendario predeterminado válido; si no existe, usa el primer
+calendario activo. No se clonan reglas a todas las agendas porque eso mantendría
+el envío cruzado que este contrato busca eliminar.
+
 ## Lecturas Acotadas Para Navegación
 
 Las vistas autenticadas de Calendario leen el espejo local y nunca sincronizan

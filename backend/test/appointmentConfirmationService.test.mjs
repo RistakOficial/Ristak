@@ -13,6 +13,14 @@ import { createAppointmentReminder } from '../src/services/appointmentRemindersS
 import { setAppNotificationPayloadSenderForTest } from '../src/services/pushNotificationsService.js'
 import { getContactJourney } from '../src/controllers/contactsController.js'
 
+const TEST_CALENDAR_ID = 'calendar_confirmation_test'
+
+await db.run(`
+  INSERT INTO calendars (id, name, is_active, source)
+  VALUES (?, 'Calendario de confirmaciones', 1, 'ristak')
+  ON CONFLICT(id) DO NOTHING
+`, [TEST_CALENDAR_ID])
+
 function isoFromNow(ms) {
   return new Date(Date.now() + ms).toISOString()
 }
@@ -86,7 +94,9 @@ async function withConfirmationFixture({
   confirmationTimeoutUnit = 'hours',
   aiEnabled = true,
   bypassAutomations = true,
-  appointmentStatus = 'pending'
+  appointmentStatus = 'pending',
+  reminderCalendarId = TEST_CALENDAR_ID,
+  appointmentCalendarId = reminderCalendarId
 } = {}, callback) {
   const suffix = randomUUID()
   const contactId = `contact_conf_${suffix}`
@@ -97,6 +107,14 @@ async function withConfirmationFixture({
   const endTime = isoFromNow(2 * 60 * 60 * 1000)
 
   try {
+    for (const calendarId of new Set([reminderCalendarId, appointmentCalendarId])) {
+      await db.run(`
+        INSERT INTO calendars (id, name, is_active, source)
+        VALUES (?, ?, 1, 'ristak')
+        ON CONFLICT(id) DO NOTHING
+      `, [calendarId, `Calendario ${calendarId}`])
+    }
+
     await db.run(`
       INSERT INTO contacts (id, phone, first_name, full_name)
       VALUES (?, ?, 'Ana', 'Ana Confirmacion')
@@ -106,9 +124,10 @@ async function withConfirmationFixture({
       INSERT INTO appointments (
         id, calendar_id, contact_id, title, status, appointment_status,
         start_time, end_time, date_added, date_updated
-      ) VALUES (?, 'calendar_confirmation_test', ?, 'Consulta dental', ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, 'Consulta dental', ?, ?, ?, ?, ?, ?)
     `, [
       appointmentId,
+      appointmentCalendarId,
       contactId,
       appointmentStatus,
       appointmentStatus,
@@ -119,6 +138,7 @@ async function withConfirmationFixture({
     ])
 
     const reminder = await createAppointmentReminder({
+      calendarId: reminderCalendarId,
       name: `Confirmacion IA ${suffix}`,
       messageType: 'confirmation',
       aiEnabled,
@@ -163,6 +183,11 @@ async function withConfirmationFixture({
     }
     await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    for (const calendarId of new Set([reminderCalendarId, appointmentCalendarId])) {
+      if (calendarId !== TEST_CALENDAR_ID) {
+        await db.run('DELETE FROM calendars WHERE id = ?', [calendarId])
+      }
+    }
   }
 }
 
@@ -647,6 +672,35 @@ test('el ultimátum empieza al enviarse y cancela sólo después de vencer sin r
     assert.ok(send.confirmation_timeout_processed_at)
     assert.equal(payloads.length, 1)
     assert.match(payloads[0].payload.title, /cancelada por falta de confirmación/i)
+  })
+})
+
+test('un ultimátum heredado no cancela citas de otro calendario', async () => {
+  const otherCalendarId = `calendar_confirmation_other_${randomUUID()}`
+  await withConfirmationFixture({
+    reminderCalendarId: TEST_CALENDAR_ID,
+    appointmentCalendarId: otherCalendarId,
+    noConfirmAction: 'cancel_appointment',
+    confirmationTimeoutValue: 30,
+    confirmationTimeoutUnit: 'minutes'
+  }, async ({ appointmentId, sendId }) => {
+    await expireConfirmationTimeout(sendId)
+    const result = await processExpiredConfirmationTimeouts()
+
+    assert.equal(result.processed, 1)
+    assert.equal(result.cancelled, 0)
+
+    const appointment = await db.get(
+      'SELECT appointment_status FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    assert.equal(appointment.appointment_status, 'pending')
+
+    const send = await db.get(
+      'SELECT confirmation_timeout_status FROM appointment_reminder_sends WHERE id = ?',
+      [sendId]
+    )
+    assert.equal(send.confirmation_timeout_status, 'disabled')
   })
 })
 

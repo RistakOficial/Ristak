@@ -952,7 +952,8 @@ export const CalendarsConfiguration: React.FC = () => {
   const [selectedAppointmentReminder, setSelectedAppointmentReminder] = useState<AppointmentReminder | null>(null)
   const [isAppointmentReminderModalOpen, setIsAppointmentReminderModalOpen] = useState(false)
   const [loadingAppointmentReminders, setLoadingAppointmentReminders] = useState(false)
-  const appointmentReminderSettingsLoadedRef = useRef(false)
+  const appointmentReminderSettingsCalendarIdRef = useRef('')
+  const activeAppointmentReminderCalendarIdRef = useRef('')
   const metaVariablesLoadedRef = useRef(false)
 
   // Cargar calendarios al montar
@@ -961,10 +962,21 @@ export const CalendarsConfiguration: React.FC = () => {
   }, [locationId, accessToken, calendarSourcePreference])
 
   useEffect(() => {
+    const calendarId = expandedCalendarId || ''
+    if (activeAppointmentReminderCalendarIdRef.current !== calendarId) {
+      activeAppointmentReminderCalendarIdRef.current = calendarId
+      setAppointmentReminders([])
+      setReminderSenders([])
+      setReminderChannels([])
+      setReminderTemplates([])
+      setSelectedAppointmentReminder(null)
+      setIsAppointmentReminderModalOpen(false)
+      setLoadingAppointmentReminders(false)
+    }
     if (
-      appointmentReminderSettingsLoadedRef.current ||
       activeView !== 'calendars' ||
-      !expandedCalendarId ||
+      !calendarId ||
+      appointmentReminderSettingsCalendarIdRef.current === calendarId ||
       calendarWizardStep !== 'reminders'
     ) return
     let cancelled = false
@@ -973,21 +985,21 @@ export const CalendarsConfiguration: React.FC = () => {
       setLoadingAppointmentReminders(true)
       try {
         const [overview, templateBundle] = await Promise.all([
-          appointmentRemindersService.getOverview(),
+          appointmentRemindersService.getOverview(calendarId),
           messageTemplatesService.getBundle()
         ])
-        if (cancelled) return
+        if (cancelled || activeAppointmentReminderCalendarIdRef.current !== calendarId) return
         setAppointmentReminders(overview.reminders)
         setReminderSenders(overview.senders)
         setReminderChannels(overview.channels)
         setReminderTemplates(templateBundle.templates)
-        appointmentReminderSettingsLoadedRef.current = true
+        appointmentReminderSettingsCalendarIdRef.current = calendarId
       } catch {
-        if (!cancelled) {
+        if (!cancelled && activeAppointmentReminderCalendarIdRef.current === calendarId) {
           showToast('error', 'Recordatorios automáticos', 'No se pudieron cargar los mensajes automáticos.')
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && activeAppointmentReminderCalendarIdRef.current === calendarId) {
           setLoadingAppointmentReminders(false)
         }
       }
@@ -1301,38 +1313,50 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const handleToggleAppointmentReminder = async (reminder: AppointmentReminder, enabled: boolean) => {
+    const calendarId = reminder.calendarId
+    if (!calendarId || activeAppointmentReminderCalendarIdRef.current !== calendarId) return
     setAppointmentReminders(current => current.map(item => (
       item.id === reminder.id ? { ...item, enabled } : item
     )))
 
     try {
-      const updated = await appointmentRemindersService.updateReminder(reminder.id, { enabled })
-      setAppointmentReminders(current => current.map(item => (
-        item.id === updated.id ? updated : item
-      )))
+      const updated = await appointmentRemindersService.updateReminder(calendarId, reminder.id, { enabled })
+      if (activeAppointmentReminderCalendarIdRef.current === calendarId) {
+        setAppointmentReminders(current => current.map(item => (
+          item.id === updated.id ? updated : item
+        )))
+      }
     } catch {
-      setAppointmentReminders(current => current.map(item => (
-        item.id === reminder.id ? { ...item, enabled: !enabled } : item
-      )))
-      showToast('error', 'Recordatorios automáticos', 'No se pudo actualizar el mensaje automático.')
+      if (activeAppointmentReminderCalendarIdRef.current === calendarId) {
+        setAppointmentReminders(current => current.map(item => (
+          item.id === reminder.id ? { ...item, enabled: !enabled } : item
+        )))
+        showToast('error', 'Recordatorios automáticos', 'No se pudo actualizar el mensaje automático.')
+      }
     }
   }
 
   const handleAddAppointmentReminder = () => {
+    if (!selectedCalendar?.id) return
     setSelectedAppointmentReminder(null)
     setIsAppointmentReminderModalOpen(true)
   }
 
   const handleSaveAppointmentReminder = async (reminderId: string | null, input: AppointmentReminderInput) => {
+    const calendarId = selectedCalendar?.id || ''
+    if (!calendarId || activeAppointmentReminderCalendarIdRef.current !== calendarId) return
     try {
       const saved = reminderId
-        ? await appointmentRemindersService.updateReminder(reminderId, input)
-        : await appointmentRemindersService.createReminder(input)
-      setAppointmentReminders(current => reminderId
-        ? current.map(item => item.id === saved.id ? saved : item)
-        : [...current, saved])
-      showToast('success', 'Recordatorios automáticos', reminderId ? 'Cambios guardados.' : 'Mensaje automático creado.')
+        ? await appointmentRemindersService.updateReminder(calendarId, reminderId, input)
+        : await appointmentRemindersService.createReminder(calendarId, input)
+      if (activeAppointmentReminderCalendarIdRef.current === calendarId) {
+        setAppointmentReminders(current => reminderId
+          ? current.map(item => item.id === saved.id ? saved : item)
+          : [...current, saved])
+        showToast('success', 'Recordatorios automáticos', reminderId ? 'Cambios guardados.' : 'Mensaje automático creado.')
+      }
     } catch (error) {
+      if (activeAppointmentReminderCalendarIdRef.current !== calendarId) return
       if (!isAppointmentReminderScheduleConflict(error)) {
         showToast('error', 'Recordatorios automáticos', 'No se pudieron guardar los cambios.')
       }
@@ -1341,11 +1365,16 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const handleDeleteAppointmentReminder = async (reminderId: string) => {
+    const calendarId = selectedCalendar?.id || ''
+    if (!calendarId || activeAppointmentReminderCalendarIdRef.current !== calendarId) return
     try {
-      await appointmentRemindersService.deleteReminder(reminderId)
-      setAppointmentReminders(current => current.filter(item => item.id !== reminderId))
-      showToast('success', 'Recordatorios automáticos', 'Mensaje automático eliminado.')
+      await appointmentRemindersService.deleteReminder(calendarId, reminderId)
+      if (activeAppointmentReminderCalendarIdRef.current === calendarId) {
+        setAppointmentReminders(current => current.filter(item => item.id !== reminderId))
+        showToast('success', 'Recordatorios automáticos', 'Mensaje automático eliminado.')
+      }
     } catch (error) {
+      if (activeAppointmentReminderCalendarIdRef.current !== calendarId) return
       showToast('error', 'Recordatorios automáticos', 'No se pudo eliminar el mensaje automático.')
       throw error
     }
@@ -3648,8 +3677,8 @@ export const CalendarsConfiguration: React.FC = () => {
                     <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
                       <div className={pageStyles.remindersToolbar}>
                         <div>
-                          <span>Mensajes activos para tus citas</span>
-                          <small>Se usan plantillas aprobadas, remitentes y reglas de envío compartidas con Citas.</small>
+                          <span>Mensajes de este calendario</span>
+                          <small>Solo se muestran y envían en las citas de {selectedCalendar.name || 'este calendario'}.</small>
                         </div>
                         <Button
                           variant="secondary"
@@ -3662,9 +3691,8 @@ export const CalendarsConfiguration: React.FC = () => {
                       </div>
 
                       {loadingAppointmentReminders ? (
-                        <div className={pageStyles.remindersEmpty} role="status" aria-live="polite">
-                          <Loader2 size={16} className={styles.spinIcon} />
-                          Cargando mensajes automáticos...
+                        <div className={pageStyles.remindersEmpty}>
+                          <Loading compact size="sm" message="Cargando mensajes automáticos..." />
                         </div>
                       ) : appointmentReminders.length ? (
                         <div className={pageStyles.remindersList}>

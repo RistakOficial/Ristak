@@ -32,6 +32,7 @@ export interface ReminderFailures {
 
 export interface AppointmentReminder {
   id: string
+  calendarId: string
   name: string
   enabled: boolean
   messageType: ReminderMessageType
@@ -85,6 +86,7 @@ export interface ReminderChannelOption {
 }
 
 export interface AppointmentRemindersOverview {
+  calendarId: string
   reminders: AppointmentReminder[]
   senders: ReminderSenderOption[]
   channels: ReminderChannelOption[]
@@ -146,20 +148,24 @@ export const formatReminderOffsetLabel = (
 }
 
 export const appointmentRemindersService = {
-  async getOverview(): Promise<AppointmentRemindersOverview> {
-    return apiClient.get<AppointmentRemindersOverview>('/appointment-reminders')
+  async getOverview(calendarId: string): Promise<AppointmentRemindersOverview> {
+    return apiClient.get<AppointmentRemindersOverview>(
+      `/appointment-reminders?calendarId=${encodeURIComponent(calendarId)}`
+    )
   },
 
-  async createReminder(input: AppointmentReminderInput = {}): Promise<AppointmentReminder> {
-    return apiClient.post<AppointmentReminder>('/appointment-reminders', input)
+  async createReminder(calendarId: string, input: AppointmentReminderInput = {}): Promise<AppointmentReminder> {
+    return apiClient.post<AppointmentReminder>('/appointment-reminders', { ...input, calendarId })
   },
 
-  async updateReminder(reminderId: string, input: AppointmentReminderInput): Promise<AppointmentReminder> {
-    return apiClient.put<AppointmentReminder>(`/appointment-reminders/${reminderId}`, input)
+  async updateReminder(calendarId: string, reminderId: string, input: AppointmentReminderInput): Promise<AppointmentReminder> {
+    return apiClient.put<AppointmentReminder>(`/appointment-reminders/${reminderId}`, { ...input, calendarId })
   },
 
-  async deleteReminder(reminderId: string): Promise<void> {
-    await apiClient.delete(`/appointment-reminders/${reminderId}`)
+  async deleteReminder(calendarId: string, reminderId: string): Promise<void> {
+    await apiClient.delete(
+      `/appointment-reminders/${reminderId}?calendarId=${encodeURIComponent(calendarId)}`
+    )
   }
 }
 

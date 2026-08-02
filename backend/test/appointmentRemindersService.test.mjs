@@ -26,6 +26,19 @@ import {
   setBaileysRuntimeForTest
 } from '../src/services/whatsappQrService.js'
 
+const TEST_CALENDAR_ID = 'calendar_test'
+
+await db.run(`
+  INSERT INTO calendars (id, name, is_active, source)
+  VALUES (?, 'Calendario de prueba', 1, 'ristak')
+  ON CONFLICT(id) DO NOTHING
+`, [TEST_CALENDAR_ID])
+await db.run(`
+  INSERT INTO app_config (config_key, config_value, updated_at)
+  VALUES ('default_calendar_id', ?, CURRENT_TIMESTAMP)
+  ON CONFLICT(config_key) DO UPDATE SET config_value = excluded.config_value, updated_at = CURRENT_TIMESTAMP
+`, [TEST_CALENDAR_ID])
+
 function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
   return {
     ok: status >= 200 && status < 300,
@@ -315,7 +328,9 @@ async function withReminderFixture({
   qrFallbackEnabled = false,
   apiSendEnabled = true,
   qrSendEnabled = false,
-  qrStatus = 'disconnected'
+  qrStatus = 'disconnected',
+  reminderCalendarId = TEST_CALENDAR_ID,
+  appointmentCalendarId = reminderCalendarId
 }, callback) {
   const suffix = randomUUID()
   const phone = `+52155${Date.now().toString().slice(-8)}`
@@ -335,6 +350,14 @@ async function withReminderFixture({
   const bookedAt = DateTime.utc().minus({ hours: 2 }).toISO()
 
   try {
+    for (const calendarId of new Set([reminderCalendarId, appointmentCalendarId])) {
+      await db.run(`
+        INSERT INTO calendars (id, name, is_active, source)
+        VALUES (?, ?, 1, 'ristak')
+        ON CONFLICT(id) DO NOTHING
+      `, [calendarId, `Calendario ${calendarId}`])
+    }
+
     await db.run(`
       INSERT INTO whatsapp_api_phone_numbers (
         id, waba_id, phone_number, display_phone_number, verified_name,
@@ -360,9 +383,10 @@ async function withReminderFixture({
       INSERT INTO appointments (
         id, calendar_id, contact_id, title, status, appointment_status,
         start_time, end_time, date_added
-      ) VALUES (?, 'calendar_test', ?, 'Consulta', 'pending', 'pending', ?, ?, ?)
+      ) VALUES (?, ?, ?, 'Consulta', 'pending', 'pending', ?, ?, ?)
     `, [
       appointmentId,
+      appointmentCalendarId,
       contactId,
       startTime,
       DateTime.fromISO(startTime).plus({ hours: 1 }).toISO(),
@@ -370,6 +394,7 @@ async function withReminderFixture({
     ])
 
     const reminder = await createAppointmentReminder({
+      calendarId: reminderCalendarId,
       name: `Recordatorio ${suffix}`,
       messageType: 'reminder',
       templateId: template.id,
@@ -422,6 +447,26 @@ test('recordatorios de citas envían plantilla aprobada por WhatsApp API', async
       assert.equal(captures[0].template.components[0].parameters[0].text, 'Ana')
     })
   })
+})
+
+test('un recordatorio nunca se envía a citas de otro calendario', async () => {
+  const otherCalendarId = `calendar_other_${randomUUID()}`
+  try {
+    await withYCloudMessageCapture(async (captures) => {
+      await withReminderFixture({
+        ycloudStatus: 'APPROVED',
+        reminderCalendarId: TEST_CALENDAR_ID,
+        appointmentCalendarId: otherCalendarId
+      }, async () => {
+        const result = await processDueAppointmentReminders({ batchSize: 1 })
+
+        assert.deepEqual(result, { sent: 0, errors: 0, skipped: 0 })
+        assert.equal(captures.length, 0)
+      })
+    })
+  } finally {
+    await db.run('DELETE FROM calendars WHERE id = ?', [otherCalendarId])
+  }
 })
 
 test('recordatorios de citas incluyen parámetros de botones URL dinámicos', async () => {

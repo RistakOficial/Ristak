@@ -168,6 +168,44 @@ function createServiceError(message, status = 400) {
   return error
 }
 
+async function resolveAppointmentReminderCalendarId(calendarId, {
+  fallbackToDefault = true,
+  allowMissing = false
+} = {}) {
+  const requestedId = cleanString(calendarId)
+  if (requestedId) {
+    const requestedCalendar = await db.get('SELECT id FROM calendars WHERE id = ?', [requestedId])
+    if (!requestedCalendar) {
+      throw createServiceError('El calendario seleccionado ya no existe.', 404)
+    }
+    return cleanString(requestedCalendar.id)
+  }
+
+  if (!fallbackToDefault) {
+    if (allowMissing) return ''
+    throw createServiceError('Selecciona un calendario para administrar sus mensajes automáticos.')
+  }
+
+  const defaultCalendarId = cleanString(await getAppConfig('default_calendar_id'))
+  if (defaultCalendarId) {
+    const defaultCalendar = await db.get('SELECT id FROM calendars WHERE id = ?', [defaultCalendarId])
+    if (defaultCalendar) return cleanString(defaultCalendar.id)
+  }
+
+  const fallbackCalendar = await db.get(`
+    SELECT id
+    FROM calendars
+    ORDER BY
+      CASE WHEN COALESCE(is_active, 1) = 1 THEN 0 ELSE 1 END,
+      created_at ASC,
+      id ASC
+    LIMIT 1
+  `)
+  if (fallbackCalendar?.id) return cleanString(fallbackCalendar.id)
+  if (allowMissing) return ''
+  throw createServiceError('Crea un calendario antes de configurar mensajes automáticos.')
+}
+
 function createReminderId() {
   return createRistakId('apt_reminder')
 }
@@ -406,13 +444,14 @@ function createReminderScheduleConflictError(existingReminder) {
   return error
 }
 
-async function findReminderScheduleConflict(scheduleKey, excludeReminderId = '') {
+async function findReminderScheduleConflict(calendarId, scheduleKey, excludeReminderId = '') {
   const rows = await db.all(`
     SELECT *
     FROM appointment_reminders
-    WHERE id != ?
+    WHERE calendar_id = ?
+      AND id != ?
     ORDER BY position ASC, created_at ASC
-  `, [cleanString(excludeReminderId)])
+  `, [cleanString(calendarId), cleanString(excludeReminderId)])
 
   return rows
     .map(normalizeReminderRow)
@@ -421,7 +460,7 @@ async function findReminderScheduleConflict(scheduleKey, excludeReminderId = '')
 
 async function assertReminderScheduleAvailable(data, excludeReminderId = '') {
   const scheduleKey = buildAppointmentReminderScheduleKey(data)
-  const conflict = await findReminderScheduleConflict(scheduleKey, excludeReminderId)
+  const conflict = await findReminderScheduleConflict(data.calendarId, scheduleKey, excludeReminderId)
   if (conflict) throw createReminderScheduleConflictError(conflict)
   return scheduleKey
 }
@@ -430,13 +469,15 @@ function isReminderScheduleUniqueConstraintError(error) {
   const message = cleanString(error?.message).toLowerCase()
   return error?.code === '23505' ||
     error?.code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+    message.includes('idx_appointment_reminders_calendar_schedule_key') ||
     message.includes('idx_appointment_reminders_schedule_key') ||
+    message.includes('appointment_reminders.calendar_id, appointment_reminders.schedule_key') ||
     message.includes('appointment_reminders.schedule_key')
 }
 
-async function rethrowReminderScheduleConflict(error, scheduleKey, excludeReminderId = '') {
+async function rethrowReminderScheduleConflict(error, calendarId, scheduleKey, excludeReminderId = '') {
   if (!isReminderScheduleUniqueConstraintError(error)) throw error
-  const conflict = await findReminderScheduleConflict(scheduleKey, excludeReminderId)
+  const conflict = await findReminderScheduleConflict(calendarId, scheduleKey, excludeReminderId)
   if (conflict) throw createReminderScheduleConflictError(conflict)
   throw error
 }
@@ -495,6 +536,7 @@ function normalizeReminderRow(row = {}) {
       )
   return {
     id: cleanString(row.id),
+    calendarId: cleanString(row.calendar_id),
     name: cleanString(row.name) || formatOffsetLabel(offsetValue, offsetUnit, timingAnchor),
     enabled: Number(row.enabled || 0) === 1,
     messageType,
@@ -925,7 +967,7 @@ function buildReminderDeliveryHealth(reminder, template, senders = [], channelSt
   }
 }
 
-export async function getAppointmentRemindersOverview() {
+export async function getAppointmentRemindersOverview(calendarId) {
   // (PANEL-FIX) El panel de "mensajes automáticos" no debe caerse entero por un fallo
   // en un paso de enriquecimiento (rellenar plantillas, remitentes de WhatsApp o el
   // historial de fallos). Lo ÚNICO crítico es leer los recordatorios; lo demás degrada
@@ -936,7 +978,13 @@ export async function getAppointmentRemindersOverview() {
     logger.warn(`[Recordatorios] No se pudieron rellenar plantillas por defecto (no crítico): ${error.message}`)
   }
 
-  const rows = await db.all('SELECT * FROM appointment_reminders ORDER BY position ASC, created_at ASC')
+  const resolvedCalendarId = await resolveAppointmentReminderCalendarId(calendarId)
+  const rows = await db.all(`
+    SELECT *
+    FROM appointment_reminders
+    WHERE calendar_id = ?
+    ORDER BY position ASC, created_at ASC
+  `, [resolvedCalendarId])
   const baseReminders = rows.map(normalizeReminderRow)
 
   let senders = []
@@ -993,6 +1041,7 @@ export async function getAppointmentRemindersOverview() {
     failures: failuresByReminder.get(reminder.id) || { errorCount: 0, lastErrorAt: null, lastErrorMessage: null }
   }))
   return {
+    calendarId: resolvedCalendarId,
     reminders,
     senders,
     channels: [
@@ -1104,6 +1153,7 @@ function sanitizeReminderInput(input = {}, base = {}) {
   }
 
   return {
+    calendarId: cleanString(merged.calendarId),
     name: cleanString(merged.name) || formatOffsetLabel(offsetValue, offsetUnit, timingAnchor),
     enabled: merged.enabled === false ? 0 : 1,
     messageType,
@@ -1139,24 +1189,28 @@ function sanitizeReminderInput(input = {}, base = {}) {
 }
 
 async function insertAppointmentReminder(input = {}, { systemKey = null, ignoreConflict = false } = {}) {
-  const data = await resolveReminderTemplateSelection(sanitizeReminderInput(input))
+  const calendarId = await resolveAppointmentReminderCalendarId(input.calendarId)
+  const data = await resolveReminderTemplateSelection(sanitizeReminderInput({ ...input, calendarId }))
   const scheduleKey = buildAppointmentReminderScheduleKey(data)
   const id = createReminderId()
-  const positionRow = await db.get('SELECT COALESCE(MAX(position), -1) + 1 AS next FROM appointment_reminders')
+  const positionRow = await db.get(
+    'SELECT COALESCE(MAX(position), -1) + 1 AS next FROM appointment_reminders WHERE calendar_id = ?',
+    [calendarId]
+  )
 
   const result = await db.run(`
     INSERT INTO appointment_reminders (
-      id, system_key, schedule_key, name, enabled, message_type, ai_enabled, channel, sender_mode,
+      id, calendar_id, system_key, schedule_key, name, enabled, message_type, ai_enabled, channel, sender_mode,
       sender_phone_number_id, template_id, template_name, template_language,
       content_mode, qr_fallback_enabled, timing_anchor, offset_value, offset_unit, message_text,
       smart_enabled, smart_start, smart_end, smart_overflow, no_confirm_action,
       confirmation_timeout_value, confirmation_timeout_unit,
       confirmation_timeout_mode, confirmation_response_start, confirmation_response_end,
       confirmation_success_action, bypass_automations, position
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ${ignoreConflict ? 'ON CONFLICT DO NOTHING' : ''}
   `, [
-    id, cleanString(systemKey) || null, scheduleKey, data.name, data.enabled, data.messageType, data.aiEnabled, data.channel,
+    id, calendarId, cleanString(systemKey) || null, scheduleKey, data.name, data.enabled, data.messageType, data.aiEnabled, data.channel,
     data.senderMode, data.senderPhoneNumberId, data.templateId, data.templateName,
     data.templateLanguage, data.contentMode, data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit,
     data.messageText, data.smartEnabled, data.smartStart, data.smartEnd,
@@ -1168,7 +1222,10 @@ async function insertAppointmentReminder(input = {}, { systemKey = null, ignoreC
 
   if (!Number(result?.changes || 0) && systemKey) {
     return {
-      reminder: normalizeReminderRow(await db.get('SELECT * FROM appointment_reminders WHERE system_key = ?', [systemKey])),
+      reminder: normalizeReminderRow(await db.get(
+        'SELECT * FROM appointment_reminders WHERE calendar_id = ? AND system_key = ?',
+        [calendarId, systemKey]
+      )),
       created: false
     }
   }
@@ -1180,13 +1237,15 @@ async function insertAppointmentReminder(input = {}, { systemKey = null, ignoreC
 
 export async function createAppointmentReminder(input = {}) {
   await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
-  const sanitized = sanitizeReminderInput(input)
+  const calendarId = await resolveAppointmentReminderCalendarId(input.calendarId)
+  const preparedInput = { ...input, calendarId }
+  const sanitized = sanitizeReminderInput(preparedInput)
   const scheduleKey = await assertReminderScheduleAvailable(sanitized)
   try {
-    const { reminder } = await insertAppointmentReminder(input)
+    const { reminder } = await insertAppointmentReminder(preparedInput)
     return reminder
   } catch (error) {
-    await rethrowReminderScheduleConflict(error, scheduleKey)
+    await rethrowReminderScheduleConflict(error, calendarId, scheduleKey)
   }
 }
 
@@ -1196,6 +1255,12 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
   if (!existing) throw createServiceError('Mensaje automático no encontrado.', 404)
 
   const base = normalizeReminderRow(existing)
+  const calendarId = base.calendarId || await resolveAppointmentReminderCalendarId(input.calendarId)
+  const requestedCalendarId = cleanString(input.calendarId)
+  if (requestedCalendarId && requestedCalendarId !== calendarId) {
+    throw createServiceError('El mensaje automático pertenece a otro calendario.', 404)
+  }
+  base.calendarId = calendarId
   const data = await resolveReminderTemplateSelection(sanitizeReminderInput(input, base))
   const scheduleKey = await assertReminderScheduleAvailable(data, id)
 
@@ -1208,7 +1273,7 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
   try {
     await db.run(`
       UPDATE appointment_reminders
-      SET schedule_key = ?, name = ?, enabled = ?, message_type = ?, ai_enabled = ?, channel = ?, sender_mode = ?,
+      SET calendar_id = ?, schedule_key = ?, name = ?, enabled = ?, message_type = ?, ai_enabled = ?, channel = ?, sender_mode = ?,
         sender_phone_number_id = ?, template_id = ?, template_name = ?, template_language = ?,
         content_mode = ?, qr_fallback_enabled = ?, timing_anchor = ?, offset_value = ?, offset_unit = ?, message_text = ?,
         smart_enabled = ?, smart_start = ?, smart_end = ?, smart_overflow = ?,
@@ -1217,7 +1282,7 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
         confirmation_success_action = ?, bypass_automations = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [
-      scheduleKey, name, data.enabled, data.messageType, data.aiEnabled, data.channel, data.senderMode,
+      calendarId, scheduleKey, name, data.enabled, data.messageType, data.aiEnabled, data.channel, data.senderMode,
       data.senderPhoneNumberId, data.templateId, data.templateName, data.templateLanguage,
       data.contentMode, data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit, data.messageText,
       data.smartEnabled, data.smartStart, data.smartEnd, data.smartOverflow,
@@ -1226,7 +1291,7 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
       data.confirmationSuccessAction, data.bypassAutomations, id
     ])
   } catch (error) {
-    await rethrowReminderScheduleConflict(error, scheduleKey, id)
+    await rethrowReminderScheduleConflict(error, calendarId, scheduleKey, id)
   }
 
   // Si cambió la configuración de tiempo, los envíos pendientes se recalculan
@@ -1234,16 +1299,20 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
   return normalizeReminderRow(await db.get('SELECT * FROM appointment_reminders WHERE id = ?', [id]))
 }
 
-export async function deleteAppointmentReminder(reminderId) {
+export async function deleteAppointmentReminder(reminderId, calendarId = '') {
   const id = cleanString(reminderId)
+  const expectedCalendarId = cleanString(calendarId)
   await db.transaction(async (transaction) => {
     const existing = await transaction.get(`
-      SELECT id
+      SELECT id, calendar_id
       FROM appointment_reminders
       WHERE id = ?
       ${databaseDialect === 'postgres' ? 'FOR UPDATE' : ''}
     `, [id])
     if (!existing) throw createServiceError('Mensaje automático no encontrado.', 404)
+    if (expectedCalendarId && cleanString(existing.calendar_id) !== expectedCalendarId) {
+      throw createServiceError('El mensaje automático pertenece a otro calendario.', 404)
+    }
 
     // Borrar la regla desactiva cualquier ultimátum todavía pendiente en el
     // mismo commit que retira la configuración. Conservamos el envío realizado
@@ -1275,6 +1344,12 @@ export async function ensureDefaultAppointmentReminder() {
   const seeded = await getAppConfig(SEEDED_CONFIG_KEY)
   if (seeded) {
     await backfillMissingReminderTemplates()
+    return
+  }
+
+  const calendarId = await resolveAppointmentReminderCalendarId('', { allowMissing: true })
+  if (!calendarId) {
+    logger.info('[Citas] Los mensajes automáticos iniciales esperan a que exista un calendario.')
     return
   }
 
@@ -1312,7 +1387,10 @@ export async function ensureDefaultAppointmentReminder() {
     ]
 
     for (const reminder of defaultReminders) {
-      const { created } = await insertAppointmentReminder(reminder.input, {
+      const { created } = await insertAppointmentReminder({
+        ...reminder.input,
+        calendarId
+      }, {
         systemKey: reminder.systemKey,
         ignoreConflict: true
       })
@@ -2175,7 +2253,12 @@ export async function executeSafeTestAppointmentReminders(appointment = {}) {
   }
 
   const timezone = await getAccountTimezone()
-  const rows = await db.all('SELECT * FROM appointment_reminders WHERE enabled = 1 ORDER BY position ASC, created_at ASC')
+  const rows = await db.all(`
+    SELECT *
+    FROM appointment_reminders
+    WHERE enabled = 1 AND calendar_id = ?
+    ORDER BY position ASC, created_at ASC
+  `, [cleanString(storedAppointment.calendar_id)])
   const reminders = rows.map(normalizeReminderRow).filter(Boolean)
   const results = []
 
@@ -2316,7 +2399,7 @@ export async function executeSafeTestAppointmentReminders(appointment = {}) {
  */
 export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
   const overview = await db.all("SELECT * FROM appointment_reminders WHERE enabled = 1")
-  const reminders = overview.map(normalizeReminderRow)
+  const reminders = overview.map(normalizeReminderRow).filter(reminder => reminder?.calendarId)
   if (!reminders.length) return { sent: 0, errors: 0, skipped: 0 }
 
   const timezone = await getAccountTimezone()
@@ -2353,8 +2436,12 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
 
   if (!clauses.length) return { sent: 0, errors: 0, skipped: 0 }
 
+  const calendarIds = [...new Set(reminders.map(reminder => reminder.calendarId))]
+  const calendarPlaceholders = calendarIds.map(() => '?').join(', ')
+  params.push(...calendarIds)
+
   const appointments = await db.all(`
-    SELECT a.id, a.title, a.start_time, a.date_added, a.source, a.booking_channel, a.appointment_status, a.status, a.contact_id,
+    SELECT a.id, a.calendar_id, a.title, a.start_time, a.date_added, a.source, a.booking_channel, a.appointment_status, a.status, a.contact_id,
       c.phone, c.email, c.first_name, c.last_name, c.full_name, c.preferred_whatsapp_phone_number_id
     FROM appointments a
     JOIN contacts c ON c.id = a.contact_id
@@ -2362,6 +2449,7 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
       AND COALESCE(a.is_test, 0) = 0
       AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN ('cancelled', 'canceled', 'noshow', 'invalid')
       AND (${clauses.join(' OR ')})
+      AND a.calendar_id IN (${calendarPlaceholders})
   `, params)
 
   if (!appointments.length) return { sent: 0, errors: 0, skipped: 0 }
@@ -2401,6 +2489,7 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
   for (const appointment of appointments) {
     for (const reminder of reminders) {
       if (sent + errors >= batchSize) break
+      if (reminder.calendarId !== cleanString(appointment.calendar_id)) continue
       if (alreadyHandled.has(`${reminder.id}|${appointment.id}`)) continue
 
       // Los avisos "después de agendar" solo aplican a reservas hechas EN Ristak.

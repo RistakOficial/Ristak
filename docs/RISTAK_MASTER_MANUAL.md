@@ -3978,6 +3978,18 @@ Reglas base:
   o mutacion mas nueva. Crear o editar pinta solo la respuesta ya confirmada por
   backend y despues espera el refetch canonico; eliminar quita la fila confirmada
   inmediatamente y tambien revalida eventos y proximas citas.
+- Los mensajes automáticos también pertenecen al calendario seleccionado. Cada
+  fila de `appointment_reminders` guarda `calendar_id`; `/appointments` y
+  Configuración > Calendarios recargan la lista al cambiar de agenda, vacían la
+  anterior y descartan respuestas tardías. El API exige `calendarId` para leer y
+  mutar, los horarios sólo son únicos dentro de cada calendario y el cron jamás
+  combina una regla con una cita cuyo `appointments.calendar_id` sea distinto.
+  También se desactivan los ultimátums heredados cuyo mensaje y cita pertenezcan
+  a calendarios distintos, antes de ejecutar acciones como cancelar por falta de
+  confirmación.
+  La migración de configuraciones globales anteriores las conserva en el
+  calendario predeterminado válido de la cuenta —o en el primer calendario
+  activo si falta— sin clonarlas ni seguir enviándolas en todas las agendas.
 - `/appointments` y DesktopChat crean citas con el mismo `AppointmentModal`
   compartido; Chat sólo inyecta el contacto y calendario del hilo. En ambos, el
   bloque de Invitados vive en la columna principal entre Ubicación y Notas, y el

@@ -130,6 +130,92 @@ test('la migración PostgreSQL instala public_sites.public_domain en bases exist
   )
 })
 
+test('la migración 150 limita horarios y llaves de sistema por calendario en SQLite', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-reminder-calendar-scope-'))
+  const database = openMemoryDatabase()
+  const migrationName = '150_appointment_reminders_calendar_scope.sqlite.sql'
+
+  try {
+    await database.exec(`
+      CREATE TABLE appointment_reminders (
+        id TEXT PRIMARY KEY,
+        calendar_id TEXT,
+        system_key TEXT,
+        schedule_key TEXT
+      );
+      CREATE TABLE appointments (
+        id TEXT PRIMARY KEY,
+        calendar_id TEXT
+      );
+      CREATE TABLE appointment_reminder_sends (
+        id TEXT PRIMARY KEY,
+        reminder_id TEXT,
+        appointment_id TEXT,
+        confirmation_timeout_status TEXT,
+        confirmation_timeout_processed_at TEXT
+      );
+      CREATE UNIQUE INDEX idx_appointment_reminders_system_key
+        ON appointment_reminders(system_key)
+        WHERE system_key IS NOT NULL;
+      CREATE UNIQUE INDEX idx_appointment_reminders_schedule_key
+        ON appointment_reminders(schedule_key)
+        WHERE schedule_key IS NOT NULL;
+      INSERT INTO appointment_reminders (id, calendar_id, system_key, schedule_key)
+      VALUES ('reminder_a', 'calendar_a', 'default_on_booking', 'after_booking:0');
+      INSERT INTO appointments (id, calendar_id)
+      VALUES ('appointment_b', 'calendar_b');
+      INSERT INTO appointment_reminder_sends (
+        id, reminder_id, appointment_id, confirmation_timeout_status
+      ) VALUES ('send_crossed', 'reminder_a', 'appointment_b', 'pending');
+    `)
+    await copyFile(
+      new URL(`../migrations/versioned/${migrationName}`, import.meta.url),
+      join(directory, migrationName)
+    )
+
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 1, skipped: 0 }
+    )
+
+    await database.run(`
+      INSERT INTO appointment_reminders (id, calendar_id, system_key, schedule_key)
+      VALUES ('reminder_b', 'calendar_b', 'default_on_booking', 'after_booking:0')
+    `)
+    await assert.rejects(
+      () => database.run(`
+        INSERT INTO appointment_reminders (id, calendar_id, schedule_key)
+        VALUES ('reminder_duplicate', 'calendar_a', 'after_booking:0')
+      `),
+      /UNIQUE constraint failed/i
+    )
+    const [crossedSend] = await database.all(`
+      SELECT confirmation_timeout_status, confirmation_timeout_processed_at
+      FROM appointment_reminder_sends
+      WHERE id = 'send_crossed'
+    `)
+    assert.equal(crossedSend.confirmation_timeout_status, 'disabled')
+    assert.ok(crossedSend.confirmation_timeout_processed_at)
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('la migración 150 de PostgreSQL conserva legacy y reemplaza índices globales', async () => {
+  const sql = await readFile(
+    new URL('../migrations/versioned/150a_appointment_reminders_calendar_scope.postgres.sql', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS calendar_id TEXT/i)
+  assert.match(sql, /WHERE appointment_reminders\.calendar_id IS NULL/i)
+  assert.match(sql, /DROP INDEX IF EXISTS idx_appointment_reminders_schedule_key/i)
+  assert.match(sql, /ON appointment_reminders\(calendar_id, schedule_key\)/i)
+  assert.match(sql, /ON appointment_reminders\(calendar_id, system_key\)/i)
+  assert.match(sql, /confirmation_timeout_status = 'disabled'/i)
+})
+
 test('SQLite repara public_sites.public_domain aunque el bootstrap legacy ya se haya omitido', async () => {
   const database = openMemoryDatabase()
 

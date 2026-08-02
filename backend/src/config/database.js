@@ -8242,6 +8242,7 @@ async function initTablesUnlocked() {
     await db.run(`
       CREATE TABLE IF NOT EXISTS appointment_reminders (
         id TEXT PRIMARY KEY,
+        calendar_id TEXT,
         system_key TEXT,
         schedule_key TEXT,
         name TEXT,
@@ -8360,10 +8361,47 @@ async function initTablesUnlocked() {
       await db.run('ALTER TABLE appointment_reminders ADD COLUMN system_key TEXT')
     } catch (_) { /* columna ya existe */ }
 
+    try {
+      await db.run('ALTER TABLE appointment_reminders ADD COLUMN calendar_id TEXT')
+    } catch (_) { /* columna ya existe */ }
+
+    // Los recordatorios anteriores eran globales. Se conservan, pero se asignan
+    // al calendario predeterminado válido (o al primer calendario activo) para
+    // impedir que sigan mostrándose y enviándose en calendarios ajenos.
+    const legacyReminderCalendar = await db.get(`
+      SELECT calendars.id
+      FROM calendars
+      ORDER BY
+        CASE
+          WHEN calendars.id = (
+            SELECT config_value
+            FROM app_config
+            WHERE config_key = 'default_calendar_id'
+            LIMIT 1
+          ) THEN 0
+          WHEN COALESCE(calendars.is_active, 1) = 1 THEN 1
+          ELSE 2
+        END,
+        calendars.created_at ASC,
+        calendars.id ASC
+      LIMIT 1
+    `)
+    if (legacyReminderCalendar?.id) {
+      await db.run(
+        'UPDATE appointment_reminders SET calendar_id = ? WHERE calendar_id IS NULL',
+        [legacyReminderCalendar.id]
+      )
+    }
+
     await db.run(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_appointment_reminders_system_key
-      ON appointment_reminders(system_key)
-      WHERE system_key IS NOT NULL
+      CREATE INDEX IF NOT EXISTS idx_appointment_reminders_calendar
+      ON appointment_reminders(calendar_id)
+    `)
+
+    await db.run(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_appointment_reminders_calendar_system_key
+      ON appointment_reminders(calendar_id, system_key)
+      WHERE calendar_id IS NOT NULL AND system_key IS NOT NULL
     `)
 
     try {
@@ -8398,6 +8436,7 @@ async function initTablesUnlocked() {
       WITH reminder_schedule_candidates AS (
         SELECT
           id,
+          calendar_id,
           COALESCE(timing_anchor, 'before_appointment') || ':' || CAST(
             CASE
               WHEN COALESCE(timing_anchor, 'before_appointment') = 'after_booking' THEN
@@ -8419,9 +8458,10 @@ async function initTablesUnlocked() {
       ), ranked_reminder_schedules AS (
         SELECT
           id,
+          calendar_id,
           candidate_key,
           ROW_NUMBER() OVER (
-            PARTITION BY candidate_key
+            PARTITION BY calendar_id, candidate_key
             ORDER BY created_at ASC, id ASC
           ) AS schedule_rank
         FROM reminder_schedule_candidates
@@ -8441,7 +8481,8 @@ async function initTablesUnlocked() {
         AND NOT EXISTS (
           SELECT 1
           FROM appointment_reminders occupied_schedule
-          WHERE occupied_schedule.schedule_key = (
+          WHERE occupied_schedule.calendar_id = appointment_reminders.calendar_id
+            AND occupied_schedule.schedule_key = (
             SELECT candidate_key
             FROM ranked_reminder_schedules
             WHERE ranked_reminder_schedules.id = appointment_reminders.id
@@ -8450,9 +8491,9 @@ async function initTablesUnlocked() {
     `)
 
     await db.run(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_appointment_reminders_schedule_key
-      ON appointment_reminders(schedule_key)
-      WHERE schedule_key IS NOT NULL
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_appointment_reminders_calendar_schedule_key
+      ON appointment_reminders(calendar_id, schedule_key)
+      WHERE calendar_id IS NOT NULL AND schedule_key IS NOT NULL
     `)
 
     try {

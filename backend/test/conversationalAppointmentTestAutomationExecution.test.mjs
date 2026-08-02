@@ -321,10 +321,10 @@ test('recordatorios de cita test llegan sólo como copia interna y el cron jamá
   try {
     await db.run(`
       INSERT INTO appointment_reminders (
-        id, name, enabled, message_type, ai_enabled, channel, sender_mode,
+        id, calendar_id, name, enabled, message_type, ai_enabled, channel, sender_mode,
         content_mode, timing_anchor, offset_value, offset_unit, message_text,
         smart_enabled, position
-      ) VALUES (?, 'Aviso inmediato', 1, 'reminder', 0, 'whatsapp', 'contact',
+      ) VALUES (?, 'calendar-test', 'Aviso inmediato', 1, 'reminder', 0, 'whatsapp', 'contact',
         'direct', 'after_booking', 0, 'seconds', 'Hola {{contact.first_name}}, tu cita quedó lista.', 0, 9999)
     `, [reminderId])
     const appointment = await getLocalAppointment(fixture.appointmentId)

@@ -423,6 +423,8 @@ export const Appointments: React.FC = () => {
   const [reminderTemplates, setReminderTemplates] = useState<MessageTemplate[]>([]);
   const [selectedReminder, setSelectedReminder] = useState<AppointmentReminder | null>(null);
   const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
+  const [remindersLoading, setRemindersLoading] = useState(false);
+  const activeReminderCalendarIdRef = useRef('');
 
   // Modal de cita
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
@@ -460,13 +462,28 @@ export const Appointments: React.FC = () => {
   const [selectionStart, setSelectionStart] = useState<{ date: Date; hour: number; minute: number } | null>(null);
   const [selectionEnd, setSelectionEnd] = useState<{ date: Date; hour: number; minute: number } | null>(null);
 
-  // Carga inicial de los mensajes automáticos del panel lateral.
+  // Los mensajes automáticos pertenecen al calendario seleccionado. Al cambiar
+  // la agenda se vacía primero la lista anterior y se descartan respuestas viejas.
   useEffect(() => {
+    const calendarId = selectedCalendar?.id || '';
+    activeReminderCalendarIdRef.current = calendarId;
+    setReminders([]);
+    setReminderSenders([]);
+    setReminderChannels([]);
+    setReminderTemplates([]);
+    setSelectedReminder(null);
+    setIsReminderModalOpen(false);
+    if (!calendarId) {
+      setRemindersLoading(false);
+      return;
+    }
+
     let cancelled = false;
     const loadReminderSettings = async () => {
+      setRemindersLoading(true);
       // CRÍTICO: los recordatorios. Si esto falla, sí es un error real del panel.
-      const overview = await appointmentRemindersService.getOverview();
-      if (cancelled) return;
+      const overview = await appointmentRemindersService.getOverview(calendarId);
+      if (cancelled || activeReminderCalendarIdRef.current !== calendarId) return;
       setReminders(overview.reminders);
       setReminderSenders(overview.senders);
       setReminderChannels(overview.channels);
@@ -475,65 +492,91 @@ export const Appointments: React.FC = () => {
       // Si no hay acceso o fallan, NO deben tumbar todo el panel de mensajes automáticos.
       try {
         const templateBundle = await messageTemplatesService.getBundle();
-        if (!cancelled) setReminderTemplates(templateBundle.templates);
+        if (!cancelled && activeReminderCalendarIdRef.current === calendarId) {
+          setReminderTemplates(templateBundle.templates);
+        }
       } catch {
-        if (!cancelled) setReminderTemplates([]);
+        if (!cancelled && activeReminderCalendarIdRef.current === calendarId) {
+          setReminderTemplates([]);
+        }
       }
     };
 
     loadReminderSettings()
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && activeReminderCalendarIdRef.current === calendarId) {
           showToast('error', 'Mensajes automáticos', 'No se pudieron cargar los mensajes automáticos.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled && activeReminderCalendarIdRef.current === calendarId) {
+          setRemindersLoading(false);
         }
       });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectedCalendar?.id]);
 
   const handleToggleReminder = useCallback(async (reminder: AppointmentReminder, enabled: boolean) => {
+    const calendarId = reminder.calendarId;
+    if (!calendarId || activeReminderCalendarIdRef.current !== calendarId) return;
     setReminders(prev => prev.map(item => item.id === reminder.id ? { ...item, enabled } : item));
     try {
-      const updated = await appointmentRemindersService.updateReminder(reminder.id, { enabled });
-      setReminders(prev => prev.map(item => item.id === updated.id ? updated : item));
+      const updated = await appointmentRemindersService.updateReminder(calendarId, reminder.id, { enabled });
+      if (activeReminderCalendarIdRef.current === calendarId) {
+        setReminders(prev => prev.map(item => item.id === updated.id ? updated : item));
+      }
     } catch {
-      setReminders(prev => prev.map(item => item.id === reminder.id ? { ...item, enabled: !enabled } : item));
-      showToast('error', 'Mensajes automáticos', 'No se pudo actualizar el mensaje automático.');
+      if (activeReminderCalendarIdRef.current === calendarId) {
+        setReminders(prev => prev.map(item => item.id === reminder.id ? { ...item, enabled: !enabled } : item));
+        showToast('error', 'Mensajes automáticos', 'No se pudo actualizar el mensaje automático.');
+      }
     }
   }, [showToast]);
 
   const handleAddReminder = useCallback(() => {
+    if (!selectedCalendar?.id) return;
     setSelectedReminder(null);
     setIsReminderModalOpen(true);
-  }, []);
+  }, [selectedCalendar?.id]);
 
   const handleSaveReminder = useCallback(async (reminderId: string | null, input: AppointmentReminderInput) => {
+    const calendarId = selectedCalendar?.id || '';
+    if (!calendarId || activeReminderCalendarIdRef.current !== calendarId) return;
     try {
       const saved = reminderId
-        ? await appointmentRemindersService.updateReminder(reminderId, input)
-        : await appointmentRemindersService.createReminder(input);
-      setReminders(prev => reminderId
-        ? prev.map(item => item.id === saved.id ? saved : item)
-        : [...prev, saved]);
-      showToast('success', 'Mensajes automáticos', reminderId ? 'Cambios guardados.' : 'Mensaje automático creado.');
+        ? await appointmentRemindersService.updateReminder(calendarId, reminderId, input)
+        : await appointmentRemindersService.createReminder(calendarId, input);
+      if (activeReminderCalendarIdRef.current === calendarId) {
+        setReminders(prev => reminderId
+          ? prev.map(item => item.id === saved.id ? saved : item)
+          : [...prev, saved]);
+        showToast('success', 'Mensajes automáticos', reminderId ? 'Cambios guardados.' : 'Mensaje automático creado.');
+      }
     } catch (error) {
+      if (activeReminderCalendarIdRef.current !== calendarId) return;
       if (!isAppointmentReminderScheduleConflict(error)) {
         showToast('error', 'Mensajes automáticos', 'No se pudieron guardar los cambios.');
       }
       throw error;
     }
-  }, [showToast]);
+  }, [selectedCalendar?.id, showToast]);
 
   const handleDeleteReminder = useCallback(async (reminderId: string) => {
+    const calendarId = selectedCalendar?.id || '';
+    if (!calendarId || activeReminderCalendarIdRef.current !== calendarId) return;
     try {
-      await appointmentRemindersService.deleteReminder(reminderId);
-      setReminders(prev => prev.filter(item => item.id !== reminderId));
-      showToast('success', 'Mensajes automáticos', 'Mensaje automático eliminado.');
+      await appointmentRemindersService.deleteReminder(calendarId, reminderId);
+      if (activeReminderCalendarIdRef.current === calendarId) {
+        setReminders(prev => prev.filter(item => item.id !== reminderId));
+        showToast('success', 'Mensajes automáticos', 'Mensaje automático eliminado.');
+      }
     } catch (error) {
+      if (activeReminderCalendarIdRef.current !== calendarId) return;
       showToast('error', 'Mensajes automáticos', 'No se pudo eliminar el mensaje automático.');
       throw error;
     }
-  }, [showToast]);
+  }, [selectedCalendar?.id, showToast]);
 
   const timelineOrderedReminders = useMemo(
     () => sortAppointmentRemindersByTimeline(reminders),
@@ -550,6 +593,15 @@ export const Appointments: React.FC = () => {
   }, []);
 
   const selectCalendar = useCallback((calendar: Calendar | null) => {
+    const calendarId = calendar?.id || '';
+    activeReminderCalendarIdRef.current = calendarId;
+    setReminders([]);
+    setReminderSenders([]);
+    setReminderChannels([]);
+    setReminderTemplates([]);
+    setSelectedReminder(null);
+    setIsReminderModalOpen(false);
+    setRemindersLoading(Boolean(calendarId));
     eventsRequestRef.current += 1;
     eventsAbortRef.current?.abort();
     eventsAbortRef.current = null;
@@ -570,7 +622,7 @@ export const Appointments: React.FC = () => {
     setVisibleEventsHasNext(false);
     setVisibleEventsLoading(false);
     setSelectedCalendar(calendar);
-    persistLastSelectedCalendar(calendar?.id ?? null);
+    persistLastSelectedCalendar(calendarId || null);
   }, [persistLastSelectedCalendar]);
 
   const navigateCalendarView = useCallback((next?: {
@@ -3003,7 +3055,9 @@ export const Appointments: React.FC = () => {
           </div>
 
           <div className={styles.automationList}>
-            {reminders.length === 0 ? (
+            {remindersLoading ? (
+              <Loading compact size="sm" message="Cargando mensajes automáticos..." />
+            ) : reminders.length === 0 ? (
               <p className={styles.emptyText}>Agrega un mensaje automático con el botón +</p>
             ) : (
               timelineOrderedReminders.map((reminder) => {

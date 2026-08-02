@@ -14,9 +14,19 @@ function sendError(res, error, fallback = 'Error procesando la solicitud') {
   res.status(status).json(payload)
 }
 
+function requireCalendarId(value) {
+  const calendarId = String(value || '').trim()
+  if (calendarId) return calendarId
+  const error = new Error('Selecciona un calendario para administrar sus mensajes automáticos.')
+  error.status = 400
+  error.code = 'appointment_reminder_calendar_required'
+  throw error
+}
+
 export async function getAppointmentRemindersHandler(req, res) {
   try {
-    res.json({ success: true, data: await getAppointmentRemindersOverview() })
+    const calendarId = requireCalendarId(req.query.calendarId)
+    res.json({ success: true, data: await getAppointmentRemindersOverview(calendarId) })
   } catch (error) {
     logger.error(`Error listando mensajes automáticos de citas: ${error.message}`)
     sendError(res, error, 'Error listando los mensajes automáticos')
@@ -25,7 +35,11 @@ export async function getAppointmentRemindersHandler(req, res) {
 
 export async function createAppointmentReminderHandler(req, res) {
   try {
-    const reminder = await createAppointmentReminder(req.body || {})
+    const body = req.body || {}
+    const reminder = await createAppointmentReminder({
+      ...body,
+      calendarId: requireCalendarId(body.calendarId)
+    })
     res.status(201).json({ success: true, data: reminder })
   } catch (error) {
     logger.error(`Error creando mensaje automático de citas: ${error.message}`)
@@ -35,7 +49,11 @@ export async function createAppointmentReminderHandler(req, res) {
 
 export async function updateAppointmentReminderHandler(req, res) {
   try {
-    const reminder = await updateAppointmentReminder(req.params.reminderId, req.body || {})
+    const body = req.body || {}
+    const reminder = await updateAppointmentReminder(req.params.reminderId, {
+      ...body,
+      calendarId: requireCalendarId(body.calendarId)
+    })
     res.json({ success: true, data: reminder })
   } catch (error) {
     logger.error(`Error actualizando mensaje automático de citas: ${error.message}`)
@@ -45,7 +63,8 @@ export async function updateAppointmentReminderHandler(req, res) {
 
 export async function deleteAppointmentReminderHandler(req, res) {
   try {
-    res.json({ success: true, data: await deleteAppointmentReminder(req.params.reminderId) })
+    const calendarId = requireCalendarId(req.query.calendarId)
+    res.json({ success: true, data: await deleteAppointmentReminder(req.params.reminderId, calendarId) })
   } catch (error) {
     logger.error(`Error eliminando mensaje automático de citas: ${error.message}`)
     sendError(res, error, 'Error eliminando el mensaje automático')

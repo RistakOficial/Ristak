@@ -5,8 +5,22 @@ import {
   createAppointmentReminder,
   DEFAULT_APPOINTMENT_NOTICE_TEXT,
   ensureDefaultAppointmentReminder,
+  getAppointmentRemindersOverview,
   updateAppointmentReminder
 } from '../src/services/appointmentRemindersService.js'
+
+const TEST_CALENDAR_ID = 'calendar_test'
+
+await db.run(`
+  INSERT INTO calendars (id, name, is_active, source)
+  VALUES (?, 'Calendario de prueba', 1, 'ristak')
+  ON CONFLICT(id) DO NOTHING
+`, [TEST_CALENDAR_ID])
+await db.run(`
+  INSERT INTO app_config (config_key, config_value, updated_at)
+  VALUES ('default_calendar_id', ?, CURRENT_TIMESTAMP)
+  ON CONFLICT(config_key) DO UPDATE SET config_value = excluded.config_value, updated_at = CURRENT_TIMESTAMP
+`, [TEST_CALENDAR_ID])
 
 test('el arranque concurrente crea una sola vez los dos mensajes predeterminados', async () => {
   await db.run("DELETE FROM app_config WHERE config_key = 'appointment_reminders_seeded'")
@@ -274,4 +288,50 @@ test('la restricción atómica deja una sola alta cuando varias pestañas guarda
 
   const rows = await db.all("SELECT id FROM appointment_reminders WHERE schedule_key = 'after_booking:900000'")
   assert.equal(rows.length, 1)
+})
+
+test('cada calendario lista sus propios mensajes y puede repetir el mismo horario', async () => {
+  const otherCalendarId = 'calendar_test_secondary'
+  await db.run(`
+    INSERT INTO calendars (id, name, is_active, source)
+    VALUES (?, 'Calendario secundario', 1, 'ristak')
+    ON CONFLICT(id) DO NOTHING
+  `, [otherCalendarId])
+  await db.run('DELETE FROM appointment_reminders')
+
+  try {
+    const primary = await createAppointmentReminder({
+      calendarId: TEST_CALENDAR_ID,
+      name: 'Mensaje del calendario principal',
+      timingAnchor: 'before_appointment',
+      offsetValue: 2,
+      offsetUnit: 'hours'
+    })
+    const secondary = await createAppointmentReminder({
+      calendarId: otherCalendarId,
+      name: 'Mensaje del calendario secundario',
+      timingAnchor: 'before_appointment',
+      offsetValue: 2,
+      offsetUnit: 'hours'
+    })
+
+    const primaryOverview = await getAppointmentRemindersOverview(TEST_CALENDAR_ID)
+    const secondaryOverview = await getAppointmentRemindersOverview(otherCalendarId)
+
+    assert.deepEqual(primaryOverview.reminders.map(reminder => reminder.id), [primary.id])
+    assert.deepEqual(secondaryOverview.reminders.map(reminder => reminder.id), [secondary.id])
+    assert.equal(primaryOverview.calendarId, TEST_CALENDAR_ID)
+    assert.equal(secondaryOverview.calendarId, otherCalendarId)
+
+    await assert.rejects(
+      () => updateAppointmentReminder(primary.id, {
+        calendarId: otherCalendarId,
+        enabled: false
+      }),
+      error => error.status === 404 && /otro calendario/i.test(error.message)
+    )
+  } finally {
+    await db.run('DELETE FROM appointment_reminders')
+    await db.run('DELETE FROM calendars WHERE id = ?', [otherCalendarId])
+  }
 })

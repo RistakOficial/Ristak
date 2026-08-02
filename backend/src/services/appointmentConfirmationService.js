@@ -421,6 +421,7 @@ async function processConfirmationTimeout(sendId, currentTime) {
         s.confirmation_deadline_at,
         s.confirmation_timeout_status,
         r.no_confirm_action,
+        r.calendar_id AS reminder_calendar_id,
         a.title,
         a.calendar_id,
         a.start_time,
@@ -444,6 +445,21 @@ async function processConfirmationTimeout(sendId, currentTime) {
       new Date(send.confirmation_deadline_at).getTime() > new Date(currentTime).getTime()
     ) {
       return { processed: false }
+    }
+
+    // Una confirmación creada antes del alcance por calendario pudo quedar
+    // ligada a una cita ajena. Nunca ejecutes su acción diferida (en especial
+    // cancelar): se desactiva al detectarla y se conserva la fila como auditoría.
+    const reminderCalendarId = String(send.reminder_calendar_id || '').trim()
+    const appointmentCalendarId = String(send.calendar_id || '').trim()
+    if (!reminderCalendarId || !appointmentCalendarId || reminderCalendarId !== appointmentCalendarId) {
+      await transaction.run(`
+        UPDATE appointment_reminder_sends
+        SET confirmation_timeout_status = 'disabled',
+            confirmation_timeout_processed_at = ?
+        WHERE id = ? AND confirmation_timeout_status = 'pending'
+      `, [currentTime, sendId])
+      return { processed: true, status: 'disabled' }
     }
 
     const confirmationWindow = await transaction.get(`
