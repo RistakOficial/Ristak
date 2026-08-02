@@ -474,9 +474,12 @@ block asset IDs and canonical Storage URLs in video blocks. Shared assets expose
 all published origin Sites. Storage-only assets remain measurable first-party;
 new renders attach their Media ID, and legacy events without IDs can be resolved
 from the current block only when they occurred after that block's latest binding
-update. For a selected Stream asset, Ristak may query Bunny's statistics and show
-them in a separately labeled provider panel. Provider views/watch time never
-replace the first-party ledger, including when Bunny returns zero.
+update. Sites Analytics does not query Bunny when a user opens a video detail.
+Its plays, unique visitors, watched time and 20-segment retention curve come from
+Ristak's first-party event ledger, so Storage fallback remains measurable and a
+provider-side zero cannot hide real audience activity. Bunny statistics remain
+available only through the explicit provider endpoint for operational diagnosis;
+they are not part of the primary product dashboard.
 
 ## App media explorer
 

@@ -168,7 +168,6 @@ import {
   sitesService,
   type SitesAnalyticsSummary,
   type SitesVideoAnalyticsDetail,
-  type SitesVideoTimelineReachSegment,
   type PublicSite,
   type PublicSiteDomain,
   type SitesAICreationKind,
@@ -3293,12 +3292,21 @@ const formatSitesTimecode = (value: unknown) => {
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
-const buildSitesReachCurvePoints = (segments: SitesVideoTimelineReachSegment[]) => {
+type SitesVideoCurveSegment = {
+  reachPercent?: number
+  retentionPercent?: number
+}
+
+const getSitesVideoCurvePercent = (segment?: SitesVideoCurveSegment) => (
+  clampSitesPercent(segment?.retentionPercent ?? segment?.reachPercent ?? 0)
+)
+
+const buildSitesReachCurvePoints = (segments: SitesVideoCurveSegment[]) => {
   if (!segments.length) return ''
   const lastIndex = Math.max(1, segments.length - 1)
   return segments.map((segment, index) => {
     const x = (index / lastIndex) * 100
-    const y = 100 - clampSitesPercent(segment.reachPercent)
+    const y = 100 - getSitesVideoCurvePercent(segment)
     return `${x.toFixed(2)},${y.toFixed(2)}`
   }).join(' ')
 }
@@ -12030,8 +12038,7 @@ export const Sites: React.FC = () => {
     sitesService.getVideoAnalytics(sitesAnalyticsVideoId, {
       ...getSitesAnalyticsRange(dateRange.start, dateRange.end),
       siteId: sitesAnalyticsSiteId || undefined,
-      viewerLimit: 200,
-      includeProviderAnalytics: true
+      viewerLimit: 200
     })
       .then((analytics) => {
         if (!cancelled) setSitesVideoAnalytics(analytics)
@@ -47022,24 +47029,6 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const videoRowsByWatchTime = aggregateVideoStats?.topAssetsByWatch || []
   const firstPartyTracking = analytics?.firstPartyTracking || null
   const firstPartySummary = firstPartyTracking?.summary || null
-  const providerAnalytics = analytics?.providerAnalytics || null
-  const providerSummary = providerAnalytics?.summary || null
-  const providerViewsChart = buildSitesChartPoints(providerAnalytics?.viewsChart || [])
-  const providerWatchTimeChart = buildSitesChartPoints(providerAnalytics?.watchTimeChart || [])
-  const providerEngagementScore = providerSummary?.engagementScore !== null &&
-    providerSummary?.engagementScore !== undefined &&
-    Number(providerSummary.engagementScore) >= 0
-    ? Number(providerSummary.engagementScore)
-    : null
-  const providerStatusLabel = analytics?.providerAnalyticsError
-    ? 'No disponible'
-    : providerAnalytics?.status === 'ready'
-      ? 'Respuesta de Bunny'
-      : providerAnalytics?.status === 'not_synced'
-        ? 'Sin Stream asociado'
-        : providerAnalytics?.status === 'not_configured' || providerAnalytics?.status === 'disabled'
-          ? 'Stream no configurado'
-          : 'Sin respuesta'
   const selectedVideoMode = Boolean(selectedVideoId)
   const totalVideoViews = aggregateVideoSummary?.playbackStarts ?? aggregateVideoSummary?.plays ?? null
   const totalVideoWatchTime = aggregateVideoSummary?.watchedSeconds ?? null
@@ -47140,8 +47129,25 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
       []
   )
   const reachSegments = firstPartyTracking?.timelineReachCurve || []
-  const retentionCurvePoints = buildSitesReachCurvePoints(reachSegments)
+  const measuredRetentionSegments = firstPartyTracking?.retentionSegments || []
+  const retentionCurveSegments = measuredRetentionSegments.length ? measuredRetentionSegments : reachSegments
+  const retentionCurvePoints = buildSitesReachCurvePoints(retentionCurveSegments)
   const retentionAreaPath = buildSitesRetentionAreaPath(retentionCurvePoints)
+  const lastRetentionPercent = getSitesVideoCurvePercent(retentionCurveSegments[retentionCurveSegments.length - 1])
+  const largestRetentionDrop = measuredRetentionSegments.reduce((largest, segment, index) => {
+    if (index === 0) return largest
+    const previous = getSitesVideoCurvePercent(measuredRetentionSegments[index - 1])
+    const current = getSitesVideoCurvePercent(segment)
+    const drop = Math.max(0, previous - current)
+    return drop > largest.drop ? { drop, label: segment.label } : largest
+  }, { drop: 0, label: '' })
+  const watchTimeQualityLabel = firstPartyTracking?.quality?.watchTimeStatus === 'exact'
+    ? 'Intervalos directos'
+    : firstPartyTracking?.quality?.watchTimeStatus === 'mixed'
+      ? 'Directos + recuperados'
+      : firstPartyTracking?.quality?.watchTimeStatus === 'inferred'
+        ? 'Recuperados del avance'
+        : 'Sin intervalos todavía'
   const retentionPlayheadStyle = {
     '--video-retention-playhead': `${retentionPlaybackPercent}%`
   } as React.CSSProperties
@@ -47150,6 +47156,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   } as React.CSSProperties
   const retentionDisplayDuration = retentionDurationSeconds ||
     readSitesNumber(selectedVideo?.duration) ||
+    measuredRetentionSegments[measuredRetentionSegments.length - 1]?.endSeconds ||
     reachSegments[reachSegments.length - 1]?.endSeconds ||
     0
   const videoViewers = firstPartyTracking?.viewers || []
@@ -47583,8 +47590,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           <div className={styles.videoRetentionPanel}>
             <div className={styles.videoRetentionHeader}>
               <div>
-                <span>Curva de alcance</span>
-                <strong>{reachSegments.length ? `${formatSitesPercent(reachSegments[reachSegments.length - 1]?.reachPercent)} alcanzó el último tramo` : 'Sin datos'}</strong>
+                <span>Retención real</span>
+                <strong>{retentionCurveSegments.length ? `${formatSitesPercent(lastRetentionPercent)} vio el último tramo` : 'Sin datos'}</strong>
               </div>
               {loadingVideoAnalytics && <em>Actualizando...</em>}
             </div>
@@ -47635,7 +47642,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                 onLostPointerCapture={stopRetentionScrubbing}
                 onKeyDown={handleRetentionScrubKeyDown}
               >
-                {reachSegments.length && retentionCurvePoints ? (
+                {retentionCurveSegments.length && retentionCurvePoints ? (
                   <>
                     <svg className={styles.videoRetentionCurve} viewBox="0 0 100 100" preserveAspectRatio="none">
                       <path d={retentionAreaPath} />
@@ -47651,8 +47658,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                 ) : null}
                 <span className={styles.videoRetentionPlayhead} aria-hidden="true" />
               </div>
-              {!reachSegments.length || !retentionCurvePoints ? (
-                <div className={styles.videoRetentionEmptyNote}>Aún no hay suficientes reproducciones para dibujar la curva de alcance.</div>
+              {!retentionCurveSegments.length || !retentionCurvePoints ? (
+                <div className={styles.videoRetentionEmptyNote}>Aún no hay suficientes reproducciones para dibujar la retención.</div>
               ) : null}
               {retentionPreviewUrl ? (
                 <div className={styles.videoRetentionControls}>
@@ -47731,32 +47738,20 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           <section className={styles.videoAnalyticsSection}>
             <div className={styles.videoAnalyticsSectionHeader}>
               <div>
-                <span>Bunny Stream · comparación del proveedor</span>
-                <strong>{providerStatusLabel}</strong>
+                <span>Lectura de retención</span>
+                <strong>Medición de Ristak</strong>
               </div>
             </div>
-            {analytics?.providerAnalyticsError ? (
-              <div className={styles.sitesAnalyticsChartEmpty}>
-                Bunny no pudo entregar sus estadísticas: {analytics.providerAnalyticsError}
-              </div>
-            ) : providerAnalytics?.status === 'ready' ? (
-              <>
-                {renderDetailRows([
-                  { key: 'provider-views', icon: <Play size={15} />, label: 'Vistas reportadas por Bunny', value: formatSitesCompactNumber(providerSummary?.views) },
-                  { key: 'provider-watch', icon: <Clock3 size={15} />, label: 'Tiempo visto reportado', value: formatSitesSeconds(providerSummary?.watchTime) },
-                  { key: 'provider-average', icon: <Flame size={15} />, label: 'Promedio por vista', value: formatSitesSeconds(providerSummary?.averageWatchTime) },
-                  { key: 'provider-engagement', icon: <BarChart3 size={15} />, label: 'Engagement de Bunny', value: formatSitesPercent(providerEngagementScore) },
-                  { key: 'provider-country', icon: <Globe2 size={15} />, label: 'País principal', value: providerSummary?.topCountry || 'Sin dato' }
-                ], 'Bunny no devolvió métricas para este periodo.')}
-                <p className={styles.sitesAnalyticsDetailEmpty}>
-                  Esta lectura no reemplaza la medición first-party de Ristak; sirve para comparar lo que Bunny registró en el Stream.
-                </p>
-              </>
-            ) : (
-              <div className={styles.sitesAnalyticsChartEmpty}>
-                Este archivo todavía no tiene un Stream listo para consultar. Sus métricas first-party siguen disponibles arriba.
-              </div>
-            )}
+            {renderDetailRows([
+              { key: 'retention-start', icon: <Play size={15} />, label: 'Retención al inicio', value: measuredRetentionSegments.length ? formatSitesPercent(measuredRetentionSegments[0]?.retentionPercent) : 'Sin dato' },
+              { key: 'retention-end', icon: <CheckCircle2 size={15} />, label: 'Retención en el último tramo', value: measuredRetentionSegments.length ? formatSitesPercent(lastRetentionPercent) : 'Sin dato' },
+              { key: 'retention-drop', icon: <ArrowDown size={15} />, label: largestRetentionDrop.label ? `Mayor caída · ${largestRetentionDrop.label}` : 'Mayor caída', value: measuredRetentionSegments.length ? formatSitesPercent(largestRetentionDrop.drop) : 'Sin dato' },
+              { key: 'retention-segments', icon: <BarChart3 size={15} />, label: 'Tramos medidos', value: formatSitesCompactNumber(measuredRetentionSegments.length) },
+              { key: 'retention-quality', icon: <Flame size={15} />, label: 'Cálculo de tiempo visto', value: watchTimeQualityLabel }
+            ], 'Todavía no hay intervalos de reproducción para calcular la retención.')}
+            <p className={styles.sitesAnalyticsDetailEmpty}>
+              Ristak calcula esta lectura con la reproducción pública y excluye las vistas abiertas con no-track.
+            </p>
           </section>
         </div>
 
@@ -47796,41 +47791,6 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           </div>
         )}
 
-        {providerAnalytics?.status === 'ready' && (providerViewsChart.length || providerWatchTimeChart.length) && (
-          <div className={styles.videoStreamCharts}>
-            {providerViewsChart.length ? (
-              <div className={styles.sitesAnalyticsChartBlock}>
-                <div className={styles.sitesAnalyticsChartTitle}>
-                  <span>Vistas de Bunny por periodo</span>
-                  <strong>{formatSitesCompactNumber(providerSummary?.views)}</strong>
-                </div>
-                <AreaChart
-                  data={providerViewsChart}
-                  height={190}
-                  showLegend={false}
-                  formatValue={(value) => formatSitesCompactNumber(value)}
-                  formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} vistas de Bunny`}
-                />
-              </div>
-            ) : null}
-            {providerWatchTimeChart.length ? (
-              <div className={styles.sitesAnalyticsChartBlock}>
-                <div className={styles.sitesAnalyticsChartTitle}>
-                  <span>Tiempo visto de Bunny por periodo</span>
-                  <strong>{formatSitesSeconds(providerSummary?.watchTime)}</strong>
-                </div>
-                <AreaChart
-                  data={providerWatchTimeChart}
-                  height={190}
-                  color="var(--pos)"
-                  showLegend={false}
-                  formatValue={(value) => formatSitesSeconds(value)}
-                  formatTooltipValue={(value) => `${formatSitesSeconds(value)} reportados por Bunny`}
-                />
-              </div>
-            ) : null}
-          </div>
-        )}
       </div>
     )
   }

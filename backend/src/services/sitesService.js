@@ -27427,6 +27427,7 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
         pendingWatchFromSeconds: null,
         pendingWatchToSeconds: null,
         isPlaying: false,
+        hasPlaybackStarted: false,
         isBuffering: false,
         hasRenderedFirstFrame: false
       });
@@ -27437,7 +27438,7 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
           state.sentMilestones.add(hitMilestone);
           return true;
         }
-        if (now - state.lastSentAt >= 5000 && Math.abs(position - state.lastPosition) >= 1) return true;
+        if (now - state.lastSentAt >= 10000 && Math.abs(position - state.lastPosition) >= 1) return true;
         return false;
       };
       const updateStateTiming = (state, seconds, duration, options = {}) => {
@@ -27528,6 +27529,12 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
         state.videoProvider = state.videoProvider || 'html5_video';
         const emit = (eventName, force = false, beacon = false, accrue = true, preservePosition = false) => {
           if (video.dataset.rstkVideoPreviewing === 'true' && eventName !== 'video_ready' && eventName !== 'video_error') return;
+          if (eventName === 'video_play') {
+            state.hasPlaybackStarted = true;
+            state.isPlaying = true;
+          } else if (!state.hasPlaybackStarted && eventName !== 'video_ready' && eventName !== 'video_error') {
+            return;
+          }
           const duration = Number.isFinite(video.duration) ? video.duration : state.durationSeconds;
           const position = preservePosition ? state.positionSeconds : video.currentTime || 0;
           const info = updateStateTiming(state, position, duration || 0, { accrue });
@@ -27544,16 +27551,24 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
             progressPercent: percent,
             ...pendingWatch
           }, { beacon });
-          if (eventName === 'video_play') state.isPlaying = true;
           if (eventName === 'video_pause' || eventName === 'video_ended' || eventName === 'video_error') {
             state.isPlaying = false;
             state.isBuffering = false;
           }
         };
+        const ensurePlaybackStarted = () => {
+          if (state.hasPlaybackStarted || video.dataset.rstkVideoPreviewing === 'true') return false;
+          if (video.paused || video.ended) return false;
+          if (!video.autoplay && video.dataset.rstkVideoRealPlayed !== 'true') return false;
+          emit('video_play', true, false, false);
+          return state.hasPlaybackStarted;
+        };
         video.addEventListener('loadedmetadata', () => emit('video_ready', true));
-        video.addEventListener('play', () => emit('video_play', true));
+        video.addEventListener('play', () => emit('video_play', true, false, false));
         video.addEventListener('playing', () => {
           if (video.dataset.rstkVideoPreviewing === 'true') return;
+          ensurePlaybackStarted();
+          if (!state.hasPlaybackStarted) return;
           if (!state.hasRenderedFirstFrame) {
             state.hasRenderedFirstFrame = true;
             emit('video_playing', true);
@@ -27584,8 +27599,18 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
         });
         video.addEventListener('ended', () => emit('video_ended', true, true));
         video.addEventListener('error', () => emit('video_error', true, true));
-        video.addEventListener('timeupdate', () => emit('video_progress', false));
-        window.addEventListener('pagehide', () => emit('video_progress', true, true));
+        video.addEventListener('timeupdate', () => {
+          const startedNow = ensurePlaybackStarted();
+          if (!state.hasPlaybackStarted) return;
+          if (startedNow && !state.hasRenderedFirstFrame) {
+            state.hasRenderedFirstFrame = true;
+            emit('video_playing', true, false, false);
+          }
+          emit('video_progress', false);
+        });
+        window.addEventListener('pagehide', () => {
+          if (state.hasPlaybackStarted) emit('video_progress', true, true);
+        });
       };
       const attach = () => {
         document.querySelectorAll('iframe').forEach(trackBunnyIframe);

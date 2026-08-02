@@ -1257,9 +1257,10 @@ compartido entre varios Sites aparece con todos sus orígenes publicados aunque
 `module_entity_id` sea nulo o viejo. El selector y el preview son paginados, pero
 `inventory`, `topAssetsByStarts` y `topAssetsByWatch` salen del alcance completo
 en servidor. Un video guardado sin Bunny Stream conserva analitica first-party;
-la respuesta de Bunny se consulta al seleccionar el video, aparece en un bloque
-separado y nunca rellena o reemplaza la medicion propia, ni siquiera si el
-proveedor devuelve cero. Los videos del formulario interno de calendario se
+el detalle ya no consulta ni muestra la respuesta de Bunny: reproducciones,
+tiempo visto, visitantes y retencion salen del ledger de Ristak. La consulta del
+proveedor queda como diagnostico operativo separado. Los videos del formulario
+interno de calendario se
 excluyen del inventario y de todos los scopes analiticos. Cuando la interfaz
 selecciona un origen exacto, el detalle de ese video transmite `siteId` hasta el
 ledger: tarjetas, curva y espectadores no mezclan otras páginas que reutilicen
@@ -1281,15 +1282,24 @@ pausar, buscar, terminar o salir; un seek cambia alcance pero no fabrica segundo
 vistos.
 
 `playerLoads` cuenta primeros `video_ready`; `playbackStarts`, primeros
-`video_play`; `uniqueViewers`, identidades de esas reproducciones;
-`watchedSeconds`, deltas aceptados dentro del rango; y
+`video_play` o un inicio recuperado desde reproducción/avance real cuando ese
+evento faltó durante la transición del preview; `uniqueViewers`, identidades de
+esas reproducciones; `watchedSeconds`, deltas aceptados dentro del rango o
+diferencias históricas conservadoras de hasta 10 segundos entre eventos
+consecutivos separados por no más de 30 segundos; y
 `completedPlaybacks`, solo reproducciones con `video_ended`. Reanudar no crea un
-nuevo inicio y alcanzar 99% mediante seek no completa. La grafica derivada del
-maximo playhead se llama `timelineReachCurve` o **Curva de alcance**, nunca
-retencion. No existe heatmap de intervalos mientras esa telemetria no este
-disponible. El detalle por video agrupa páginas y bloques desde sus columnas
+nuevo inicio, un seek no suma tiempo y alcanzar 99% mediante seek no completa.
+El contrato v3 conserva `timelineReachCurve` para el punto maximo alcanzado y
+agrega 20 `retentionSegments` basados en intersecciones de intervalos realmente
+vistos; el heatmap usa la misma intensidad. El detalle por video agrupa páginas y bloques desde sus columnas
 canónicas; la consulta debe funcionar igual con el `GROUP BY` estricto de
 PostgreSQL y con SQLite.
+
+El heartbeat regular se envia cada 10 segundos y los hitos/pausa/seek/cierre
+siguen vaciando el acumulado. `payload_json` ya no duplica URL, dispositivo y
+contexto completo en cada progreso: esas dimensiones viven normalizadas y el
+JSON conserva solo red/QoE o errores. Esto reduce el crecimiento futuro sin
+eliminar histórico ni crear tablas nuevas.
 
 El motor de video también mide calidad de reproducción: el primer
 `video_playing` contra el primer `video_play` produce

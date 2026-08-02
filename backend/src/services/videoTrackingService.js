@@ -122,11 +122,38 @@ function normalizeVideoEventName(value) {
 
 function parseJsonPayload(value) {
   try {
-    const raw = JSON.stringify(value || {})
+    const raw = JSON.stringify(value)
     return raw.length > 8000 ? raw.slice(0, 8000) : raw
   } catch {
-    return '{}'
+    return null
   }
+}
+
+function buildCompactVideoPayload(data = {}, eventName = '') {
+  const compact = {}
+  const includeNetworkContext = new Set([
+    'video_ready',
+    'video_playing',
+    'video_buffer_start',
+    'video_buffer_end',
+    'video_error'
+  ]).has(eventName)
+
+  if (includeNetworkContext) {
+    for (const key of ['connection_type', 'downlink_mbps', 'rtt_ms', 'save_data']) {
+      const value = data[key]
+      if (value !== null && value !== undefined && value !== '') compact[key] = value
+    }
+  }
+
+  if (eventName === 'video_error') {
+    for (const key of ['error_code', 'error_message', 'media_error_code', 'network_state', 'ready_state']) {
+      const value = data[key]
+      if (value !== null && value !== undefined && value !== '') compact[key] = value
+    }
+  }
+
+  return Object.keys(compact).length ? parseJsonPayload(compact) : null
 }
 
 function readVideoData(body = {}) {
@@ -184,7 +211,7 @@ function readVideoData(body = {}) {
     watchFrom: clampNumber(data.watch_from_seconds ?? data.watchFromSeconds, 0, 24 * 60 * 60),
     watchTo: clampNumber(data.watch_to_seconds ?? data.watchToSeconds, 0, 24 * 60 * 60),
     watchedDelta: clampNumber(data.watched_delta_seconds ?? data.watchedDeltaSeconds, 0, 30) || 0,
-    payloadJson: parseJsonPayload(data)
+    payloadJson: buildCompactVideoPayload(data, eventName)
   }
 }
 
@@ -1505,7 +1532,10 @@ function buildVideoLedgerCte(scope, dateFilters = {}) {
   const readyRangeParams = []
   const playRangeParams = []
   const readyInRange = buildLedgerTimestampCondition('first_ready_at', dateFilters, readyRangeParams)
-  const playInRange = buildLedgerTimestampCondition('first_play_at', dateFilters, playRangeParams)
+  const playInRange = buildLedgerTimestampCondition('first_playback_start_at', dateFilters, playRangeParams)
+  const eventGapSeconds = isPostgresRuntime
+    ? 'EXTRACT(EPOCH FROM ((event_at)::timestamptz - (previous_event_at)::timestamptz))'
+    : '(julianday(event_at) - julianday(previous_event_at)) * 86400.0'
   return {
     params: [
       ...rangeFlag.params,
@@ -1514,7 +1544,7 @@ function buildVideoLedgerCte(scope, dateFilters = {}) {
       ...playRangeParams
     ],
     sql: `
-      WITH scoped_events AS (
+      WITH ordered_events AS (
         SELECT
           e.*,
           ${resolvedVideoEventAssetIdExpression('e')} AS resolved_media_asset_id,
@@ -1523,14 +1553,71 @@ function buildVideoLedgerCte(scope, dateFilters = {}) {
             ORDER BY e.event_at DESC, COALESCE(e.event_sequence, 0) DESC, e.id DESC
           ) AS playback_event_rank,
           ${rangeFlag.sql} AS in_range,
-          CASE
-            WHEN COALESCE(e.watched_delta_seconds, 0) >= 0
-             AND COALESCE(e.watched_delta_seconds, 0) <= 30
-            THEN COALESCE(e.watched_delta_seconds, 0)
-            ELSE 0
-          END AS accepted_delta
+          LAG(e.position_seconds) OVER (
+            PARTITION BY e.playback_id
+            ORDER BY e.event_at ASC, COALESCE(e.event_sequence, 0) ASC, e.id ASC
+          ) AS previous_position_seconds,
+          LAG(e.event_at) OVER (
+            PARTITION BY e.playback_id
+            ORDER BY e.event_at ASC, COALESCE(e.event_sequence, 0) ASC, e.id ASC
+          ) AS previous_event_at
         FROM video_playback_events e
         ${scope.where}
+      ),
+      normalized_events AS (
+        SELECT
+          ordered_events.*,
+          COALESCE(watched_delta_seconds, 0) AS stored_delta,
+          position_seconds - previous_position_seconds AS position_delta,
+          ${eventGapSeconds} AS event_gap_seconds
+        FROM ordered_events
+      ),
+      scoped_events AS (
+        SELECT
+          normalized_events.*,
+          CASE
+            WHEN stored_delta > 0 AND stored_delta <= 30
+            THEN stored_delta
+            WHEN event_name IN ('video_timeupdate', 'video_progress', 'video_playing', 'video_pause', 'video_ended')
+             AND position_delta > 0 AND position_delta <= 10
+             AND event_gap_seconds > 0 AND event_gap_seconds <= 30
+            THEN position_delta
+            ELSE 0
+          END AS accepted_delta,
+          CASE
+            WHEN stored_delta > 0 AND stored_delta <= 30
+             AND watch_from_seconds IS NOT NULL AND watch_to_seconds IS NOT NULL
+             AND watch_to_seconds > watch_from_seconds
+            THEN watch_from_seconds
+            WHEN stored_delta > 0 AND stored_delta <= 30
+            THEN CASE WHEN position_seconds - stored_delta < 0 THEN 0 ELSE position_seconds - stored_delta END
+            WHEN event_name IN ('video_timeupdate', 'video_progress', 'video_playing', 'video_pause', 'video_ended')
+             AND position_delta > 0 AND position_delta <= 10
+             AND event_gap_seconds > 0 AND event_gap_seconds <= 30
+            THEN previous_position_seconds
+            ELSE NULL
+          END AS accepted_watch_from_seconds,
+          CASE
+            WHEN stored_delta > 0 AND stored_delta <= 30
+             AND watch_from_seconds IS NOT NULL AND watch_to_seconds IS NOT NULL
+             AND watch_to_seconds > watch_from_seconds
+            THEN watch_to_seconds
+            WHEN stored_delta > 0 AND stored_delta <= 30
+            THEN position_seconds
+            WHEN event_name IN ('video_timeupdate', 'video_progress', 'video_playing', 'video_pause', 'video_ended')
+             AND position_delta > 0 AND position_delta <= 10
+             AND event_gap_seconds > 0 AND event_gap_seconds <= 30
+            THEN position_seconds
+            ELSE NULL
+          END AS accepted_watch_to_seconds,
+          CASE
+            WHEN stored_delta <= 0
+             AND event_name IN ('video_timeupdate', 'video_progress', 'video_playing', 'video_pause', 'video_ended')
+             AND position_delta > 0 AND position_delta <= 10
+             AND event_gap_seconds > 0 AND event_gap_seconds <= 30
+            THEN 1 ELSE 0
+          END AS inferred_watch_event
+        FROM normalized_events
       ),
       playback_facts AS (
         SELECT
@@ -1548,11 +1635,20 @@ function buildVideoLedgerCte(scope, dateFilters = {}) {
           MAX(CASE WHEN in_range = 1 THEN event_at ELSE NULL END) AS last_event_at,
           MIN(CASE WHEN event_name = 'video_ready' THEN event_at ELSE NULL END) AS first_ready_at,
           MIN(CASE WHEN event_name = 'video_play' THEN event_at ELSE NULL END) AS first_play_at,
+          MIN(CASE
+            WHEN event_name IN ('video_play', 'video_playing', 'video_ended') THEN event_at
+            WHEN event_name IN ('video_timeupdate', 'video_progress', 'video_pause')
+             AND (accepted_delta > 0 OR position_seconds > 0)
+            THEN event_at
+            ELSE NULL
+          END) AS first_playback_start_at,
           MIN(CASE WHEN event_name = 'video_playing' THEN event_at ELSE NULL END) AS first_playing_at,
           MIN(CASE WHEN event_name = 'video_ended' AND in_range = 1 THEN event_at ELSE NULL END) AS first_ended_in_range_at,
           COALESCE(SUM(CASE WHEN in_range = 1 AND event_name = 'video_play' THEN 1 ELSE 0 END), 0) AS range_play_actions,
           COALESCE(SUM(CASE WHEN in_range = 1 AND event_name = 'video_buffer_start' THEN 1 ELSE 0 END), 0) AS range_buffer_starts,
           COALESCE(SUM(CASE WHEN in_range = 1 THEN accepted_delta ELSE 0 END), 0) AS range_watched_seconds,
+          COALESCE(SUM(CASE WHEN in_range = 1 AND stored_delta > 0 AND stored_delta <= 30 THEN 1 ELSE 0 END), 0) AS range_explicit_watch_events,
+          COALESCE(SUM(CASE WHEN in_range = 1 THEN inferred_watch_event ELSE 0 END), 0) AS range_inferred_watch_events,
           COALESCE(MAX(CASE
             WHEN in_range = 1 AND event_name = 'video_ended' THEN 100
             WHEN in_range = 1 THEN progress_percent
@@ -1598,7 +1694,11 @@ function buildVideoLedgerCte(scope, dateFilters = {}) {
             ELSE NULL
           END AS identity_key,
           CASE WHEN ${readyInRange} THEN 1 ELSE 0 END AS ready_in_range,
-          CASE WHEN ${playInRange} THEN 1 ELSE 0 END AS play_in_range
+          CASE WHEN ${playInRange} THEN 1 ELSE 0 END AS play_in_range,
+          CASE
+            WHEN first_play_at IS NULL AND first_playback_start_at IS NOT NULL THEN 1
+            ELSE 0
+          END AS inferred_playback_start
         FROM playback_facts
       )
     `
@@ -1632,7 +1732,7 @@ function buildLedgerAggregateSelect() {
       ELSE NULL
     END), 0) AS average_startup_seconds,
     COALESCE(SUM(CASE
-      WHEN play_in_range = 1 AND first_playing_at IS NOT NULL THEN 1
+      WHEN play_in_range = 1 AND first_play_at IS NOT NULL AND first_playing_at IS NOT NULL THEN 1
       ELSE 0
     END), 0) AS qoe_playback_samples,
     COALESCE(SUM(range_buffer_starts), 0) AS buffering_events,
@@ -1645,12 +1745,15 @@ function buildLedgerAggregateSelect() {
     COALESCE(SUM(CASE
       WHEN play_in_range = 1
        AND first_ended_in_range_at IS NOT NULL
-       AND first_ended_in_range_at >= first_play_at
+       AND first_ended_in_range_at >= first_playback_start_at
       THEN 1 ELSE 0
     END), 0) AS completed_playbacks,
     COALESCE(SUM(range_event_count), 0) AS total_events,
     COALESCE(SUM(verified_event_count), 0) AS verified_events,
     COALESCE(SUM(legacy_event_count), 0) AS legacy_events,
+    COALESCE(SUM(range_explicit_watch_events), 0) AS explicit_watch_events,
+    COALESCE(SUM(range_inferred_watch_events), 0) AS inferred_watch_events,
+    COALESCE(SUM(CASE WHEN play_in_range = 1 THEN inferred_playback_start ELSE 0 END), 0) AS inferred_playback_starts,
     COALESCE(SUM(adjusted_time_event_count), 0) AS adjusted_time_events,
     COALESCE(SUM(CASE WHEN asset_context_count > 1 OR site_context_count > 1 THEN 1 ELSE 0 END), 0) AS context_conflicts
   `
@@ -1718,6 +1821,9 @@ function videoLedgerQualityFromRow(row = {}) {
   const totalEvents = Number(row.total_events || 0)
   const verifiedEvents = Number(row.verified_events || 0)
   const legacyEvents = Number(row.legacy_events || 0)
+  const explicitWatchEvents = Number(row.explicit_watch_events || 0)
+  const inferredWatchEvents = Number(row.inferred_watch_events || 0)
+  const inferredPlaybackStarts = Number(row.inferred_playback_starts || 0)
   const adjustedTimeEvents = Number(row.adjusted_time_events || 0)
   const contextConflicts = Number(row.context_conflicts || 0)
   const status = totalEvents === 0
@@ -1733,6 +1839,12 @@ function videoLedgerQualityFromRow(row = {}) {
     totalEvents,
     verifiedEvents,
     legacyEvents,
+    explicitWatchEvents,
+    inferredWatchEvents,
+    inferredPlaybackStarts,
+    watchTimeStatus: inferredWatchEvents > 0
+      ? (explicitWatchEvents > 0 ? 'mixed' : 'inferred')
+      : (explicitWatchEvents > 0 ? 'exact' : 'empty'),
     adjustedTimeEvents,
     contextConflicts,
     warnings: [
@@ -1744,6 +1856,12 @@ function videoLedgerQualityFromRow(row = {}) {
         : []),
       ...(adjustedTimeEvents > 0
         ? [`${adjustedTimeEvents} evento(s) usaron hora de recepción por timestamp inválido o fuera de tolerancia.`]
+        : []),
+      ...(inferredPlaybackStarts > 0
+        ? [`${inferredPlaybackStarts} reproducción(es) se recuperaron desde avance real porque faltó el evento de inicio.`]
+        : []),
+      ...(inferredWatchEvents > 0
+        ? [`${inferredWatchEvents} intervalo(s) de tiempo visto se reconstruyeron conservadoramente desde posiciones consecutivas.`]
         : [])
     ]
   }
@@ -1790,7 +1908,7 @@ export async function getVideoPlaybackAggregate(input = {}) {
     const emptyQuality = videoLedgerQualityFromRow()
     const emptyCharts = emptyPeriodCharts()
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       dateFrom: dateFilters.dateFrom || '',
       dateTo: dateFilters.dateTo || '',
       meta: {
@@ -1821,7 +1939,7 @@ export async function getVideoPlaybackAggregate(input = {}) {
   const ledger = buildVideoLedgerCte(scope, dateFilters)
   const aggregateSelect = buildLedgerAggregateSelect()
   const startPeriodExpression = buildLedgerPeriodExpression(
-    'first_play_at',
+    'first_playback_start_at',
     hourly,
     dateFilters.appliedTimezone,
     dateFilters
@@ -1972,7 +2090,7 @@ export async function getVideoPlaybackAggregate(input = {}) {
   }
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     dateFrom: dateFilters.dateFrom || '',
     dateTo: dateFilters.dateTo || '',
     meta: {
@@ -2027,7 +2145,7 @@ export async function getVideoPlaybackViewers(input = {}) {
   const ledger = buildVideoLedgerCte(scope, dateFilters)
   const aggregateSelect = buildLedgerAggregateSelect()
   const startPeriodExpression = buildLedgerPeriodExpression(
-    'first_play_at',
+    'first_playback_start_at',
     hourly,
     dateFilters.appliedTimezone,
     dateFilters
@@ -2049,7 +2167,8 @@ export async function getVideoPlaybackViewers(input = {}) {
     viewerRows,
     pageRows,
     blockRows,
-    reachRows
+    reachRows,
+    retentionRows
   ] = await Promise.all([
     db.get(`
       ${ledger.sql}
@@ -2099,10 +2218,10 @@ export async function getVideoPlaybackViewers(input = {}) {
           COALESCE(MAX(range_duration_seconds), 0) AS duration_seconds,
           COALESCE(MAX(CASE
             WHEN first_ended_in_range_at IS NOT NULL
-             AND first_ended_in_range_at >= first_play_at
+             AND first_ended_in_range_at >= first_playback_start_at
             THEN 1 ELSE 0
           END), 0) AS completed,
-          MIN(first_play_at) AS first_event_at,
+          MIN(first_playback_start_at) AS first_event_at,
           MAX(last_event_at) AS last_event_at,
           MAX(CASE WHEN viewer_context_rank = 1 THEN page_url ELSE NULL END) AS page_url,
           MAX(CASE WHEN viewer_context_rank = 1 THEN public_page_id ELSE NULL END) AS public_page_id,
@@ -2167,6 +2286,50 @@ export async function getVideoPlaybackViewers(input = {}) {
         COALESCE(MAX(playbacks.range_duration_seconds), 0) AS duration_seconds
       FROM thresholds
       LEFT JOIN playbacks ON playbacks.play_in_range = 1
+      GROUP BY thresholds.segment, thresholds.start_percent, thresholds.end_percent
+      ORDER BY thresholds.segment ASC
+    `, ledger.params),
+    db.all(`
+      ${ledger.sql},
+      thresholds(segment, start_percent, end_percent) AS (
+        VALUES ${thresholdValues}
+      )
+      SELECT
+        thresholds.segment,
+        thresholds.start_percent,
+        thresholds.end_percent,
+        COUNT(DISTINCT playbacks.playback_id) AS eligible_playbacks,
+        COUNT(DISTINCT CASE
+          WHEN scoped_events.accepted_delta > 0
+           AND scoped_events.accepted_watch_from_seconds IS NOT NULL
+           AND scoped_events.accepted_watch_to_seconds IS NOT NULL
+           AND (
+             (
+               COALESCE(NULLIF(scoped_events.duration_seconds, 0), playbacks.range_duration_seconds) > 0
+               AND scoped_events.accepted_watch_to_seconds > (
+                 COALESCE(NULLIF(scoped_events.duration_seconds, 0), playbacks.range_duration_seconds)
+                 * thresholds.start_percent / 100.0
+               )
+               AND scoped_events.accepted_watch_from_seconds < (
+                 COALESCE(NULLIF(scoped_events.duration_seconds, 0), playbacks.range_duration_seconds)
+                 * thresholds.end_percent / 100.0
+               )
+             )
+             OR (
+               COALESCE(NULLIF(scoped_events.duration_seconds, 0), playbacks.range_duration_seconds) <= 0
+               AND scoped_events.progress_percent >= thresholds.start_percent
+               AND scoped_events.progress_percent < thresholds.end_percent
+             )
+           )
+          THEN playbacks.playback_id
+          ELSE NULL
+        END) AS retained_playbacks,
+        COALESCE(MAX(playbacks.range_duration_seconds), 0) AS duration_seconds
+      FROM thresholds
+      LEFT JOIN playbacks ON playbacks.play_in_range = 1
+      LEFT JOIN scoped_events
+        ON scoped_events.playback_id = playbacks.playback_id
+       AND scoped_events.in_range = 1
       GROUP BY thresholds.segment, thresholds.start_percent, thresholds.end_percent
       ORDER BY thresholds.segment ASC
     `, ledger.params)
@@ -2236,9 +2399,34 @@ export async function getVideoPlaybackViewers(input = {}) {
         : 0
     }
   })
+  const retentionSegments = retentionRows.map((row, index) => {
+    const eligiblePlaybacks = Number(row.eligible_playbacks || 0)
+    const retainedSessions = Number(row.retained_playbacks || 0)
+    const reachedSessions = Number(reachRows[index]?.reached_playbacks || 0)
+    const durationSeconds = Number(row.duration_seconds || 0)
+    const startPercent = Number(row.start_percent || 0)
+    const endPercent = Number(row.end_percent || 0)
+    const retentionPercent = eligiblePlaybacks > 0
+      ? roundMetric((retainedSessions / eligiblePlaybacks) * 100)
+      : 0
+    return {
+      segment: Number(row.segment || 0),
+      startPercent,
+      endPercent,
+      startSeconds: roundMetric((durationSeconds * startPercent) / 100),
+      endSeconds: roundMetric((durationSeconds * endPercent) / 100),
+      label: `${Math.round(startPercent)}-${Math.round(endPercent)}%`,
+      retainedSessions,
+      skippedSessions: Math.max(0, reachedSessions - retainedSessions),
+      replayedSessions: 0,
+      retentionPercent,
+      replayRatePercent: 0,
+      intensity: retentionPercent
+    }
+  })
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     meta: {
       source: 'first_party',
       status: quality.status,
@@ -2257,8 +2445,12 @@ export async function getVideoPlaybackViewers(input = {}) {
     },
     ...periodCharts,
     timelineReachCurve,
-    heatmap: null,
-    retentionSegments: [],
+    heatmap: retentionSegments.map(segment => ({
+      segment: segment.segment,
+      intensity: segment.intensity,
+      label: segment.label
+    })),
+    retentionSegments,
     pages: breakdownFromRows(pageRows),
     blocks: breakdownFromRows(blockRows),
     viewers: viewerRows.map(row => ({

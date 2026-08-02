@@ -253,8 +253,10 @@ test('video playback tracking links anonymous playback to contact after registra
     assert.equal(viewers.viewsChart.reduce((total, point) => total + Number(point.value || 0), 0), 1)
     assert.equal(viewers.watchTimeChart.reduce((total, point) => total + Number(point.value || 0), 0), 8)
     assert.ok(Array.isArray(viewers.retentionSegments))
-    assert.equal(viewers.retentionSegments.length, 0)
-    assert.equal(viewers.heatmap, null)
+    assert.equal(viewers.retentionSegments.length, 20)
+    assert.equal(viewers.retentionSegments[6].retentionPercent, 100)
+    assert.equal(viewers.retentionSegments[8].retentionPercent, 100)
+    assert.equal(viewers.heatmap.length, 20)
     assert.equal(viewers.timelineReachCurve.length, 20)
     assert.equal(viewers.quality.status, 'verified')
     assert.equal(viewers.pages[0].label, 'page_1')
@@ -579,8 +581,77 @@ test('video ledger counts one start across resume, ended-only completion, and ex
     assert.equal(detail.viewers[0].watchedSeconds, 15)
     assert.equal(detail.viewers[0].completed, true)
     assert.equal(detail.timelineReachCurve.at(-1).reachPercent, 100)
-    assert.deepEqual(detail.retentionSegments, [])
-    assert.equal(detail.heatmap, null)
+    assert.equal(detail.retentionSegments.length, 20)
+    assert.equal(detail.retentionSegments[0].retentionPercent, 100)
+    assert.equal(detail.retentionSegments[2].retentionPercent, 100)
+    assert.equal(detail.retentionSegments[3].retentionPercent, 0)
+    assert.equal(detail.heatmap.length, 20)
+  } finally {
+    await db.run('DELETE FROM video_playback_events WHERE playback_id = ?', [playbackId]).catch(() => undefined)
+    await db.run('DELETE FROM video_playback_sessions WHERE playback_id = ?', [playbackId]).catch(() => undefined)
+  }
+})
+
+test('video analytics recovers a real playback and watched time when the native play event was missed', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const playbackId = `playback_video_recovered_${suffix}`
+  const assetId = `asset_video_recovered_${suffix}`
+  const baseTs = Date.now() - 30_000
+  const definitions = [
+    ['video_ready', 0, 0],
+    ['video_progress', 5, 5_000],
+    ['video_progress', 12, 10_000]
+  ]
+
+  try {
+    for (const [index, [eventName, position, offsetMs]] of definitions.entries()) {
+      await recordVideoPlaybackEvent({
+        visitor_id: `visitor_${suffix}`,
+        session_id: `session_${suffix}`,
+        event_name: eventName,
+        ts: baseTs + offsetMs,
+        data: {
+          event_id: `${playbackId}:${index + 1}`,
+          event_sequence: index + 1,
+          ingestion_version: 2,
+          playback_id: playbackId,
+          media_asset_id: assetId,
+          site_id: `site_${suffix}`,
+          page_id: 'page_recovered',
+          block_id: 'block_recovered',
+          position_seconds: position,
+          duration_seconds: 100,
+          watched_delta_seconds: 0,
+          url: 'https://public.example.test/watch',
+          connection_type: '4g'
+        }
+      })
+    }
+
+    const aggregate = await getVideoPlaybackAggregate({ assetIds: [assetId] })
+    assert.equal(aggregate.schemaVersion, 3)
+    assert.equal(aggregate.summary.playbackStarts, 1)
+    assert.equal(aggregate.summary.playActions, 0)
+    assert.ok(Math.abs(aggregate.summary.watchedSeconds - 12) < 0.1)
+    assert.equal(aggregate.quality.inferredPlaybackStarts, 1)
+    assert.equal(aggregate.quality.inferredWatchEvents, 2)
+    assert.equal(aggregate.quality.watchTimeStatus, 'inferred')
+
+    const detail = await getVideoPlaybackViewers({ assetId, limit: 10 })
+    assert.equal(detail.schemaVersion, 3)
+    assert.equal(detail.viewers.length, 1)
+    assert.equal(detail.viewers[0].playCount, 0)
+    assert.ok(Math.abs(detail.viewers[0].watchedSeconds - 12) < 0.1)
+    assert.equal(detail.retentionSegments[0].retentionPercent, 100)
+    assert.equal(detail.retentionSegments[2].retentionPercent, 100)
+
+    const payloadRows = await db.all(
+      'SELECT event_name, payload_json FROM video_playback_events WHERE playback_id = ? ORDER BY event_sequence',
+      [playbackId]
+    )
+    assert.deepEqual(JSON.parse(payloadRows[0].payload_json), { connection_type: '4g' })
+    assert.equal(payloadRows[1].payload_json, null)
+    assert.equal(payloadRows[2].payload_json, null)
   } finally {
     await db.run('DELETE FROM video_playback_events WHERE playback_id = ?', [playbackId]).catch(() => undefined)
     await db.run('DELETE FROM video_playback_sessions WHERE playback_id = ?', [playbackId]).catch(() => undefined)

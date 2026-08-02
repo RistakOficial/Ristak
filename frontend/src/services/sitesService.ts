@@ -1,6 +1,15 @@
 import apiClient from './apiClient'
 import { apiUrl, getApiBaseUrl } from './apiBaseUrl'
-import type { FirstPartyVideoTracking, MediaAsset, MediaAssetPage, MediaStreamAnalytics, MediaStreamAnalyticsInput, StreamChartPoint } from './mediaService'
+import type {
+  FirstPartyVideoRetentionSegment,
+  FirstPartyVideoTracking,
+  MediaAsset,
+  MediaAssetPage,
+  MediaStreamAnalytics,
+  MediaStreamAnalyticsInput,
+  StreamChartPoint,
+  StreamHeatmapPoint
+} from './mediaService'
 import { withRequestTimeout } from './requestTimeout'
 
 const SITES_VIEW_REQUEST_TIMEOUT_MS = 20_000
@@ -477,6 +486,10 @@ export interface SitesVideoAnalyticsQuality {
   totalEvents: number
   verifiedEvents: number
   legacyEvents: number
+  explicitWatchEvents: number
+  inferredWatchEvents: number
+  inferredPlaybackStarts: number
+  watchTimeStatus: 'empty' | 'exact' | 'mixed' | 'inferred'
   adjustedTimeEvents: number
   contextConflicts: number
   warnings: string[]
@@ -499,7 +512,7 @@ export type SitesFirstPartyVideoTracking = Omit<
   FirstPartyVideoTracking,
   'summary' | 'retentionSegments'
 > & {
-  schemaVersion: 2
+  schemaVersion: 3
   meta: {
     source: 'first_party'
     status: 'empty' | 'legacy_only' | 'mixed_legacy' | 'verified'
@@ -516,12 +529,12 @@ export type SitesFirstPartyVideoTracking = Omit<
     watchedSeconds: StreamChartPoint[]
   }
   timelineReachCurve: SitesVideoTimelineReachSegment[]
-  retentionSegments: []
-  heatmap: null
+  retentionSegments: FirstPartyVideoRetentionSegment[]
+  heatmap: StreamHeatmapPoint[]
 }
 
 export interface SitesVideoAnalyticsAggregate {
-  schemaVersion: 2
+  schemaVersion: 3
   dateFrom: string
   dateTo: string
   meta: {

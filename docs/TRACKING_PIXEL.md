@@ -630,6 +630,12 @@ proyección. Un retry idéntico responde como deduplicado sin volver a sumar; el
 mismo ID o secuencia con otro payload se rechaza. El reproductor acumula
 `watched_delta_seconds` entre heartbeats y vacía el acumulado al pausar, buscar,
 terminar o salir. Saltar con seek no cuenta el tramo saltado como tiempo visto.
+El heartbeat regular es de 10 segundos; los hitos porcentuales, pausa, seek,
+finalización y `pagehide` siguen forzando flush para no perder el cierre. Las
+filas frecuentes ya no repiten todo el contexto del navegador en `payload_json`:
+identidad, Site, bloque, posición y duración viven en columnas normalizadas, y
+el JSON conserva sólo señales compactas de red/QoE o detalle de error cuando
+aplica.
 Las migraciones versionadas `136*` agregan estos campos e índices a instalaciones
 existentes antes de que el backend quede listo; un esquema parcial detiene el
 arranque en vez de perder o duplicar eventos silenciosamente. En PostgreSQL cada
@@ -639,7 +645,10 @@ método B-tree, columnas, unicidad y predicado, no sólo el nombre.
 Las definiciones canónicas son:
 
 - carga: primer `video_ready` de un playback;
-- reproducción iniciada: primer `video_play`; reanudar no suma otra;
+- reproducción iniciada: primer `video_play`; si el cambio de preview a
+  reproducción real ocurrió sin ese evento, la lectura recupera un único inicio
+  desde `video_playing`, `video_ended` o avance positivo verificable. Reanudar no
+  suma otra;
 - primer cuadro visible: primer `video_playing`; la diferencia contra el primer
   `video_play` produce `averageStartupSeconds`;
 - rebuffer: cada `video_buffer_start` posterior al primer cuadro; `playing`
@@ -647,11 +656,23 @@ Las definiciones canónicas son:
   `bufferingEvents`, `playbacksWithBuffering` y
   `bufferingEventsPerPlayback`; su denominador es `qoePlaybackSamples`, no el
   histórico anterior a esta telemetría;
-- tiempo visto: suma de deltas aceptados por `event_at`;
+- tiempo visto: suma de deltas aceptados por `event_at`. Para eventos históricos
+  que llegaron con delta cero, el ledger puede reconstruir de forma conservadora
+  una diferencia positiva de hasta 10 segundos entre posiciones consecutivas,
+  siempre que los eventos estén separados por no más de 30 segundos; un
+  `video_seeked` nunca fabrica tiempo;
 - completada: existe `video_ended`; llegar o buscar hasta 99% no completa;
-- alcance: máximo playhead alcanzado, presentado como **Curva de alcance**, no
-  retención;
-- heatmap de intervalos: no disponible mientras no exista telemetría suficiente.
+- alcance: máximo playhead alcanzado; permanece disponible por separado como
+  `timelineReachCurve` y no se confunde con retención;
+- retención: `retentionSegments` divide el video en 20 tramos y cuenta playbacks
+  cuyo intervalo visto realmente intersectó cada tramo. `heatmap` refleja esa
+  misma intensidad; buscar hacia adelante puede aumentar alcance, pero no
+  retención.
+
+La respuesta de detalle usa `schemaVersion = 3` y declara en `quality`
+`explicitWatchEvents`, `inferredWatchEvents`, `inferredPlaybackStarts` y
+`watchTimeStatus = empty|exact|mixed|inferred`. La inferencia repara huecos de
+telemetría; no inventa identificación ni crea filas nuevas en la base.
 
 Los eventos de calidad adjuntan, cuando el navegador lo permite,
 `connection_type`, `downlink_mbps`, `rtt_ms` y `save_data`. Son señales
@@ -679,13 +700,14 @@ El histórico previo a v2 puede sumar retries dos veces en la proyección y, al
 mismo tiempo, perder segundos o eventos repetidos en el ledger. No se debe
 backfillear una fuente desde la otra. La respuesta declara `quality` como
 `verified`, `mixed_legacy`, `legacy_only` o `empty`; cualquier valor legacy debe
-mostrarse con advertencia. Bunny u otro proveedor puede aparecer como comparación
-separada, nunca como fallback de la medición first-party. El detalle de un asset
+mostrarse con advertencia. Bunny u otro proveedor nunca es fallback de la
+medición first-party. El detalle de un asset
 acepta `siteId`: si se eligió un origen exacto, todas sus métricas y espectadores
 quedan limitados a ese sitio aunque el mismo video exista en otros. La interfaz
-solicita la estadística de Bunny sólo para el video seleccionado y la rotula como
-comparación del proveedor; una respuesta en cero se muestra como cero y jamás
-borra reproducciones first-party reales.
+de Sites usa exclusivamente Ristak para reproducciones, tiempo visto, retención y
+visitantes; no consulta Bunny al abrir el detalle. El endpoint del proveedor
+permanece disponible para diagnóstico operativo explícito, fuera de la lectura
+principal del producto.
 
 ### Matriz Rápida De Diagnóstico
 

@@ -557,6 +557,10 @@ test('el frontend pide previews por streamVideoId y resume Sites por scope sin e
   assert.match(backendSitesSource, /player\.on\('seeked', timing => emit\('video_seeked', timing \|\| \{\}, true, false, false\)\)/)
   assert.match(backendSitesSource, /window\.addEventListener\('pagehide', \(\) => \{\s*emit\('video_progress', \{\s*seconds: state\.positionSeconds,[\s\S]*?\}, true, true, false\)/)
   assert.match(backendSitesSource, /video\.addEventListener\('seeking', \(\) => \{[\s\S]*?emit\('video_progress', true, false, false, true\)/)
+  assert.match(backendSitesSource, /now - state\.lastSentAt >= 10000/)
+  assert.match(backendSitesSource, /const ensurePlaybackStarted = \(\) =>/)
+  assert.match(backendSitesSource, /video\.dataset\.rstkVideoRealPlayed !== 'true'/)
+  assert.match(backendSitesSource, /video\.addEventListener\('timeupdate', \(\) => \{\s*const startedNow = ensurePlaybackStarted\(\)/)
 
   const analyticsHandlerStart = controllerSource.indexOf('export async function getSitesAnalyticsSummaryHandler')
   const analyticsHandlerEnd = controllerSource.indexOf('\nexport async function ', analyticsHandlerStart + 1)
@@ -625,7 +629,10 @@ test('el frontend pide previews por streamVideoId y resume Sites por scope sin e
   const videoDetailCallEnd = frontendSource.indexOf('})\n      .then', videoDetailCallStart)
   const videoDetailCall = frontendSource.slice(videoDetailCallStart, videoDetailCallEnd)
   assert.match(videoDetailCall, /siteId:\s*sitesAnalyticsSiteId\s*\|\|\s*undefined/)
-  assert.match(videoDetailCall, /includeProviderAnalytics:\s*true/)
+  assert.doesNotMatch(videoDetailCall, /includeProviderAnalytics/)
+  assert.doesNotMatch(frontendSource, /Bunny Stream · comparación del proveedor/)
+  assert.match(frontendSource, /Retención real/)
+  assert.match(frontendSource, /Medición de Ristak/)
 
   const videoDetailServiceStart = frontendServiceSource.indexOf('getVideoAnalytics(assetId: string')
   const videoDetailServiceEnd = frontendServiceSource.indexOf('\n  verifyDomain(', videoDetailServiceStart)
