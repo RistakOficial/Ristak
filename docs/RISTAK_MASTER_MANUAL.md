@@ -1400,6 +1400,13 @@ filtro, sin perder su restricción existente.
 
 Las plantillas de WhatsApp son snapshots locales: una lectura vacia no dispara
 `refresh` al proveedor; sincronizar sigue siendo una accion explicita.
+Configuracion presenta carpetas, subcarpetas y plantillas dentro de una sola
+tabla navegable. La ruta superior permite volver a cualquier nivel y tambien
+funciona como destino de arrastre; las filas de carpeta se abren en la misma
+superficie y aceptan plantillas u otras carpetas, mientras que crear una carpeta
+la coloca en la ubicacion que el usuario esta viendo. La raiz contiene las
+plantillas sin carpeta y las carpetas de primer nivel; no existe una columna
+lateral separada que duplique la jerarquia.
 
 La accion **Cambiar canal de respuesta predeterminado** guarda, para el contacto
 que atraviesa el nodo, el canal que debe aparecer seleccionado al abrir una

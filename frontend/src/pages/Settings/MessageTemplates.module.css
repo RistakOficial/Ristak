@@ -39,10 +39,7 @@
 }
 
 .managerGrid {
-  display: grid;
-  grid-template-columns: 258px minmax(0, 1fr);
-  align-items: start;
-  gap: 24px;
+  min-width: 0;
 }
 
 .editorGrid {
@@ -65,30 +62,6 @@
   padding: 16px;
 }
 
-.folders {
-  position: sticky;
-  top: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
-
-.folderHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 0 2px 8px;
-}
-
-.folderHeader strong {
-  color: var(--color-text-primary);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.folderHeader span,
 .toolbarCount,
 .filterCount,
 .emptyState span {
@@ -97,139 +70,6 @@
   line-height: 1.45;
 }
 
-.folderItem,
-.folderRow button:first-child {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 40px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-  text-align: left;
-}
-
-.folderItem {
-  padding: 0 10px;
-}
-
-.folderRow button:first-child {
-  padding: 0 8px 0 10px;
-}
-
-.folderItem:hover,
-.folderRow button:first-child:hover {
-  background: rgba(148, 163, 184, 0.08);
-  color: var(--color-text-primary);
-}
-
-.folderItem span,
-.folderRow span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.folderItem b,
-.folderRow b {
-  color: var(--color-text-tertiary);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 500;
-  min-width: 16px;
-  text-align: right;
-}
-
-.folderItemActive,
-.folderRowActive button:first-child {
-  border-color: rgba(148, 163, 184, 0.24);
-  background: var(--color-background-primary);
-  color: var(--color-text-primary);
-  box-shadow: 0 10px 24px -20px rgba(15, 23, 42, 0.45);
-}
-
-.folderDropActive,
-.folderDropActive button:first-child {
-  border-color: rgba(16, 185, 129, 0.36);
-  background: rgba(16, 185, 129, 0.1);
-  color: var(--color-text-primary);
-}
-
-.folderList {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  overflow: visible;
-}
-
-.folderRow {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px;
-  align-items: center;
-  gap: 4px;
-  border-radius: 8px;
-}
-
-.folderSystemRow {
-  min-height: 40px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.folderSystemRow button:first-child {
-  min-height: 38px;
-  border: 0;
-  background: transparent;
-}
-
-.folderSystemRow:hover {
-  background: rgba(148, 163, 184, 0.08);
-}
-
-.folderSystemRow:hover button:first-child,
-.folderSystemRowActive button:first-child {
-  color: var(--color-text-primary);
-}
-
-.folderSystemRow button:first-child:hover {
-  background: transparent;
-}
-
-.folderSystemRowActive {
-  border-color: rgba(148, 163, 184, 0.24);
-  background: var(--color-background-primary);
-  box-shadow: 0 10px 24px -20px rgba(15, 23, 42, 0.45);
-}
-
-.folderSystemRow.folderDropActive {
-  border-color: rgba(16, 185, 129, 0.36);
-  background: rgba(16, 185, 129, 0.1);
-  color: var(--color-text-primary);
-}
-
-.folderActionSpacer {
-  display: block;
-  width: 34px;
-  height: 34px;
-}
-
-.newFolder {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 36px;
-  gap: 8px;
-  padding-top: 8px;
-}
-
-.newFolder input,
 .field input,
 .field select,
 .field textarea,
@@ -245,7 +85,6 @@
   letter-spacing: 0;
 }
 
-.newFolder input,
 .field input,
 .field select,
 .field textarea,
@@ -257,7 +96,6 @@
   background: var(--color-background-primary);
 }
 
-.newFolder input,
 .field input,
 .field select,
 .inlineForm input,
@@ -267,13 +105,7 @@
   padding: 0 11px;
 }
 
-.newFolder input {
-  height: 36px;
-}
-
-.newFolder button,
-.iconButton,
-.folderMenuButton {
+.iconButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -287,9 +119,7 @@
   transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
 }
 
-.newFolder button:hover:not(:disabled),
-.iconButton:hover:not(:disabled),
-.folderMenuButton:hover {
+.iconButton:hover:not(:disabled) {
   border-color: rgba(148, 163, 184, 0.28);
   background: rgba(148, 163, 184, 0.08);
   color: var(--color-text-primary);
@@ -298,55 +128,6 @@
 .iconButton:disabled {
   cursor: not-allowed;
   opacity: 0.42;
-}
-
-.folderMenuButton {
-  opacity: 0;
-  border-color: transparent;
-}
-
-.folderRow:hover .folderMenuButton,
-.folderMenuButton:focus-visible,
-.folderMenuButton[aria-expanded='true'] {
-  opacity: 1;
-}
-
-.folderMenu {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 4px);
-  z-index: var(--z-index-popover);
-  min-width: 168px;
-  overflow: hidden;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 8px;
-  background: var(--surface-solid, var(--surface));
-  box-shadow: 0 18px 42px -28px rgba(15, 23, 42, 0.7);
-}
-
-.folderMenu button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 36px;
-  padding: 0 11px;
-  border: 0;
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font-size: 13px;
-  text-align: left;
-}
-
-.folderMenu button:hover {
-  background: rgba(239, 68, 68, 0.08);
-  color: var(--color-status-error);
-}
-
-.newFolder button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
 }
 
 .tablePanel {
@@ -373,23 +154,60 @@
   width: min(460px, 100%);
 }
 
-.filterBar {
-  display: grid;
-  grid-template-columns: minmax(140px, 0.9fr) minmax(180px, 1.2fr) minmax(150px, 0.7fr) minmax(150px, 0.7fr) auto auto;
-  gap: 10px;
-  align-items: end;
+.browserNavigation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   margin-bottom: 12px;
 }
 
-.filterTitle {
-  display: inline-flex;
+.browserPath {
+  display: flex;
   align-items: center;
-  gap: 7px;
-  min-height: 40px;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 500;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.browserPath button {
+  flex: 0 0 auto;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.browserPathSeparator {
+  flex: 0 0 auto;
+  color: var(--text-mute);
+}
+
+.browserPathDropTarget {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.folderCreateForm {
+  display: grid;
+  grid-template-columns: minmax(220px, 420px) auto auto;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.folderCreateForm input {
+  width: 100%;
+  min-width: 0;
+}
+
+.filterBar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 0.7fr) minmax(150px, 0.7fr) auto auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
 }
 
 .filterControl {
@@ -428,29 +246,9 @@
 .field textarea:focus,
 .inlineForm input:focus,
 .buttonEditorRow input:focus,
-.buttonEditorRow select:focus,
-.newFolder input:focus {
+.buttonEditorRow select:focus {
   border-color: var(--ristak-focus-border);
   box-shadow: var(--ristak-focus-ring);
-}
-
-.clearFiltersButton {
-  min-height: 40px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 8px;
-  color: var(--color-text-secondary);
-  background: var(--color-background-primary);
-  padding: 0 12px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.clearFiltersButton:hover {
-  color: var(--color-text-primary);
-  border-color: rgba(148, 163, 184, 0.32);
 }
 
 .bulkBar {
@@ -574,7 +372,37 @@
   display: inline-flex;
   margin-right: 8px;
   color: var(--color-text-tertiary);
+  cursor: grab;
   vertical-align: middle;
+}
+
+.browserDraggableRow {
+  cursor: grab;
+}
+
+.browserFolderRow {
+  cursor: pointer;
+}
+
+.browserRowDropTarget > td {
+  background: var(--accent-soft);
+  box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
+}
+
+.browserNameCell {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.browserFolderIcon {
+  color: var(--warn);
+}
+
+.browserTemplateIcon {
+  color: var(--accent);
 }
 
 .selectionCell input {
@@ -598,15 +426,15 @@
 }
 
 .collectionTypeFolder {
-  color: #b45309;
-  border-color: rgba(245, 158, 11, 0.24);
-  background: rgba(245, 158, 11, 0.1);
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+  background: var(--warn-soft);
 }
 
 .collectionTypeTemplate {
-  color: #2563eb;
-  border-color: rgba(37, 99, 235, 0.22);
-  background: rgba(37, 99, 235, 0.08);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: var(--accent-soft);
 }
 
 .collectionNameButton {
@@ -644,7 +472,7 @@
 .collectionNameButton small {
   color: var(--color-text-tertiary);
   font-size: 12px;
-  font-weight: 550;
+  font-weight: 400;
 }
 
 .collectionNameButton:disabled strong,
@@ -1361,17 +1189,8 @@
 }
 
 @media (max-width: 1360px) {
-  .managerGrid,
   .editorGrid {
     grid-template-columns: 1fr;
-  }
-
-  .folders {
-    position: static;
-  }
-
-  .folderList {
-    max-height: none;
   }
 
   .editorSide {
@@ -1401,6 +1220,7 @@
   }
 
   .filterBar,
+  .folderCreateForm,
   .bulkBar,
   .formGrid,
   .locationGrid,

@@ -14,10 +14,8 @@ import {
   FolderPlus,
   Globe2,
   GripVertical,
-  Hash as HashIcon,
   Image,
   ListTree,
-  Loader2,
   MapPin,
   MessageSquare,
   MoreHorizontal,
@@ -28,7 +26,6 @@ import {
   Save,
   Search,
   Send,
-  SlidersHorizontal,
   Trash2,
   Type,
   UploadCloud,
@@ -39,6 +36,7 @@ import {
   Button,
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuTrigger,
   Loading,
   CustomSelect,
@@ -78,7 +76,19 @@ const ROOT_FOLDER_KEY = '__root__'
 const DRAG_DATA_TYPE = 'application/x-ristak-template-manager'
 const VARIABLE_PATTERN = /{{\s*([a-zA-Z0-9_.-]+)\s*}}/g
 const META_VARIABLE_PATTERN = /{{\s*(\d+)\s*}}/g
-type TemplateFolderFilter = 'all' | 'unfiled' | string
+
+interface TemplateManagerDragPayload {
+  templateIds: string[]
+  folderIds: string[]
+}
+
+interface TemplateBrowserEntry {
+  rowId: string
+  kind: 'folder' | 'template'
+  name: string
+  folder?: MessageTemplateFolder
+  template?: MessageTemplate
+}
 
 const getButtonValueTarget = (index: number): MessageTemplateVariableTarget => `buttons.${index}.value`
 const BUTTON_VALUE_TARGET_PATTERN = /^buttons\.(\d+)\.value$/
@@ -408,14 +418,6 @@ function templateMatchesPhone(template: MessageTemplate, phone?: WhatsAppApiPhon
   return false
 }
 
-function isTemplateFolderId(folderId: TemplateFolderFilter | null): folderId is string {
-  return Boolean(folderId && folderId !== 'all' && folderId !== 'unfiled')
-}
-
-function getTemplateFolderTargetId(folderId: TemplateFolderFilter | null) {
-  return isTemplateFolderId(folderId) ? folderId : null
-}
-
 function getVariableGroupLabel(variable: MessageTemplateVariable) {
   return String(variable.group || '').trim() || 'Otros datos'
 }
@@ -483,7 +485,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   })
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<'list' | 'editor'>('list')
-  const [activeFolderId, setActiveFolderId] = useState<TemplateFolderFilter>('all')
+  const [activeFolderId, setActiveFolderId] = useState<string | null>(null)
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null)
   const [draft, setDraft] = useState<MessageTemplateDraft>(() => createEmptyDraft(null))
   const [searchTerm, setSearchTerm] = useState('')
@@ -497,11 +499,12 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const [sendingTest, setSendingTest] = useState(false)
   const [testPhone, setTestPhone] = useState('')
   const [folderName, setFolderName] = useState('')
+  const [showFolderCreator, setShowFolderCreator] = useState(false)
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [selectedTemplateIds, setSelectedTemplateIds] = useState<Set<string>>(() => new Set())
   const [bulkTargetFolderId, setBulkTargetFolderId] = useState(ROOT_FOLDER_KEY)
   const [bulkWorking, setBulkWorking] = useState(false)
-  const [dragging, setDragging] = useState<{ templateIds: string[]; folderIds: string[] } | null>(null)
+  const [dragging, setDragging] = useState<TemplateManagerDragPayload | null>(null)
   const [activeVariablePicker, setActiveVariablePicker] = useState<string | null>(null)
   const [variableSearchDrafts, setVariableSearchDrafts] = useState<Record<string, string>>({})
   const [expandedVariableCategories, setExpandedVariableCategories] = useState<Set<string>>(() => new Set())
@@ -560,6 +563,10 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     new Map(bundle.folders.map((folder) => [folder.id, folder]))
   ), [bundle.folders])
 
+  useEffect(() => {
+    if (activeFolderId && !folderMap.has(activeFolderId)) setActiveFolderId(null)
+  }, [activeFolderId, folderMap])
+
   const folderOptions = useMemo(() => {
     const byParent = new Map<string, typeof bundle.folders>()
     for (const folder of bundle.folders) {
@@ -611,11 +618,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const visibleTemplates = useMemo(() => {
     const query = searchTerm.trim().toLowerCase()
     return bundle.templates.filter((template) => {
-      const matchesFolder =
-        activeFolderId === 'all' ||
-        (activeFolderId === 'unfiled' ? !template.folderId : template.folderId === activeFolderId)
-
-      if (!matchesFolder) return false
+      if ((template.folderId || null) !== activeFolderId) return false
 
       const matchesSearch = !query || [
         template.name,
@@ -637,19 +640,6 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     })
   }, [activeFolderId, bundle.templates, folderMap, searchTerm, selectedFilterPhone, templateCategoryFilter, templatePhoneFilter, templateStatusFilter])
 
-  const templateCountsByFolder = useMemo(() => {
-    const counts = new Map<string, number>()
-    for (const template of bundle.templates) {
-      if (!template.folderId) continue
-      counts.set(template.folderId, (counts.get(template.folderId) || 0) + 1)
-    }
-    return counts
-  }, [bundle.templates])
-
-  const unfiledTemplateCount = useMemo(() => (
-    bundle.templates.filter((template) => !template.folderId).length
-  ), [bundle.templates])
-
   const childFoldersByParent = useMemo(() => {
     const rows = new Map<string, typeof bundle.folders>()
     for (const folder of bundle.folders) {
@@ -659,19 +649,57 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     return rows
   }, [bundle.folders])
 
-  const folderRows = useMemo(() => {
-    const rows: Array<{ folder: MessageTemplateFolder; depth: number }> = []
+  const currentFolderTemplates = useMemo(() => (
+    bundle.templates.filter((template) => (template.folderId || null) === activeFolderId)
+  ), [activeFolderId, bundle.templates])
 
-    const walk = (parentId: string, depth: number) => {
-      for (const folder of childFoldersByParent.get(parentId) || []) {
-        rows.push({ folder, depth })
-        walk(folder.id, depth + 1)
-      }
+  const directItemCountsByFolder = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const folder of bundle.folders) {
+      if (folder.parentId) counts.set(folder.parentId, (counts.get(folder.parentId) || 0) + 1)
+    }
+    for (const template of bundle.templates) {
+      if (template.folderId) counts.set(template.folderId, (counts.get(template.folderId) || 0) + 1)
+    }
+    return counts
+  }, [bundle.folders, bundle.templates])
+
+  const activeFolderPath = useMemo(() => {
+    const path: MessageTemplateFolder[] = []
+    const visited = new Set<string>()
+    let currentId = activeFolderId
+
+    while (currentId && !visited.has(currentId)) {
+      visited.add(currentId)
+      const folder = folderMap.get(currentId)
+      if (!folder) break
+      path.unshift(folder)
+      currentId = folder.parentId || null
     }
 
-    walk(ROOT_FOLDER_KEY, 0)
-    return rows
-  }, [childFoldersByParent])
+    return path
+  }, [activeFolderId, folderMap])
+
+  const visibleChildFolders = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase()
+    return (childFoldersByParent.get(activeFolderId || ROOT_FOLDER_KEY) || [])
+      .filter((folder) => !query || folder.name.toLowerCase().includes(query))
+  }, [activeFolderId, childFoldersByParent, searchTerm])
+
+  const browserEntries = useMemo<TemplateBrowserEntry[]>(() => [
+    ...visibleChildFolders.map((folder) => ({
+      rowId: `folder:${folder.id}`,
+      kind: 'folder' as const,
+      name: folder.name,
+      folder
+    })),
+    ...visibleTemplates.map((template) => ({
+      rowId: template.id,
+      kind: 'template' as const,
+      name: template.name,
+      template
+    }))
+  ], [visibleChildFolders, visibleTemplates])
 
   const selectedTemplates = useMemo(() => (
     bundle.templates.filter((template) => selectedTemplateIds.has(template.id))
@@ -725,7 +753,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
   const startNewTemplate = () => {
     setSelectedTemplateId(null)
-    setDraft(createEmptyDraft(getTemplateFolderTargetId(activeFolderId)))
+    setDraft(createEmptyDraft(activeFolderId))
     setActiveVariablePicker(null)
     setVariableSearchDrafts({})
     setExpandedVariableCategories(new Set())
@@ -783,7 +811,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
     if (templateName) {
       setSearchTerm(templateName)
-      setActiveFolderId('all')
+      setActiveFolderId(null)
       setView('list')
     }
   }, [bundle.templates, loading, location.search])
@@ -940,7 +968,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
       setSelectedTemplateId(saved.id)
       setDraft(templateToDraft(saved))
-      setActiveFolderId(saved.folderId || 'unfiled')
+      setActiveFolderId(saved.folderId || null)
       await loadBundle()
       if (!options.silent) {
         showToast('success', 'Plantilla guardada', `${saved.name} quedó lista`)
@@ -967,7 +995,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       const result = await messageTemplatesService.submitTemplate(saved.id)
       setSelectedTemplateId(null)
       setDraft(createEmptyDraft(result.template.folderId || null))
-      setActiveFolderId(result.template.folderId || 'unfiled')
+      setActiveFolderId(result.template.folderId || null)
       await loadBundle()
       setView('list')
       showToast('success', 'Enviada a revisión', result.message || 'WhatsApp API recibio la plantilla')
@@ -1018,6 +1046,16 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
   const clearSelection = () => {
     setSelectedTemplateIds(new Set())
+  }
+
+  const navigateToFolder = (folderId: string | null) => {
+    setActiveFolderId(folderId)
+    setSearchTerm('')
+    setFolderName('')
+    setShowFolderCreator(false)
+    setOpenFolderMenuId(null)
+    setDropTargetFolderId(null)
+    clearSelection()
   }
 
   const moveTemplatesToFolder = async (templates: MessageTemplate[], folderId: string | null) => {
@@ -1094,15 +1132,21 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     )
   }
 
-  const getDragPayload = (id: string) => {
+  const getTemplateDragPayload = (id: string): TemplateManagerDragPayload => {
     return {
       templateIds: selectedTemplateIds.has(id) ? [...selectedTemplateIds] : [id],
       folderIds: []
     }
   }
 
-  const handleDragStart = (event: React.DragEvent, id: string) => {
-    const payload = getDragPayload(id)
+  const getBrowserDragPayload = (entry: TemplateBrowserEntry): TemplateManagerDragPayload => (
+    entry.kind === 'folder' && entry.folder
+      ? { templateIds: [], folderIds: [entry.folder.id] }
+      : getTemplateDragPayload(entry.template?.id || entry.rowId)
+  )
+
+  const handleBrowserDragStart = (event: React.DragEvent, entry: TemplateBrowserEntry) => {
+    const payload = getBrowserDragPayload(entry)
     setDragging(payload)
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData(DRAG_DATA_TYPE, JSON.stringify(payload))
@@ -1112,15 +1156,38 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     if (dragging) return dragging
     try {
       const raw = event.dataTransfer.getData(DRAG_DATA_TYPE)
-      return raw ? JSON.parse(raw) as { templateIds: string[]; folderIds: string[] } : null
+      if (!raw) return null
+      const payload = JSON.parse(raw) as Partial<TemplateManagerDragPayload>
+      return Array.isArray(payload.templateIds) && Array.isArray(payload.folderIds)
+        ? { templateIds: payload.templateIds, folderIds: payload.folderIds }
+        : null
     } catch {
       return null
     }
   }
 
+  const isFolderInside = (folderId: string, ancestorId: string) => {
+    const visited = new Set<string>()
+    let currentId: string | null = folderId
+
+    while (currentId && !visited.has(currentId)) {
+      if (currentId === ancestorId) return true
+      visited.add(currentId)
+      currentId = folderMap.get(currentId)?.parentId || null
+    }
+
+    return false
+  }
+
+  const canDropOnFolder = (payload: TemplateManagerDragPayload | null, folderId: string | null) => {
+    if (!payload || (!payload.templateIds.length && !payload.folderIds.length)) return false
+    if (!folderId) return true
+    return payload.folderIds.every((draggedFolderId) => !isFolderInside(folderId, draggedFolderId))
+  }
+
   const handleFolderDragOver = (event: React.DragEvent, folderId: string | null) => {
     const payload = dragging
-    if (!payload?.templateIds.length) return
+    if (!canDropOnFolder(payload, folderId)) return
 
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
@@ -1130,18 +1197,37 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const handleDropOnFolder = async (event: React.DragEvent, folderId: string | null) => {
     event.preventDefault()
     const payload = readDragPayload(event)
-    if (!payload || bulkWorking) return
+    if (!canDropOnFolder(payload, folderId) || !payload || bulkWorking) return
 
     const templates = bundle.templates.filter((template) => payload.templateIds.includes(template.id))
+    const folders = bundle.folders.filter((folder) => payload.folderIds.includes(folder.id))
+    const templatesToMove = templates.filter((template) => (template.folderId || null) !== folderId)
+    const foldersToMove = folders.filter((folder) => (folder.parentId || null) !== folderId)
+
+    if (!templatesToMove.length && !foldersToMove.length) {
+      setDragging(null)
+      setDropTargetFolderId(null)
+      return
+    }
 
     setBulkWorking(true)
     try {
-      await moveTemplatesToFolder(templates, folderId)
+      await moveTemplatesToFolder(templatesToMove, folderId)
+      for (const folder of foldersToMove) {
+        await messageTemplatesService.updateFolder(folder.id, {
+          name: folder.name,
+          parentId: folderId,
+          sortOrder: folder.sortOrder
+        })
+      }
       clearSelection()
       await loadBundle()
-      showToast('success', 'Movido', folderId ? `Guardado en ${folderMap.get(folderId)?.name || 'carpeta'}` : 'Guardado sin carpeta')
+      const movedTotal = templatesToMove.length + foldersToMove.length
+      const targetName = folderId ? folderMap.get(folderId)?.name || 'la carpeta' : 'Plantillas'
+      showToast('success', movedTotal === 1 ? 'Elemento movido' : 'Elementos movidos', `Ahora ${movedTotal === 1 ? 'está' : 'están'} en ${targetName}`)
     } catch (error) {
-      showToast('error', 'No se pudo mover', getErrorMessage(error, 'Intenta con otra carpeta'))
+      await loadBundle()
+      showToast('error', 'No se pudo mover', getErrorMessage(error, 'La carpeta no acepta ese movimiento'))
     } finally {
       setBulkWorking(false)
       setDragging(null)
@@ -1201,11 +1287,12 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     try {
       await messageTemplatesService.createFolder({
         name: folderName.trim(),
-        parentId: getTemplateFolderTargetId(activeFolderId)
+        parentId: activeFolderId
       })
       setFolderName('')
+      setShowFolderCreator(false)
       await loadBundle()
-      showToast('success', getTemplateFolderTargetId(activeFolderId) ? 'Subcarpeta creada' : 'Carpeta creada', folderName.trim())
+      showToast('success', activeFolderId ? 'Subcarpeta creada' : 'Carpeta creada', folderName.trim())
     } catch (error) {
       showToast('error', 'No se pudo crear', getErrorMessage(error, 'Intenta nuevamente'))
     } finally {
@@ -1219,11 +1306,13 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
     showConfirm(
       'Eliminar carpeta',
-      `Las plantillas dentro de ${folder.name} quedarán sueltas.`,
+      `Se eliminará ${folder.name} y sus subcarpetas. Sus plantillas quedarán en la raíz.`,
       async () => {
         try {
           await messageTemplatesService.deleteFolder(folder.id)
-          if (activeFolderId === folder.id) setActiveFolderId('all')
+          if (activeFolderId && isFolderInside(activeFolderId, folder.id)) {
+            setActiveFolderId(folder.parentId || null)
+          }
           await loadBundle()
           showToast('success', 'Carpeta eliminada', folder.name)
         } catch (error) {
@@ -1576,16 +1665,12 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   }
 
   const renderList = () => {
-    const activeFolderName = activeFolderId === 'all'
-      ? 'Todas las plantillas'
-      : activeFolderId === 'unfiled'
-        ? 'Sin carpeta'
-        : folderMap.get(activeFolderId)?.name || 'Carpeta'
+    const activeFolderName = activeFolderId ? folderMap.get(activeFolderId)?.name || 'Carpeta' : 'Plantillas'
     const emptyTitle = hasTemplateFilters || searchTerm.trim()
       ? 'Sin resultados'
-      : activeFolderId === 'all'
-        ? 'Todavía no hay plantillas'
-        : 'No hay plantillas en esta carpeta'
+      : activeFolderId
+        ? 'Esta carpeta está vacía'
+        : 'Todavía no hay carpetas ni plantillas'
     const templateSelectionToolbar = selectedTotal > 0 ? (
       <TableSelectionToolbar
         count={selectedTotal}
@@ -1594,7 +1679,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         onClearSelection={clearSelection}
       >
         <CustomSelect value={bulkTargetFolderId} onChange={(event) => setBulkTargetFolderId(event.target.value)}>
-          <option value={ROOT_FOLDER_KEY}>Sin carpeta</option>
+          <option value={ROOT_FOLDER_KEY}>Raíz (Plantillas)</option>
           {folderOptions.map((option) => (
             <option key={option.id} value={option.id}>{option.label}</option>
           ))}
@@ -1613,7 +1698,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         </Button>
       </TableSelectionToolbar>
     ) : null
-    const templateColumns: Column<MessageTemplate>[] = [
+    const templateColumns: Column<TemplateBrowserEntry>[] = [
       {
         key: 'drag',
         header: '',
@@ -1628,60 +1713,126 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       },
       {
         key: 'name',
-        header: 'Plantilla',
-        render: (_value, template) => {
+        header: 'Nombre',
+        sortable: false,
+        render: (_value, entry) => {
+          if (entry.kind === 'folder' && entry.folder) {
+            const itemCount = directItemCountsByFolder.get(entry.folder.id) || 0
+            return (
+              <div className={styles.browserNameCell}>
+                <Folder size={18} className={styles.browserFolderIcon} aria-hidden="true" />
+                <button
+                  type="button"
+                  className={styles.collectionNameButton}
+                  onClick={() => navigateToFolder(entry.folder?.id || null)}
+                  title={`Abrir ${entry.folder.name}`}
+                >
+                  <strong>{entry.folder.name}</strong>
+                  <small>{itemCount} {itemCount === 1 ? 'elemento' : 'elementos'}</small>
+                </button>
+              </div>
+            )
+          }
+
+          const template = entry.template
+          if (!template) return null
           const templateLockedForEditing = isTemplateUnderReviewStatus(getMessageTemplateProviderStatus(template))
           return (
-            <button
-              type="button"
-              className={styles.collectionNameButton}
-              onClick={() => editTemplate(template)}
-              disabled={templateLockedForEditing}
-              title={templateLockedForEditing ? 'En revisión: espera respuesta de Meta antes de editar' : 'Editar plantilla'}
-            >
-              <strong>{template.name}</strong>
-              <small>{template.bodyText || template.description || 'Sin texto principal'}</small>
-            </button>
+            <div className={styles.browserNameCell}>
+              <FileText size={18} className={styles.browserTemplateIcon} aria-hidden="true" />
+              <button
+                type="button"
+                className={styles.collectionNameButton}
+                onClick={() => editTemplate(template)}
+                disabled={templateLockedForEditing}
+                title={templateLockedForEditing ? 'En revisión: espera respuesta de Meta antes de editar' : 'Editar plantilla'}
+              >
+                <strong>{template.name}</strong>
+                <small>{template.bodyText || template.description || 'Sin texto principal'}</small>
+              </button>
+            </div>
           )
         }
       },
       {
         key: 'category',
         header: 'Tipo',
-        render: (_value, template) => (
+        sortable: false,
+        render: (_value, entry) => entry.kind === 'folder' ? (
+          <span className={`${styles.collectionTypeBadge} ${styles.collectionTypeFolder}`}>
+            <Folder size={14} />
+            Carpeta
+          </span>
+        ) : entry.template ? (
           <span className={`${styles.collectionTypeBadge} ${styles.collectionTypeTemplate}`}>
             <FileText size={14} />
-            {getCategoryLabel(template.category)}
+            {getCategoryLabel(entry.template.category)}
           </span>
-        )
-      },
-      {
-        key: 'folderId',
-        header: 'Carpeta',
-        render: (_value, template) => folderMap.get(template.folderId || '')?.name || 'Sin carpeta'
+        ) : null
       },
       {
         key: 'language',
-        header: 'Idioma'
+        header: 'Idioma',
+        sortable: false,
+        render: (_value, entry) => entry.template?.language || '—'
       },
       {
         key: 'providerStatus',
         header: 'Estado',
-        render: (_value, template) => (
-          <span className={`${styles.providerBadge} ${styles[`providerBadge${getProviderStatusTone(getMessageTemplateProviderStatus(template))}`]}`}>
-            {getProviderStatusLabel(getMessageTemplateProviderStatus(template))}
+        sortable: false,
+        render: (_value, entry) => entry.template ? (
+          <span className={`${styles.providerBadge} ${styles[`providerBadge${getProviderStatusTone(getMessageTemplateProviderStatus(entry.template))}`]}`}>
+            {getProviderStatusLabel(getMessageTemplateProviderStatus(entry.template))}
           </span>
-        )
+        ) : '—'
       },
       {
         key: 'actions',
         header: '',
         searchable: false,
         sortable: false,
-        render: (_value, template) => {
+        render: (_value, entry) => {
+          if (entry.kind === 'folder' && entry.folder) {
+            const folder = entry.folder
+            return (
+              <div className={styles.collectionTableActions} onDoubleClick={(event) => event.stopPropagation()}>
+                <DropdownMenu
+                  open={openFolderMenuId === folder.id}
+                  onOpenChange={(open) => setOpenFolderMenuId(open ? folder.id : null)}
+                >
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
+                      aria-label={`Opciones de ${folder.name}`}
+                      title="Opciones"
+                    >
+                      <MoreHorizontal size={16} />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" side="bottom">
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        setOpenFolderMenuId(null)
+                        confirmDeleteFolder(folder.id)
+                      }}
+                    >
+                      <Trash2 size={14} />
+                      Eliminar carpeta
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )
+          }
+
+          const template = entry.template
+          if (!template) return null
           const templateLockedForEditing = isTemplateUnderReviewStatus(getMessageTemplateProviderStatus(template))
           return (
-            <div className={styles.collectionTableActions}>
+            <div className={styles.collectionTableActions} onDoubleClick={(event) => event.stopPropagation()}>
               <button
                 type="button"
                 className={styles.iconButton}
@@ -1703,131 +1854,27 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
     return (
       <div className={styles.managerGrid}>
-        <aside className={styles.folders} aria-label="Carpetas de plantillas">
-          <div className={styles.folderHeader}>
-            <strong>Carpetas</strong>
-            <span>{bundle.folders.length} activas</span>
-          </div>
-
-          <div className={`${styles.folderRow} ${styles.folderSystemRow} ${activeFolderId === 'all' ? styles.folderSystemRowActive : ''}`}>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveFolderId('all')
-                setOpenFolderMenuId(null)
-              }}
-            >
-              <HashIcon size={16} />
-              <span>Todas las plantillas</span>
-              <b>{bundle.templates.length}</b>
-            </button>
-            <span className={styles.folderActionSpacer} aria-hidden="true" />
-          </div>
-
-          <div
-            className={`${styles.folderRow} ${styles.folderSystemRow} ${activeFolderId === 'unfiled' ? styles.folderSystemRowActive : ''} ${dropTargetFolderId === ROOT_FOLDER_KEY ? styles.folderDropActive : ''}`}
-            onDragOver={(event) => handleFolderDragOver(event, null)}
-            onDragLeave={() => setDropTargetFolderId(null)}
-            onDrop={(event) => handleDropOnFolder(event, null)}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                setActiveFolderId('unfiled')
-                setOpenFolderMenuId(null)
-              }}
-            >
-              <HashIcon size={16} />
-              <span>Sin carpeta</span>
-              <b>{unfiledTemplateCount}</b>
-            </button>
-            <span className={styles.folderActionSpacer} aria-hidden="true" />
-          </div>
-
-          <div className={styles.folderList}>
-            {folderRows.map(({ folder, depth }) => (
-              <div
-                key={folder.id}
-                className={`${styles.folderRow} ${activeFolderId === folder.id ? styles.folderRowActive : ''} ${dropTargetFolderId === folder.id ? styles.folderDropActive : ''}`}
-                onDragOver={(event) => handleFolderDragOver(event, folder.id)}
-                onDragLeave={() => setDropTargetFolderId(null)}
-                onDrop={(event) => handleDropOnFolder(event, folder.id)}
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveFolderId(folder.id)
-                    setOpenFolderMenuId(null)
-                  }}
-                >
-                  <Folder size={16} />
-                  <span style={{ paddingLeft: depth ? depth * 12 : 0 }}>{folder.name}</span>
-                  <b>{templateCountsByFolder.get(folder.id) || 0}</b>
-                </button>
-                <DropdownMenu
-                  open={openFolderMenuId === folder.id}
-                  onOpenChange={(open) => setOpenFolderMenuId(open ? folder.id : null)}
-                >
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      className={styles.folderMenuButton}
-                      aria-label={`Opciones de ${folder.name}`}
-                      title="Opciones"
-                    >
-                      <MoreHorizontal size={16} />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" side="top" sideOffset={4} className={styles.folderMenu}>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setOpenFolderMenuId(null)
-                        confirmDeleteFolder(folder.id)
-                      }}
-                    >
-                      <Trash2 size={14} />
-                      <span>Eliminar carpeta</span>
-                    </button>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            ))}
-          </div>
-
-          <div className={styles.newFolder}>
-            <input
-              value={folderName}
-              placeholder={isTemplateFolderId(activeFolderId) ? 'Nueva subcarpeta' : 'Nueva carpeta'}
-              onChange={(event) => setFolderName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void submitFolder()
-              }}
-            />
-            <button
-              type="button"
-              disabled={!folderName.trim() || creatingFolder}
-              onClick={() => void submitFolder()}
-              aria-label="Crear carpeta"
-              title="Crear carpeta"
-            >
-              {creatingFolder ? <Loader2 size={15} className={styles.spin} /> : <FolderPlus size={15} />}
-            </button>
-          </div>
-        </aside>
-
         <main className={styles.tablePanel}>
           <div className={styles.toolbar}>
             <SearchField
               className={styles.toolbarSearch}
               value={searchTerm}
-              placeholder="Buscar por nombre, texto, carpeta o estado"
+              placeholder={`Buscar en ${activeFolderName}`}
               onChange={(nextSearch) => setSearchTerm(nextSearch)}
               onClear={() => setSearchTerm('')}
             />
             <div className={styles.toolbarActions}>
-              <span className={styles.toolbarCount}>{visibleTemplates.length} plantillas</span>
+              <span className={styles.toolbarCount}>{browserEntries.length} {browserEntries.length === 1 ? 'elemento' : 'elementos'}</span>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setFolderName('')
+                  setShowFolderCreator(true)
+                }}
+              >
+                <FolderPlus size={16} />
+                Carpeta
+              </Button>
               <Button variant="outline" onClick={syncAllTemplates} loading={syncing}>
                 <RefreshCw size={16} />
                 Sincronizar
@@ -1839,11 +1886,87 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
             </div>
           </div>
 
+          <div className={styles.browserNavigation}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              iconOnly
+              disabled={!activeFolderId}
+              onClick={() => navigateToFolder(folderMap.get(activeFolderId || '')?.parentId || null)}
+              aria-label="Volver a la carpeta anterior"
+              title="Volver"
+            >
+              <ArrowLeft size={16} />
+            </Button>
+            <nav className={styles.browserPath} aria-label="Ruta de carpetas">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={dropTargetFolderId === ROOT_FOLDER_KEY ? styles.browserPathDropTarget : ''}
+                onClick={() => navigateToFolder(null)}
+                onDragOver={(event) => handleFolderDragOver(event, null)}
+                onDragLeave={() => setDropTargetFolderId(null)}
+                onDrop={(event) => void handleDropOnFolder(event, null)}
+              >
+                <Folder size={15} />
+                Plantillas
+              </Button>
+              {activeFolderPath.map((folder) => (
+                <React.Fragment key={folder.id}>
+                  <ChevronRight size={14} className={styles.browserPathSeparator} aria-hidden="true" />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={dropTargetFolderId === folder.id ? styles.browserPathDropTarget : ''}
+                    onClick={() => navigateToFolder(folder.id)}
+                    onDragOver={(event) => handleFolderDragOver(event, folder.id)}
+                    onDragLeave={() => setDropTargetFolderId(null)}
+                    onDrop={(event) => void handleDropOnFolder(event, folder.id)}
+                    aria-current={folder.id === activeFolderId ? 'page' : undefined}
+                  >
+                    {folder.name}
+                  </Button>
+                </React.Fragment>
+              ))}
+            </nav>
+          </div>
+
+          {showFolderCreator && (
+            <form
+              className={styles.folderCreateForm}
+              onSubmit={(event) => {
+                event.preventDefault()
+                void submitFolder()
+              }}
+            >
+              <input
+                autoFocus
+                value={folderName}
+                placeholder={activeFolderId ? 'Nombre de la subcarpeta' : 'Nombre de la carpeta'}
+                onChange={(event) => setFolderName(event.target.value)}
+                aria-label={activeFolderId ? 'Nombre de la subcarpeta' : 'Nombre de la carpeta'}
+              />
+              <Button type="submit" size="sm" disabled={!folderName.trim()} loading={creatingFolder}>
+                Crear
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setFolderName('')
+                  setShowFolderCreator(false)
+                }}
+              >
+                Cancelar
+              </Button>
+            </form>
+          )}
+
           <div className={styles.filterBar}>
-            <div className={styles.filterTitle}>
-              <SlidersHorizontal size={16} />
-              <span>{activeFolderName}</span>
-            </div>
             <label className={styles.filterControl}>
               <span>Número</span>
               <CustomSelect
@@ -1880,11 +2003,12 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                 ))}
               </CustomSelect>
             </label>
-            <span className={styles.filterCount}>{visibleTemplates.length} de {bundle.templates.length}</span>
+            <span className={styles.filterCount}>{visibleTemplates.length} de {currentFolderTemplates.length} plantillas</span>
             {hasTemplateFilters && (
-              <button
+              <Button
                 type="button"
-                className={styles.clearFiltersButton}
+                variant="ghost"
+                size="sm"
                 onClick={() => {
                   setTemplatePhoneFilter('all')
                   setTemplateCategoryFilter('all')
@@ -1892,14 +2016,14 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                 }}
               >
                 Limpiar filtros
-              </button>
+              </Button>
             )}
           </div>
 
-          <Table<MessageTemplate>
+          <Table<TemplateBrowserEntry>
             initialColumns={templateColumns}
-            data={visibleTemplates}
-            keyExtractor={(template) => template.id}
+            data={browserEntries}
+            keyExtractor={(entry) => entry.rowId}
             emptyMessage={emptyTitle}
             searchable={false}
             paginated={false}
@@ -1908,13 +2032,28 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
             rowSelection={{
               selectedKeys: Array.from(selectedTemplateIds),
               onChange: (nextSelectedIds) => setSelectedTemplateIds(new Set(nextSelectedIds)),
-              getRowLabel: (template) => template.name,
-              selectAllLabel: 'Seleccionar todas las plantillas'
+              isRowDisabled: (entry) => entry.kind === 'folder',
+              getRowLabel: (entry) => entry.name,
+              selectAllLabel: 'Seleccionar todas las plantillas de esta carpeta'
             }}
-            getRowProps={(template) => ({
-              className: isTemplateUnderReviewStatus(getMessageTemplateProviderStatus(template)) ? styles.collectionRowLocked : '',
+            getRowProps={(entry) => ({
+              className: [
+                styles.browserDraggableRow,
+                entry.kind === 'folder' ? styles.browserFolderRow : '',
+                entry.kind === 'folder' && dropTargetFolderId === entry.folder?.id ? styles.browserRowDropTarget : '',
+                entry.template && isTemplateUnderReviewStatus(getMessageTemplateProviderStatus(entry.template)) ? styles.collectionRowLocked : ''
+              ].filter(Boolean).join(' '),
               draggable: true,
-              onDragStart: (event) => handleDragStart(event, template.id),
+              onDoubleClick: () => {
+                if (entry.folder) navigateToFolder(entry.folder.id)
+                else if (entry.template) editTemplate(entry.template)
+              },
+              onDragStart: (event) => handleBrowserDragStart(event, entry),
+              ...(entry.folder ? {
+                onDragOver: (event) => handleFolderDragOver(event, entry.folder?.id || null),
+                onDragLeave: () => setDropTargetFolderId(null),
+                onDrop: (event) => void handleDropOnFolder(event, entry.folder?.id || null)
+              } : {}),
               onDragEnd: () => {
                 setDragging(null)
                 setDropTargetFolderId(null)
