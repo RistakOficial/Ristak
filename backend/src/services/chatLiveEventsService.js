@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import { clearPresence } from './presenceService.js'
+import { recordMcpBusinessEventBestEffort } from './mcpEventInboxService.js'
 
 const HEARTBEAT_INTERVAL_MS = 25_000
 const clients = new Map()
@@ -86,7 +87,7 @@ export function subscribeChatLiveEvents(req, res) {
 
 export function publishChatMessageEvent(input = {}) {
   const contactId = cleanString(input.contactId)
-  if (!contactId || clients.size === 0) return
+  if (!contactId) return
 
   const payload = {
     type: 'chat_message',
@@ -101,6 +102,16 @@ export function publishChatMessageEvent(input = {}) {
     isNew: input.isNew !== false,
     receivedAt: new Date().toISOString()
   }
+
+  recordMcpBusinessEventBestEffort({
+    domain: 'chat',
+    type: 'chat_message',
+    entityId: payload.messageId || contactId,
+    payload,
+    occurredAt: payload.messageTimestamp || payload.receivedAt
+  })
+
+  if (clients.size === 0) return
 
   for (const [clientId, client] of clients.entries()) {
     try {
@@ -117,7 +128,7 @@ export function publishChatDataChangedEvent(input = {}) {
   const domains = [...new Set((Array.isArray(input.domains) ? input.domains : [])
     .map(cleanString)
     .filter(domain => supportedDomains.has(domain)))]
-  if (!contactId || domains.length === 0 || clients.size === 0) return
+  if (!contactId || domains.length === 0) return
 
   const payload = {
     type: 'chat_data_changed',
@@ -126,6 +137,16 @@ export function publishChatDataChangedEvent(input = {}) {
     entityId: cleanString(input.entityId),
     changedAt: new Date().toISOString()
   }
+
+  recordMcpBusinessEventBestEffort({
+    domain: 'chat',
+    type: 'chat_data_changed',
+    entityId: payload.entityId || contactId,
+    payload,
+    occurredAt: payload.changedAt
+  })
+
+  if (clients.size === 0) return
 
   for (const [clientId, client] of clients.entries()) {
     try {

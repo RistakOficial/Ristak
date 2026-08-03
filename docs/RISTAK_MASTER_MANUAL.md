@@ -9481,7 +9481,7 @@ Incluye:
 - MCP para clientes compatibles.
 
 El MCP externo es un plano de control tipado sobre los servicios de negocio de
-Ristak. El registro actual contiene 336 tools antes del filtrado de autorizacion
+Ristak. El registro actual contiene 347 tools antes del filtrado de autorizacion
 y cubre CRM/contactos, tags, campos personalizados, trigger links, inbox y envio
 de mensajes, chatbot, citas, calendarios, automatizaciones, pagos, productos,
 precios, suscripciones, dashboard, reportes, analytics/tracking, campañas ya
@@ -9493,22 +9493,36 @@ Developers y `tools/list` cuentan/muestran solo las tools visibles para el
 usuario, plan, modulos, scopes y conexiones de proveedores actuales. Una tool
 dependiente de WhatsApp, Email, HighLevel, Google Calendar, pagos o Meta no se
 descubre si esa integración local no está lista, y `tools/call` vuelve a validar
-la conexión. Esta ampliación no agregó nuevas acciones para administrar campañas
-de Meta. No es SQL libre, no es un proxy genérico de rutas y no autoriza secretos,
+la conexión. Publicidad sí permite leer campañas, anuncios, conjuntos, inversión,
+atribución y activos disponibles, además de ejecutar sincronizaciones que sólo
+refrescan la copia local. El registro excluye explícitamente crear o previsualizar
+borradores de campaña, por lo que una IA no puede crear ni modificar campañas de
+Meta. No es SQL libre, no es un proxy genérico de rutas y no autoriza secretos,
 infraestructura ni escritura directa en tablas/ledgers protegidos. Cada accion nueva
 de producto que se publique por MCP debe registrarse con schema, contrato de
 salida, feature/modulo, permiso de usuario, scope OAuth, anotaciones de riesgo y
 ejecutor auditable.
 
 Las acciones operativas nuevas incluyen journeys y actualizaciones masivas de
-contactos; lotes persistentes de plantillas/automatizaciones; WhatsApp multimedia;
+contactos; ciclo completo de lotes persistentes (listar, consultar, pausar,
+reanudar, reprogramar, cancelar y borrar) para plantillas/automatizaciones;
+WhatsApp multimedia;
 preferencias y lectura de chat; suscripciones y decisiones sobre comprobantes;
 recordatorios de citas y sincronización de Google Calendar; carpetas, catálogos y
 pruebas de automatizaciones; submissions y video analytics de Sites; carpetas y
 assets de Media; tracking; configuración de cuenta/notificaciones y administración
-seleccionada de usuarios. Crear usuarios permanece en la interfaz de Ristak:
-el endpoint actual exige contraseña y el MCP no debe transportar contraseñas;
-se expondrá cuando exista invitación sin contraseña.
+seleccionada de usuarios. Las altas nuevas usan invitaciones sin contraseña:
+Ristak envía por el correo conectado un enlace de 48 horas, la persona crea su
+propia contraseña y el cliente MCP nunca recibe token, enlace ni password. El
+administrador puede listar o revocar pendientes desde Ristak o mediante tools
+dedicadas.
+
+Todas las tools anuncian `outputSchema`, seguridad OAuth y hints de lectura,
+riesgo e idempotencia. `mcp_search_capabilities` busca por intención, dominio,
+acceso y riesgo sin obligar al modelo a adivinar nombres dentro de todo el
+catálogo. La preparación y consulta de aprobaciones acepta cualquiera de los
+scopes operativos relevantes, así que una conexión de ejecución o destrucción no
+queda bloqueada artificialmente por no tener `ristak.read`.
 
 Las instrucciones de `initialize` explican el flujo HTML code-first a todos los
 clientes compatibles. Cuando existe una skill web local, ésta es responsable de
@@ -9542,8 +9556,19 @@ Las conexiones se inician mediante handoffs seguros hacia Configuración de
 Ristak o el OAuth normal de Google; el MCP no recibe ni devuelve credenciales.
 Las desconexiones soportadas reutilizan los controllers oficiales, exigen admin
 y aprobación destructiva. `mcp_runtime_continuity` informa qué jobs,
-automatizaciones publicadas y workers siguen corriendo dentro de Ristak. Ningún
-MCP puede despertar por sí solo una conversación de IA que ya fue cerrada.
+automatizaciones publicadas y workers siguen corriendo dentro de Ristak.
+`mcp_events_list` expone una bandeja durable de eventos de chat/pagos creada
+después de autorizar cada grant, filtrada nuevamente por permisos y licencia;
+`mcp_events_acknowledge` registra un acuse idempotente sólo para esa conexión.
+Los eventos duran 30 días. Ningún MCP puede despertar por sí solo una
+conversación de IA que ya fue cerrada: un runtime externo debe consultar esa
+bandeja por polling o usar automatizaciones/webhooks.
+
+El mantenimiento de control plane arranca con el backend y corre cada seis horas
+bajo lock distribuido. Expira aprobaciones e invitaciones pendientes, elimina
+idempotencias vencidas, conserva aprobaciones/invitaciones terminales 90 días y
+auditoría 180 días. Sus tablas, junto con invitaciones y eventos/ack, quedan
+bloqueadas del CRUD genérico y sólo se operan por sus rutas/tools dedicadas.
 
 El usuario administra estas conexiones en
 `Configuracion > Developers > Conectar con MCP`. El frontend consulta
@@ -9554,7 +9579,8 @@ por tools se resuelven con la zona de la cuenta y la moneda default sale de
 `account_currency`, nunca de la computadora del cliente MCP.
 
 "Recibir mensajes" en una herramienta MCP significa listar inbox/conversacion o
-mantener polling desde el runtime del cliente. Ristak no puede iniciar una
+consultar `mcp_events_list` desde el runtime del cliente y acusar sólo los eventos
+procesados. Ristak no puede iniciar una
 llamada espontanea dentro de una sesion cerrada de Codex, ChatGPT o Claude; para
 flujos event-driven se usan automatizaciones o webhooks.
 

@@ -19,9 +19,14 @@ import {
   revokeApiToken
 } from '../controllers/authController.js'
 import {
+  acceptUserInvitation,
   createUser,
+  createUserInvitation,
   deleteUser,
+  getUserInvitationInfo,
+  listUserInvitations,
   listUsers,
+  revokeUserInvitation,
   updateUser
 } from '../controllers/userAccessController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
@@ -94,6 +99,8 @@ router.post('/login', loginRateLimiter, login)
 // (AUTH-010) Recuperación de contraseña por correo (público, rate-limited por IP).
 router.post('/forgot-password', authBurstRateLimiter, forgotPassword)
 router.post('/reset-password', authBurstRateLimiter, resetPassword)
+router.post('/invitation-info', authBurstRateLimiter, getUserInvitationInfo)
+router.post('/accept-invitation', authBurstRateLimiter, acceptUserInvitation)
 
 // POST /api/auth/local-dev-session - Sesión automática sólo para desarrollo local
 router.post('/local-dev-session', localDevSession)
@@ -122,6 +129,9 @@ router.get('/users', requireAuth, requireAdmin, listUsers)
 router.post('/users', requireAuth, requireAdmin, createUser)
 router.patch('/users/:userId', requireAuth, requireAdmin, updateUser)
 router.delete('/users/:userId', requireAuth, requireAdmin, deleteUser)
+router.get('/user-invitations', requireAuth, requireAdmin, listUserInvitations)
+router.post('/user-invitations', requireAuth, requireAdmin, createUserInvitation)
+router.delete('/user-invitations/:invitationId', requireAuth, requireAdmin, revokeUserInvitation)
 
 // GET /api/auth/api-token - Obtener metadatos del API token autenticado
 router.get('/api-token', requireAuth, requireModuleAccess('settings_api_access'), getApiToken)

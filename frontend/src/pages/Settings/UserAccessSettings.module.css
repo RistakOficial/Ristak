@@ -462,6 +462,14 @@
   background: var(--accent-soft);
 }
 
+.invitationRow {
+  cursor: default;
+}
+
+.invitationRow:hover {
+  background: transparent;
+}
+
 .memberIdentity,
 .selectedIdentity {
   display: flex;
@@ -517,6 +525,12 @@
   min-width: 0;
   color: var(--text-mute);
   font-size: 12px;
+}
+
+.invitationActionCell {
+  display: flex;
+  min-width: 0;
+  justify-content: flex-start;
 }
 
 .memberAccessCell {

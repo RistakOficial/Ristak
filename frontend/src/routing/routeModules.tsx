@@ -69,6 +69,11 @@ const resetPassword = createLazyRoute(
   'default',
   'route:reset-password'
 )
+const acceptInvitation = createLazyRoute(
+  () => import('@/pages/Login/AcceptInvitation'),
+  'default',
+  'route:accept-invitation'
+)
 const publicPayment = createLazyRoute(() => import('@/pages/PublicPayment/PublicPayment'), 'PublicPayment')
 const publicPaymentGatewayReturn = createLazyRoute(
   () => import('@/pages/PublicPayment/PublicPayment'),
@@ -135,6 +140,7 @@ export const LazyLicenseBlocked = licenseBlocked.Component
 export const LazySso = sso.Component
 export const LazyLogin = login.Component
 export const LazyResetPassword = resetPassword.Component
+export const LazyAcceptInvitation = acceptInvitation.Component
 export const LazyPublicPayment = publicPayment.Component
 export const LazyPublicPaymentGatewayReturn = publicPaymentGatewayReturn.Component
 export const LazyMobileTenantSetup = mobileTenantSetup.Component
@@ -172,6 +178,7 @@ const routeModuleRegistry: RouteModuleRegistration[] = [
   { path: '/sso', exact: true, preload: sso.preload },
   { path: '/login', exact: true, preload: login.preload },
   { path: '/reset-password', exact: true, preload: resetPassword.preload },
+  { path: '/accept-invitation', exact: true, preload: acceptInvitation.preload },
   { path: '/movil/tenant', exact: true, preload: mobileTenantSetup.preload },
   { path: '/movil/login', exact: true, preload: login.preload },
   { path: '/movil/agent-chat', preload: phoneAgentChat.preload },

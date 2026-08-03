@@ -24,6 +24,7 @@ import {
   LazyLogin,
   LazyMDPProgram,
   LazyMobileTenantSetup,
+  LazyAcceptInvitation,
   LazyPaymentProducts,
   LazyPaymentSubscriptions,
   LazyPhoneAgentChat,
@@ -821,6 +822,7 @@ const AppWithNotifications: React.FC = () => {
           <Route path="/sso" element={<LazySso />} />
           <Route path="/login" element={<LazyLogin />} />
           <Route path="/reset-password" element={<LazyResetPassword />} />
+          <Route path="/accept-invitation" element={<LazyAcceptInvitation />} />
           <Route path="/oauth/authorize" element={<ProtectedRoute><LazyOAuthAuthorize /></ProtectedRoute>} />
           <Route path="/mcp/actions/confirm" element={<ProtectedRoute><LazyMcpActionConfirmation /></ProtectedRoute>} />
           <Route path="/pay/success" element={<LazyPublicPaymentGatewayReturn />} />

@@ -27,6 +27,25 @@ export interface SaveTeamUserInput {
   accessConfig: AccessConfig
 }
 
+export interface TeamUserInvitation {
+  id: string
+  email: string
+  phone: string
+  firstName: string
+  lastName: string
+  fullName: string
+  role: UserRole
+  status: 'pending' | 'accepted' | 'revoked' | 'expired'
+  expiresAt: string
+  deliveredAt: string | null
+  acceptedAt: string | null
+  revokedAt: string | null
+  createdAt: string
+  accessConfig: AccessConfig
+}
+
+export type InviteTeamUserInput = Omit<SaveTeamUserInput, 'password'>
+
 interface UsersResponse {
   success: boolean
   users: TeamUser[]
@@ -35,6 +54,18 @@ interface UsersResponse {
 interface UserResponse {
   success: boolean
   user: TeamUser
+}
+
+interface InvitationsResponse {
+  success: boolean
+  invitations: TeamUserInvitation[]
+}
+
+interface InvitationResponse {
+  success: boolean
+  invitation: TeamUserInvitation
+  delivery?: 'email'
+  message?: string
 }
 
 export const userAccessService = {
@@ -46,6 +77,19 @@ export const userAccessService = {
   async createUser(input: SaveTeamUserInput) {
     const response = await apiClient.post<UserResponse>('/auth/users', input)
     return response.user
+  },
+
+  async listInvitations() {
+    const response = await apiClient.get<InvitationsResponse>('/auth/user-invitations')
+    return response.invitations || []
+  },
+
+  async inviteUser(input: InviteTeamUserInput) {
+    return apiClient.post<InvitationResponse>('/auth/user-invitations', input)
+  },
+
+  async revokeInvitation(invitationId: string) {
+    return apiClient.delete<InvitationResponse>(`/auth/user-invitations/${invitationId}`)
   },
 
   async updateUser(userId: string, input: SaveTeamUserInput) {

@@ -30,6 +30,7 @@ import { startConversationalAppointmentTestCleanupCron } from './jobs/conversati
 import { startConversationalAgentTestAssignmentsCleanup } from './jobs/conversationalAgentTestAssignmentsCleanup.js'
 import { startConversationalAgentPauseExpiryCron } from './jobs/conversationalAgentPauseExpiry.cron.js'
 import { startChatPushDeliveryCron, stopChatPushDeliveryCron } from './jobs/metaDirectChatDelivery.cron.js'
+import { startMcpMaintenanceCron, stopMcpMaintenanceCron } from './jobs/mcpMaintenance.cron.js'
 import { startAutomationReviewProjectionScheduler } from './jobs/automationReviewProjection.cron.js'
 import { startReadModelProjectionMaintenanceScheduler } from './jobs/readModelProjectionMaintenance.cron.js'
 import { syncRegisteredIntegrationCrons } from './jobs/integrationCronRegistry.js'
@@ -917,6 +918,7 @@ async function startRuntimeServices() {
     startConversationalAgentTestAssignmentsCleanup() // Restaura asignaciones temporales y respeta cambios humanos posteriores
     startConversationalAgentPauseExpiryCron() // Reactiva pausas vencidas fuera de los GET de métricas/listados
     startChatPushDeliveryCron() // Recupera push durable y limpia terminales aunque Meta se desconecte
+    startMcpMaintenanceCron() // Expira y depura eventos, aprobaciones, auditoría e invitaciones MCP
     startConversationGoalEffectsRecoveryScheduler() // Recupera leases/fallos de metas sin depender de un reinicio
     await syncRegisteredIntegrationCrons({ reason: 'startup' }) // Integraciones: sólo si están conectadas
   }
@@ -995,6 +997,7 @@ function handleShutdown(signal) {
   // requests normales deben seguir pasando mientras la instancia vieja drena.
   markDeployShutdownStarted()
   stopChatPushDeliveryCron()
+  stopMcpMaintenanceCron()
   stopIntegrationCrons()
   logger.warn(
     `[Shutdown] ${signal} recibido. Drenando ${activeRequests} request(s) activa(s), ` +

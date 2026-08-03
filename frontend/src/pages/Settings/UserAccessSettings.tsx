@@ -22,7 +22,12 @@ import { Badge, Button, Card, Modal, TabList } from '@/components/common'
 import { UserNotificationPreferencesAdmin } from './UserNotificationPreferencesAdmin' // (MOB-006)
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
-import { userAccessService, type SaveTeamUserInput, type TeamUser } from '@/services/userAccessService'
+import {
+  userAccessService,
+  type SaveTeamUserInput,
+  type TeamUser,
+  type TeamUserInvitation
+} from '@/services/userAccessService'
 import {
   ACCESS_MODULES,
   ADMIN_ACCESS,
@@ -485,10 +490,12 @@ export const UserAccessSettings: React.FC = () => {
   const { user } = useAuth()
   const { showToast, showConfirm } = useNotification()
   const [members, setMembers] = useState<TeamUser[]>([])
+  const [invitations, setInvitations] = useState<TeamUserInvitation[]>([])
   const [loading, setLoading] = useState(true)
   const [savingCreate, setSavingCreate] = useState(false)
   const [savingEdit, setSavingEdit] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [revokingInvitationId, setRevokingInvitationId] = useState<string | null>(null)
   const [createExpanded, setCreateExpanded] = useState(false)
   const [createPreset, setCreatePreset] = useState<AccessPreset>('default')
   const [createDraft, setCreateDraft] = useState<Draft>(() => blankDraft())
@@ -515,9 +522,13 @@ export const UserAccessSettings: React.FC = () => {
     const loadMembers = async () => {
       try {
         setLoading(true)
-        const nextMembers = await userAccessService.listUsers()
+        const [nextMembers, nextInvitations] = await Promise.all([
+          userAccessService.listUsers(),
+          userAccessService.listInvitations()
+        ])
         if (cancelled) return
         setMembers(nextMembers)
+        setInvitations(nextInvitations.filter(invitation => invitation.status === 'pending'))
         setSelectedId((current) => current || nextMembers[0]?.id || null)
       } catch (error: any) {
         if (!cancelled) {
@@ -608,26 +619,27 @@ export const UserAccessSettings: React.FC = () => {
     event.preventDefault()
     const payload = getDraftPayload(createDraft)
 
-    if (!payload.email && !payload.phone) {
-      showToast('warning', 'Falta contacto', 'Agrega correo o teléfono para crear el acceso.')
-      return
-    }
-
-    if (!payload.password) {
-      showToast('warning', 'Falta contraseña', 'Agrega una contraseña temporal.')
+    if (!payload.email) {
+      showToast('warning', 'Falta correo', 'Necesitamos un correo para enviar la invitación segura.')
       return
     }
 
     try {
       setSavingCreate(true)
-      const created = await userAccessService.createUser(payload)
-      setMembers((current) => [created, ...current])
-      setSelectedId(created.id)
+      const response = await userAccessService.inviteUser({
+        firstName: payload.firstName,
+        lastName: payload.lastName,
+        email: payload.email,
+        phone: payload.phone,
+        role: payload.role,
+        accessConfig: payload.accessConfig
+      })
+      setInvitations((current) => [response.invitation, ...current])
       setCreateDraft(blankDraft())
       setCreateExpanded(false)
-      showToast('success', 'Acceso creado', 'La persona ya puede entrar con sus datos.')
+      showToast('success', 'Invitación enviada', 'La persona recibirá un enlace privado para crear su contraseña y activar el acceso.')
     } catch (error: any) {
-      showToast('error', 'No se creó el acceso', error?.message || 'Revisa los datos e intenta otra vez.')
+      showToast('error', 'No se envió la invitación', error?.message || 'Revisa el correo y la conexión de email.')
     } finally {
       setSavingCreate(false)
     }
@@ -684,6 +696,28 @@ export const UserAccessSettings: React.FC = () => {
     )
   }
 
+  const handleRevokeInvitation = (invitation: TeamUserInvitation) => {
+    showConfirm(
+      'Cancelar invitación',
+      `El enlace enviado a ${invitation.email} dejará de funcionar. Puedes enviar una invitación nueva después.`,
+      async () => {
+        try {
+          setRevokingInvitationId(invitation.id)
+          await userAccessService.revokeInvitation(invitation.id)
+          setInvitations((current) => current.filter(item => item.id !== invitation.id))
+          showToast('success', 'Invitación cancelada', 'El enlace anterior ya no permite activar el acceso.')
+        } catch (error: any) {
+          showToast('error', 'No se pudo cancelar', error?.message || 'Intenta otra vez.')
+          return false
+        } finally {
+          setRevokingInvitationId(null)
+        }
+      },
+      'Cancelar invitación',
+      'Conservar'
+    )
+  }
+
   return (
     <div className={styles.page}>
       {/* (MOB-006) Pestañas: Accesos (intacto) + Notificaciones del equipo (nuevo). */}
@@ -725,11 +759,11 @@ export const UserAccessSettings: React.FC = () => {
             <div className={styles.addRowText}>
               <span className={styles.sectionTitle}>Nuevo acceso</span>
               <span className={styles.sectionDescription}>
-                Crea el acceso de una persona en tres pasos: datos, rol y permisos.
+                Envía una invitación segura y define desde ahora su rol y permisos.
               </span>
             </div>
             <Button type="button" variant="primary" onClick={openCreate} leftIcon={<UserPlus size={16} />}>
-              Agregar persona
+              Invitar persona
             </Button>
           </div>
         </section>
@@ -737,7 +771,7 @@ export const UserAccessSettings: React.FC = () => {
         <Modal
           isOpen={createExpanded}
           onClose={closeCreate}
-          title="Agregar persona"
+          title="Invitar persona"
           type="custom"
           size="lg"
           showCloseButton
@@ -747,7 +781,7 @@ export const UserAccessSettings: React.FC = () => {
               <div className={styles.blockHeader}>
                 <div>
                   <h4 className={styles.blockTitle}>1 · Datos de la persona</h4>
-                  <p className={styles.blockDescription}>El correo o teléfono será su usuario para iniciar sesión.</p>
+                  <p className={styles.blockDescription}>Le enviaremos un enlace privado para que cree su propia contraseña.</p>
                 </div>
               </div>
 
@@ -797,18 +831,8 @@ export const UserAccessSettings: React.FC = () => {
                   />
                 </div>
                 <div className={`${styles.field} ${styles.fieldWide}`}>
-                  <label className={styles.label} htmlFor="access-password">Contraseña temporal</label>
-                  <input
-                    id="access-password"
-                    className={styles.input}
-                    type="password"
-                    value={createDraft.password}
-                    onChange={(event) => setCreateDraft((current) => ({ ...current, password: event.target.value }))}
-                    autoComplete="new-password"
-                    minLength={6}
-                  />
                   <p className={styles.helperText}>
-                    Necesitas al menos correo o teléfono y una contraseña temporal.
+                    El correo es obligatorio. Ristak no te mostrará ni te pedirá la contraseña de la persona invitada.
                   </p>
                 </div>
               </div>
@@ -868,11 +892,60 @@ export const UserAccessSettings: React.FC = () => {
                 Cancelar
               </Button>
               <Button type="submit" variant="primary" loading={savingCreate} leftIcon={<UserPlus size={16} />}>
-                Crear acceso
+                Enviar invitación
               </Button>
             </div>
           </form>
         </Modal>
+
+        {invitations.length > 0 && (
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <div>
+                <h3 className={styles.sectionTitle}>Invitaciones pendientes</h3>
+                <p className={styles.sectionDescription}>Estas personas todavía no crean su contraseña ni activan el acceso.</p>
+              </div>
+              <Badge variant="neutral">{invitations.length}</Badge>
+            </div>
+            <div className={styles.membersPanel}>
+              <div className={styles.membersHeaderRow}>
+                <span>Persona</span>
+                <span>Rol</span>
+                <span>Acción</span>
+              </div>
+              <div className={styles.membersList}>
+                {invitations.map((invitation) => (
+                  <div key={invitation.id} className={`${styles.memberRow} ${styles.invitationRow}`}>
+                    <span className={styles.memberIdentity}>
+                      <span className={styles.avatar}>{getInitials(invitation)}</span>
+                      <span className={styles.memberText}>
+                        <span className={styles.memberName}>{invitation.fullName || invitation.email}</span>
+                        <span className={styles.memberMeta}>{invitation.email}</span>
+                      </span>
+                    </span>
+                    <span className={styles.memberRoleCell}>
+                      <Badge variant={invitation.role === 'admin' ? 'primary' : 'neutral'}>
+                        {getRoleLabel(invitation.role)}
+                      </Badge>
+                    </span>
+                    <span className={styles.invitationActionCell}>
+                      <Button
+                        type="button"
+                        variant="danger"
+                        size="sm"
+                        loading={revokingInvitationId === invitation.id}
+                        disabled={Boolean(revokingInvitationId)}
+                        onClick={() => handleRevokeInvitation(invitation)}
+                      >
+                        Cancelar
+                      </Button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
 
         <section className={styles.section}>
           <div className={styles.sectionHeader}>
@@ -1030,8 +1103,8 @@ export const UserAccessSettings: React.FC = () => {
                           type="password"
                           value={editDraft.password || ''}
                           onChange={(event) => setEditDraft((current) => current ? { ...current, password: event.target.value } : current)}
-                          placeholder="Opcional"
-                          minLength={6}
+                          placeholder="Opcional · mínimo 10 caracteres"
+                          minLength={10}
                         />
                       </div>
                     </div>

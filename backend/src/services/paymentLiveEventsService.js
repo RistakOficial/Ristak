@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import { invalidateTrackingAnalyticsCache } from './trackingAnalyticsCache.js'
+import { recordMcpBusinessEventBestEffort } from './mcpEventInboxService.js'
 
 const HEARTBEAT_INTERVAL_MS = 25_000
 const clients = new Map()
@@ -143,6 +144,13 @@ function publishPaymentEvent(eventName, payload) {
   // Analíticas agrega compras/clientes: la coherencia no puede depender de que
   // exista un navegador conectado al stream SSE.
   invalidateTrackingAnalyticsCache()
+  recordMcpBusinessEventBestEffort({
+    domain: 'payments',
+    type: eventName,
+    entityId: payload.paymentId || payload.subscriptionId || payload.publicPaymentId || null,
+    payload,
+    occurredAt: payload.receivedAt || new Date().toISOString()
+  })
   if (clients.size === 0) return
 
   for (const [clientId, client] of clients.entries()) {

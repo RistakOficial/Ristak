@@ -225,6 +225,78 @@ const contactTools = [
     inputSchema: schema({ payload: OBJECT }, ['payload']),
     body: args => args.payload
   }),
+  readTool({
+    name: 'contacts_bulk_actions_list',
+    description: 'Lista lotes persistentes de WhatsApp y automatizaciones con estado, avance, errores y programación.',
+    module: 'contacts',
+    handler: contactsController.listBulkContactActions,
+    inputSchema: schema({ limit: { type: 'integer', minimum: 1, maximum: 200 } }),
+    query: args => compactDefined({ limit: args.limit })
+  }),
+  readTool({
+    name: 'contacts_bulk_action_get',
+    description: 'Obtiene un lote persistente y el estado individual de sus contactos para revisar avance o errores.',
+    module: 'contacts',
+    handler: contactsController.getBulkContactAction,
+    inputSchema: schema({ actionId: ID }, ['actionId']),
+    params: args => ({ actionId: args.actionId })
+  }),
+  executeTool({
+    name: 'contacts_bulk_action_pause',
+    description: 'Pausa un lote persistente antes de que procese los contactos pendientes; no revierte envíos ya realizados.',
+    module: 'contacts',
+    handler: contactsController.pauseBulkContactAction,
+    inputSchema: schema({ actionId: ID }, ['actionId']),
+    params: args => ({ actionId: args.actionId })
+  }),
+  executeTool({
+    name: 'contacts_bulk_action_resume',
+    description: 'Reanuda un lote pausado y vuelve a activar el procesamiento de sus contactos pendientes.',
+    module: 'contacts',
+    handler: contactsController.resumeBulkContactAction,
+    inputSchema: schema({ actionId: ID }, ['actionId']),
+    params: args => ({ actionId: args.actionId })
+  }),
+  executeTool({
+    name: 'contacts_bulk_action_reschedule',
+    description: 'Reprograma los contactos pendientes o con error de un lote usando la zona horaria del negocio.',
+    module: 'contacts',
+    handler: contactsController.rescheduleBulkContactAction,
+    inputSchema: schema({
+      actionId: ID,
+      scheduledAt: DATE_TIME,
+      dripEnabled: { type: 'boolean' },
+      dripIntervalMinutes: { type: 'integer', minimum: 1, maximum: 1440 }
+    }, ['actionId', 'scheduledAt']),
+    params: args => ({ actionId: args.actionId }),
+    body: args => ({
+      schedule: {
+        mode: 'scheduled',
+        scheduledAt: args.scheduledAt,
+        drip: {
+          enabled: args.dripEnabled === true,
+          intervalMinutes: args.dripIntervalMinutes
+        }
+      }
+    })
+  }),
+  destructiveTool({
+    name: 'contacts_bulk_action_cancel',
+    description: 'Cancela de forma definitiva todos los contactos pendientes de un lote; no revierte acciones ya ejecutadas.',
+    module: 'contacts',
+    handler: contactsController.cancelBulkContactAction,
+    inputSchema: schema({ actionId: ID }, ['actionId']),
+    params: args => ({ actionId: args.actionId })
+  }),
+  destructiveTool({
+    name: 'contacts_bulk_action_delete',
+    description: 'Elimina el historial administrado de un lote y todos sus items; no revierte acciones ya ejecutadas.',
+    module: 'contacts',
+    handler: contactsController.deleteBulkContactAction,
+    method: 'DELETE',
+    inputSchema: schema({ actionId: ID }, ['actionId']),
+    params: args => ({ actionId: args.actionId })
+  }),
   mutationTool({
     name: 'chat_mark_many_read',
     description: 'Marca varios chats como leídos para el usuario conectado y encola recibos del proveedor cuando corresponda.',
@@ -1049,6 +1121,41 @@ const settingsTools = [
     module: 'settings_users',
     adminOnly: true,
     handler: userAccessController.listUsers
+  }),
+  readTool({
+    name: 'settings_user_invitations_list',
+    description: 'Lista invitaciones de acceso enviadas, aceptadas, revocadas o expiradas. Nunca devuelve el enlace secreto.',
+    module: 'settings_users',
+    adminOnly: true,
+    handler: userAccessController.listUserInvitations
+  }),
+  executeTool({
+    name: 'settings_user_invite',
+    description: 'Invita a una persona por correo para que cree su propia contraseña; el enlace se envía directamente y nunca se entrega al cliente MCP.',
+    module: 'settings_users',
+    additionalModules: [{ module: 'settings_email', access: 'write' }],
+    connectionPrerequisites: ['email'],
+    adminOnly: true,
+    handler: userAccessController.createUserInvitation,
+    inputSchema: schema({
+      firstName: { type: 'string', maxLength: 80 },
+      lastName: { type: 'string', maxLength: 80 },
+      email: { type: 'string', minLength: 3, maxLength: 180 },
+      phone: { type: 'string', maxLength: 40 },
+      role: { type: 'string', enum: ['admin', 'employee'] },
+      accessConfig: OBJECT
+    }, ['email', 'role', 'accessConfig']),
+    body: cleanControls
+  }),
+  destructiveTool({
+    name: 'settings_user_invitation_revoke',
+    description: 'Revoca una invitación pendiente para que su enlace deje de poder activar un acceso.',
+    module: 'settings_users',
+    adminOnly: true,
+    handler: userAccessController.revokeUserInvitation,
+    method: 'DELETE',
+    inputSchema: schema({ invitationId: ID }, ['invitationId']),
+    params: args => ({ invitationId: args.invitationId })
   }),
   mutationTool({
     name: 'settings_user_update',

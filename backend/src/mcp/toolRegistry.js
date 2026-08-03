@@ -6,6 +6,10 @@ import { hasGrantedScope } from '../utils/oauthTokens.js'
 import { logger } from '../utils/logger.js'
 import { getMissingMcpConnectionPrerequisites } from '../services/mcpConnectionPrerequisitesService.js'
 import {
+  acknowledgeMcpBusinessEvents,
+  listMcpBusinessEvents
+} from '../services/mcpEventInboxService.js'
+import {
   consumeMcpActionConfirmation,
   createMcpActionConfirmation,
   getMcpActionConfirmationStatus,
@@ -200,6 +204,7 @@ function outputSummary(value) {
 function riskLevelFor(spec) {
   if (spec.scope === 'ristak.destructive') return 'destructive'
   if (spec.scope === 'ristak.execute') return 'execute'
+  if (spec.scope === 'ristak.write') return 'write'
   return spec.access === 'write' ? 'write' : 'read'
 }
 
@@ -215,21 +220,20 @@ function modulePoliciesFor(spec) {
 }
 
 function toolDefinition(spec) {
-  const securitySchemes = [{ type: 'oauth2', scopes: [spec.scope] }]
+  const securitySchemes = (spec.scopesAny?.length ? spec.scopesAny : [spec.scope])
+    .map(scope => ({ type: 'oauth2', scopes: [scope] }))
   return {
     name: spec.name,
     title: spec.title || spec.name.replaceAll('_', ' '),
     description: spec.description,
     inputSchema: spec.inputSchema,
-    outputSchema: spec.outputSchema || {
-      type: 'object',
-      additionalProperties: true
-    },
+    outputSchema: spec.outputSchema,
     securitySchemes,
     annotations: {
       readOnlyHint: spec.readOnlyHint ?? spec.access === 'read',
       destructiveHint: spec.scope === 'ristak.destructive',
-      openWorldHint: spec.openWorld === true || spec.scope === 'ristak.execute'
+      openWorldHint: spec.openWorld === true || spec.scope === 'ristak.execute',
+      idempotentHint: spec.idempotentHint ?? spec.idempotencyRequired === true
     },
     _meta: {
       securitySchemes,
@@ -273,6 +277,7 @@ const controlToolSpecs = [
     module: 'settings_api_access',
     access: 'read',
     scope: 'ristak.write',
+    scopesAny: ['ristak.write', 'ristak.execute', 'ristak.destructive'],
     risk: 'medium',
     featureKeys: [],
     adminOnly: false,
@@ -314,6 +319,7 @@ const controlToolSpecs = [
     module: 'settings_api_access',
     access: 'read',
     scope: 'ristak.read',
+    scopesAny: ['ristak.read', 'ristak.write', 'ristak.execute', 'ristak.destructive'],
     risk: 'low',
     featureKeys: [],
     adminOnly: false,
@@ -328,8 +334,117 @@ const controlToolSpecs = [
     execute(context, args) {
       return getMcpActionConfirmationStatus(context, args.approvalTicket)
     }
+  }),
+  Object.freeze({
+    name: 'mcp_search_capabilities',
+    title: 'Buscar capacidades de Ristak',
+    description: 'Úsala cuando necesites encontrar la herramienta correcta por intención, dominio, acceso o riesgo sin revisar manualmente todo el catálogo MCP.',
+    module: 'settings_api_access',
+    access: 'read',
+    scope: 'ristak.read',
+    scopesAny: ['ristak.read', 'ristak.write', 'ristak.execute', 'ristak.destructive'],
+    risk: 'low',
+    featureKeys: [],
+    adminOnly: false,
+    confirmRequired: false,
+    idempotencyRequired: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', minLength: 1, maxLength: 300 },
+        domain: { type: 'string', minLength: 1, maxLength: 120 },
+        access: { type: 'string', enum: ['read', 'write'] },
+        risk: { type: 'string', enum: ['read', 'write', 'execute', 'destructive'] },
+        limit: { type: 'integer', minimum: 1, maximum: 50 }
+      },
+      required: ['query'],
+      additionalProperties: false
+    },
+    execute(context, args) {
+      return searchMcpCapabilities(context, args)
+    }
+  }),
+  Object.freeze({
+    name: 'mcp_events_list',
+    title: 'Leer eventos pendientes',
+    description: 'Recupera mensajes y cambios de pagos durables que esta conexión todavía no ha confirmado. Úsala al retomar una sesión o desde un runtime que haga polling.',
+    module: 'settings_api_access',
+    access: 'read',
+    scope: 'ristak.read',
+    scopesAny: ['ristak.read', 'ristak.write', 'ristak.execute', 'ristak.destructive'],
+    risk: 'low',
+    featureKeys: [],
+    adminOnly: false,
+    confirmRequired: false,
+    idempotencyRequired: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        domain: { type: 'string', enum: ['chat', 'payments'] },
+        eventType: { type: 'string', minLength: 1, maxLength: 120 },
+        afterCursor: { type: 'string', minLength: 1, maxLength: 1000 },
+        limit: { type: 'integer', minimum: 1, maximum: 100 }
+      },
+      additionalProperties: false
+    },
+    execute(context, args) {
+      return listMcpBusinessEvents(context, args)
+    }
+  }),
+  Object.freeze({
+    name: 'mcp_events_acknowledge',
+    title: 'Confirmar eventos procesados',
+    description: 'Marca como procesados, solo para esta conexión OAuth, uno o varios eventos ya atendidos. Es idempotente y no modifica los datos del negocio.',
+    module: 'settings_api_access',
+    access: 'read',
+    scope: 'ristak.write',
+    risk: 'low',
+    featureKeys: [],
+    adminOnly: false,
+    confirmRequired: false,
+    idempotencyRequired: false,
+    idempotentHint: true,
+    readOnlyHint: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        eventIds: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 100,
+          items: { type: 'string', minLength: 1, maxLength: 120 }
+        }
+      },
+      required: ['eventIds'],
+      additionalProperties: false
+    },
+    execute(context, args) {
+      return acknowledgeMcpBusinessEvents(context, args.eventIds)
+    }
   })
 ]
+const controlToolNames = new Set(controlToolSpecs.map(entry => entry.name))
+
+const BASE_TOOL_OUTPUT_SCHEMA = Object.freeze({
+  type: 'object',
+  properties: {
+    success: { type: 'boolean', description: 'Indica si Ristak completó la operación.' },
+    data: { description: 'Datos principales de la operación cuando el controlador usa un sobre data.' },
+    items: { type: 'array', items: {}, description: 'Colección principal cuando la respuesta usa items.' },
+    message: { type: 'string', description: 'Resumen seguro y legible del resultado.' },
+    error: { type: 'string', description: 'Mensaje seguro cuando la herramienta no pudo completarse.' },
+    code: { type: 'string', description: 'Código estable de error o estado cuando existe.' }
+  },
+  additionalProperties: true
+})
+
+// La IA puede leer, sincronizar y analizar Publicidad/Meta. La creación o
+// modificación de borradores de campaña queda fuera del MCP por política de
+// producto, incluso si Meta Ads se conecta en el futuro.
+const MCP_DISABLED_TOOL_NAMES = new Set([
+  'campaigns_builder_draft_create',
+  'campaigns_builder_draft_preview'
+])
 
 const allSpecs = Object.freeze([
   ...controlToolSpecs,
@@ -337,7 +452,12 @@ const allSpecs = Object.freeze([
   ...siteToolSpecs,
   ...extendedToolSpecs,
   ...capabilityToolSpecs
-])
+]
+  .filter(entry => !MCP_DISABLED_TOOL_NAMES.has(entry?.name))
+  .map(entry => Object.freeze({
+    ...entry,
+    outputSchema: entry.outputSchema || BASE_TOOL_OUTPUT_SCHEMA
+  })))
 const specByName = new Map()
 for (const entry of allSpecs) {
   if (!entry?.name || typeof entry.execute !== 'function') {
@@ -359,7 +479,7 @@ async function missingConnectionPrerequisites(context, prerequisites = []) {
 
 async function hasToolPolicy(context, spec) {
   const user = context.user || {}
-  if (!hasGrantedScope(context.scopes || context.mcpUser?.scope, spec.scope)) return false
+  if (!hasRequiredToolScope(context, spec)) return false
   if (spec.adminOnly && user.role !== 'admin') return false
   if (modulePoliciesFor(spec).some(policy => !hasUserAccess(user, policy.module, policy.access))) return false
   if ((await missingConnectionPrerequisites(context, spec.connectionPrerequisites)).length) return false
@@ -378,10 +498,19 @@ async function hasToolPolicy(context, spec) {
   return true
 }
 
+function hasRequiredToolScope(context, spec) {
+  const granted = context.scopes || context.mcpUser?.scope
+  if (spec.scopesAny?.length) {
+    return spec.scopesAny.some(scope => hasGrantedScope(granted, scope))
+  }
+  return hasGrantedScope(granted, spec.scope)
+}
+
 async function assertToolAuthorization(context, spec) {
-  if (!hasGrantedScope(context.scopes || context.mcpUser?.scope, spec.scope)) {
-    throw makeError(`La conexión no tiene el scope ${spec.scope}.`, 'insufficient_scope', 403, {
-      requiredScope: spec.scope
+  if (!hasRequiredToolScope(context, spec)) {
+    const requiredScopes = spec.scopesAny?.length ? spec.scopesAny : [spec.scope]
+    throw makeError(`La conexión necesita uno de estos scopes: ${requiredScopes.join(', ')}.`, 'insufficient_scope', 403, {
+      requiredScopes
     })
   }
   if (spec.adminOnly && context.user?.role !== 'admin') {
@@ -431,6 +560,49 @@ async function assertToolAuthorization(context, spec) {
         })
       }
     }
+  }
+}
+
+async function searchMcpCapabilities(context, args = {}) {
+  const normalizedQuery = String(args.query || '').trim().toLowerCase()
+  const terms = normalizedQuery.split(/\s+/).filter(Boolean)
+  const domain = String(args.domain || '').trim()
+  const limit = Math.max(1, Math.min(Number(args.limit) || 20, 50))
+  const policyContext = { ...context, connectionPrerequisiteCache: new Map() }
+  const allowed = await Promise.all(allSpecs.map(entry => hasToolPolicy(policyContext, entry)))
+
+  const results = allSpecs
+    .filter((_entry, index) => allowed[index])
+    .filter(entry => !controlToolNames.has(entry.name))
+    .filter(entry => !domain || entry.module === domain)
+    .filter(entry => !args.access || entry.access === args.access)
+    .filter(entry => !args.risk || riskLevelFor(entry) === args.risk)
+    .map(entry => {
+      const haystack = [entry.name, entry.title, entry.description, entry.module]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      const score = terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0)
+      return { entry, score }
+    })
+    .filter(result => result.score > 0)
+    .sort((left, right) => right.score - left.score || left.entry.name.localeCompare(right.entry.name))
+
+  return {
+    success: true,
+    query: args.query,
+    total: results.length,
+    tools: results.slice(0, limit).map(({ entry }) => ({
+      name: entry.name,
+      title: entry.title || entry.name.replaceAll('_', ' '),
+      description: entry.description,
+      domain: entry.module,
+      access: entry.access,
+      scope: entry.scope,
+      risk: riskLevelFor(entry),
+      confirmationRequired: entry.confirmRequired === true,
+      connectionPrerequisites: entry.connectionPrerequisites || []
+    }))
   }
 }
 
@@ -654,7 +826,9 @@ export function sanitizeMcpResult(value) {
 
 export const __mcpRegistryTestHooks = {
   allSpecs,
+  MCP_DISABLED_TOOL_NAMES,
   riskLevelFor,
+  searchMcpCapabilities,
   stableValue,
   sanitizeAuditInput,
   sanitizeExternal,

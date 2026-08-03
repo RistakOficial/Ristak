@@ -82,7 +82,7 @@ the same server URL; `tools/list` returns the exact tools available to the user
 who authorized that connection.
 
 The MCP is a typed control plane over Ristak's business services, not a generic
-route proxy and not unrestricted SQL. The current registry contains 336 typed
+route proxy and not unrestricted SQL. The current registry contains 347 typed
 tools before authorization filtering. `GET /api/api-access/mcp/status` and
 `tools/list` report only the subset visible to the current user, plan, modules
 and granted scopes. It also removes tools whose provider is not connected in
@@ -94,9 +94,11 @@ catalog cannot bypass it. The registry covers these operational domains:
 - calendars, availability, appointments and automations;
 - payments, payment links/plans, products, prices and subscriptions;
 - dashboard summaries, reports, analytics, attribution and web tracking;
-- campaigns and Meta assets already supported by the account, visible only when
-  the corresponding Meta connection exists; this expansion did not add new Meta
-  campaign-management actions;
+- campaigns, ads, ad sets, performance, spend, attribution, pixels, pages,
+  social profiles and other Meta assets already supported by the account,
+  visible only when the corresponding Meta connection exists. The MCP may read
+  and refresh/synchronize this data, but it deliberately omits campaign-draft
+  creation and preview tools so an AI cannot create or modify campaigns in Meta;
 - media library assets, folders, storage usage, signed local-file uploads to
   Bunny.net, signed replacements, temporary ZIP downloads and permitted
   lifecycle actions;
@@ -105,14 +107,22 @@ catalog cannot bypass it. The registry covers these operational domains:
 - Sites lifecycle, imported HTML files, preview and controlled publication.
 
 The expanded operational set includes contact journeys and bulk field updates,
-persistent WhatsApp/template and automation batches, multimedia WhatsApp sends,
+persistent WhatsApp/template and automation batches with list/get/pause/resume/
+reschedule/cancel/delete lifecycle, multimedia WhatsApp sends,
 read-state and channel preferences, payment subscriptions and transfer-proof
 decisions, appointment reminders and Google Calendar synchronization, automation
 folders/catalogs/tests, Site submissions/video analytics, Media folders/assets,
 tracking configuration and sessions, account settings, notification preferences
-and selected user administration. MCP does not accept a user's raw password, so
-creating a user remains in the authenticated Ristak interface until the product
-has a passwordless invitation flow.
+and selected user administration. User creation is passwordless from the
+administrator's point of view: `settings_user_invite` sends a 48-hour activation
+link directly through the account's connected email, the recipient creates the
+password, and the MCP never receives the link, token or password. Pending
+invitations can be listed or revoked.
+
+Every advertised tool has an explicit output schema, OAuth security declaration
+and read/destructive/open-world/idempotency annotations. `mcp_search_capabilities`
+provides deterministic discovery by intent, domain, access and risk so clients do
+not need to load or guess the entire catalog.
 
 Payment metadata edits cannot change payment status. Recording a payment uses
 `ristak.execute`; refunds, voids and payment-plan cancellation/deletion use
@@ -144,7 +154,10 @@ The granted scope is necessary but not sufficient. On every `tools/list` and
 6. a signed, single-use human approval for high-impact writes, external effects
    and destructive actions.
 
-`confirm=true` is not approval by itself. For a protected action the client must
+`confirm=true` is not approval by itself. The preparation/status tools accept
+any relevant granted scope instead of incorrectly requiring `ristak.read`; this
+lets an execute-only or destructive-only connection complete its own approval
+flow. For a protected action the client must
 first call `mcp_prepare_action_confirmation` with the exact tool name and exact
 business arguments. Ristak returns a short-lived URL and a single-use
 `approvalTicket`; the authenticated user opens the URL inside Ristak and reviews
@@ -221,10 +234,27 @@ closed. The URL must not be logged or copied into durable documentation.
 ### Receiving messages
 
 An agent can list the inbox, inspect a contact conversation and answer through
-the channels connected in Ristak. MCP does not initiate an unsolicited request
-into a closed Codex/ChatGPT/Claude session. A client that needs continuous
-reception must poll/read the inbox from its own runtime or use Ristak
-automations/webhooks for an event-driven flow.
+the channels connected in Ristak. Ristak also stores a durable, per-OAuth-grant
+event inbox for chat and payment changes. `mcp_events_list` returns only events
+created after that grant was authorized, still permitted by the user's current
+module access and license, with an opaque cursor. Once processed,
+`mcp_events_acknowledge` marks them handled only for that grant and is idempotent.
+
+MCP does not initiate an unsolicited request into a closed
+Codex/ChatGPT/Claude session. A client that needs continuous reception must poll
+`mcp_events_list` from its own runtime, or use Ristak automations/webhooks for an
+event-driven flow. This closes event loss between sessions without pretending a
+closed chat can be awakened.
+
+### Retention and control-plane cleanup
+
+The system maintenance job runs at startup and every six hours under a
+distributed lock. It expires pending action approvals and user invitations,
+deletes expired idempotency records and 30-day MCP business events, retains
+terminal approvals/invitations for 90 days and audit records for 180 days. Event,
+acknowledgement, invitation, approval and OAuth control tables are blocked from
+generic REST/MCP table queries; only their dedicated business tools may access
+them.
 
 ### Uploading a local file to Bunny.net
 
