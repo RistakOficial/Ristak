@@ -74,7 +74,11 @@ enlaces de disparo.
 
 Al activar el modo en línea, Ristak crea también el mensaje automático
 `online_meeting_join_link_10m`, diez minutos antes, con la plantilla
-`recordatorio_cita_en_linea_10_minutos`. La variable
+`acceso_videollamada_10_minutos`. Esta es la plantilla preferida que se crea para
+cualquier calendario en línea nuevo; mantiene texto fijo después de la URL
+dinámica para cumplir la validación de plantillas de Meta.
+
+La variable
 `{{cita.enlace_ingreso}}` se resuelve para la cita y el contacto exactos. Su
 token opaco cifra además `appointment_id`, por lo que el clic puede comprobar
 calendario, contacto y cita sin aceptar IDs manipulables desde el query string.

@@ -274,8 +274,8 @@ const APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS = [
     }
   },
   {
-    name: 'recordatorio_cita_en_linea_10_minutos',
-    providerRevision: 1,
+    name: 'acceso_videollamada_10_minutos',
+    providerRevision: 2,
     description: 'Recordatorio automático con el enlace seguro de ingreso a una cita en línea.',
     category: 'utility',
     language: DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE,
@@ -283,8 +283,8 @@ const APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS = [
     headerEnabled: false,
     headerType: 'none',
     headerText: '',
-    bodyText: 'Hola {{1}}, tu cita en línea comienza el {{2}} a las {{3}}. Ingresa aquí: {{4}}',
-    footerText: 'Ristak registrará tu ingreso al abrir el enlace',
+    bodyText: 'Hola {{1}}, tu cita en línea comienza el {{2}} a las {{3}}. Ingresa a la videollamada aquí: {{4}}\n\nTe esperamos.',
+    footerText: 'Mensaje automático de Ristak',
     buttons: [],
     variableExamples: {
       '{{contact.first_name}}': 'María',
@@ -324,7 +324,7 @@ const APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS = [
   }
 ]
 const ONLINE_MEETING_MESSAGE_TEMPLATE = APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS.find(
-  template => template.name === 'recordatorio_cita_en_linea_10_minutos'
+  template => template.name === 'acceso_videollamada_10_minutos'
 )
 const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS.filter(
   template => template !== ONLINE_MEETING_MESSAGE_TEMPLATE

@@ -75,7 +75,7 @@ const DEFAULT_BOOKING_NOTICE_SYSTEM_KEY = 'default_on_booking'
 const DEFAULT_ONE_HOUR_REMINDER_SYSTEM_KEY = 'default_one_hour_before'
 const DEFAULT_CONFIRMATION_SYSTEM_KEY = 'default_one_day_before'
 const ONLINE_MEETING_REMINDER_SYSTEM_KEY = 'online_meeting_join_link_10m'
-const ONLINE_MEETING_TEMPLATE_NAME = 'recordatorio_cita_en_linea_10_minutos'
+const ONLINE_MEETING_TEMPLATE_NAME = 'acceso_videollamada_10_minutos'
 const REMINDER_SCHEDULE_CONFLICT_CODE = 'appointment_reminder_schedule_conflict'
 
 // Si un envío quedó pendiente demasiado tiempo (p.ej. cita creada después de

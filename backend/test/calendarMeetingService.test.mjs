@@ -58,7 +58,16 @@ test('una cita en línea usa enlace opaco, oculta el destino interno y marca asi
     assert.equal(reminder?.enabled, 1)
     assert.equal(reminder?.offset_value, 10)
     assert.equal(reminder?.offset_unit, 'minutes')
-    assert.equal(reminder?.template_name, 'recordatorio_cita_en_linea_10_minutos')
+    assert.equal(reminder?.template_name, 'acceso_videollamada_10_minutos')
+    const onlineTemplate = await db.get(
+      'SELECT body_text, footer_text FROM whatsapp_message_templates WHERE id = ?',
+      [reminder.template_id]
+    )
+    assert.equal(
+      onlineTemplate?.body_text,
+      'Hola {{1}}, tu cita en línea comienza el {{2}} a las {{3}}. Ingresa a la videollamada aquí: {{4}}\n\nTe esperamos.'
+    )
+    assert.equal(onlineTemplate?.footer_text, 'Mensaje automático de Ristak')
 
     const start = new Date(Date.now() + 60 * 60 * 1000)
     const appointment = await createLocalAppointment({

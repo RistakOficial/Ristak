@@ -2088,8 +2088,10 @@ interno con `system_scope='calendar_meeting'`. No aparece en la librería de
 enlaces ni como variable genérica, porque el único dato público autorizado es
 `{{cita.enlace_ingreso}}` dentro de una cita real.
 
-La plantilla `recordatorio_cita_en_linea_10_minutos` se crea para ese flujo y
-una regla administrada la programa diez minutos antes. Cada render cifra
+La plantilla preferida `acceso_videollamada_10_minutos` se crea al activar un
+calendario en línea y una regla administrada la programa diez minutos antes. Su
+copy conserva texto fijo después de la URL dinámica para cumplir la validación de
+Meta. Cada render cifra
 `public_id + contact_id + appointment_id` en un token `pce1_*`; el destino real
 no se incluye en el WhatsApp. El primer clic válido registra el evento, comprueba
 que los tres IDs coincidan, marca la cita `showed` y crea la señal idempotente de

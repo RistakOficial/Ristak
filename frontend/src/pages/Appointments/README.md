@@ -168,7 +168,9 @@ cambiar de calendario la UI vacía la lista anterior y descarta respuestas
 asíncronas que pertenezcan a la selección previa.
 
 Cuando un calendario es `online`, Ristak agrega una regla administrada diez
-minutos antes con la plantilla `recordatorio_cita_en_linea_10_minutos`. La
+minutos antes con la plantilla `acceso_videollamada_10_minutos`. La
+plantilla es la preferida para calendarios en línea nuevos y conserva texto fijo
+después de la URL dinámica para que Meta pueda aceptarla. La
 variable **Enlace de ingreso a la cita** (`{{cita.enlace_ingreso}}`) aparece en
 el grupo Citas de las plantillas de WhatsApp y se materializa como URL opaca
 individual. La URL de Zoom/Meet no aparece en el catálogo de enlaces de disparo.
