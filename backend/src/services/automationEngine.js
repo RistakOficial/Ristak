@@ -26,6 +26,10 @@ import { createRistakId } from '../utils/idGenerator.js'
 import { invalidateTrackingAnalyticsCache } from './trackingAnalyticsCache.js'
 import { normalizeContactNameFields } from '../utils/contactNameFormatter.js'
 import {
+  normalizeContactLifecycleStage,
+  resolveContactLifecycleStage
+} from '../utils/contactLifecycleStage.js'
+import {
   claimAppointmentTestAction,
   completeAppointmentTestAction,
   recordSimulatedAppointmentTestAction
@@ -694,13 +698,13 @@ function contactChangeFieldsForEvent(eventType, ctx = {}) {
   if (CONTACT_CHANGE_EVENT_TYPES.has(eventType)) fields.push('updatedAt')
   if (eventType === 'tag-changed') fields.push('tags')
   if (eventType === 'payment-received' || eventType === 'refund') {
-    fields.push('payments', 'paymentsCount', 'totalPaid', 'purchasesCount', 'lastPurchaseDate')
+    fields.push('payments', 'paymentsCount', 'totalPaid', 'purchasesCount', 'lastPurchaseDate', 'stage')
   }
   if (eventType === 'appointment-booked') {
-    fields.push('appointments', 'appointmentsCount', 'activeAppointmentsCount', 'activeAppointment', 'appointmentStatus', 'appointmentCalendar', 'appointmentDate')
+    fields.push('appointments', 'appointmentsCount', 'activeAppointmentsCount', 'activeAppointment', 'appointmentStatus', 'appointmentCalendar', 'appointmentDate', 'stage')
   }
   if (eventType === 'appointment-status') {
-    fields.push('appointments', 'activeAppointment', 'appointmentStatus')
+    fields.push('appointments', 'activeAppointment', 'appointmentStatus', 'stage')
   }
   return [...new Set(fields.map(cleanString).filter(Boolean))]
 }
@@ -1758,7 +1762,10 @@ function filterFieldValue(filter, ctx) {
     case 'preferred_whatsapp_number': return contact.preferredWhatsAppPhoneNumberId || contact.preferred_whatsapp_phone_number_id || ''
     case 'preferred_reply_channel': return contact.preferredReplyChannel || contact.preferred_reply_channel || ''
     case 'country': return contact.country || ''
-    case 'stage': return contact.stage || custom.stage || ''
+    // Los filtros nuevos de etapa usan evaluateLifecycleStageFilter. Este valor
+    // conserva el texto legacy para objetivos contact.field_contains guardados
+    // antes de que la etapa se volviera un catálogo canónico.
+    case 'stage': return contact.stage || custom.stage || resolveContactLifecycleStage(contact)
     case 'assigned': return contact.assignedUser || custom.assignedUser || ''
     case 'tag': return (contact.tagKeys || contact.tags || []).join(' , ')
     case 'custom': return String(custom[filter.customKey] ?? '')
@@ -1876,6 +1883,35 @@ function evaluateChangedDetailFilter(filter, ctx) {
   }
 }
 
+function evaluateTagFilter(filter, ctx) {
+  const contact = ctx.contact || {}
+  const values = [...new Set([
+    ...(Array.isArray(contact.tagKeys) ? contact.tagKeys : []),
+    ...(Array.isArray(contact.tags) ? contact.tags : [])
+  ].map(normalizeText).filter(Boolean))]
+  const expected = normalizeText(filter.value)
+  const exactMatch = values.includes(expected)
+  const partialMatch = values.some((value) => value.includes(expected))
+  switch (filter.match) {
+    case 'not': return !exactMatch
+    case 'contains': return partialMatch
+    case 'not_contains': return !partialMatch
+    case 'empty': return values.length === 0
+    case 'not_empty': return values.length > 0
+    default: return exactMatch
+  }
+}
+
+function evaluateLifecycleStageFilter(filter, ctx) {
+  const actual = resolveContactLifecycleStage(ctx.contact || {})
+  const expected = normalizeContactLifecycleStage(filter.value)
+  if (filter.match === 'empty') return !actual
+  if (filter.match === 'not_empty') return Boolean(actual)
+  if (!expected) return false
+  if (filter.match === 'not' || filter.match === 'not_contains') return actual !== expected
+  return actual === expected
+}
+
 const PAYMENT_CANDIDATE_FILTER_FIELDS = new Set([
   'product',
   'product_name',
@@ -1912,6 +1948,8 @@ function evaluatePaymentCandidateFilter(filter, ctx) {
 
 function evaluateFilter(filter, ctx) {
   if (filter.field === 'changed_detail') return evaluateChangedDetailFilter(filter, ctx)
+  if (filter.field === 'tag') return evaluateTagFilter(filter, ctx)
+  if (filter.field === 'stage') return evaluateLifecycleStageFilter(filter, ctx)
   if (PAYMENT_CANDIDATE_FILTER_FIELDS.has(filter.field)) return evaluatePaymentCandidateFilter(filter, ctx)
   const actualRaw = filterFieldValue(filter, ctx)
   if (actualRaw === null) return true
@@ -2511,7 +2549,7 @@ function ruleFieldValue(rule, ctx) {
     case 'contact-email': return contact.email || ''
     case 'contact-source': return contact.source || ''
     case 'contact-country': return contact.country || ''
-    case 'contact-stage': return contact.stage || ''
+    case 'contact-stage': return resolveContactLifecycleStage(contact)
     case 'contact-assigned-user': return contact.assignedUser || ''
     case 'contact-created': return contact.createdAt || ''
     case 'contact-updated': return contact.updatedAt || ''
@@ -2642,6 +2680,17 @@ function evaluateRule(rule, ctx) {
   const actualValue = comparableValue(actualRaw)
   const expectedValue = renderTemplate(String(rule.value ?? ''), ctx)
   const expectedToValue = renderTemplate(String(rule.valueTo ?? ''), ctx)
+  if (rule.field === 'contact-stage') {
+    const actualStage = resolveContactLifecycleStage(ctx.contact || {})
+    const expectedStage = normalizeContactLifecycleStage(expectedValue)
+    if (!expectedStage) return { ok: false, known: true }
+    return {
+      ok: rule.operator === 'is_not' || rule.operator === 'neq'
+        ? actualStage !== expectedStage
+        : actualStage === expectedStage,
+      known: true
+    }
+  }
   const actual = normalizeText(actualValue)
   const expected = normalizeText(expectedValue)
   switch (rule.operator) {
@@ -6364,6 +6413,8 @@ async function loadContact(contactId, fallback = {}) {
   const tagKeys = await buildTagMatchKeys(row?.id || contactId || null, storedTags)
     .then((keys) => [...keys])
     .catch(() => storedTags)
+  const explicitStage = row?.stage || bag.stage || ''
+  const lifecycleStage = resolveContactLifecycleStage({ ...metrics, stage: explicitStage })
   return {
     id: row?.id || contactId || null,
     firstName: row?.first_name || '',
@@ -6380,7 +6431,8 @@ async function loadContact(contactId, fallback = {}) {
     preferred_reply_route_id: replyPreference?.routeId || '',
     source: row?.source || bag.source || '',
     country: row?.country || bag.country || '',
-    stage: row?.stage || bag.stage || '',
+    stage: explicitStage,
+    lifecycleStage,
     assignedUser: row?.assigned_user || bag.assignedUser || '',
     // Atribución de anuncios (filtros "Anuncio de origen", "URL de origen"…)
     adName: row?.attribution_ad_name || '',

@@ -1,5 +1,6 @@
 import type { CatalogKind } from '@/services/automationCatalogsService'
 import { contactTagsService } from '@/services/contactTagsService'
+import { DEFAULT_CONTACT_LIFECYCLE_STAGE_OPTIONS } from '@/utils/contactLifecycleStage'
 
 /**
  * Catálogo de campos reales del CRM para el constructor de condiciones.
@@ -116,7 +117,13 @@ export const CRM_FIELDS: CrmField[] = [
   { id: 'contact-created', label: 'Fecha de creación', category: 'contact', type: 'date' },
   { id: 'contact-updated', label: 'Fecha de actualización', category: 'contact', type: 'date' },
   { id: 'contact-assigned-user', label: 'Usuario asignado', category: 'contact', type: 'select', valueCatalog: 'users' },
-  { id: 'contact-stage', label: 'Etapa / pipeline', category: 'contact', type: 'text' },
+  {
+    id: 'contact-stage',
+    label: 'Pipeline / etapa',
+    category: 'contact',
+    type: 'select',
+    options: DEFAULT_CONTACT_LIFECYCLE_STAGE_OPTIONS
+  },
   { id: 'contact-custom-field', label: 'Campo personalizado…', category: 'contact', type: 'text', needsCustomKey: true },
 
   // Etiquetas — estado del contacto: siempre disponible.
@@ -749,8 +756,22 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   { id: 'first_name', label: 'Nombre', phrase: 'el nombre', category: 'Contacto' },
   { id: 'last_name', label: 'Apellido', phrase: 'el apellido', category: 'Contacto' },
   { id: 'source', label: 'Fuente', phrase: 'la fuente', category: 'Contacto' },
-  { id: 'tag', label: 'Etiqueta', phrase: 'la etiqueta', catalog: 'tags', category: 'Contacto' },
-  { id: 'stage', label: 'Pipeline / etapa', phrase: 'la etapa', category: 'Contacto' },
+  {
+    id: 'tag',
+    label: 'Etiqueta',
+    phrase: 'la etiqueta',
+    catalog: 'tags',
+    operators: ['is', 'not', 'contains', 'not_contains'],
+    category: 'Contacto'
+  },
+  {
+    id: 'stage',
+    label: 'Pipeline / etapa',
+    phrase: 'la etapa',
+    options: DEFAULT_CONTACT_LIFECYCLE_STAGE_OPTIONS,
+    operators: ['is', 'not'],
+    category: 'Contacto'
+  },
   { id: 'country', label: 'País', phrase: 'el país', category: 'Contacto' },
   { id: 'email', label: 'Correo (dato de contacto)', phrase: 'el correo', category: 'Contacto' },
   { id: 'phone', label: 'Teléfono', phrase: 'el teléfono', category: 'Contacto' },

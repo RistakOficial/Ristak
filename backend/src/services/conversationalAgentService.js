@@ -6,6 +6,10 @@ import { logger } from '../utils/logger.js'
 import { DEFAULT_TIMEZONE, getAccountTimezone } from '../utils/dateUtils.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import {
+  normalizeContactLifecycleStage,
+  resolveContactLifecycleStage
+} from '../utils/contactLifecycleStage.js'
+import {
   coalescedTimestampSortExpression,
   timestampSortExpression,
   timestampSortParameterExpression
@@ -386,6 +390,7 @@ export const CONDITION_SCHEMA = {
     visitor_id: ['contains', 'not_contains', 'is', 'is_not', 'starts_with', 'ends_with', 'not_empty', 'empty'],
     ghl_contact_id: ['contains', 'not_contains', 'is', 'is_not', 'starts_with', 'ends_with', 'not_empty', 'empty'],
     preferred_phone: ['is', 'is_not', 'not_empty', 'empty'],
+    stage: ['is', 'is_not'],
     customer: ['is_customer', 'not_customer'],
     created: ['within', 'older_than', 'before', 'after', 'between'],
     updated: ['within', 'older_than', 'before', 'after', 'between'],
@@ -499,6 +504,9 @@ function normalizeParam(category, param) {
   } else if (field === 'custom_field') {
     base.fieldKey = String(param.fieldKey || '').trim().slice(0, 160)
     base.value = String(param.value || '').trim().slice(0, 400)
+  } else if (field === 'stage') {
+    base.value = normalizeContactLifecycleStage(param.value)
+    if (!base.value) return null
   } else {
     base.value = String(param.value || '').trim().slice(0, 240)
   }
@@ -14885,6 +14893,18 @@ export async function buildRuleContext({ contactId = null, channel = 'whatsapp',
     status: normalizeMatchText(row.appointment_status || row.status || ''),
     assignedUserId: String(row.assigned_user_id || '')
   }))
+  const attendedAppointmentsCount = appointments.filter((appointment) => (
+    ['showed', 'show', 'attended', 'completed', 'complete'].includes(appointment.status)
+  )).length
+  const activeAppointmentsCount = appointments.filter((appointment) => (
+    !['cancelled', 'canceled', 'no_show', 'no-show', 'noshow', 'invalid', 'failed', 'missed', 'deleted', 'void', 'voided'].includes(appointment.status)
+  )).length
+  const lifecycleStage = resolveContactLifecycleStage({
+    purchasesCount: contact?.purchases_count,
+    totalPaid: contact?.total_paid,
+    attendedAppointmentsCount,
+    activeAppointmentsCount
+  })
 
   // Nombres de los usuarios asignados a citas del contacto (para "Contacto asignado")
   const assigneeIds = [...new Set(appointments.map((appt) => appt.assignedUserId).filter(Boolean))]
@@ -14947,6 +14967,7 @@ export async function buildRuleContext({ contactId = null, channel = 'whatsapp',
       visitorId: normalizeMatchText(contact.visitor_id || ''),
       ghlContactId: normalizeMatchText(contact.ghl_contact_id || ''),
       preferredPhone: String(contact.preferred_whatsapp_phone_number_id || '').trim(),
+      lifecycleStage,
       purchasesCount: Number(contact.purchases_count) || 0,
       totalPaid: Number(contact.total_paid) || 0,
       createdAt: contact.created_at || null,
@@ -15150,6 +15171,10 @@ function contactParamMatches(param, ctx) {
       return textValueMatches(info.ghlContactId, param.operator, value)
     case 'preferred_phone':
       return textValueMatches(info.preferredPhone, param.operator, param.value)
+    case 'stage':
+      return param.operator === 'is_not'
+        ? info.lifecycleStage !== normalizeContactLifecycleStage(param.value)
+        : info.lifecycleStage === normalizeContactLifecycleStage(param.value)
     case 'customer':
       return param.operator === 'is_customer'
         ? (info.purchasesCount > 0 || info.totalPaid > 0)

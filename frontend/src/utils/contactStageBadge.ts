@@ -1,6 +1,5 @@
 import type { BadgeVariant } from '@/components/common/Badge'
-
-type ContactStage = 'lead' | 'appointment' | 'attended' | 'customer'
+import type { ContactLifecycleStage as ContactStage } from './contactLifecycleStage'
 
 interface ContactStageLabels {
   lead: string

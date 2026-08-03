@@ -7338,6 +7338,19 @@ ejemplo, `trigger-contact-updated` tambien participa en eventos de etiquetas,
 citas y pagos porque el motor vuelve a evaluar sus filtros antes de inscribir.
 La compuerta de licencia `canRunAutomationFlow` se conserva despues del lookup.
 
+`Contacto modificado` evalua el estado final ya persistido del contacto. Sus
+filtros de nombre, fuente y demas datos estandar comparan el valor actual; el
+filtro de etiqueta comprueba pertenencia real por ID o alias legible, no una
+cadena armada con todas las etiquetas. Los eventos de etiqueta, cita y pago se
+consideran cambios de contacto y vuelven a pasar por esos filtros. `Pipeline /
+etapa` representa el ciclo comercial calculado por Ristak y se configura desde
+una lista cerrada: `lead`, `appointment`, `attended` y `customer`, mostrados con
+los labels de cuenta como Interesado/Prospecto, Agendo cita, Asistio a cita y
+Cliente. Pagos exitosos tienen prioridad sobre asistencia, y asistencia sobre
+una cita activa. Pagos y cambios de cita marcan tambien `stage` dentro de
+`changedFields`, por lo que el filtro `Detalle que cambio = Pipeline / etapa`
+puede combinarse con la etapa final deseada sin crear otro disparador.
+
 Los webhooks entrantes productivos siempre hacen match exacto por `endpoint_id`:
 un endpoint vacio no es comodin. La captura de muestra del editor usa una llave
 interna separada derivada del `flow` editable, por lo que tampoco necesita
@@ -7996,6 +8009,12 @@ palabras, frases o texto del mensaje; el lenguaje natural siempre lo interpreta
 el modelo principal. Una pausa, omision o asignacion manual real conserva su
 procedencia. Las superficies de control manejan agentes individuales, nunca un
 pseudoagente global "Todos".
+
+Dentro de la categoria Contacto, `Pipeline / etapa` usa la misma lista cerrada y
+el mismo calculo comercial que Automatizaciones. El usuario elige una opcion; no
+captura nombres de etapa a mano. Backend y frontend persisten los valores
+canonicos (`lead`, `appointment`, `attended`, `customer`) para que renombrar
+Interesado o Cliente en la cuenta no rompa las reglas guardadas.
 
 `contactScope` limita exclusivamente el matching automatico. Cuando un usuario
 asigna manualmente un agente a un contacto, esa decision pertenece al contacto

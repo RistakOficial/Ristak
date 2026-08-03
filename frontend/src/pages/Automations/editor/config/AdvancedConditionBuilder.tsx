@@ -24,6 +24,8 @@ import { CatalogSelect, Field, NumberTextInput, TextInput } from './configPrimit
 import { VariableTextInput } from '../composer/MessageComposer'
 import { FlowVariablesContext, type FlowVariable } from '../variablesCatalog'
 import { DrillSelect } from './DrillSelect'
+import { useLabels } from '@/contexts/LabelsContext'
+import { getContactLifecycleStageOptions } from '@/utils/contactLifecycleStage'
 import styles from '../AutomationEditor.module.css'
 
 /**
@@ -81,6 +83,11 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
   const config = normalize(value)
   const multiBranch = allowBranches && config.branches.length > 1
   const flowVariables = React.useContext(FlowVariablesContext)
+  const { labels } = useLabels()
+  const lifecycleStageOptions = React.useMemo(
+    () => getContactLifecycleStageOptions(labels),
+    [labels.customer, labels.lead]
+  )
 
   const previousVariableGroups = React.useMemo(() => {
     const categoryLabels = new Map(flowVariables.categories.map((category) => [category.id, category.label]))
@@ -230,12 +237,13 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
         />
       )
     } else if (field.type === 'select' && field.options) {
+      const fixedOptions = field.id === 'contact-stage' ? lifecycleStageOptions : field.options
       input = (
         <CustomSelect
-          options={field.options}
+          options={fixedOptions}
           value={rule.value || ''}
           onValueChange={(next) =>
-            set({ value: next, valueLabel: field.options?.find((option) => option.value === next)?.label || next })
+            set({ value: next, valueLabel: fixedOptions.find((option) => option.value === next)?.label || next })
           }
           placeholder="Selecciona el valor"
           aria-label="Valor"

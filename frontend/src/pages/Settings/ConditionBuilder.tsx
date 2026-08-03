@@ -16,6 +16,7 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import { contactTagsService } from '@/services/contactTagsService'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
+import { getContactLifecycleStageOptions } from '@/utils/contactLifecycleStage'
 import styles from './ConversationalAgentSettings.module.css'
 
 /**
@@ -34,7 +35,7 @@ import styles from './ConversationalAgentSettings.module.css'
 type ValueKind =
   | 'none' | 'channel' | 'text' | 'list' | 'tag' | 'tagList' | 'calendar'
   | 'date' | 'dateRange' | 'offset' | 'amount' | 'amountRange'
-  | 'ad' | 'adText' | 'businessPhone' | 'timeRange' | 'weekdays' | 'customField' | 'customFieldValue'
+  | 'ad' | 'adText' | 'businessPhone' | 'timeRange' | 'weekdays' | 'customField' | 'customFieldValue' | 'stage'
 
 interface OperatorDef {
   id: string
@@ -145,6 +146,15 @@ function textOperators(subject: string, placeholder: string): OperatorDef[] {
     { id: 'ends_with', label: 'termina con', valueKind: 'text', placeholder, phrase: (p) => textOperatorPhrase(subject, p) },
     { id: 'not_empty', label: 'no está vacío', valueKind: 'none', phrase: (p) => textOperatorPhrase(subject, p) },
     { id: 'empty', label: 'está vacío', valueKind: 'none', phrase: (p) => textOperatorPhrase(subject, p) }
+  ]
+}
+
+function lifecycleStageOperators(leadLabel: string, customerLabel: string): OperatorDef[] {
+  const options = getContactLifecycleStageOptions({ lead: leadLabel, customer: customerLabel })
+  const stageName = (value?: string) => options.find((option) => option.value === value)?.label || value || '…'
+  return [
+    { id: 'is', label: 'es igual a', valueKind: 'stage', phrase: (param) => `la etapa es "${stageName(param.value)}"` },
+    { id: 'is_not', label: 'no es igual a', valueKind: 'stage', phrase: (param) => `la etapa no es "${stageName(param.value)}"` }
   ]
 }
 
@@ -319,6 +329,11 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
           { id: 'not_empty', label: 'no está vacío', valueKind: 'none', phrase: () => 'tiene número WhatsApp preferido' },
           { id: 'empty', label: 'está vacío', valueKind: 'none', phrase: () => 'no tiene número WhatsApp preferido' }
         ]
+      },
+      {
+        field: 'stage',
+        menuLabel: 'Pipeline / etapa',
+        operators: lifecycleStageOperators(DEFAULT_CRM_LABELS.lead, DEFAULT_CRM_LABELS.customer)
       },
       {
         field: 'customer',
@@ -522,12 +537,19 @@ function money(value?: number) {
   return `$${Number(value || 0).toLocaleString('es-MX')}`
 }
 
-function buildLocalizedConditionCategories(customerLowerLabel: string): CategoryDef[] {
+function buildLocalizedConditionCategories(leadLabel: string, customerLabel: string): CategoryDef[] {
+  const customerLowerLabel = formatCrmLabelLower(customerLabel, DEFAULT_CRM_LABELS.customer)
   return CONDITION_CATEGORIES.map((category) => {
     if (category.id !== 'contact') return category
     return {
       ...category,
       params: category.params.map((param) => {
+        if (param.field === 'stage') {
+          return {
+            ...param,
+            operators: lifecycleStageOperators(leadLabel, customerLabel)
+          }
+        }
         if (param.field !== 'customer') return param
         return {
           ...param,
@@ -567,6 +589,7 @@ function defaultParamFor(categoryId: ConditionCategory, field: string, operatorI
   const operator = operatorId ? getOperatorDef(categoryId, field, operatorId, categories) : getParamDef(categoryId, field, categories).operators[0]
   const param: AgentConditionParam = { field, operator: operator.id }
   if (operator.valueKind === 'channel') param.value = 'chat'
+  if (operator.valueKind === 'stage') param.value = 'lead'
   if (operator.valueKind === 'list' || operator.valueKind === 'tagList' || operator.valueKind === 'weekdays') param.values = []
   if (operator.valueKind === 'offset') {
     const isContactDateField = field === 'created' || field === 'updated' || field === 'last_purchase'
@@ -761,10 +784,13 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
   // Carga el catálogo de etiquetas para mostrar nombres y no IDs
   useContactTags()
   const { labels } = useLabels()
-  const customerLowerLabel = formatCrmLabelLower(labels.customer, DEFAULT_CRM_LABELS.customer)
+  const lifecycleStageOptions = useMemo(
+    () => getContactLifecycleStageOptions(labels),
+    [labels.customer, labels.lead]
+  )
   const conditionCategories = useMemo(
-    () => buildLocalizedConditionCategories(customerLowerLabel),
-    [customerLowerLabel]
+    () => buildLocalizedConditionCategories(labels.lead, labels.customer),
+    [labels.customer, labels.lead]
   )
   // Filas en edición, identificadas por "grupo:índice"
   const [editingKeys, setEditingKeys] = useState<Set<string>>(new Set())
@@ -908,6 +934,19 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
             placeholder={operator.placeholder || 'Valor'}
             onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { value: event.target.value })}
           />
+        )
+      case 'stage':
+        return (
+          <select
+            className={styles.ruleSelect}
+            value={param.value || 'lead'}
+            onChange={(event) => updateParam(groupIndex, conditionIndex, paramIndex, { value: event.target.value })}
+            aria-label="Pipeline / etapa"
+          >
+            {lifecycleStageOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
         )
       case 'list':
         return (

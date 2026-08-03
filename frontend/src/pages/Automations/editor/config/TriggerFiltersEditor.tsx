@@ -11,6 +11,8 @@ import {
 import { CatalogSelect, TextInput, CustomSelect } from './configPrimitives'
 import { MetaPostSelector } from '@/components/MetaPostSelector/MetaPostSelector'
 import { DrillSelect, type DrillGroup } from './DrillSelect'
+import { useLabels } from '@/contexts/LabelsContext'
+import { getContactLifecycleStageOptions } from '@/utils/contactLifecycleStage'
 import styles from '../AutomationEditor.module.css'
 
 /**
@@ -30,6 +32,11 @@ export const TriggerFiltersEditor: React.FC<{
   /** Formulario elegido en el disparador/objetivo para cargar sus preguntas */
   selectedFormId?: string
 }> = ({ value, onChange, contextKey, excludedFieldIds = [], selectedFormId }) => {
+  const { labels } = useLabels()
+  const lifecycleStageOptions = useMemo(
+    () => getContactLifecycleStageOptions(labels),
+    [labels.customer, labels.lead]
+  )
   const filters = asTriggerFilters(value)
   const fields = filterFieldsFor(contextKey, excludedFieldIds)
   const formIdForQuestions = filters.find((filter) => filter.field === 'form-specific' && filter.value)?.value || selectedFormId || ''
@@ -68,6 +75,7 @@ export const TriggerFiltersEditor: React.FC<{
         const isSpecificForm = field?.id === 'form-specific'
         const operators = triggerOperatorsForField(field)
         const needsValue = Boolean(filter.match) && triggerOperatorNeedsValue(filter.match)
+        const fixedOptions = field?.id === 'stage' ? lifecycleStageOptions : field?.options
         return (
           <div key={index} className={styles.filterRow}>
             <div className={styles.filterHeaderRow}>
@@ -181,14 +189,14 @@ export const TriggerFiltersEditor: React.FC<{
                         onChange={(next, label) => update(index, { value: next, valueLabel: label })}
                         aria-label="Publicación del comentario"
                       />
-                    ) : field?.options ? (
+                    ) : fixedOptions ? (
                       <CustomSelect
-                        options={field.options}
+                        options={fixedOptions}
                         value={filter.value}
                         onValueChange={(next) =>
                           update(index, {
                             value: next,
-                            valueLabel: field.options?.find((option) => option.value === next)?.label || next
+                            valueLabel: fixedOptions.find((option) => option.value === next)?.label || next
                           })
                         }
                         placeholder="Valor"

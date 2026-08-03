@@ -800,6 +800,22 @@ test('filtersMatch: coincide / NO coincide / contiene / NO contiene', () => {
   assert.equal(filtersMatch([{ field: 'stage', match: 'is', value: 'x' }], ctx), false)
 })
 
+test('filtersMatch: compara etapa comercial y pertenencia real de etiquetas', () => {
+  const contactCtx = {
+    contact: {
+      firstName: 'Ana',
+      lifecycleStage: 'customer',
+      tagKeys: ['tag_vip', 'vip', 'tag_newsletter']
+    }
+  }
+
+  assert.equal(filtersMatch([{ field: 'stage', match: 'is', value: 'Cliente' }], contactCtx), true)
+  assert.equal(filtersMatch([{ field: 'stage', match: 'not', value: 'Agendó cita' }], contactCtx), true)
+  assert.equal(filtersMatch([{ field: 'tag', match: 'is', value: 'tag_vip' }], contactCtx), true)
+  assert.equal(filtersMatch([{ field: 'tag', match: 'not', value: 'tag_vip' }], contactCtx), false)
+  assert.equal(filtersMatch([{ field: 'first_name', match: 'is', value: 'ana' }], contactCtx), true)
+})
+
 test('filtersMatch: filtra datos completos del evento de pago', () => {
   const paymentCtx = {
     paymentId: 'pay_123',
@@ -3565,7 +3581,7 @@ test('trigger contacto modificado filtra número de WhatsApp asignado', async ()
   }
 })
 
-test('trigger contacto modificado filtra totales de pago del contacto', async () => {
+test('trigger contacto modificado filtra etapa de cliente y totales de pago', async () => {
   const suffix = randomUUID()
   const automationId = `automation_contact_change_payment_${suffix}`
   const contactId = `contact_change_payment_${suffix}`
@@ -3586,8 +3602,14 @@ test('trigger contacto modificado filtra totales de pago del contacto', async ()
                   {
                     field: 'changed_detail',
                     match: 'is',
-                    value: 'totalPaid',
-                    valueLabel: 'Total pagado'
+                    value: 'stage',
+                    valueLabel: 'Pipeline / etapa'
+                  },
+                  {
+                    field: 'stage',
+                    match: 'is',
+                    value: 'customer',
+                    valueLabel: 'Cliente'
                   },
                   {
                     field: 'total_paid',
@@ -3689,6 +3711,12 @@ test('trigger contacto modificado filtra cita activa y cantidad de citas', async
                     value: ''
                   },
                   {
+                    field: 'stage',
+                    match: 'is',
+                    value: 'appointment',
+                    valueLabel: 'Agendó cita'
+                  },
+                  {
                     field: 'appointments_count',
                     match: 'gte',
                     value: '1'
@@ -3770,6 +3798,101 @@ test('trigger contacto modificado filtra cita activa y cantidad de citas', async
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])
     await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('trigger contacto modificado reacciona a una etiqueta y al nombre final del contacto', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_contact_change_tag_${suffix}`
+  const contactId = `contact_change_tag_${suffix}`
+  const tagId = `tag_vip_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-contact-updated',
+              type: 'trigger-contact-updated',
+              config: {
+                filters: [
+                  {
+                    field: 'changed_detail',
+                    match: 'is',
+                    value: 'tags',
+                    valueLabel: 'Etiquetas'
+                  },
+                  {
+                    field: 'tag',
+                    match: 'is',
+                    value: tagId,
+                    valueLabel: 'VIP'
+                  },
+                  {
+                    field: 'first_name',
+                    match: 'is',
+                    value: 'Ana'
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      { id: 'done', type: 'extra-comment', label: 'Listo', config: {} }
+    ],
+    edges: [
+      { id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      'INSERT INTO contact_tags (id, name) VALUES (?, ?)',
+      [tagId, 'VIP']
+    )
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, tags, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+523${Date.now().toString().slice(-10)}`,
+        `tag-change-${suffix}@test.com`,
+        'Ana Prueba',
+        'Ana',
+        JSON.stringify([tagId]),
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test contacto modificado etiqueta', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('tag-changed', {
+      contactId,
+      tagId,
+      tag: 'VIP',
+      tagAction: 'added'
+    })
+
+    const enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.ok(enrollment)
+    assert.equal(enrollment.status, 'completed')
+    assert.equal(enrollment.current_node_id, 'done')
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    await db.run('DELETE FROM contact_tags WHERE id = ?', [tagId])
   }
 })
 

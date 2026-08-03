@@ -5,6 +5,7 @@ import {
   buildConversationalAgentRuntimeConfig,
   buildNewContactScopeCutoffAt,
   contactIsOutOfScopeForAgent,
+  entryRulesMatch,
   findConversationalAgentEntryConflicts
 } from '../src/services/conversationalAgentService.js'
 
@@ -95,6 +96,25 @@ test('un agente nuevo nace sin separación de globos', () => {
 
   assert.equal(agent.replyDelivery.mode, 'single')
   assert.equal(agent.replyDelivery.splitMessagesEnabled, false)
+})
+
+test('las condiciones del chatbot comparan la etapa comercial canónica', () => {
+  const stageAgent = agent({
+    filters: {
+      entry: {
+        groups: [{
+          conditions: [{
+            category: 'contact',
+            params: [{ field: 'stage', operator: 'is', value: 'attended' }]
+          }]
+        }]
+      },
+      exit: { groups: [] }
+    }
+  })
+
+  assert.equal(entryRulesMatch(stageAgent, { contactInfo: { lifecycleStage: 'attended' } }), true)
+  assert.equal(entryRulesMatch(stageAgent, { contactInfo: { lifecycleStage: 'appointment' } }), false)
 })
 
 test('new_only permite solo contactos creados desde el instante exacto del corte', () => {
