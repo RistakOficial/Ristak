@@ -53,13 +53,13 @@ const MCP_SERVER_INSTRUCTIONS = [
   'Si no conoces el nombre exacto de una herramienta, usa mcp_search_capabilities con la intención en lenguaje natural y filtros opcionales; no adivines nombres.',
   'Al retomar una sesión o desde un runtime con polling, usa mcp_events_list y confirma sólo los eventos ya procesados con mcp_events_acknowledge. Una conversación cerrada no puede despertarse por sí sola.',
   'Publicidad/Meta permite consultar y sincronizar datos existentes. El MCP no permite crear ni modificar campañas o borradores de campaña.',
-  'Para cualquier herramienta con _meta["ristak/confirmationRequired"]=true, llama primero mcp_prepare_action_confirmation con el nombre y los argumentos exactos, entrega approvalUrl a la persona y espera la aprobación. Después ejecuta con confirm=true, el mismo approvalTicket y una idempotencyKey. Nunca pidas ni reveles credenciales o secretos.',
+  'La autorización operativa se concede una sola vez mediante los scopes OAuth de la conexión. Ejecuta directamente las herramientas permitidas sin pedir aprobación humana por llamada; conserva una idempotencyKey estable en cada escritura y nunca pidas ni reveles credenciales o secretos.',
   'Para una landing o sitio personalizado, usa la skill o capacidad web del cliente para generar el documento y llama directamente sites_create_html_draft; esa herramienta ya valida el HTML. Reserva sites_validate_html para un preflight sin escritura.',
   'Después de crear el borrador, abre sites_open_html_live_preview una sola vez y usa sites_patch_html_draft con fragmentos exactos. No vuelvas a leer ni reenviar el documento completo después de cada cambio; usa sites_get_code sólo al entrar a un Site existente o si un parche ya no coincide.',
   'sites_replace_html_draft queda para reescrituras completas. Conserva la revisión devuelta por cada guardado y no cierres ni publiques el borrador mientras iteras.',
   'No construyas un diseño HTML personalizado apilando bloques nativos ni uses grids de cards o contenedores anidados como estilo genérico.',
   'Ristak elimina JavaScript propio por seguridad; resuelve el sitio con HTML, CSS y elementos declarativos compatibles.',
-  'Mantén el Site en borrador, previsualiza e itera; usa sites_publish sólo cuando la persona haya pedido publicar y confirme la acción.'
+  'Mantén el Site en borrador, previsualiza e itera; usa sites_publish cuando la solicitud de la persona incluya publicarlo.'
 ].join(' ')
 
 router.use((_req, res, next) => {
@@ -398,16 +398,15 @@ const toolDefinitions = [
   {
     name: 'ghl_create_contact',
     title: 'Create GoHighLevel contact',
-    description: 'Creates a GoHighLevel contact through Ristak. Requires confirm=true.',
+    description: 'Creates a GoHighLevel contact through Ristak using the permissions granted to the OAuth client.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string' },
         email: { type: 'string' },
-        phone: { type: 'string' },
-        confirm: { type: 'boolean' }
+        phone: { type: 'string' }
       },
-      required: ['name', 'confirm']
+      required: ['name']
     },
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false }
   },
@@ -437,7 +436,7 @@ const toolDefinitions = [
   {
     name: 'ghl_create_appointment',
     title: 'Create GoHighLevel appointment',
-    description: 'Creates an appointment in GoHighLevel through Ristak. Requires confirm=true.',
+    description: 'Creates an appointment in GoHighLevel through Ristak using the permissions granted to the OAuth client.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -449,17 +448,16 @@ const toolDefinitions = [
         appointmentStatus: { type: 'string', enum: ['confirmed', 'cancelled', 'showed', 'noshow', 'pending'] },
         assignedUserId: { type: 'string' },
         address: { type: 'string' },
-        notes: { type: 'string' },
-        confirm: { type: 'boolean' }
+        notes: { type: 'string' }
       },
-      required: ['calendarId', 'contactId', 'startTime', 'endTime', 'confirm']
+      required: ['calendarId', 'contactId', 'startTime', 'endTime']
     },
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false }
   },
   {
     name: 'ghl_create_payment_link',
     title: 'Create GoHighLevel payment link',
-    description: 'Creates and sends a GoHighLevel invoice/payment link through Ristak. Requires confirm=true.',
+    description: 'Creates and sends a GoHighLevel invoice/payment link through Ristak using the permissions granted to the OAuth client.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -468,17 +466,16 @@ const toolDefinitions = [
         currency: { type: 'string', description: 'Opcional; usa la moneda de la cuenta cuando se omite.' },
         concept: { type: 'string' },
         dueDate: { type: 'string' },
-        channels: { type: 'object' },
-        confirm: { type: 'boolean' }
+        channels: { type: 'object' }
       },
-      required: ['contactId', 'amount', 'confirm']
+      required: ['contactId', 'amount']
     },
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false }
   },
   {
     name: 'ghl_record_offline_payment',
     title: 'Record GoHighLevel offline payment',
-    description: 'Creates an invoice and records an offline payment in GoHighLevel through Ristak. Requires confirm=true.',
+    description: 'Creates an invoice and records an offline payment in GoHighLevel through Ristak using the permissions granted to the OAuth client.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -489,17 +486,16 @@ const toolDefinitions = [
         paymentMethod: { type: 'string', enum: ['cash', 'bank_transfer', 'transfer', 'deposit', 'check', 'manual', 'other'] },
         paymentDate: { type: 'string' },
         reference: { type: 'string' },
-        notes: { type: 'string' },
-        confirm: { type: 'boolean' }
+        notes: { type: 'string' }
       },
-      required: ['contactId', 'amount', 'confirm']
+      required: ['contactId', 'amount']
     },
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false }
   },
   {
     name: 'ghl_create_installment_plan',
     title: 'Create GoHighLevel installment plan',
-    description: 'Creates a Ristak installment payment flow; GoHighLevel is only used when selected as an optional connected gateway. Requires confirm=true.',
+    description: 'Creates a Ristak installment payment flow; GoHighLevel is only used when selected as an optional connected gateway.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -512,17 +508,16 @@ const toolDefinitions = [
         firstPaymentEnabled: { type: 'boolean' },
         firstPaymentAmount: { type: 'number' },
         firstPaymentMethod: { type: 'string' },
-        remainingAutomatic: { type: 'boolean' },
-        confirm: { type: 'boolean' }
+        remainingAutomatic: { type: 'boolean' }
       },
-      required: ['contactId', 'totalAmount', 'remainingPayments', 'confirm']
+      required: ['contactId', 'totalAmount', 'remainingPayments']
     },
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false }
   },
   {
     name: 'ghl_api_request',
     title: 'GoHighLevel API request',
-    description: 'Fallback request to any GoHighLevel API path through Ristak. Mutating methods require confirm=true.',
+    description: 'Fallback request to any GoHighLevel API path through Ristak using the permissions granted to the OAuth client.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -530,8 +525,7 @@ const toolDefinitions = [
         path: { type: 'string', description: 'Path under services.leadconnectorhq.com, for example /contacts/search.' },
         params: { type: 'object' },
         body: { type: 'object' },
-        version: { type: 'string' },
-        confirm: { type: 'boolean' }
+        version: { type: 'string' }
       },
       required: ['path']
     },
@@ -728,12 +722,6 @@ async function listTransactions(args = {}) {
   )
 
   return { transactions: rows.map(serializePaymentRowAmount) }
-}
-
-function assertConfirmed(args = {}, action) {
-  if (args.confirm !== true) {
-    throw new Error(`${action} requiere confirm=true para ejecutarse`)
-  }
 }
 
 function clampLimit(value, max = 100, fallback = 25) {
@@ -1078,7 +1066,6 @@ async function ghlSearchContacts(args = {}) {
 }
 
 async function ghlCreateContact(args = {}) {
-  assertConfirmed(args, 'Crear contacto en GoHighLevel')
   const { client } = await getGhlContext()
 
   if (!args.name && !args.email && !args.phone) {
@@ -1156,7 +1143,6 @@ async function saveLocalAppointment(appointment = {}, fallback = {}) {
 }
 
 async function ghlCreateAppointment(args = {}) {
-  assertConfirmed(args, 'Crear cita en GoHighLevel')
   const { config } = await getGhlContext()
   const appointment = await calendarService.createAppointment(
     {
@@ -1191,7 +1177,6 @@ async function ghlCreateAppointment(args = {}) {
 }
 
 async function ghlCreatePaymentLink(args = {}) {
-  assertConfirmed(args, 'Crear link de pago en GoHighLevel')
   const contact = await resolveContact(args.contactId)
   const accountCurrency = await getAccountCurrency()
 
@@ -1208,7 +1193,6 @@ async function ghlCreatePaymentLink(args = {}) {
 }
 
 async function ghlRecordOfflinePayment(args = {}) {
-  assertConfirmed(args, 'Registrar pago offline en GoHighLevel')
   const contact = await resolveContact(args.contactId)
   const accountCurrency = await getAccountCurrency()
 
@@ -1227,7 +1211,6 @@ async function ghlRecordOfflinePayment(args = {}) {
 }
 
 async function ghlCreateInstallmentPlan(args = {}) {
-  assertConfirmed(args, 'Crear plan de parcialidades en GoHighLevel')
   const contact = await resolveContact(args.contactId)
   const accountCurrency = await getAccountCurrency()
 
@@ -1252,10 +1235,6 @@ function normalizeGhlApiPath(path) {
 async function ghlApiRequest(args = {}) {
   const method = String(args.method || 'GET').toUpperCase()
   const path = normalizeGhlApiPath(args.path)
-
-  if (method !== 'GET') {
-    assertConfirmed(args, `Ejecutar ${method} ${path} en GoHighLevel`)
-  }
 
   const { client } = await getGhlContext()
   return client.request(path, {

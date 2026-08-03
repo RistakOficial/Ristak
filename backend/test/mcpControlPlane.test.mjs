@@ -8,14 +8,9 @@ import express from 'express'
 import { databaseReady, db } from '../src/config/database.js'
 import { domainToolSpecs } from '../src/mcp/domainTools.js'
 import mcpRoutes from '../src/routes/mcp.routes.js'
-import mcpActionConfirmationsRoutes from '../src/routes/mcpActionConfirmations.routes.js'
 import sitesRoutes from '../src/routes/sites.routes.js'
 import { resetCentralStorageConfigCache } from '../src/services/mediaStorageService.js'
 import { deleteSite } from '../src/services/sitesService.js'
-import {
-  consumeMcpActionConfirmation,
-  decideMcpActionConfirmation
-} from '../src/services/mcpActionConfirmationService.js'
 import {
   MCP_SCOPES,
   MCP_SCOPE_VALUES,
@@ -24,7 +19,6 @@ import {
   createAuthorizationCode,
   registerOAuthClient
 } from '../src/utils/oauthTokens.js'
-import { generateToken } from '../src/utils/auth.js'
 
 const fixture = {
   server: null,
@@ -37,8 +31,6 @@ const fixture = {
   redirectUri: 'http://127.0.0.1:9847/callback',
   readToken: '',
   fullToken: '',
-  sessionToken: '',
-  secondarySessionToken: '',
   contactId: '',
   secondaryContactId: '',
   siteId: ''
@@ -68,33 +60,6 @@ function requestMcp(token, payload) {
           payload: text ? JSON.parse(text) : null
         })
       })
-    })
-    request.once('error', reject)
-    request.write(body)
-    request.end()
-  })
-}
-
-function requestJson(path, token, payload) {
-  return new Promise((resolve, reject) => {
-    const body = Buffer.from(JSON.stringify(payload), 'utf8')
-    const request = http.request({
-      hostname: '127.0.0.1',
-      port: fixture.port,
-      path,
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'Content-Length': String(body.length)
-      }
-    }, response => {
-      const chunks = []
-      response.on('data', chunk => chunks.push(Buffer.from(chunk)))
-      response.on('end', () => resolve({
-        statusCode: response.statusCode,
-        payload: JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
-      }))
     })
     request.once('error', reject)
     request.write(body)
@@ -148,21 +113,6 @@ async function issueToken(scopes, userId = fixture.userId) {
   }).accessToken
 }
 
-async function prepareAndApproveAction(toolName, businessArguments) {
-  const prepared = await requestMcp(fixture.fullToken, {
-    jsonrpc: '2.0', id: crypto.randomUUID(), method: 'tools/call',
-    params: {
-      name: 'mcp_prepare_action_confirmation',
-      arguments: { toolName, arguments: businessArguments }
-    }
-  })
-  assert.equal(prepared.payload.result.isError, undefined)
-  const approvalTicket = prepared.payload.result.structuredContent.confirmation.approvalTicket
-  assert.ok(approvalTicket)
-  await decideMcpActionConfirmation(fixture.userId, approvalTicket, 'approve')
-  return approvalTicket
-}
-
 before(async () => {
   await databaseReady
   const migration = await readFile(
@@ -170,12 +120,6 @@ before(async () => {
     'utf8'
   )
   await db.exec(migration)
-  const confirmationMigration = await readFile(
-    new URL('../migrations/versioned/151_mcp_action_confirmations.sqlite.sql', import.meta.url),
-    'utf8'
-  )
-  await db.exec(confirmationMigration)
-
   const username = `mcp_plane_${crypto.randomUUID()}@example.test`
   const inserted = await db.run(
     `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
@@ -183,7 +127,6 @@ before(async () => {
     [username, username]
   )
   fixture.userId = inserted.lastID
-  fixture.sessionToken = generateToken({ userId: fixture.userId, role: 'admin', tokenVersion: 0 })
   const secondaryUsername = `mcp_plane_secondary_${crypto.randomUUID()}@example.test`
   const secondaryInserted = await db.run(
     `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
@@ -191,11 +134,6 @@ before(async () => {
     [secondaryUsername, secondaryUsername]
   )
   fixture.secondaryUserId = secondaryInserted.lastID
-  fixture.secondarySessionToken = generateToken({
-    userId: fixture.secondaryUserId,
-    role: 'admin',
-    tokenVersion: 0
-  })
   const client = await registerOAuthClient({
     clientName: 'MCP Control Plane Test',
     redirectUris: [fixture.redirectUri],
@@ -205,7 +143,6 @@ before(async () => {
 
   const app = express()
   app.use(express.json({ limit: '1mb' }))
-  app.use('/api/mcp/action-confirmations', mcpActionConfirmationsRoutes)
   app.use('/api/mcp', mcpRoutes)
   app.use('/api/sites', sitesRoutes)
   fixture.server = http.createServer(app)
@@ -265,7 +202,9 @@ test('initialize anuncia instrucciones, protocolo y servidor MCP v2', async () =
   assert.equal(response.statusCode, 200)
   assert.equal(response.headers['mcp-protocol-version'], '2025-06-18')
   assert.equal(response.payload.result.serverInfo.version, '2.0.0')
-  assert.match(response.payload.result.instructions, /confirm=true/)
+  assert.match(response.payload.result.instructions, /scopes OAuth/i)
+  assert.match(response.payload.result.instructions, /sin pedir aprobación humana por llamada/i)
+  assert.doesNotMatch(response.payload.result.instructions, /confirm=true|approvalTicket/)
   assert.match(response.payload.result.instructions, /sites_create_html_draft/)
   assert.match(response.payload.result.instructions, /sites_patch_html_draft/)
   assert.match(response.payload.result.instructions, /no vuelvas a leer ni reenviar/i)
@@ -299,7 +238,6 @@ test('pagos separa edición, ejecución y cancelación destructiva', async () =>
     planId: 'plan_1',
     action: 'change_card',
     payload: { returnUrl: 'https://app.example.test/settings' },
-    confirm: true,
     idempotencyKey: 'payment-plan-action-001'
   })
   assert.deepEqual(calls[0].body, {
@@ -329,14 +267,11 @@ test('scope de lectura lista sólo lecturas y no expone SQL ni proxies arbitrari
 
 test('el servidor monta MCP antes del router catch-all de costos', async () => {
   const serverSource = await readFile(new URL('../src/server.js', import.meta.url), 'utf8')
-  const confirmationsMount = serverSource.indexOf("app.use('/api/mcp/action-confirmations', mcpActionConfirmationsRoutes)")
   const mcpMount = serverSource.indexOf("app.use('/api/mcp', mcpRoutes)")
   const costsMount = serverSource.indexOf("app.use('/api', costsRoutes)")
 
-  assert.notEqual(confirmationsMount, -1)
   assert.notEqual(mcpMount, -1)
   assert.notEqual(costsMount, -1)
-  assert.ok(confirmationsMount < mcpMount, 'mcpRoutes interceptaría la aprobación humana')
   assert.ok(mcpMount < costsMount, 'costsRoutes interceptaría OAuth/MCP antes de su router propio')
 })
 
@@ -353,6 +288,9 @@ test('grant ampliado invalida el token viejo y publica el catálogo de control',
   })
   const names = new Set(response.payload.result.tools.map(tool => tool.name))
   assert.ok(names.size >= 100)
+  assert.equal(names.has('mcp_prepare_action_confirmation'), false)
+  assert.equal(names.has('mcp_action_confirmation_status'), false)
+  assert.ok(response.payload.result.tools.every(tool => tool._meta?.['ristak/confirmationRequired'] === undefined))
   for (const required of [
     'contacts_create',
     'chatbot_update',
@@ -514,15 +452,12 @@ test('el pase temporal de Bunny se entrega una vez pero nunca queda guardado en 
     sha256: 'a'.repeat(64),
     folderPath: 'Pruebas'
   }
-  const approvalTicket = await prepareAndApproveAction('media_prepare_bunny_upload', businessArguments)
   const request = () => requestMcp(fixture.fullToken, {
     jsonrpc: '2.0', id: 41, method: 'tools/call',
     params: {
       name: 'media_prepare_bunny_upload',
       arguments: {
         ...businessArguments,
-        confirm: true,
-        approvalTicket,
         idempotencyKey
       }
     }
@@ -607,16 +542,15 @@ test('idempotencia queda aislada por usuario aunque el cliente OAuth sea el mism
   assert.notEqual(fixture.secondaryContactId, fixture.contactId)
 })
 
-test('confirmación, schema e idempotencyKey se aplican dentro del servidor', async () => {
-  const missingConfirmation = await requestMcp(fixture.fullToken, {
+test('el scope OAuth autoriza la acción directa y el servidor conserva schema e idempotencia', async () => {
+  const archived = await requestMcp(fixture.fullToken, {
     jsonrpc: '2.0', id: 6, method: 'tools/call',
     params: {
       name: 'contacts_archive',
       arguments: { contactId: fixture.contactId, idempotencyKey: 'archive-contact-001' }
     }
   })
-  assert.equal(missingConfirmation.payload.result.isError, true)
-  assert.equal(missingConfirmation.payload.result.structuredContent.code, 'invalid_arguments')
+  assert.equal(archived.payload.result.isError, undefined)
 
   const unknownArgument = await requestMcp(fixture.fullToken, {
     jsonrpc: '2.0', id: 7, method: 'tools/call',
@@ -629,78 +563,11 @@ test('confirmación, schema e idempotencyKey se aplican dentro del servidor', as
   assert.equal(unknownArgument.payload.result.structuredContent.code, 'invalid_arguments')
 })
 
-test('la aprobación humana queda ligada a persona, herramienta, argumentos y un solo uso', async () => {
-  const toolName = 'contacts_archive'
-  const businessArguments = { contactId: fixture.contactId }
-  const prepared = await requestMcp(fixture.fullToken, {
+test('los controles de aprobación humana ya no existen en el protocolo MCP', async () => {
+  const response = await requestMcp(fixture.fullToken, {
     jsonrpc: '2.0', id: 71, method: 'tools/call',
-    params: {
-      name: 'mcp_prepare_action_confirmation',
-      arguments: { toolName, arguments: businessArguments }
-    }
+    params: { name: 'mcp_prepare_action_confirmation', arguments: {} }
   })
-  assert.equal(prepared.payload.result.isError, undefined)
-  const approvalTicket = prepared.payload.result.structuredContent.confirmation.approvalTicket
-  assert.ok(approvalTicket)
-
-  const wrongUser = await requestJson(
-    '/api/mcp/action-confirmations/context',
-    fixture.secondarySessionToken,
-    { ticket: approvalTicket }
-  )
-  assert.equal(wrongUser.statusCode, 403)
-  assert.equal(wrongUser.payload.code, 'confirmation_actor_mismatch')
-
-  const contextResponse = await requestJson(
-    '/api/mcp/action-confirmations/context',
-    fixture.sessionToken,
-    { ticket: approvalTicket }
-  )
-  assert.equal(contextResponse.statusCode, 200)
-  assert.equal(contextResponse.payload.confirmation.toolName, toolName)
-
-  const approvalResponse = await requestJson(
-    '/api/mcp/action-confirmations/decision',
-    fixture.sessionToken,
-    { ticket: approvalTicket, decision: 'approve' }
-  )
-  assert.equal(approvalResponse.statusCode, 200)
-  assert.equal(approvalResponse.payload.confirmation.status, 'approved')
-
-  const grant = await db.get(
-    `SELECT grant_id FROM oauth_grants
-     WHERE user_id = ? AND client_id = ? AND revoked_at IS NULL
-     ORDER BY created_at DESC LIMIT 1`,
-    [fixture.userId, fixture.clientId]
-  )
-  const confirmationContext = {
-    user: { id: fixture.userId },
-    mcpUser: { clientId: fixture.clientId, grantId: grant.grant_id }
-  }
-  const spec = domainTool(toolName)
-
-  await assert.rejects(
-    consumeMcpActionConfirmation(confirmationContext, spec, {
-      contactId: 'otro-contacto',
-      confirm: true,
-      approvalTicket,
-      idempotencyKey: 'confirmation-binding-wrong-001'
-    }),
-    (error) => error?.code === 'confirmation_binding_mismatch'
-  )
-  await consumeMcpActionConfirmation(confirmationContext, spec, {
-    ...businessArguments,
-    confirm: true,
-    approvalTicket,
-    idempotencyKey: 'confirmation-binding-exact-001'
-  })
-  await assert.rejects(
-    consumeMcpActionConfirmation(confirmationContext, spec, {
-      ...businessArguments,
-      confirm: true,
-      approvalTicket,
-      idempotencyKey: 'confirmation-binding-reuse-002'
-    }),
-    (error) => error?.code === 'confirmation_consumed'
-  )
+  assert.equal(response.payload.result.isError, true)
+  assert.equal(response.payload.result.structuredContent.code, 'tool_not_found')
 })

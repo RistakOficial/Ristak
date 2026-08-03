@@ -150,26 +150,15 @@ The granted scope is necessary but not sufficient. On every `tools/list` and
 2. `developers` plus the commercial feature for the resource;
 3. the user's module access (`read`, `write` or `admin` as required);
 4. the OAuth scope declared by the tool;
-5. the required provider connection, when the tool depends on one;
-6. a signed, single-use human approval for high-impact writes, external effects
-   and destructive actions.
+5. the required provider connection, when the tool depends on one.
 
-`confirm=true` is not approval by itself. The preparation/status tools accept
-any relevant granted scope instead of incorrectly requiring `ristak.read`; this
-lets an execute-only or destructive-only connection complete its own approval
-flow. For a protected action the client must
-first call `mcp_prepare_action_confirmation` with the exact tool name and exact
-business arguments. Ristak returns a short-lived URL and a single-use
-`approvalTicket`; the authenticated user opens the URL inside Ristak and reviews
-a safe summary. Sensitive and oversized values are redacted or marked as
-truncated, while the ticket remains bound to the complete arguments. After the
-decision, `mcp_action_confirmation_status` confirms whether that same ticket is
-ready to execute. The final tool call must include the ticket and the same
-arguments, `confirm=true` and its `idempotencyKey`. The ticket is bound to
-the user, OAuth client/grant, tool and normalized argument hash, expires after
-15 minutes and is consumed atomically. Rejecting, altering arguments, changing
-the connection or replaying the ticket fails closed. Destructive approvals also
-require typing `APROBAR` in the Ristak screen.
+OAuth consent is the human authorization boundary. Once the user grants the
+requested scopes to a client, that client calls permitted tools directly without
+a second approval screen, `confirm` flag or action ticket. Ristak still performs
+all checks above on every call, and write tools require an `idempotencyKey` so a
+network retry cannot repeat the action. Expanding scopes, reconnecting after a
+revocation or authorizing another client still requires the normal OAuth consent
+flow.
 
 Business dates are interpreted with the account timezone and new monetary
 records use `account_currency` when the caller does not provide a valid explicit
@@ -210,14 +199,14 @@ The preferred low-latency code-first lifecycle is:
    create runs the same authoring checks.
 7. `sites_preview_html` still returns the inert HTML directly for MCP clients
    that need source instead of the auto-refreshing browser view.
-8. `sites_publish` remains a separate `ristak.execute` action with explicit
-   confirmation.
+8. `sites_publish` remains a separate `ristak.execute` action and executes
+   directly when that scope has already been granted.
 
 `sites_create_draft` and the block tools are for the native Ristak visual editor,
 native forms and native components. `sites_update_code` remains available for
 multi-file or already-published code changes, but it is intentionally
-high-impact and requires confirmation because a published Site can change
-immediately.
+high-impact, requires `ristak.execute`, an `idempotencyKey` and revision checks
+because a published Site can change immediately.
 
 HTML creation and mutation responses are compact and typed: they return the Site
 identity, editor mode, revision, file inventory without source duplication,
@@ -249,16 +238,17 @@ closed chat can be awakened.
 ### Retention and control-plane cleanup
 
 The system maintenance job runs at startup and every six hours under a
-distributed lock. It expires pending action approvals and user invitations,
-deletes expired idempotency records and 30-day MCP business events, retains
-terminal approvals/invitations for 90 days and audit records for 180 days. Event,
-acknowledgement, invitation, approval and OAuth control tables are blocked from
-generic REST/MCP table queries; only their dedicated business tools may access
-them.
+distributed lock. It expires user invitations, deletes expired idempotency
+records and 30-day MCP business events, retains terminal invitations for 90 days
+and audit records for 180 days. During rolling upgrades it also expires and
+removes historical action-approval rows created by older versions; current MCP
+tools never create new ones. Event, acknowledgement, invitation, historical
+approval and OAuth control tables are blocked from generic REST/MCP table
+queries; only their dedicated internal routes may access them.
 
 ### Uploading a local file to Bunny.net
 
-`media_prepare_bunny_upload` uses `ristak.execute` and an explicit confirmation.
+`media_prepare_bunny_upload` uses `ristak.execute` and an `idempotencyKey`.
 The MCP request carries only the file name, MIME, exact byte count, SHA-256,
 optional Media folder and visibility; it never carries Base64 or the Bunny API
 key. This avoids the MCP JSON limit and lets Codex, ChatGPT, Claude or another
@@ -304,7 +294,7 @@ WhatsApp, Email, HighLevel, Google Calendar, payments, Meta social and Meta Ads
 are evaluated independently. `integrations_connection_handoff` returns either a
 Ristak settings URL or the normal Google OAuth start URL; it never returns or
 accepts provider secrets. Supported disconnects reuse the canonical integration
-controllers, require administrator access and a signed destructive approval.
+controllers and require administrator access plus `ristak.destructive`.
 
 `mcp_runtime_continuity` reports which jobs, published automations and provider
 workers continue inside Ristak after the AI client closes. The MCP server cannot

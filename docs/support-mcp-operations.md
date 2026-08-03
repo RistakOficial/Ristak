@@ -16,7 +16,7 @@ MCP `ristak-mobile-stores` del Installer.
 
 | Si Raul pide... | Usa primero... | Para que |
 | --- | --- | --- |
-| "Crea un contacto", "manda este mensaje", "agenda una cita", "crea/publica una pagina" o cualquier accion normal de producto | MCP funcional `ristak` (`/api/mcp`, herramientas `mcp__ristak__*`) | Ejecutar la funcion con la cuenta, permisos, licencia, scopes y confirmaciones del usuario autenticado |
+| "Crea un contacto", "manda este mensaje", "agenda una cita", "crea/publica una pagina" o cualquier accion normal de producto | MCP funcional `ristak` (`/api/mcp`, herramientas `mcp__ristak__*`) | Ejecutar directamente con la cuenta, permisos, licencia y scopes OAuth ya autorizados por el usuario |
 | "Investiga este cliente", "por que fallo el backend", "revisa el chat o la IA", "mira logs/health/deploy/DB" sobre una instalacion real | MCP de soporte `ristak-render-support` (`mcp__ristak_render_support__*`) | Encontrar la instalacion correcta y reunir evidencia real, read-only, antes de diagnosticar |
 | "Implementa/cambia/refactoriza esta funcion" sin reportar un incidente real | Repo correspondiente en rama o worktree limpio | Cambiar y validar codigo; soporte no es un navegador de codigo |
 

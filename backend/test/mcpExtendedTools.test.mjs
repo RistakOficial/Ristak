@@ -47,13 +47,11 @@ test('las herramientas extendidas tienen catálogo único y metadata de segurida
     assert.equal(typeof entry.execute, 'function')
 
     if (entry.access === 'write') {
-      assert.equal(entry.confirmRequired, true, `${entry.name} debe exigir confirmación`)
+      assert.equal(entry.confirmRequired, false, `${entry.name} no debe pedir confirmación humana por acción`)
       assert.equal(entry.idempotencyRequired, true, `${entry.name} debe ser idempotente`)
-      assert.equal(entry.inputSchema.properties.confirm.type, 'boolean')
-      assert.equal(entry.inputSchema.properties.approvalTicket.type, 'string')
+      assert.equal(entry.inputSchema.properties.confirm, undefined)
+      assert.equal(entry.inputSchema.properties.approvalTicket, undefined)
       assert.equal(entry.inputSchema.properties.idempotencyKey.type, 'string')
-      assert.ok(entry.inputSchema.required.includes('confirm'))
-      assert.ok(entry.inputSchema.required.includes('approvalTicket'))
       assert.ok(entry.inputSchema.required.includes('idempotencyKey'))
     } else {
       assert.equal(entry.confirmRequired, false)
@@ -159,7 +157,6 @@ test('Media prepara una subida local a Bunny sin meter bytes ni guardar el pase 
     sha256: 'a'.repeat(64),
     folderPath: 'Documentos/Propuestas',
     isPublic: false,
-    confirm: true,
     idempotencyKey: 'bunny-upload-001'
   }
   const result = await uploadTool.execute(uploadRecorder.context, args)
@@ -214,7 +211,7 @@ test('productos usa el catálogo local, no sincroniza al leer y compacta datos d
   assert.equal(result.products[0].prices[0].id, 'price_1')
 })
 
-test('crear producto exige confirmación y no propaga controles MCP al controller', async () => {
+test('crear producto ejecuta directo y no propaga controles MCP al controller', async () => {
   const createTool = tool('settings_product_create')
   const args = {
     name: 'Curso premium',
@@ -222,15 +219,8 @@ test('crear producto exige confirmación y no propaga controles MCP al controlle
     prices: [{ name: 'Precio base', amount: 100, type: 'one_time' }],
     idempotencyKey: 'product-create-001'
   }
-  const blocked = recorder()
-  await assert.rejects(
-    () => createTool.execute(blocked.context, args),
-    (error) => error.code === 'confirmation_required'
-  )
-  assert.equal(blocked.calls.length, 0)
-
   const created = recorder({ success: true, product: { localId: 'product_1', name: args.name } })
-  await createTool.execute(created.context, { ...args, confirm: true })
+  await createTool.execute(created.context, args)
   assert.equal(created.calls[0].handler, 'createProduct')
   assert.equal(created.calls[0].request.headers['idempotency-key'], args.idempotencyKey)
   assert.equal(created.calls[0].request.body.confirm, undefined)
@@ -271,7 +261,6 @@ test('suscripciones oculta datos de pasarela y delega cancelación al flujo can�
   const cancelRecorder = recorder({ success: true, data: { id: 'sub_1', status: 'cancelled' } })
   const cancelled = await tool('settings_subscription_cancel').execute(cancelRecorder.context, {
     subscriptionId: 'sub_1',
-    confirm: true,
     idempotencyKey: 'subscription-cancel-001'
   })
   assert.equal(cancelRecorder.calls[0].handler, 'actionSubscriptionView')
@@ -286,7 +275,6 @@ test('preferencias sólo permiten claves conocidas y serializan valores como esp
     chatPushNotificationsEnabled: true,
     calendarPushNotificationCalendarIds: ['calendar_1', 'calendar_2'],
     mobileChatAppointmentEntryMode: 'calendar',
-    confirm: true,
     idempotencyKey: 'user-preferences-001'
   })
   assert.equal(preferencesRecorder.calls[0].handler, 'saveUserConfig')
@@ -301,7 +289,6 @@ test('preferencias sólo permiten claves conocidas y serializan valores como esp
   const emptyRecorder = recorder()
   await assert.rejects(
     () => tool('settings_user_preferences_update').execute(emptyRecorder.context, {
-      confirm: true,
       idempotencyKey: 'user-preferences-002'
     }),
     (error) => error.code === 'invalid_arguments'
@@ -385,16 +372,7 @@ test('tracking y fallback de atribución entregan estado y muestras acotadas, no
     stats: { successful_updates: 1, revenue_recovered: 100 },
     updated_contacts: [{ id: 'contact_1', name: 'Ana', url: 'https://private', old_ad_id: '', new_ad_id: 'ad_1' }]
   })
-  await assert.rejects(
-    () => tool('analytics_attribution_fallback_execute').execute(executeRecorder.context, {
-      idempotencyKey: 'attribution-fallback-001'
-    }),
-    (error) => error.code === 'confirmation_required'
-  )
-  assert.equal(executeRecorder.calls.length, 0)
-
   const executed = await tool('analytics_attribution_fallback_execute').execute(executeRecorder.context, {
-    confirm: true,
     idempotencyKey: 'attribution-fallback-001'
   })
   assert.equal(executeRecorder.calls[0].handler, 'executeFallback')

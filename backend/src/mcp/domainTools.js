@@ -18,16 +18,6 @@ const IDEMPOTENCY_KEY = {
   maxLength: 180,
   pattern: '^[A-Za-z0-9._:-]+$'
 }
-const CONFIRM = {
-  type: 'boolean',
-  description: 'Debe ser true después de confirmar la acción con la persona usuaria.'
-}
-const APPROVAL_TICKET = {
-  type: 'string',
-  minLength: 32,
-  maxLength: 4096,
-  description: 'Pase firmado y de un solo uso emitido por mcp_prepare_action_confirmation.'
-}
 
 function schema(properties = {}, required = []) {
   return { type: 'object', properties, required, additionalProperties: false }
@@ -35,13 +25,12 @@ function schema(properties = {}, required = []) {
 
 function controls({ confirm = false, idempotency = false } = {}) {
   return {
-    ...(confirm ? { confirm: CONFIRM, approvalTicket: APPROVAL_TICKET } : {}),
     ...(idempotency ? { idempotencyKey: IDEMPOTENCY_KEY } : {})
   }
 }
 
 function requiredWith(required = [], { confirm = false, idempotency = false } = {}) {
-  return [...required, ...(confirm ? ['confirm', 'approvalTicket'] : []), ...(idempotency ? ['idempotencyKey'] : [])]
+  return [...required, ...(idempotency ? ['idempotencyKey'] : [])]
 }
 
 function cleanRequestObject(source = {}) {
@@ -58,7 +47,8 @@ function spec(definition) {
     adminOnly: false,
     confirmRequired: false,
     idempotencyRequired: false,
-    ...definition
+    ...definition,
+    confirmRequired: false
   })
 }
 
@@ -209,7 +199,7 @@ const contactTools = [
     description: 'Mueve un contacto a la papelera conservando pagos e historial.',
     module: 'contacts', access: 'write', scope: 'ristak.destructive', risk: 'high',
     handler: contactsController.deleteContact, method: 'DELETE',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ contactId: ID, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['contactId'], { confirm: true, idempotency: true })),
     params: (args) => ({ id: args.contactId })
   }),
@@ -238,7 +228,7 @@ const contactTools = [
     description: 'Borra permanentemente un contacto ya archivado. Los pagos se conservan desacoplados.',
     module: 'contacts', access: 'write', scope: 'ristak.destructive', risk: 'critical', adminOnly: true,
     handler: contactsController.permanentDeleteContact, method: 'DELETE',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ contactId: ID, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['contactId'], { confirm: true, idempotency: true })),
     params: (args) => ({ id: args.contactId })
   }),
@@ -312,7 +302,7 @@ const chatTools = [
     featureKeys: ['whatsapp'],
     connectionPrerequisites: ['whatsapp'],
     handler: whatsappController.sendWhatsAppApiTextMessageView, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({
       contactId: ID, to: { type: 'string', maxLength: 80 }, from: { type: 'string', maxLength: 80 },
       text: TEXT, transport: { type: 'string', enum: ['api', 'qr'] }, phoneNumberId: ID,
@@ -328,7 +318,7 @@ const chatTools = [
     featureKeys: ['meta_ads'],
     connectionPrerequisites: ['meta_social'],
     handler: whatsappController.sendMetaSocialTextMessageView, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({
       contactId: ID, platform: { type: 'string', enum: ['messenger', 'instagram'] }, message: TEXT,
       replyToMessageId: ID, replyToProviderMessageId: ID,
@@ -343,7 +333,7 @@ const chatTools = [
     featureKeys: ['email'],
     connectionPrerequisites: ['email'],
     handler: emailController.sendEmailView, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({
       contactId: ID, to: { type: 'string', maxLength: 320 }, subject: { type: 'string', minLength: 1, maxLength: 998 },
       text: TEXT, html: { type: 'string', maxLength: 200000 }, replyTo: { type: 'string', maxLength: 320 }, includeSignature: { type: 'boolean' },
@@ -358,7 +348,7 @@ const chatTools = [
     featureKeys: ['highlevel_integration'],
     connectionPrerequisites: ['highlevel'],
     handler: highLevelController.sendConversationMessage, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({
       contactId: ID, channel: { type: 'string', enum: ['SMS', 'WhatsApp', 'Email', 'IG', 'FB'] },
       message: TEXT, subject: SHORT_TEXT, html: { type: 'string', maxLength: 200000 },
@@ -378,7 +368,7 @@ const chatTools = [
     description: 'Programa un mensaje para una fecha/hora ISO. La zona horaria se resuelve por las reglas de la cuenta.',
     module: 'chat', access: 'write', scope: 'ristak.execute', risk: 'high',
     handler: whatsappController.scheduleChatMessageView, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({
       contactId: ID, provider: SHORT_TEXT, channel: SHORT_TEXT, transport: SHORT_TEXT,
       messageType: { type: 'string', enum: ['text', 'template'] }, text: TEXT,
@@ -395,7 +385,7 @@ const chatTools = [
     description: 'Cancela un mensaje programado antes de su envío.',
     module: 'chat', access: 'write', scope: 'ristak.destructive', risk: 'high',
     handler: whatsappController.cancelScheduledChatMessageView, method: 'DELETE',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ messageId: ID, contactId: ID, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['messageId'], { confirm: true, idempotency: true })),
     params: (args) => ({ id: args.messageId }), body: (args) => ({ contactId: args.contactId })
   })
@@ -433,7 +423,7 @@ const agentTools = [
   controllerSpec({
     name: 'chatbot_delete', description: 'Elimina un chatbot. Esta acción no se puede deshacer.',
     module: 'ai_agent', access: 'write', scope: 'ristak.destructive', risk: 'critical', handler: agentController.deleteAgent, method: 'DELETE',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ agentId: ID, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['agentId'], { confirm: true, idempotency: true })),
     params: (args) => ({ agentId: args.agentId })
   }),
@@ -501,7 +491,7 @@ const calendarTools = [
     name: 'appointments_create',
     description: 'Crea una cita con las validaciones de disponibilidad, contacto, calendario y zona horaria de Ristak.',
     module: 'appointments', access: 'write', scope: 'ristak.execute', risk: 'high', handler: calendarsController.createAppointment, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({
       calendarId: ID, contactId: ID, title: SHORT_TEXT,
       startTime: { type: 'string', minLength: 10, maxLength: 80 }, endTime: { type: 'string', maxLength: 80 },
@@ -515,14 +505,14 @@ const calendarTools = [
     name: 'appointments_update',
     description: 'Reprograma o actualiza una cita usando las reglas del calendario y de proveedores conectados.',
     module: 'appointments', access: 'write', scope: 'ristak.execute', risk: 'high', handler: calendarsController.updateAppointment, method: 'PUT',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ appointmentId: ID, changes: { type: 'object', additionalProperties: true }, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['appointmentId', 'changes'], { confirm: true, idempotency: true })),
     params: (args) => ({ id: args.appointmentId }), body: (args) => args.changes
   }),
   controllerSpec({
-    name: 'appointments_cancel', description: 'Cancela y elimina una cita según las reglas del proveedor. Requiere confirmación explícita.',
+    name: 'appointments_cancel', description: 'Cancela y elimina una cita según las reglas del proveedor con scope ristak.destructive.',
     module: 'appointments', access: 'write', scope: 'ristak.destructive', risk: 'critical', handler: calendarsController.deleteEvent, method: 'DELETE',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ appointmentId: ID, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['appointmentId'], { confirm: true, idempotency: true })),
     params: (args) => ({ id: args.appointmentId })
   }),
@@ -543,7 +533,7 @@ const calendarTools = [
   controllerSpec({
     name: 'appointments_delete_calendar', description: 'Elimina un calendario local. Puede afectar enlaces y disponibilidad publicados.',
     module: 'appointments', access: 'write', scope: 'ristak.destructive', risk: 'critical', handler: calendarsController.deleteCalendar, method: 'DELETE',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ calendarId: ID, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['calendarId'], { confirm: true, idempotency: true })),
     params: (args) => ({ id: args.calendarId })
   }),
@@ -556,14 +546,14 @@ const calendarTools = [
   controllerSpec({
     name: 'appointments_create_block', description: 'Bloquea un intervalo en un calendario.',
     module: 'appointments', access: 'write', scope: 'ristak.execute', risk: 'high', handler: calendarsController.createBlockedSlot, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ calendarId: ID, startTime: { type: 'string', maxLength: 80 }, endTime: { type: 'string', maxLength: 80 }, title: SHORT_TEXT, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['calendarId', 'startTime', 'endTime'], { confirm: true, idempotency: true })),
     body: cleanRequestObject
   }),
   controllerSpec({
     name: 'appointments_delete_block', description: 'Elimina un bloqueo de agenda.',
     module: 'appointments', access: 'write', scope: 'ristak.destructive', risk: 'high', handler: calendarsController.deleteBlockedSlot, method: 'DELETE',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ blockId: ID, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['blockId'], { confirm: true, idempotency: true })),
     params: (args) => ({ id: args.blockId })
   })
@@ -589,7 +579,7 @@ const paymentTools = [
     name: 'payments_create',
     description: 'Registra una transacción local usando la moneda configurada en la cuenta. Reintentos con la misma clave no duplican el pago.',
     module: 'payments', access: 'write', scope: 'ristak.execute', risk: 'high', handler: transactionsController.createTransaction, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({
       amount: { type: 'number', exclusiveMinimum: 0 }, method: SHORT_TEXT, paymentMethod: SHORT_TEXT, status: SHORT_TEXT,
       reference: SHORT_TEXT, title: SHORT_TEXT, description: TEXT, date: { type: 'string', maxLength: 80 }, dueDate: { type: 'string', maxLength: 80 },
@@ -609,21 +599,21 @@ const paymentTools = [
   controllerSpec({
     name: 'payments_record', description: 'Marca una transacción existente como pagada y ejecuta su reconciliación, estadísticas y automatizaciones.',
     module: 'payments', access: 'write', scope: 'ristak.execute', risk: 'critical', handler: transactionsController.recordPayment, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ paymentId: ID, amount: { type: 'number', exclusiveMinimum: 0 }, paymentDate: { type: 'string', maxLength: 80 }, paymentMethod: SHORT_TEXT, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['paymentId'], { confirm: true, idempotency: true })),
     params: (args) => ({ id: args.paymentId }), body: cleanRequestObject
   }),
   controllerSpec({
     name: 'payments_refund', description: 'Registra el reembolso de un pago completado cuando Ristak es la fuente autorizada.',
     module: 'payments', access: 'write', scope: 'ristak.destructive', risk: 'critical', handler: transactionsController.refundTransaction, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ paymentId: ID, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['paymentId'], { confirm: true, idempotency: true })),
     params: (args) => ({ id: args.paymentId })
   }),
   controllerSpec({
     name: 'payments_void', description: 'Anula una transacción pendiente; nunca convierte un pago completado en borrado.',
     module: 'payments', access: 'write', scope: 'ristak.destructive', risk: 'critical', handler: transactionsController.voidTransaction, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ paymentId: ID, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['paymentId'], { confirm: true, idempotency: true })),
     params: (args) => ({ id: args.paymentId })
   }),
@@ -635,7 +625,7 @@ const paymentTools = [
   controllerSpec({
     name: 'payments_send', description: 'Envía el cobro/invoice al contacto mediante el proveedor conectado.',
     module: 'payments', access: 'write', scope: 'ristak.execute', risk: 'high', handler: transactionsController.sendTransaction, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ paymentId: ID, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['paymentId'], { confirm: true, idempotency: true })),
     params: (args) => ({ id: args.paymentId })
   }),
@@ -652,21 +642,21 @@ const paymentTools = [
   controllerSpec({
     name: 'payments_create_plan', description: 'Crea un plan de pagos validado; la moneda predeterminada es la de la cuenta.',
     module: 'payments', access: 'write', scope: 'ristak.execute', risk: 'critical', featureKeys: ['payment_plans'], handler: paymentPlansController.createPaymentPlan, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ plan: { type: 'object', additionalProperties: true }, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['plan'], { confirm: true, idempotency: true })),
     body: (args) => ({ ...args.plan, idempotencyKey: args.idempotencyKey })
   }),
   controllerSpec({
     name: 'payments_update_plan', description: 'Actualiza un plan de pagos existente mediante su servicio canónico.',
     module: 'payments', access: 'write', scope: 'ristak.execute', risk: 'high', featureKeys: ['payment_plans'], handler: paymentPlansController.updatePaymentPlan, method: 'PUT',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ planId: ID, changes: { type: 'object', additionalProperties: true }, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['planId', 'changes'], { confirm: true, idempotency: true })),
     params: (args) => ({ scheduleId: args.planId }), body: (args) => args.changes
   }),
   controllerSpec({
     name: 'payments_plan_action', description: 'Pausa, reanuda o ejecuta una acción no destructiva sobre un plan de pagos.',
     module: 'payments', access: 'write', scope: 'ristak.execute', risk: 'critical', featureKeys: ['payment_plans'], handler: paymentPlansController.actionPaymentPlan, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({
       planId: ID,
       action: { type: 'string', enum: ['activate', 'pause', 'change_card', 'auto-payment'] },
@@ -678,7 +668,7 @@ const paymentTools = [
   controllerSpec({
     name: 'payments_plan_terminate', description: 'Cancela o elimina un plan de pagos mediante su flujo canónico.',
     module: 'payments', access: 'write', scope: 'ristak.destructive', risk: 'critical', featureKeys: ['payment_plans'], handler: paymentPlansController.actionPaymentPlan, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({
       planId: ID,
       action: { type: 'string', enum: ['cancel', 'delete'] },
@@ -719,14 +709,14 @@ const automationTools = [
   controllerSpec({
     name: 'automations_publish', description: 'Valida y publica el borrador actual de una automatización como flujo vivo.',
     module: 'automations', access: 'write', scope: 'ristak.execute', risk: 'critical', handler: automationsController.updateAutomationHandler, method: 'PUT',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ automationId: ID, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['automationId'], { confirm: true, idempotency: true })),
     params: (args) => ({ automationId: args.automationId }), body: () => ({ status: 'published' })
   }),
   controllerSpec({
     name: 'automations_pause', description: 'Pausa una automatización publicada sin eliminar su configuración.',
     module: 'automations', access: 'write', scope: 'ristak.execute', risk: 'high', handler: automationsController.updateAutomationHandler, method: 'PUT',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ automationId: ID, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['automationId'], { confirm: true, idempotency: true })),
     params: (args) => ({ automationId: args.automationId }), body: () => ({ status: 'paused' })
   }),
@@ -740,7 +730,7 @@ const automationTools = [
   controllerSpec({
     name: 'automations_delete', description: 'Elimina una automatización y sus ejecuciones internas relacionadas.',
     module: 'automations', access: 'write', scope: 'ristak.destructive', risk: 'critical', handler: automationsController.deleteAutomationHandler, method: 'DELETE',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ automationId: ID, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['automationId'], { confirm: true, idempotency: true })),
     params: (args) => ({ automationId: args.automationId })
   }),
@@ -752,21 +742,21 @@ const automationTools = [
   controllerSpec({
     name: 'automations_enroll_contact', description: 'Inscribe manualmente un contacto en una automatización.',
     module: 'automations', access: 'write', scope: 'ristak.execute', risk: 'high', handler: automationsController.enrollContactInAutomationHandler, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ automationId: ID, contactId: ID, context: { type: 'object', additionalProperties: true }, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['automationId', 'contactId'], { confirm: true, idempotency: true })),
     params: (args) => ({ automationId: args.automationId }), body: (args) => ({ contactId: args.contactId, ...(args.context || {}) })
   }),
   controllerSpec({
     name: 'automations_control_enrollment', description: 'Pausa, reanuda o cancela una inscripción concreta.',
     module: 'automations', access: 'write', scope: 'ristak.execute', risk: 'high', handler: automationsController.controlEnrollmentHandler, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ automationId: ID, enrollmentId: ID, action: SHORT_TEXT, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['automationId', 'enrollmentId', 'action'], { confirm: true, idempotency: true })),
     params: (args) => ({ automationId: args.automationId, enrollmentId: args.enrollmentId }), body: (args) => ({ action: args.action })
   }),
   controllerSpec({
     name: 'automations_test_run', description: 'Ejecuta una prueba controlada de la automatización con efectos trazables.',
     module: 'automations', access: 'write', scope: 'ristak.execute', risk: 'high', handler: automationsController.testAutomationRunHandler, method: 'POST',
-    confirmRequired: true, idempotencyRequired: true,
+    confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ automationId: ID, input: { type: 'object', additionalProperties: true }, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['automationId', 'input'], { confirm: true, idempotency: true })),
     params: (args) => ({ automationId: args.automationId }), body: (args) => args.input
   }),

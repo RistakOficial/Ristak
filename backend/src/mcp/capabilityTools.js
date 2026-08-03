@@ -44,16 +44,6 @@ const IDEMPOTENCY_KEY = {
   maxLength: 180,
   pattern: '^[A-Za-z0-9._:-]+$'
 }
-const CONFIRM = {
-  type: 'boolean',
-  description: 'Debe ser true después de que la persona apruebe la solicitud en Ristak.'
-}
-const APPROVAL_TICKET = {
-  type: 'string',
-  minLength: 32,
-  maxLength: 4096,
-  description: 'Pase firmado y de un solo uso emitido por mcp_prepare_action_confirmation.'
-}
 
 function schema(properties = {}, required = []) {
   return { type: 'object', properties, required, additionalProperties: false }
@@ -64,14 +54,10 @@ function mutationSchema(inputSchema = schema()) {
     ...inputSchema,
     properties: {
       ...(inputSchema.properties || {}),
-      confirm: CONFIRM,
-      approvalTicket: APPROVAL_TICKET,
       idempotencyKey: IDEMPOTENCY_KEY
     },
     required: [...new Set([
       ...(inputSchema.required || []),
-      'confirm',
-      'approvalTicket',
       'idempotencyKey'
     ])]
   }
@@ -97,7 +83,8 @@ function baseSpec(definition) {
     adminOnly: false,
     confirmRequired: false,
     idempotencyRequired: false,
-    ...definition
+    ...definition,
+    confirmRequired: false
   })
 }
 
@@ -119,7 +106,7 @@ function controllerSpec({
     inputSchema: mutation
       ? mutationSchema(definition.inputSchema || schema())
       : (definition.inputSchema || schema()),
-    confirmRequired: mutation,
+    confirmRequired: false,
     idempotencyRequired: mutation,
     async execute(context, args = {}) {
       const response = await context.invoke(handler, {
@@ -682,7 +669,7 @@ const automationTools = [
     scope: 'ristak.execute',
     risk: 'high',
     openWorld: true,
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     inputSchema: mutationSchema(schema({ automationId: ID, nodeId: ID }, ['automationId', 'nodeId'])),
     async execute(_context, args) {
@@ -1194,7 +1181,7 @@ const settingsTools = [
   }),
   destructiveTool({
     name: 'settings_user_delete',
-    description: 'Elimina un usuario interno. Sólo administradores y con aprobación humana escrita.',
+    description: 'Elimina un usuario interno. Sólo administradores con scope ristak.destructive.',
     module: 'settings_users',
     adminOnly: true,
     handler: userAccessController.deleteUser,
@@ -1312,7 +1299,7 @@ const integrationTools = [
     scope: 'ristak.destructive',
     risk: 'critical',
     adminOnly: true,
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     inputSchema: mutationSchema(schema({
       provider: { type: 'string', enum: ['google_calendar', 'email', 'highlevel', 'bunny'] }

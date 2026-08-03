@@ -46,16 +46,6 @@ const IDEMPOTENCY_KEY = {
   maxLength: 180,
   pattern: '^[A-Za-z0-9._:-]+$'
 }
-const CONFIRM = {
-  type: 'boolean',
-  description: 'Debe ser true después de confirmar esta acción con la persona usuaria.'
-}
-const APPROVAL_TICKET = {
-  type: 'string',
-  minLength: 32,
-  maxLength: 4096,
-  description: 'Pase firmado y de un solo uso emitido por mcp_prepare_action_confirmation.'
-}
 const SCOPE = { type: 'string', enum: ['all', 'attribution', 'campaigns', 'attributed'] }
 const GROUP_BY = { type: 'string', enum: ['day', 'week', 'month', 'year'] }
 const ANALYTICS_GROUP_BY = { type: 'string', enum: ['day', 'month', 'year'] }
@@ -75,8 +65,6 @@ const GENERIC_PAYLOAD = {
 }
 
 const MUTATION_CONTROLS = {
-  confirm: CONFIRM,
-  approvalTicket: APPROVAL_TICKET,
   idempotencyKey: IDEMPOTENCY_KEY
 }
 
@@ -96,7 +84,7 @@ function mutationSchema(inputSchema = schema()) {
       ...(inputSchema.properties || {}),
       ...MUTATION_CONTROLS
     },
-    required: [...new Set([...(inputSchema.required || []), 'confirm', 'approvalTicket', 'idempotencyKey'])]
+    required: [...new Set([...(inputSchema.required || []), 'idempotencyKey'])]
   }
 }
 
@@ -129,14 +117,6 @@ function assertArgumentBudget(args) {
   throw error
 }
 
-function assertConfirmation(args) {
-  if (args?.confirm === true) return
-  const error = new Error('Esta acción requiere confirmación explícita (confirm=true).')
-  error.status = 400
-  error.code = 'confirmation_required'
-  throw error
-}
-
 function assertNonEmptyObject(value, label = 'changes') {
   if (value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length) return
   const error = new Error(`${label} debe incluir al menos un cambio.`)
@@ -151,7 +131,8 @@ function spec(definition) {
     adminOnly: false,
     confirmRequired: false,
     idempotencyRequired: false,
-    ...definition
+    ...definition,
+    confirmRequired: false
   })
 }
 
@@ -186,11 +167,10 @@ function controllerSpec({
   return spec({
     ...definition,
     inputSchema,
-    confirmRequired: isMutation,
+    confirmRequired: false,
     idempotencyRequired: isMutation,
     async execute(context, args = {}) {
       assertArgumentBudget(args)
-      if (isMutation) assertConfirmation(args)
       if (validateArgs) validateArgs(args)
       const response = await call(context, handler, {
         method,

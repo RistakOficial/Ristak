@@ -40,7 +40,7 @@ const HTML_AUTHORING_GUIDANCE = [
   'Usa la skill o capacidad de construcción web del cliente para resolver tipografía, jerarquía, aire, secciones, responsive y accesibilidad antes de guardar.',
   'No simules una landing personalizada apilando bloques nativos ni uses grids de cards o contenedores anidados como estilo por defecto.',
   'Incluye el CSS dentro del documento o en una hoja ya importada. Ristak elimina scripts, handlers on* y URLs javascript: por seguridad; no diseñes interacciones que dependan de JavaScript propio.',
-  'La creación y el guardado seguro permanecen en borrador. Abre una sola vista previa en vivo y usa parches de texto exactos para iterar antes de pedir confirmación para publicar.'
+  'La creación y el guardado seguro permanecen en borrador. Abre una sola vista previa en vivo y usa parches de texto exactos para iterar antes de publicar.'
 ].join(' ')
 
 const SITE_ID_SCHEMA = {
@@ -69,18 +69,6 @@ const IDEMPOTENCY_KEY_SCHEMA = {
   minLength: 8,
   maxLength: 180,
   pattern: '^[A-Za-z0-9._:-]+$'
-}
-
-const CONFIRM_SCHEMA = {
-  type: 'boolean',
-  description: 'Debe ser true después de confirmar esta acción con la persona usuaria.'
-}
-
-const APPROVAL_TICKET_SCHEMA = {
-  type: 'string',
-  minLength: 32,
-  maxLength: 4096,
-  description: 'Pase firmado y de un solo uso emitido por mcp_prepare_action_confirmation.'
 }
 
 const STRUCTURED_OBJECT_SCHEMA = {
@@ -311,13 +299,12 @@ function makeInputSchema(properties, required = []) {
 
 function writeControls({ confirmRequired = false } = {}) {
   return {
-    idempotencyKey: IDEMPOTENCY_KEY_SCHEMA,
-    ...(confirmRequired ? { confirm: CONFIRM_SCHEMA, approvalTicket: APPROVAL_TICKET_SCHEMA } : {})
+    idempotencyKey: IDEMPOTENCY_KEY_SCHEMA
   }
 }
 
 function writeRequirements(required = [], { confirmRequired = false } = {}) {
-  return [...required, 'idempotencyKey', ...(confirmRequired ? ['confirm', 'approvalTicket'] : [])]
+  return [...required, 'idempotencyKey']
 }
 
 function spec(definition) {
@@ -326,7 +313,8 @@ function spec(definition) {
     featureKeys: ['sites'],
     confirmRequired: false,
     idempotencyRequired: false,
-    ...definition
+    ...definition,
+    confirmRequired: false
   })
 }
 
@@ -350,14 +338,6 @@ function revisionString(value) {
 
 function importedCodeRevision(imported = {}) {
   return computeImportedSiteCodeRevision(imported.codeFiles)
-}
-
-function assertBooleanConfirmation(args = {}) {
-  if (args.confirm === true) return
-  const error = new Error('Esta acción requiere confirmación explícita (confirm=true).')
-  error.status = 400
-  error.code = 'confirmation_required'
-  throw error
 }
 
 function assertStructuredBodySize(value, label) {
@@ -818,7 +798,7 @@ async function createHtmlDraft(context, args = {}, { requireAuthoringReady = fal
   return compactHtmlDraftMutationResponse(response, qualityReport)
 }
 
-const dangerousControlProperties = writeControls({ confirmRequired: true })
+const dangerousControlProperties = writeControls()
 
 export const siteToolSpecs = Object.freeze([
   spec({
@@ -1167,7 +1147,7 @@ export const siteToolSpecs = Object.freeze([
   spec({
     name: 'sites_update_code',
     title: 'Editar código con impacto potencial en vivo',
-    description: 'Reemplaza uno o varios archivos de código y puede cambiar inmediatamente un Site ya publicado, por eso exige ristak.execute y confirmación. Para iterar sobre un borrador HTML usa sites_patch_html_draft. expectedRevision evita sobreescribir una versión ya observada.',
+    description: 'Reemplaza uno o varios archivos de código y puede cambiar inmediatamente un Site ya publicado, por eso exige ristak.execute. Para iterar sobre un borrador HTML usa sites_patch_html_draft. expectedRevision evita sobreescribir una versión ya observada.',
     inputSchema: makeInputSchema({
       siteId: SITE_ID_SCHEMA,
       expectedRevision: {
@@ -1191,14 +1171,13 @@ export const siteToolSpecs = Object.freeze([
         }
       },
       ...dangerousControlProperties
-    }, writeRequirements(['siteId', 'expectedRevision', 'files'], { confirmRequired: true })),
+    }, writeRequirements(['siteId', 'expectedRevision', 'files'], { confirmRequired: false })),
     access: 'write',
     scope: 'ristak.execute',
     risk: 'high',
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       assertCodeUpdateSize(args.files)
       await assertConditionalPaymentFeature(context, args.files)
 
@@ -1248,14 +1227,13 @@ export const siteToolSpecs = Object.freeze([
       destinationKey: { type: 'string', maxLength: 180 },
       customFieldDefinitionId: { type: 'string', maxLength: 180 },
       ...dangerousControlProperties
-    }, writeRequirements(['siteId', 'formId', 'fieldId', 'destinationType'], { confirmRequired: true })),
+    }, writeRequirements(['siteId', 'formId', 'fieldId', 'destinationType'], { confirmRequired: false })),
     access: 'write',
     scope: 'ristak.execute',
     risk: 'high',
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       const response = await call(context, updateImportedSiteFieldMappingHandler, {
         method: 'PATCH',
         params: { siteId: args.siteId },
@@ -1296,14 +1274,13 @@ export const siteToolSpecs = Object.freeze([
       label: { type: 'string', maxLength: 300 },
       kind: { type: 'string', enum: ['image', 'audio', 'video', 'document', 'other'] },
       ...dangerousControlProperties
-    }, writeRequirements(['siteId', 'mediaAssetId'], { confirmRequired: true })),
+    }, writeRequirements(['siteId', 'mediaAssetId'], { confirmRequired: false })),
     access: 'write',
     scope: 'ristak.execute',
     risk: 'high',
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       return call(context, saveSiteContentAssetHandler, {
         method: args.bindingId ? 'PUT' : 'POST',
         params: { siteId: args.siteId, ...(args.bindingId ? { bindingId: args.bindingId } : {}) },
@@ -1323,14 +1300,13 @@ export const siteToolSpecs = Object.freeze([
       siteId: SITE_ID_SCHEMA,
       bindingId: { type: 'string', minLength: 1, maxLength: 180 },
       ...dangerousControlProperties
-    }, writeRequirements(['siteId', 'bindingId'], { confirmRequired: true })),
+    }, writeRequirements(['siteId', 'bindingId'], { confirmRequired: false })),
     access: 'write',
     scope: 'ristak.destructive',
     risk: 'high',
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       return call(context, deleteSiteContentAssetHandler, {
         method: 'DELETE',
         params: { siteId: args.siteId, bindingId: args.bindingId }
@@ -1373,7 +1349,7 @@ export const siteToolSpecs = Object.freeze([
         metaCapiEnabled: { type: 'boolean' },
         metaEventName: { type: 'string', maxLength: 80 },
         ...dangerousControlProperties
-      }, writeRequirements(['siteId'], { confirmRequired: true })),
+      }, writeRequirements(['siteId'], { confirmRequired: false })),
       anyOf: [
         { required: ['name'] },
         { required: ['slug'] },
@@ -1389,10 +1365,9 @@ export const siteToolSpecs = Object.freeze([
     access: 'write',
     scope: 'ristak.execute',
     risk: 'high',
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       const body = siteUpdateBody(args)
       assertStructuredBodySize(body.theme, 'El tema')
       await assertConditionalPaymentFeature(context, body)
@@ -1431,14 +1406,13 @@ export const siteToolSpecs = Object.freeze([
     inputSchema: makeInputSchema({
       siteId: SITE_ID_SCHEMA,
       ...dangerousControlProperties
-    }, writeRequirements(['siteId'], { confirmRequired: true })),
+    }, writeRequirements(['siteId'], { confirmRequired: false })),
     access: 'write',
     scope: stateTool.scope,
     risk: stateTool.risk,
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       return call(context, updateSiteHandler, {
         method: 'PUT',
         params: { siteId: args.siteId },
@@ -1452,14 +1426,13 @@ export const siteToolSpecs = Object.freeze([
     inputSchema: makeInputSchema({
       siteId: SITE_ID_SCHEMA,
       ...dangerousControlProperties
-    }, writeRequirements(['siteId'], { confirmRequired: true })),
+    }, writeRequirements(['siteId'], { confirmRequired: false })),
     access: 'write',
     scope: 'ristak.destructive',
     risk: 'critical',
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       return call(context, deleteSiteHandler, {
         method: 'DELETE',
         params: { siteId: args.siteId }
@@ -1473,14 +1446,13 @@ export const siteToolSpecs = Object.freeze([
       siteId: SITE_ID_SCHEMA,
       ...BLOCK_INPUT_PROPERTIES,
       ...dangerousControlProperties
-    }, writeRequirements(['siteId', 'blockType'], { confirmRequired: true })),
+    }, writeRequirements(['siteId', 'blockType'], { confirmRequired: false })),
     access: 'write',
     scope: 'ristak.execute',
     risk: 'high',
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       const body = blockBody(args)
       assertStructuredBodySize({ options: body.options, settings: body.settings }, 'La configuración del bloque')
       await assertConditionalPaymentFeature(context, body)
@@ -1500,16 +1472,15 @@ export const siteToolSpecs = Object.freeze([
         blockId: SITE_ID_SCHEMA,
         ...BLOCK_INPUT_PROPERTIES,
         ...dangerousControlProperties
-      }, writeRequirements(['siteId', 'blockId'], { confirmRequired: true })),
+      }, writeRequirements(['siteId', 'blockId'], { confirmRequired: false })),
       anyOf: Object.keys(BLOCK_INPUT_PROPERTIES).map((key) => ({ required: [key] }))
     },
     access: 'write',
     scope: 'ristak.execute',
     risk: 'high',
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       const body = blockBody(args)
       assertStructuredBodySize({ options: body.options, settings: body.settings }, 'La configuración del bloque')
       await assertConditionalPaymentFeature(context, body)
@@ -1527,14 +1498,13 @@ export const siteToolSpecs = Object.freeze([
       siteId: SITE_ID_SCHEMA,
       blockId: SITE_ID_SCHEMA,
       ...dangerousControlProperties
-    }, writeRequirements(['siteId', 'blockId'], { confirmRequired: true })),
+    }, writeRequirements(['siteId', 'blockId'], { confirmRequired: false })),
     access: 'write',
     scope: 'ristak.destructive',
     risk: 'critical',
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       return call(context, deleteBlockHandler, {
         method: 'DELETE',
         params: { siteId: args.siteId, blockId: args.blockId }
@@ -1562,14 +1532,13 @@ export const siteToolSpecs = Object.freeze([
         }
       },
       ...dangerousControlProperties
-    }, writeRequirements(['siteId', 'blocks'], { confirmRequired: true })),
+    }, writeRequirements(['siteId', 'blocks'], { confirmRequired: false })),
     access: 'write',
     scope: 'ristak.execute',
     risk: 'high',
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       assertStructuredBodySize(args.blocks, 'Los bloques')
       await assertConditionalPaymentFeature(context, args.blocks)
       return call(context, restoreBlocksHandler, {
@@ -1593,14 +1562,13 @@ export const siteToolSpecs = Object.freeze([
         items: SITE_ID_SCHEMA
       },
       ...dangerousControlProperties
-    }, writeRequirements(['siteId', 'blockIds'], { confirmRequired: true })),
+    }, writeRequirements(['siteId', 'blockIds'], { confirmRequired: false })),
     access: 'write',
     scope: 'ristak.execute',
     risk: 'high',
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       return call(context, reorderBlocksHandler, {
         method: 'PUT',
         params: { siteId: args.siteId },
@@ -1638,14 +1606,13 @@ export const siteToolSpecs = Object.freeze([
       siteId: SITE_ID_SCHEMA,
       pageId: PAGE_ID_SCHEMA,
       ...dangerousControlProperties
-    }, writeRequirements(['domain'], { confirmRequired: true })),
+    }, writeRequirements(['domain'], { confirmRequired: false })),
     access: 'write',
     scope: 'ristak.execute',
     risk: 'high',
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       return call(context, createSitesPublicDomainHandler, {
         method: 'POST',
         body: {
@@ -1663,14 +1630,13 @@ export const siteToolSpecs = Object.freeze([
     inputSchema: makeInputSchema({
       domainId: DOMAIN_ID_SCHEMA,
       ...dangerousControlProperties
-    }, writeRequirements(['domainId'], { confirmRequired: true })),
+    }, writeRequirements(['domainId'], { confirmRequired: false })),
     access: 'write',
     scope: 'ristak.execute',
     risk: 'medium',
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       return call(context, verifySitesPublicDomainByIdHandler, {
         method: 'POST',
         params: { domainId: args.domainId }
@@ -1691,14 +1657,13 @@ export const siteToolSpecs = Object.freeze([
         pattern: '^[A-Za-z0-9.-]+$'
       },
       ...dangerousControlProperties
-    }, writeRequirements(['domainId', 'siteId'], { confirmRequired: true })),
+    }, writeRequirements(['domainId', 'siteId'], { confirmRequired: false })),
     access: 'write',
     scope: 'ristak.execute',
     risk: 'high',
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       return call(context, setSitesPublicDomainDefaultRouteHandler, {
         method: 'POST',
         params: { domainId: args.domainId },
@@ -1716,14 +1681,13 @@ export const siteToolSpecs = Object.freeze([
     inputSchema: makeInputSchema({
       domainId: DOMAIN_ID_SCHEMA,
       ...dangerousControlProperties
-    }, writeRequirements(['domainId'], { confirmRequired: true })),
+    }, writeRequirements(['domainId'], { confirmRequired: false })),
     access: 'write',
     scope: 'ristak.destructive',
     risk: 'critical',
-    confirmRequired: true,
+    confirmRequired: false,
     idempotencyRequired: true,
     async execute(context, args) {
-      assertBooleanConfirmation(args)
       return call(context, removeSitesPublicDomainByIdHandler, {
         method: 'DELETE',
         params: { domainId: args.domainId }

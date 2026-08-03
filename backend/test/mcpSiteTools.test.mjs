@@ -53,12 +53,9 @@ test('las specs de Sites tienen nombres únicos y metadata de seguridad completa
     assert.equal(entry.inputSchema.additionalProperties, false)
     assert.equal(typeof entry.execute, 'function')
 
-    if (entry.confirmRequired) {
-      assert.equal(entry.inputSchema.properties.confirm.type, 'boolean')
-      assert.equal(entry.inputSchema.properties.approvalTicket.type, 'string')
-      assert.ok(entry.inputSchema.required.includes('confirm'))
-      assert.ok(entry.inputSchema.required.includes('approvalTicket'))
-    }
+    assert.equal(entry.confirmRequired, false)
+    assert.equal(entry.inputSchema.properties.confirm, undefined)
+    assert.equal(entry.inputSchema.properties.approvalTicket, undefined)
     if (entry.idempotencyRequired) {
       assert.equal(entry.inputSchema.properties.idempotencyKey.type, 'string')
       assert.ok(entry.inputSchema.required.includes('idempotencyKey'))
@@ -468,7 +465,7 @@ test('sites_get_code devuelve inventario compacto y contenido sólo cuando corre
   assert.equal(file.data.files[0].content, 'body{}')
 })
 
-test('sites_update_code bloquea confirmación ausente y revisiones obsoletas', async () => {
+test('sites_update_code bloquea revisiones obsoletas sin pedir aprobación humana', async () => {
   const codeTool = tool('sites_update_code')
   const args = {
     siteId: 'site_1',
@@ -476,11 +473,6 @@ test('sites_update_code bloquea confirmación ausente y revisiones obsoletas', a
     files: [{ path: '', content: '<h1>Nuevo</h1>' }],
     idempotencyKey: 'update-code-001'
   }
-  await assert.rejects(
-    () => codeTool.execute(recorder().context, args),
-    (error) => error.code === 'confirmation_required'
-  )
-
   const staleRecorder = recorder({
     success: true,
     data: {
@@ -490,7 +482,7 @@ test('sites_update_code bloquea confirmación ausente y revisiones obsoletas', a
     }
   })
   await assert.rejects(
-    () => codeTool.execute(staleRecorder.context, { ...args, confirm: true }),
+    () => codeTool.execute(staleRecorder.context, args),
     (error) => error.status === 409 && error.code === 'site_code_revision_conflict'
   )
   assert.equal(staleRecorder.calls.length, 1)
@@ -525,7 +517,6 @@ test('sites_update_code hace preflight y luego usa el controller canónico', asy
     siteId: 'site_1',
     expectedRevision: codeRevision(currentFiles),
     files: [{ path: '', content: '<h1>Nuevo</h1>' }],
-    confirm: true,
     idempotencyKey: 'update-code-002'
   })
 
@@ -551,7 +542,6 @@ test('publicar, retirar y archivar sólo envían el estado explícito', async ()
     const stateRecorder = recorder()
     await tool(name).execute(stateRecorder.context, {
       siteId: 'site_1',
-      confirm: true,
       idempotencyKey: `${name}-001`
     })
     assert.equal(stateRecorder.calls[0].handler, 'updateSiteHandler')
@@ -559,7 +549,7 @@ test('publicar, retirar y archivar sólo envían el estado explícito', async ()
   }
 })
 
-test('las acciones destructivas exigen confirmación antes de tocar controllers', async () => {
+test('las acciones destructivas se ejecutan directo después de autorizar el scope OAuth', async () => {
   for (const [name, args] of [
     ['sites_delete', { siteId: 'site_1' }],
     ['sites_delete_block', { siteId: 'site_1', blockId: 'block_1' }],
@@ -567,14 +557,11 @@ test('las acciones destructivas exigen confirmación antes de tocar controllers'
     ['sites_remove_public_domain', { domainId: 'domain_1' }]
   ]) {
     const destructiveRecorder = recorder()
-    await assert.rejects(
-      () => tool(name).execute(destructiveRecorder.context, {
-        ...args,
-        idempotencyKey: `${name}-001`
-      }),
-      (error) => error.code === 'confirmation_required'
-    )
-    assert.equal(destructiveRecorder.calls.length, 0)
+    await tool(name).execute(destructiveRecorder.context, {
+      ...args,
+      idempotencyKey: `${name}-001`
+    })
+    assert.ok(destructiveRecorder.calls.length > 0)
   }
 })
 
@@ -583,7 +570,6 @@ test('dominios sólo aceptan hostname y se delegan a los handlers administrados'
   await tool('sites_add_public_domain').execute(addRecorder.context, {
     domain: 'www.example.com',
     siteId: 'site_1',
-    confirm: true,
     idempotencyKey: 'domain-add-001'
   })
   assert.equal(addRecorder.calls[0].handler, 'createSitesPublicDomainHandler')
@@ -598,27 +584,15 @@ test('dominios sólo aceptan hostname y se delegan a los handlers administrados'
     domainId: 'domain_1',
     siteId: 'site_1',
     pageId: 'page_1',
-    confirm: true,
     idempotencyKey: 'domain-route-001'
   })
   assert.equal(routeRecorder.calls[0].handler, 'setSitesPublicDomainDefaultRouteHandler')
 
   const verifyTool = tool('sites_verify_public_domain')
-  const blockedVerify = recorder()
-  await assert.rejects(
-    () => verifyTool.execute(blockedVerify.context, {
-      domainId: 'domain_1',
-      idempotencyKey: 'domain-verify-001'
-    }),
-    (error) => error.code === 'confirmation_required'
-  )
-  assert.equal(blockedVerify.calls.length, 0)
-
   const verifyRecorder = recorder()
   await verifyTool.execute(verifyRecorder.context, {
     domainId: 'domain_1',
-    confirm: true,
-    idempotencyKey: 'domain-verify-002'
+    idempotencyKey: 'domain-verify-001'
   })
   assert.equal(verifyRecorder.calls[0].handler, 'verifySitesPublicDomainByIdHandler')
 })

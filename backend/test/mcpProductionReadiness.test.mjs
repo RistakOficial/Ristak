@@ -124,7 +124,7 @@ test('Meta permite leer y sincronizar datos, pero no crear ni previsualizar borr
   assert.equal(__mcpRegistryTestHooks.MCP_DISABLED_TOOL_NAMES.has('campaigns_builder_draft_create'), true)
 })
 
-test('el catálogo completa lotes, invitaciones y la aprobación funciona con scopes no-read', () => {
+test('el catálogo completa lotes e invitaciones sin herramientas de aprobación por acción', () => {
   const specs = new Map(__mcpRegistryTestHooks.allSpecs.map(spec => [spec.name, spec]))
   for (const name of [
     'contacts_bulk_actions_list',
@@ -140,11 +140,14 @@ test('el catálogo completa lotes, invitaciones y la aprobación funciona con sc
   ]) assert.ok(specs.has(name), `falta ${name}`)
 
   assert.equal(specs.get('settings_user_invite').inputSchema.properties.password, undefined)
-  const confirmationDefinition = __mcpRegistryTestHooks.toolDefinition(specs.get('mcp_prepare_action_confirmation'))
-  assert.deepEqual(
-    confirmationDefinition.securitySchemes.map(scheme => scheme.scopes[0]),
-    ['ristak.write', 'ristak.execute', 'ristak.destructive']
-  )
+  assert.equal(specs.has('mcp_prepare_action_confirmation'), false)
+  assert.equal(specs.has('mcp_action_confirmation_status'), false)
+  for (const spec of specs.values()) {
+    assert.equal(spec.confirmRequired, false, `${spec.name} todavía exige aprobación humana`)
+    assert.equal(spec.inputSchema?.properties?.confirm, undefined)
+    assert.equal(spec.inputSchema?.properties?.approvalTicket, undefined)
+    assert.equal(__mcpRegistryTestHooks.toolDefinition(spec)._meta?.['ristak/confirmationRequired'], undefined)
+  }
 })
 
 test('búsqueda de capacidades selecciona la acción correcta sin un modelo externo', async () => {

@@ -9,12 +9,6 @@ import {
   acknowledgeMcpBusinessEvents,
   listMcpBusinessEvents
 } from '../services/mcpEventInboxService.js'
-import {
-  consumeMcpActionConfirmation,
-  createMcpActionConfirmation,
-  getMcpActionConfirmationStatus,
-  stripMcpActionControls
-} from '../services/mcpActionConfirmationService.js'
 import { domainToolSpecs } from './domainTools.js'
 import { extendedToolSpecs } from './extendedTools.js'
 import { siteToolSpecs } from './siteTools.js'
@@ -239,102 +233,13 @@ function toolDefinition(spec) {
       securitySchemes,
       'ristak/domain': spec.module,
       'ristak/risk': riskLevelFor(spec),
-      'ristak/confirmationRequired': spec.confirmRequired === true,
       'ristak/idempotencyRequired': spec.idempotencyRequired === true,
       'ristak/connectionPrerequisites': spec.connectionPrerequisites || []
     }
   }
 }
 
-function businessInputSchema(spec) {
-  const inputSchema = spec?.inputSchema || { type: 'object' }
-  const properties = Object.fromEntries(
-    Object.entries(inputSchema.properties || {}).filter(([key]) => (
-      !['approvalTicket', 'confirm', 'idempotencyKey'].includes(key)
-    ))
-  )
-  return {
-    ...inputSchema,
-    properties,
-    required: (inputSchema.required || []).filter((key) => (
-      !['approvalTicket', 'confirm', 'idempotencyKey'].includes(key)
-    ))
-  }
-}
-
-const ACTION_TICKET_SCHEMA = {
-  type: 'string',
-  minLength: 32,
-  maxLength: 4096,
-  description: 'Pase firmado y de un solo uso emitido por mcp_prepare_action_confirmation.'
-}
-
 const controlToolSpecs = [
-  Object.freeze({
-    name: 'mcp_prepare_action_confirmation',
-    title: 'Solicitar aprobación humana',
-    description: 'Prepara una acción de alto impacto, la liga a sus argumentos exactos y devuelve una página segura para que la persona autenticada la apruebe o rechace.',
-    module: 'settings_api_access',
-    access: 'read',
-    scope: 'ristak.write',
-    scopesAny: ['ristak.write', 'ristak.execute', 'ristak.destructive'],
-    risk: 'medium',
-    featureKeys: [],
-    adminOnly: false,
-    confirmRequired: false,
-    idempotencyRequired: false,
-    readOnlyHint: false,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        toolName: { type: 'string', minLength: 1, maxLength: 180 },
-        arguments: {
-          type: 'object',
-          maxProperties: 200,
-          additionalProperties: true,
-          description: 'Argumentos de negocio exactos, sin confirm, approvalTicket ni idempotencyKey.'
-        }
-      },
-      required: ['toolName', 'arguments'],
-      additionalProperties: false
-    },
-    async execute(context, args) {
-      const target = specByName.get(String(args.toolName || ''))
-      if (!target || controlToolSpecs.includes(target)) {
-        throw makeError('La herramienta solicitada no existe.', 'tool_not_found', 404)
-      }
-      if (!target.confirmRequired) {
-        throw makeError('Esta herramienta no necesita aprobación humana.', 'confirmation_not_required', 409)
-      }
-      const businessArgs = stripMcpActionControls(args.arguments)
-      validateSchemaValue(businessArgs, businessInputSchema(target))
-      await assertToolAuthorization({ ...context, args: businessArgs }, target)
-      return createMcpActionConfirmation(context, target, businessArgs)
-    }
-  }),
-  Object.freeze({
-    name: 'mcp_action_confirmation_status',
-    title: 'Consultar aprobación humana',
-    description: 'Consulta si una solicitud de acción MCP sigue pendiente, fue aprobada, rechazada, utilizada o expiró.',
-    module: 'settings_api_access',
-    access: 'read',
-    scope: 'ristak.read',
-    scopesAny: ['ristak.read', 'ristak.write', 'ristak.execute', 'ristak.destructive'],
-    risk: 'low',
-    featureKeys: [],
-    adminOnly: false,
-    confirmRequired: false,
-    idempotencyRequired: false,
-    inputSchema: {
-      type: 'object',
-      properties: { approvalTicket: ACTION_TICKET_SCHEMA },
-      required: ['approvalTicket'],
-      additionalProperties: false
-    },
-    execute(context, args) {
-      return getMcpActionConfirmationStatus(context, args.approvalTicket)
-    }
-  }),
   Object.freeze({
     name: 'mcp_search_capabilities',
     title: 'Buscar capacidades de Ristak',
@@ -600,10 +505,16 @@ async function searchMcpCapabilities(context, args = {}) {
       access: entry.access,
       scope: entry.scope,
       risk: riskLevelFor(entry),
-      confirmationRequired: entry.confirmRequired === true,
       connectionPrerequisites: entry.connectionPrerequisites || []
     }))
   }
+}
+
+function stripLegacyConfirmationControls(args = {}) {
+  const normalized = { ...args }
+  delete normalized.confirm
+  delete normalized.approvalTicket
+  return normalized
 }
 
 function assertToolControls(context, spec) {
@@ -790,32 +701,26 @@ export async function callRegisteredMcpTool(context, name, args = {}) {
   const spec = specByName.get(String(name || ''))
   if (!spec) throw makeError(`Tool no soportada: ${name}`, 'tool_not_found', 404)
   const startedAt = new Date().toISOString()
-  const callContext = { ...context, args, connectionPrerequisiteCache: new Map() }
+  const effectiveArgs = stripLegacyConfirmationControls(args)
+  const callContext = { ...context, args: effectiveArgs, connectionPrerequisiteCache: new Map() }
   let reservation = null
 
   try {
-    validateSchemaValue(args, spec.inputSchema)
+    validateSchemaValue(effectiveArgs, spec.inputSchema)
     await assertToolPolicy(callContext, spec)
-    if (spec.confirmRequired && args.confirm !== true) {
-      throw makeError('Esta acción requiere confirm=true después de la aprobación humana.', 'confirmation_required', 400)
-    }
-    reservation = await beginIdempotentCall(callContext, spec, args)
+    reservation = await beginIdempotentCall(callContext, spec, effectiveArgs)
     if (reservation.mode === 'replay') {
-      await recordAudit(callContext, spec, args, startedAt, { success: true, result: reservation.result })
+      await recordAudit(callContext, spec, effectiveArgs, startedAt, { success: true, result: reservation.result })
       return reservation.result
     }
 
-    if (spec.confirmRequired) {
-      await consumeMcpActionConfirmation(callContext, spec, args)
-    }
-
-    const result = await spec.execute(callContext, args)
+    const result = await spec.execute(callContext, effectiveArgs)
     await completeIdempotentCall(reservation, 'succeeded', result)
-    await recordAudit(callContext, spec, args, startedAt, { success: true, result })
+    await recordAudit(callContext, spec, effectiveArgs, startedAt, { success: true, result })
     return result
   } catch (error) {
     await completeIdempotentCall(reservation, 'failed').catch(() => {})
-    await recordAudit(callContext, spec, args, startedAt, { success: false, error })
+    await recordAudit(callContext, spec, effectiveArgs, startedAt, { success: false, error })
     throw error
   }
 }

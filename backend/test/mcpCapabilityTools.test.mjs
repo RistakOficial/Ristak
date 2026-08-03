@@ -26,13 +26,11 @@ test('el catálogo de capacidades altas es único, acotado y no agrega campañas
     assert.equal(typeof entry.execute, 'function')
 
     if (entry.access === 'write') {
-      assert.equal(entry.confirmRequired, true, `${entry.name} debe exigir aprobación humana`)
+      assert.equal(entry.confirmRequired, false, `${entry.name} no debe pedir aprobación humana por acción`)
       assert.equal(entry.idempotencyRequired, true, `${entry.name} debe ser idempotente`)
-      assert.equal(entry.inputSchema.properties.confirm?.type, 'boolean')
-      assert.equal(entry.inputSchema.properties.approvalTicket?.type, 'string')
+      assert.equal(entry.inputSchema.properties.confirm, undefined)
+      assert.equal(entry.inputSchema.properties.approvalTicket, undefined)
       assert.equal(entry.inputSchema.properties.idempotencyKey?.type, 'string')
-      assert.ok(entry.inputSchema.required.includes('confirm'))
-      assert.ok(entry.inputSchema.required.includes('approvalTicket'))
       assert.ok(entry.inputSchema.required.includes('idempotencyKey'))
     }
   }
@@ -56,13 +54,13 @@ test('credenciales, contraseñas y webhooks arbitrarios quedan fuera de los sche
   const disconnect = tool('integrations_disconnect')
   assert.deepEqual(
     Object.keys(disconnect.inputSchema.properties).sort(),
-    ['approvalTicket', 'confirm', 'idempotencyKey', 'provider']
+    ['idempotencyKey', 'provider']
   )
 
   const webhookTest = tool('automations_test_webhook_action')
   assert.deepEqual(
     Object.keys(webhookTest.inputSchema.properties).sort(),
-    ['approvalTicket', 'automationId', 'confirm', 'idempotencyKey', 'nodeId']
+    ['automationId', 'idempotencyKey', 'nodeId']
   )
 })
 
@@ -94,7 +92,7 @@ test('los proveedores dependientes declaran su conexión y Media reemplaza por p
   assert.equal(archive.inputSchema.properties.assetIds.maxItems, 50)
 })
 
-test('la auditoría oculta pases y bytes sin romper el resultado temporal que necesita el cliente', () => {
+test('la auditoría sigue ocultando controles heredados y bytes sensibles', () => {
   const input = {
     approvalTicket: 'ticket-firmado',
     fileBase64: 'Ynl0ZXM=',

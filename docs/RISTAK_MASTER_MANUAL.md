@@ -1555,8 +1555,8 @@ incluye negocio, modulos, tipo, estado, busqueda y carpeta/recursion; cambiar el
 filtro exige empezar una pagina nueva y no puede contaminar el recorrido actual.
 
 El MCP puede preparar la subida de un archivo nuevo de la computadora con
-`media_prepare_bunny_upload`. La tool exige `ristak.execute`, confirmacion,
-idempotencyKey, nombre, MIME, bytes y SHA-256; no recibe Base64 ni entrega llaves
+`media_prepare_bunny_upload`. La tool exige `ristak.execute`, `idempotencyKey`,
+nombre, MIME, bytes y SHA-256; no recibe Base64 ni entrega llaves
 de Bunny. Devuelve una URL multipart y un pase firmado de diez minutos que no se
 guarda en el replay del MCP. `/api/media/mcp-upload` valida usuario y grant OAuth
 vigentes, Developers, permiso de escritura de Media y plan antes de Multer;
@@ -7240,7 +7240,8 @@ Para código nuevo la ruta principal optimizada es:
    grandes; exige `expectedRevision` para no pisar otra versión.
 6. `sites_preview_html`: render inerte devuelto como HTML cuando el cliente MCP
    necesita inspeccionar source en vez de la URL autoactualizable.
-7. `sites_publish`: publicación separada con `ristak.execute` y confirmación.
+7. `sites_publish`: publicación separada que se ejecuta directamente cuando la
+   conexión ya tiene `ristak.execute`.
 
 El contrato recomendado exige `doctype`, `html`, `head` y `body`. Los scripts,
 handlers `on*` y URLs `javascript:` se rechazan antes de crear o guardar por esta
@@ -9552,9 +9553,9 @@ dedicadas.
 Todas las tools anuncian `outputSchema`, seguridad OAuth y hints de lectura,
 riesgo e idempotencia. `mcp_search_capabilities` busca por intención, dominio,
 acceso y riesgo sin obligar al modelo a adivinar nombres dentro de todo el
-catálogo. La preparación y consulta de aprobaciones acepta cualquiera de los
-scopes operativos relevantes, así que una conexión de ejecución o destrucción no
-queda bloqueada artificialmente por no tener `ristak.read`.
+catálogo. La autorización humana ocurre al conceder los scopes OAuth; después la
+conexión ejecuta directamente las tools permitidas sin una aprobación por cada
+acción.
 
 Las instrucciones de `initialize` explican el flujo HTML code-first a todos los
 clientes compatibles. Cuando existe una skill web local, ésta es responsable de
@@ -9568,18 +9569,13 @@ El servidor remoto usa Streamable HTTP y OAuth 2.1 con PKCE. Los scopes separan
 `ristak.read`, `ristak.write`, `ristak.execute` y `ristak.destructive` para que
 leer, modificar estado, provocar efectos externos y destruir datos no sean el
 mismo permiso. `tools/list` solo descubre acciones compatibles con licencia,
-acceso de usuario y scopes; `tools/call` vuelve a comprobarlos. Mensajes,
-publicaciones, pagos y borrados requieren una aprobación humana firmada de un
-solo uso y dejan auditoria con secretos redactados. `confirm=true` no basta: el
-cliente prepara la aprobación con `mcp_prepare_action_confirmation`, el usuario
-abre la URL temporal autenticado en Ristak y revisa un resumen seguro; secretos y
-valores demasiado largos se ocultan o marcan como truncados, aunque el pase queda
-ligado a los argumentos completos. `mcp_action_confirmation_status` confirma si
-el mismo `approvalTicket` que entregó la preparación ya está listo y ese pase se
-consume al ejecutar. El pase dura 15 minutos, queda ligado a usuario,
-cliente/grant OAuth, tool y hash de argumentos; alterar datos, revocarlo o
-reutilizarlo falla cerrado. Acciones destructivas exigen además escribir
-`APROBAR` en la pantalla.
+acceso de usuario y scopes; `tools/call` vuelve a comprobarlos en cada ejecución.
+Mensajes, publicaciones, pagos y borrados se ejecutan directamente cuando el
+grant ya incluye el scope correspondiente: no usan `confirm`, tickets ni una
+pantalla humana por acción. Las escrituras conservan `idempotencyKey`, validación
+de schema y auditoría con secretos redactados. Revocar el grant, desactivar al
+usuario, quitar un permiso/licencia o desconectar el proveedor bloquea la llamada
+siguiente aunque el token aún no haya vencido.
 La edición genérica de pagos no acepta `status`: registrar un pago requiere
 `ristak.execute`; anular, reembolsar o cancelar/eliminar un plan exige
 `ristak.destructive`.
@@ -9587,7 +9583,7 @@ La edición genérica de pagos no acepta `status`: registrar un pago requiere
 Las conexiones se inician mediante handoffs seguros hacia Configuración de
 Ristak o el OAuth normal de Google; el MCP no recibe ni devuelve credenciales.
 Las desconexiones soportadas reutilizan los controllers oficiales, exigen admin
-y aprobación destructiva. `mcp_runtime_continuity` informa qué jobs,
+y `ristak.destructive`. `mcp_runtime_continuity` informa qué jobs,
 automatizaciones publicadas y workers siguen corriendo dentro de Ristak.
 `mcp_events_list` expone una bandeja durable de eventos de chat/pagos creada
 después de autorizar cada grant, filtrada nuevamente por permisos y licencia;
@@ -9597,10 +9593,12 @@ conversación de IA que ya fue cerrada: un runtime externo debe consultar esa
 bandeja por polling o usar automatizaciones/webhooks.
 
 El mantenimiento de control plane arranca con el backend y corre cada seis horas
-bajo lock distribuido. Expira aprobaciones e invitaciones pendientes, elimina
-idempotencias vencidas, conserva aprobaciones/invitaciones terminales 90 días y
-auditoría 180 días. Sus tablas, junto con invitaciones y eventos/ack, quedan
-bloqueadas del CRUD genérico y sólo se operan por sus rutas/tools dedicadas.
+bajo lock distribuido. Expira invitaciones, elimina idempotencias vencidas,
+conserva invitaciones terminales 90 días y auditoría 180 días. Durante el
+despliegue gradual también depura filas históricas de aprobación creadas por
+versiones anteriores; el MCP actual ya no genera nuevas. Sus tablas, junto con
+invitaciones y eventos/ack, quedan bloqueadas del CRUD genérico y sólo se operan
+por sus rutas internas dedicadas.
 
 El usuario administra estas conexiones en
 `Configuracion > Developers > Conectar con MCP`. El frontend consulta
