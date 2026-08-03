@@ -25,6 +25,7 @@ import {
 
 const DEFAULT_TEMPLATE_NAMES = [
   'cita_programada',
+  'recordatorio_cita_una_hora_simple',
   'recordatorio_cita_un_dia_antes',
   'confirmacion_cita_dia_anterior'
 ]
@@ -37,6 +38,7 @@ const SCHEDULED_APPOINTMENT_HEADER = '🗓️ Cita programada para el {{1}}'
 const SCHEDULED_APPOINTMENT_BODY = '🔔 *Importante:* Te llegarán varios recordatorios para *NO* olvidar que tienes una cita programada.\n\nTe pedimos de la manera más atenta que *respondas* los mensajes cuando se te solicite, para mantener una comunicación clara y evitar cualquier confusión con las citas.\n\n¡Gracias!'
 const SCHEDULED_APPOINTMENT_FOOTER = 'Este es un mensaje AUTOMÁTICO'
 const ONE_DAY_REMINDER_BODY = '*Recordatorio de cita* ⏰\nHola {{1}}, te recordamos que tienes una cita el {{2}} a las {{3}}. Recuerda estar al pendiente. 😄'
+const ONE_HOUR_REMINDER_BODY = 'Hola {{1}}, solo es un recordatorio de que tu cita es dentro de una hora, para que estés al pendiente.'
 const APPOINTMENT_CONFIRMATION_BODY = 'Hola {{1}}, queremos confirmar tu asistencia a la cita del {{2}} a las {{3}}. ¿Nos confirmas, por favor?'
 const DEFAULT_PAYMENT_TEMPLATE_NAMES = [
   'recordatorio_pago_pendiente',
@@ -255,8 +257,8 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
 
     try {
       const firstRun = await repairDefaultAppointmentMessageTemplatesForCurrentConnection()
-      assert.equal(firstRun.total, 3)
-      assert.equal(firstRun.submitted, 3)
+      assert.equal(firstRun.total, 4)
+      assert.equal(firstRun.submitted, 4)
       assert.deepEqual(captures.map((capture) => capture.name).sort(), [...DEFAULT_TEMPLATE_NAMES].sort())
 
       const scheduledTemplate = captures.find((capture) => capture.name === 'cita_programada')
@@ -270,6 +272,9 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
 
       const reminderTemplate = captures.find((capture) => capture.name === 'recordatorio_cita_un_dia_antes')
       assert.equal(reminderTemplate.components[0].text, ONE_DAY_REMINDER_BODY)
+      const oneHourReminderTemplate = captures.find((capture) => capture.name === 'recordatorio_cita_una_hora_simple')
+      assert.equal(oneHourReminderTemplate.components[0].text, ONE_HOUR_REMINDER_BODY)
+      assert.deepEqual(oneHourReminderTemplate.components.map((component) => component.type), ['BODY'])
       const confirmationTemplate = captures.find((capture) => capture.name === 'confirmacion_cita_dia_anterior')
       assert.equal(confirmationTemplate.components[0].text, APPOINTMENT_CONFIRMATION_BODY)
 
@@ -286,6 +291,11 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       assert.equal(localTemplate.variableBindings.bodyText['1'].variableKey, 'contact.first_name')
       assert.equal(localTemplate.variableBindings.bodyText['2'].variableKey, 'cita.fecha')
       assert.equal(localTemplate.variableBindings.bodyText['3'].variableKey, 'cita.hora')
+      const localOneHourReminder = bundle.templates.find((template) => template.name === 'recordatorio_cita_una_hora_simple')
+      assert.ok(localOneHourReminder)
+      assert.equal(localOneHourReminder.footerText, '')
+      assert.equal(localOneHourReminder.variableBindings.bodyText['1'].variableKey, 'contact.first_name')
+      assert.equal(Object.keys(localOneHourReminder.variableBindings.bodyText).length, 1)
       const localScheduled = bundle.templates.find((template) => template.name === 'cita_programada')
       assert.equal(localScheduled.footerText, SCHEDULED_APPOINTMENT_FOOTER)
       assert.deepEqual(localScheduled.variableBindings.bodyText, {})
@@ -306,7 +316,7 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
 
       const secondRun = await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: true })
       assert.equal(secondRun.submitted, 0)
-      assert.equal(captures.length, 3)
+      assert.equal(captures.length, 4)
     } finally {
       setYCloudFetchForTest(null)
       await deleteDefaultTemplates()
@@ -385,7 +395,7 @@ test('una inicialización local no pierde la actualización pendiente del provee
   })
 })
 
-test('Meta directo envía las seis plantillas aunque exista identidad previa de YCloud', async () => {
+test('Meta directo envía las siete plantillas aunque exista identidad previa de YCloud', async () => {
   await initializeMasterKey()
   const keys = getWhatsAppApiConfigKeys()
   const wabaId = `waba_meta_defaults_${Date.now()}`
@@ -440,12 +450,12 @@ test('Meta directo envía las seis plantillas aunque exista identidad previa de 
         publicBaseUrl: 'https://pagos.ristak.test'
       })
 
-      assert.equal(result.total, 6)
-      assert.equal(result.submitted, 6)
+      assert.equal(result.total, 7)
+      assert.equal(result.submitted, 7)
       assert.equal(result.errors, 0)
       assert.ok(result.templates.every(template => template.provider === 'meta_direct'))
       assert.ok(result.templates.every(template => template.providerStatus === 'PENDING'))
-      assert.equal(captures.length, 6)
+      assert.equal(captures.length, 7)
       assert.ok(captures.every(request => request.method === 'POST'))
       assert.ok(captures.every(request => request.path.endsWith(`/${wabaId}/message_templates`)))
       assert.ok(captures.every(request => !Object.hasOwn(request.body || {}, 'wabaId')))
@@ -455,7 +465,7 @@ test('Meta directo envía las seis plantillas aunque exista identidad previa de 
         FROM whatsapp_message_templates
         WHERE name IN (${[...DEFAULT_TEMPLATE_NAMES, ...DEFAULT_PAYMENT_TEMPLATE_NAMES].map(() => '?').join(', ')})
       `, [...DEFAULT_TEMPLATE_NAMES, ...DEFAULT_PAYMENT_TEMPLATE_NAMES])
-      assert.equal(stored.length, 6)
+      assert.equal(stored.length, 7)
       assert.ok(stored.every(template => template.template_provider === 'meta_direct'))
       assert.ok(stored.every(template => template.provider_status === 'PENDING'))
       assert.ok(stored.every(template => String(template.provider_template_id || '').startsWith('meta_')))
@@ -506,8 +516,8 @@ test('crea plantillas default de pagos con botones dinamicos de pago y comproban
         submitToActiveProvider: true,
         publicBaseUrl: 'https://pagos.ristak.test'
       })
-      assert.equal(result.total, 6)
-      assert.equal(result.submitted, 6)
+      assert.equal(result.total, 7)
+      assert.equal(result.submitted, 7)
 
       const paymentCaptures = captures.filter((capture) => DEFAULT_PAYMENT_TEMPLATE_NAMES.includes(capture.name))
       assert.deepEqual(paymentCaptures.map((capture) => capture.name).sort(), [...DEFAULT_PAYMENT_TEMPLATE_NAMES].sort())
@@ -899,8 +909,8 @@ test('repara defaults existentes sin enviar y manda solo los pendientes', async 
       await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
       await db.run(`
         UPDATE whatsapp_message_templates
-        SET ycloud_status = 'APPROVED', ycloud_template_id = 'official_recordatorio_cita_un_dia_antes'
-        WHERE name = 'recordatorio_cita_un_dia_antes'
+        SET ycloud_status = 'APPROVED', ycloud_template_id = 'official_' || name
+        WHERE name IN ('recordatorio_cita_una_hora_simple', 'recordatorio_cita_un_dia_antes')
       `)
       await db.run(`
         UPDATE whatsapp_message_templates
@@ -931,6 +941,7 @@ test('repara defaults existentes sin enviar y manda solo los pendientes', async 
 
       const bundle = await getMessageTemplateBundle()
       const byName = new Map(bundle.templates.map((template) => [template.name, template]))
+      assert.equal(byName.get('recordatorio_cita_una_hora_simple').ycloudStatus, 'APPROVED')
       assert.equal(byName.get('recordatorio_cita_un_dia_antes').ycloudStatus, 'APPROVED')
       assert.equal(byName.get('cita_programada').ycloudStatus, 'PENDING')
       assert.equal(byName.get('confirmacion_cita_dia_anterior').ycloudStatus, 'PENDING')
@@ -989,7 +1000,7 @@ test('recrea una plantilla default atorada en revisión después de seis horas',
             ycloud_template_id = 'official_' || name,
             ycloud_submitted_at = datetime('now', '-1 hour'),
             ycloud_review_retry_count = 0
-        WHERE name IN ('cita_programada', 'confirmacion_cita_dia_anterior')
+        WHERE name IN ('cita_programada', 'recordatorio_cita_una_hora_simple', 'confirmacion_cita_dia_anterior')
       `)
       await db.run(`
         UPDATE whatsapp_message_templates
@@ -1088,7 +1099,7 @@ test('reintenta una plantilla default rechazada con nombre técnico nuevo sin du
             ycloud_template_id = 'official_' || name,
             ycloud_template_name = name,
             ycloud_submitted_at = datetime('now', '-1 hour')
-        WHERE name IN ('cita_programada', 'recordatorio_cita_un_dia_antes')
+        WHERE name IN ('cita_programada', 'recordatorio_cita_una_hora_simple', 'recordatorio_cita_un_dia_antes')
       `)
       await db.run(`
         UPDATE whatsapp_message_templates
@@ -1174,7 +1185,7 @@ test('crea alerta y no reintenta cuando la plantilla default ya agotó dos reint
         SET ycloud_status = 'APPROVED',
             ycloud_template_id = 'official_' || name,
             ycloud_submitted_at = datetime('now', '-1 hour')
-        WHERE name IN ('cita_programada', 'confirmacion_cita_dia_anterior')
+        WHERE name IN ('cita_programada', 'recordatorio_cita_una_hora_simple', 'confirmacion_cita_dia_anterior')
       `)
       await db.run(`
         UPDATE whatsapp_message_templates

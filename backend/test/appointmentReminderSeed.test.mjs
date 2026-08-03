@@ -4,6 +4,7 @@ import { db } from '../src/config/database.js'
 import {
   createAppointmentReminder,
   DEFAULT_APPOINTMENT_NOTICE_TEXT,
+  DEFAULT_ONE_HOUR_REMINDER_TEXT,
   ensureDefaultAppointmentReminder,
   getAppointmentRemindersOverview,
   updateAppointmentReminder
@@ -22,7 +23,7 @@ await db.run(`
   ON CONFLICT(config_key) DO UPDATE SET config_value = excluded.config_value, updated_at = CURRENT_TIMESTAMP
 `, [TEST_CALENDAR_ID])
 
-test('el arranque concurrente crea una sola vez los dos mensajes predeterminados', async () => {
+test('el arranque concurrente crea una sola vez los tres mensajes predeterminados', async () => {
   await db.run("DELETE FROM app_config WHERE config_key = 'appointment_reminders_seeded'")
   await db.run('DELETE FROM appointment_reminders')
 
@@ -33,10 +34,10 @@ test('el arranque concurrente crea una sola vez los dos mensajes predeterminados
       offset_value, offset_unit, template_name, message_text, smart_enabled,
       confirmation_success_action
     FROM appointment_reminders
-    WHERE system_key IN ('default_on_booking', 'default_one_day_before')
+    WHERE system_key IN ('default_on_booking', 'default_one_hour_before', 'default_one_day_before')
     ORDER BY position ASC
   `)
-  assert.equal(seededRows.length, 2)
+  assert.equal(seededRows.length, 3)
 
   const bookingNotice = seededRows.find(row => row.system_key === 'default_on_booking')
   assert.equal(bookingNotice.name, 'Aviso al agendar')
@@ -49,6 +50,18 @@ test('el arranque concurrente crea una sola vez los dos mensajes predeterminados
   assert.equal(bookingNotice.template_name, 'cita_programada')
   assert.equal(bookingNotice.message_text, DEFAULT_APPOINTMENT_NOTICE_TEXT)
   assert.equal(bookingNotice.smart_enabled, 0)
+
+  const oneHourReminder = seededRows.find(row => row.system_key === 'default_one_hour_before')
+  assert.equal(oneHourReminder.name, 'Recordatorio 1 hora antes')
+  assert.equal(oneHourReminder.enabled, 0)
+  assert.equal(oneHourReminder.message_type, 'reminder')
+  assert.equal(oneHourReminder.ai_enabled, 0)
+  assert.equal(oneHourReminder.timing_anchor, 'before_appointment')
+  assert.equal(oneHourReminder.offset_value, 1)
+  assert.equal(oneHourReminder.offset_unit, 'hours')
+  assert.equal(oneHourReminder.template_name, 'recordatorio_cita_una_hora_simple')
+  assert.equal(oneHourReminder.message_text, DEFAULT_ONE_HOUR_REMINDER_TEXT)
+  assert.equal(oneHourReminder.smart_enabled, 0)
 
   const confirmation = seededRows.find(row => row.system_key === 'default_one_day_before')
   assert.equal(confirmation.name, 'Confirmación 1 día antes')
@@ -66,7 +79,37 @@ test('el arranque concurrente crea una sola vez los dos mensajes predeterminados
   )
 
   const total = await db.get('SELECT COUNT(*) AS total FROM appointment_reminders')
-  assert.equal(Number(total.total), 2)
+  assert.equal(Number(total.total), 3)
+})
+
+test('un recordatorio nuevo de una hora elige el copy simple y no expone el título de la cita', async () => {
+  await db.run('DELETE FROM appointment_reminders')
+
+  const reminder = await createAppointmentReminder({
+    name: 'Una hora antes',
+    timingAnchor: 'before_appointment',
+    offsetValue: 60,
+    offsetUnit: 'minutes'
+  })
+
+  assert.equal(reminder.templateName, 'recordatorio_cita_una_hora_simple')
+  assert.equal(reminder.messageText, DEFAULT_ONE_HOUR_REMINDER_TEXT)
+
+  const template = await db.get(`
+    SELECT body_text, footer_text, variable_bindings_json
+    FROM whatsapp_message_templates
+    WHERE name = 'recordatorio_cita_una_hora_simple' AND language = 'es_MX'
+  `)
+  assert.equal(
+    template.body_text,
+    'Hola {{1}}, solo es un recordatorio de que tu cita es dentro de una hora, para que estés al pendiente.'
+  )
+  assert.equal(template.footer_text, '')
+  assert.doesNotMatch(template.body_text, /cita\.titulo|automático|Raúl Gómez/i)
+  assert.equal(
+    JSON.parse(template.variable_bindings_json).bodyText['1'].variableKey,
+    'contact.first_name'
+  )
 })
 
 test('actualiza solo el texto directo legacy del aviso al agendar', async () => {

@@ -48,11 +48,15 @@ import {
   normalizeConfirmationSuccessActions,
   serializeConfirmationSuccessActions
 } from './appointmentConfirmationActions.js'
-import { LEGACY_DEFAULT_APPOINTMENT_NOTICE_TEXT } from './appointmentMessageDefaults.js'
+import {
+  DEFAULT_ONE_HOUR_REMINDER_TEXT,
+  LEGACY_DEFAULT_APPOINTMENT_NOTICE_TEXT
+} from './appointmentMessageDefaults.js'
 
 export {
   DEFAULT_APPOINTMENT_NOTICE_TEXT,
   DEFAULT_REMINDER_TEXT,
+  DEFAULT_ONE_HOUR_REMINDER_TEXT,
   DEFAULT_CONFIRMATION_TEXT,
   DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT,
   formatOffsetLabel,
@@ -67,6 +71,7 @@ export function appointmentReminderRetryCutoffExpression(dialect = databaseDiale
 
 const SEEDED_CONFIG_KEY = 'appointment_reminders_seeded'
 const DEFAULT_BOOKING_NOTICE_SYSTEM_KEY = 'default_on_booking'
+const DEFAULT_ONE_HOUR_REMINDER_SYSTEM_KEY = 'default_one_hour_before'
 const DEFAULT_CONFIRMATION_SYSTEM_KEY = 'default_one_day_before'
 const REMINDER_SCHEDULE_CONFLICT_CODE = 'appointment_reminder_schedule_conflict'
 
@@ -105,6 +110,7 @@ const DEFAULT_CONFIRMATION_RESPONSE_START = '09:00'
 const DEFAULT_CONFIRMATION_RESPONSE_END = '21:00'
 const DEFAULT_TEMPLATE_NAME_BY_PURPOSE = {
   reminder: 'recordatorio_cita_un_dia_antes',
+  oneHourReminder: 'recordatorio_cita_una_hora_simple',
   notice: 'cita_programada',
   confirmation: 'confirmacion_cita_dia_anterior'
 }
@@ -625,8 +631,15 @@ function getDefaultTemplateNameForReminder(data = {}) {
   if (timingAnchor === 'after_booking') return DEFAULT_TEMPLATE_NAME_BY_PURPOSE.notice
 
   const messageType = MESSAGE_TYPES.has(cleanString(data.messageType)) ? cleanString(data.messageType) : 'reminder'
-  return messageType === 'confirmation'
-    ? DEFAULT_TEMPLATE_NAME_BY_PURPOSE.confirmation
+  if (messageType === 'confirmation') return DEFAULT_TEMPLATE_NAME_BY_PURPOSE.confirmation
+
+  const offsetUnit = cleanString(data.offsetUnit)
+  const offsetValue = Number(data.offsetValue)
+  const offsetMs = Number.isFinite(offsetValue) && OFFSET_UNIT_MS[offsetUnit]
+    ? offsetValue * OFFSET_UNIT_MS[offsetUnit]
+    : null
+  return offsetMs === OFFSET_UNIT_MS.hours
+    ? DEFAULT_TEMPLATE_NAME_BY_PURPOSE.oneHourReminder
     : DEFAULT_TEMPLATE_NAME_BY_PURPOSE.reminder
 }
 
@@ -693,7 +706,8 @@ async function backfillMissingReminderTemplates() {
   `, [DEFAULT_APPOINTMENT_NOTICE_TEXT, LEGACY_DEFAULT_APPOINTMENT_NOTICE_TEXT])
 
   const rows = await db.all(`
-    SELECT id, message_type, timing_anchor, template_id, template_name, template_language
+    SELECT id, message_type, timing_anchor, offset_value, offset_unit,
+      template_id, template_name, template_language
     FROM appointment_reminders
     WHERE COALESCE(channel, 'whatsapp') IN ('whatsapp', 'whatsapp_qr')
       AND COALESCE(content_mode, 'template') = 'template'
@@ -702,7 +716,14 @@ async function backfillMissingReminderTemplates() {
   for (const row of rows) {
     const messageType = MESSAGE_TYPES.has(cleanString(row.message_type)) ? cleanString(row.message_type) : 'reminder'
     const timingAnchor = TIMING_ANCHORS.has(cleanString(row.timing_anchor)) ? cleanString(row.timing_anchor) : 'before_appointment'
-    const expectedName = getDefaultTemplateNameForReminder({ messageType, timingAnchor })
+    const offsetValue = Number(row.offset_value)
+    const offsetUnit = cleanString(row.offset_unit)
+    const expectedName = getDefaultTemplateNameForReminder({
+      messageType,
+      timingAnchor,
+      offsetValue,
+      offsetUnit
+    })
     const storedTemplateId = cleanString(row.template_id)
     const storedTemplateName = cleanString(row.template_name)
     let selectedTemplate = storedTemplateId ? await getReminderTemplateById(storedTemplateId) : null
@@ -716,7 +737,12 @@ async function backfillMissingReminderTemplates() {
     const hasDanglingDefault = !selectedTemplate && DEFAULT_APPOINTMENT_TEMPLATE_NAMES.has(storedTemplateName)
     if (!hasNoSelection && !hasMismatchedDefault && !hasDanglingDefault) continue
 
-    const template = await getDefaultReminderTemplate({ messageType, timingAnchor })
+    const template = await getDefaultReminderTemplate({
+      messageType,
+      timingAnchor,
+      offsetValue,
+      offsetUnit
+    })
     if (!template) continue
     await db.run(`
       UPDATE appointment_reminders
@@ -1088,7 +1114,9 @@ function sanitizeReminderInput(input = {}, base = {}) {
       ? DEFAULT_APPOINTMENT_NOTICE_TEXT
       : messageType === 'confirmation'
         ? DEFAULT_CONFIRMATION_TEXT
-        : DEFAULT_REMINDER_TEXT)
+        : offsetValue * OFFSET_UNIT_MS[offsetUnit] === OFFSET_UNIT_MS.hours
+          ? DEFAULT_ONE_HOUR_REMINDER_TEXT
+          : DEFAULT_REMINDER_TEXT)
   const hasConfirmationSuccessActions = Object.prototype.hasOwnProperty.call(input, 'confirmationSuccessActions')
   const hasLegacyConfirmationSuccessAction = Object.prototype.hasOwnProperty.call(input, 'confirmationSuccessAction')
   const legacyActionIsUnchanged = (
@@ -1361,8 +1389,9 @@ export async function deleteAppointmentReminder(reminderId, calendarId = '') {
 }
 
 /**
- * Crea una sola vez los dos mensajes iniciales de una cuenta nueva: el aviso
- * inmediato al agendar y la confirmación un día antes. Ambos nacen pausados para
+ * Crea una sola vez los tres mensajes iniciales de una cuenta nueva: el aviso
+ * inmediato al agendar, el recordatorio una hora antes y la confirmación un día
+ * antes. Todos nacen pausados para
  * que el usuario revise canal y plantillas antes de enviar. La bandera en
  * app_config evita recrearlos si después los edita o elimina.
  */
@@ -1396,6 +1425,21 @@ export async function ensureDefaultAppointmentReminder() {
           smartEnabled: false
         },
         logMessage: '[Citas] Aviso por defecto creado y pausado (al momento de agendar)'
+      },
+      {
+        systemKey: DEFAULT_ONE_HOUR_REMINDER_SYSTEM_KEY,
+        input: {
+          name: 'Recordatorio 1 hora antes',
+          enabled: false,
+          messageType: 'reminder',
+          aiEnabled: false,
+          timingAnchor: 'before_appointment',
+          offsetValue: 1,
+          offsetUnit: 'hours',
+          messageText: DEFAULT_ONE_HOUR_REMINDER_TEXT,
+          smartEnabled: false
+        },
+        logMessage: '[Citas] Recordatorio por defecto creado y pausado (1 hora antes, sin IA)'
       },
       {
         systemKey: DEFAULT_CONFIRMATION_SYSTEM_KEY,

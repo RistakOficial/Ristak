@@ -77,17 +77,25 @@ const clampAfterOffsetValue = (value: number, unit: ReminderOffsetUnit): number 
 
 const DEFAULT_TEMPLATE_NAME_BY_PURPOSE = {
   reminder: 'recordatorio_cita_un_dia_antes',
+  oneHourReminder: 'recordatorio_cita_una_hora_simple',
   notice: 'cita_programada',
   confirmation: 'confirmacion_cita_dia_anterior'
 } as const
 
 const getDefaultTemplateName = (
   messageType: AppointmentReminderInput['messageType'],
-  timingAnchor: ReminderTimingAnchor
+  timingAnchor: ReminderTimingAnchor,
+  offsetValue = 1,
+  offsetUnit: ReminderOffsetUnit = 'days'
 ) => {
   if (timingAnchor === 'after_booking') return DEFAULT_TEMPLATE_NAME_BY_PURPOSE.notice
-  return messageType === 'confirmation'
-    ? DEFAULT_TEMPLATE_NAME_BY_PURPOSE.confirmation
+  if (messageType === 'confirmation') return DEFAULT_TEMPLATE_NAME_BY_PURPOSE.confirmation
+
+  const unitMs = offsetUnit === 'seconds'
+    ? 1000
+    : CONFIRMATION_TIMEOUT_UNIT_MS[offsetUnit]
+  return Number(offsetValue) * unitMs === CONFIRMATION_TIMEOUT_UNIT_MS.hours
+    ? DEFAULT_TEMPLATE_NAME_BY_PURPOSE.oneHourReminder
     : DEFAULT_TEMPLATE_NAME_BY_PURPOSE.reminder
 }
 
@@ -403,10 +411,12 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
   const defaultTemplateForType = useMemo(() => {
     const name = getDefaultTemplateName(
       (draft.messageType as AppointmentReminder['messageType']) || 'reminder',
-      timingAnchor
+      timingAnchor,
+      Number(draft.offsetValue) || 1,
+      (draft.offsetUnit as ReminderOffsetUnit) || 'days'
     )
     return visibleTemplates.find(template => template.name === name) || visibleTemplates[0] || null
-  }, [draft.messageType, timingAnchor, visibleTemplates])
+  }, [draft.messageType, draft.offsetUnit, draft.offsetValue, timingAnchor, visibleTemplates])
 
   useEffect(() => {
     // El draft de una regla existente se hidrata en otro efecto durante este mismo
@@ -487,8 +497,18 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
   const changeTimingAnchor = (nextAnchor: ReminderTimingAnchor) => {
     if (nextAnchor === timingAnchor) return
     const messageType = (draft.messageType as AppointmentReminder['messageType']) || 'reminder'
-    const previousName = getDefaultTemplateName(messageType, timingAnchor)
-    const nextName = getDefaultTemplateName(messageType, nextAnchor)
+    const previousName = getDefaultTemplateName(
+      messageType,
+      timingAnchor,
+      Number(draft.offsetValue) || 1,
+      (draft.offsetUnit as ReminderOffsetUnit) || 'days'
+    )
+    const nextName = getDefaultTemplateName(
+      messageType,
+      nextAnchor,
+      nextAnchor === 'after_booking' ? 0 : 1,
+      nextAnchor === 'after_booking' ? 'minutes' : 'days'
+    )
     const shouldSwitchTemplate = !draft.templateId || selectedTemplate?.name === previousName
     const nextTemplate = visibleTemplates.find(template => template.name === nextName) || null
 
@@ -527,6 +547,29 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
       ...prev,
       offsetUnit: nextUnit,
       offsetValue: clampAfterOffsetValue(Number(prev.offsetValue) || 1, nextUnit)
+    }))
+  }
+
+  const changeBeforeOffset = (nextValue: number, nextUnit: ReminderOffsetUnit) => {
+    const messageType = (draft.messageType as AppointmentReminder['messageType']) || 'reminder'
+    const currentValue = Number(draft.offsetValue) || 1
+    const currentUnit = (draft.offsetUnit as ReminderOffsetUnit) || 'days'
+    const previousName = getDefaultTemplateName(messageType, timingAnchor, currentValue, currentUnit)
+    const nextName = getDefaultTemplateName(messageType, timingAnchor, nextValue, nextUnit)
+    const shouldSwitchTemplate = !draft.templateId || selectedTemplate?.name === previousName
+    const nextTemplate = visibleTemplates.find(template => template.name === nextName) || null
+
+    setDraft(prev => ({
+      ...prev,
+      offsetValue: nextValue,
+      offsetUnit: nextUnit,
+      ...(shouldSwitchTemplate && nextTemplate
+        ? {
+            templateId: nextTemplate.id,
+            templateName: nextTemplate.name,
+            templateLanguage: nextTemplate.language
+          }
+        : {})
     }))
   }
 
@@ -577,9 +620,16 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
     const messageType: AppointmentReminderInput['messageType'] = enabled ? 'confirmation' : 'reminder'
     const previousName = getDefaultTemplateName(
       (draft.messageType as AppointmentReminder['messageType']) || 'reminder',
-      timingAnchor
+      timingAnchor,
+      Number(draft.offsetValue) || 1,
+      (draft.offsetUnit as ReminderOffsetUnit) || 'days'
     )
-    const nextName = getDefaultTemplateName(messageType, timingAnchor)
+    const nextName = getDefaultTemplateName(
+      messageType,
+      timingAnchor,
+      Number(draft.offsetValue) || 1,
+      (draft.offsetUnit as ReminderOffsetUnit) || 'days'
+    )
     const shouldSwitchTemplate = !draft.templateId || selectedTemplate?.name === previousName
     const nextTemplate = visibleTemplates.find(template => template.name === nextName) || null
 
@@ -1104,14 +1154,20 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                   min={1}
                   max={60}
                   value={draft.offsetValue ?? 1}
-                  onValueChange={(value) => set('offsetValue', Math.max(1, Math.round(value)))}
+                  onValueChange={(value) => changeBeforeOffset(
+                    Math.max(1, Math.round(value)),
+                    (draft.offsetUnit as ReminderOffsetUnit) || 'days'
+                  )}
                   aria-label="Cantidad de tiempo antes de la cita"
                 />
                 <div className={styles.offsetUnit}>
                   <CustomSelect
                     value={draft.offsetUnit || 'days'}
                     options={OFFSET_UNIT_OPTIONS}
-                    onValueChange={(value) => set('offsetUnit', value as AppointmentReminderInput['offsetUnit'])}
+                    onValueChange={(value) => changeBeforeOffset(
+                      Number(draft.offsetValue) || 1,
+                      value as ReminderOffsetUnit
+                    )}
                     aria-label="Unidad de tiempo"
                   />
                 </div>

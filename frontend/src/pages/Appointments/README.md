@@ -260,21 +260,26 @@ asíncronas que pertenezcan a la selección previa.
   aunque sea un aviso posterior al agendado.
 - El momento manda sobre el modo de confirmación al elegir plantilla: todo aviso
   `after_booking` usa `cita_programada`; antes de la cita se usa
-  `recordatorio_cita_un_dia_antes` o `confirmacion_cita_dia_anterior` según el
-  switch. Backend vuelve a calcular esta selección y repara filas históricas que
+  `confirmacion_cita_dia_anterior` para confirmaciones,
+  `recordatorio_cita_una_hora_simple` para recordatorios configurados exactamente
+  una hora antes y `recordatorio_cita_un_dia_antes` para los demás recordatorios.
+  Backend vuelve a calcular esta selección y repara filas históricas que
   apunten a otra plantilla predeterminada, por lo que una confirmación inmediata
   nunca puede mandar el texto del día anterior.
-- Los tres textos predeterminados incluyen la fecha y hora canónicas de la cita.
-  No dependen de frases relativas como "mañana" o "dentro de 1 día", que pueden
-  dejar de ser ciertas si cambia el horario inteligente o el momento configurado.
+- El copy relativo "dentro de una hora" sólo pertenece a
+  `recordatorio_cita_una_hora_simple`: el editor cambia de plantilla si el offset
+  deja de equivaler a una hora y el mensaje inicial tiene horario inteligente
+  apagado. Las demás plantillas siguen usando datos canónicos de la cita.
 - WhatsApp usa el canal conectado sin un switch manual de respaldo: QR-only sale
   por QR, API-only sale por API y API+QR del mismo número intenta API primero y
   usa QR sólo si la API realmente pierde disponibilidad. Una plantilla sin
   aprobar o una ventana cerrada no cambian a QR.
-- Una cuenta nueva recibe únicamente dos mensajes automáticos en su calendario
-  predeterminado, ambos pausados:
+- Una cuenta nueva recibe únicamente tres mensajes automáticos en su calendario
+  predeterminado, todos pausados:
   `Aviso al agendar`, exactamente al crear la cita, sin horario inteligente y
-  con la plantilla `cita_programada`; y `Confirmación 1 día antes`, con IA
+  con la plantilla `cita_programada`; `Recordatorio 1 hora antes`, sin IA ni
+  horario inteligente y con `recordatorio_cita_una_hora_simple`; y
+  `Confirmación 1 día antes`, con IA
   apagada y la plantilla `confirmacion_cita_dia_anterior`. Cada fila lleva una
   `system_key` única para que dos arranques simultáneos no la dupliquen. Las
   cuentas existentes no reciben este paquete y nada se envía hasta que el

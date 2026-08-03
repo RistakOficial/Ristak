@@ -3550,9 +3550,10 @@ enviarla como ejemplo al crear la plantilla en YCloud/Meta. Cada boton web acept
 maximo una variable dinamica. Los botones de telefono guardan un numero estatico
 en formato internacional y los botones WhatsApp call no llevan variable de URL.
 
-Al conectar WhatsApp API, Ristak crea y repara seis plantillas default en las
+Al conectar WhatsApp API, Ristak crea y repara siete plantillas default en las
 carpetas `Recordatorios` y `Pagos`: `cita_programada`,
-`recordatorio_cita_un_dia_antes`, `confirmacion_cita_dia_anterior`,
+`recordatorio_cita_una_hora_simple`, `recordatorio_cita_un_dia_antes`,
+`confirmacion_cita_dia_anterior`,
 `recordatorio_pago_pendiente`, `comprobante_pago_recibido` y
 `pago_fallido_reintento`. El arranque solo garantiza la copia local y nunca llama
 al proveedor. La conexion/refresco de WhatsApp y los comandos explicitos
@@ -4736,12 +4737,15 @@ agente responda preguntas logisticas, debe dejar esa opcion apagada.
 
 La plantilla se decide primero por el momento del mensaje y despues por el modo:
 `after_booking` siempre usa `cita_programada`; para `before_appointment`, una
-confirmacion usa `confirmacion_cita_dia_anterior` y un recordatorio usa
-`recordatorio_cita_un_dia_antes`. Esta regla se aplica tanto en frontend como en
-backend. El arranque repara filas historicas que apunten a otra plantilla default
+confirmacion usa `confirmacion_cita_dia_anterior`, un recordatorio configurado
+exactamente a una hora usa `recordatorio_cita_una_hora_simple` y los demas
+recordatorios usan `recordatorio_cita_un_dia_antes`. Esta regla se aplica tanto
+en frontend como en backend. El arranque repara filas historicas que apunten a otra plantilla default
 y el envio vuelve a validar el contrato para fallar cerrado ante una corrupcion
-posterior. Las plantillas default muestran la fecha y hora canonicas y no dependen
-de texto relativo como "mañana" o "dentro de 1 dia".
+posterior. La unica excepcion relativa es `recordatorio_cita_una_hora_simple`:
+su copy dice "dentro de una hora" porque el backend y el editor solo la consideran
+default cuando el offset normalizado equivale exactamente a una hora y el horario
+inteligente del recordatorio inicial esta apagado.
 
 El envío de una plantilla de cita reutiliza el constructor canónico de
 componentes de WhatsApp. Esto incluye variables de encabezado y cuerpo, además
@@ -4867,14 +4871,19 @@ pendiente y los siguientes arranques no vuelven a enviarla innecesariamente a
 revision. Si el proveedor ya tiene la plantilla bajo revision, Ristak espera a
 que termine ese bloqueo y conserva la revision como pendiente.
 
-Una cuenta nueva recibe exactamente dos filas iniciales, ambas pausadas. `Aviso
+Una cuenta nueva recibe exactamente tres filas iniciales, todas pausadas. `Aviso
 al agendar` usa `after_booking`, offset cero, horario inteligente apagado y la
 plantilla `cita_programada`, por lo que queda listo para salir exactamente cuando
-se crea la cita. `Confirmación 1 día antes` usa
+se crea la cita. `Recordatorio 1 hora antes` usa `before_appointment`, offset de
+una hora, horario inteligente apagado, IA apagada y la plantilla
+`recordatorio_cita_una_hora_simple`; su mensaje se limita a saludar por nombre y
+recordar que la cita es dentro de una hora, sin título/calendario, fecha, firma ni
+footer automático. `Confirmación 1 día antes` usa
 `message_type='confirmation'`, ancla `before_appointment`, plantilla
 `confirmacion_cita_dia_anterior`, `ai_enabled=0` y offset de un día. Nada se
 envía hasta que el usuario revise y active cada configuración. Las filas llevan
-`system_key='default_on_booking'` y `system_key='default_one_day_before'`, más
+`system_key='default_on_booking'`, `system_key='default_one_hour_before'` y
+`system_key='default_one_day_before'`, más
 un índice único parcial; así dos instancias que arrancan al mismo tiempo no
 pueden duplicarlas. Si la cuenta ya tenía cualquier mensaje automático, este
 paquete no se agrega. Además, cada confirmación nueva selecciona por defecto sus

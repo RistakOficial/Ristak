@@ -14,3 +14,9 @@ export const DEFAULT_APPOINTMENT_NOTICE_TEXT =
 
 export const LEGACY_DEFAULT_APPOINTMENT_NOTICE_TEXT =
   'Hola {{contact.first_name}}, tu cita quedó agendada para el {{cita.fecha}} a las {{cita.hora}}. Te esperamos.\n\nEsto es un mensaje automático'
+
+export const DEFAULT_ONE_HOUR_REMINDER_TEMPLATE_BODY_TEXT =
+  'Hola {{1}}, solo es un recordatorio de que tu cita es dentro de una hora, para que estés al pendiente.'
+
+export const DEFAULT_ONE_HOUR_REMINDER_TEXT =
+  'Hola {{contact.first_name}}, solo es un recordatorio de que tu cita es dentro de una hora, para que estés al pendiente.'

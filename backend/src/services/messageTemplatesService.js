@@ -26,7 +26,8 @@ import { createRistakId } from '../utils/idGenerator.js'
 import {
   DEFAULT_APPOINTMENT_NOTICE_BODY_TEXT,
   DEFAULT_APPOINTMENT_NOTICE_FOOTER_TEXT,
-  DEFAULT_APPOINTMENT_NOTICE_HEADER_TEXT
+  DEFAULT_APPOINTMENT_NOTICE_HEADER_TEXT,
+  DEFAULT_ONE_HOUR_REMINDER_TEMPLATE_BODY_TEXT
 } from './appointmentMessageDefaults.js'
 
 const TEMPLATE_CATEGORIES = new Set(['utility', 'marketing', 'authentication', 'service'])
@@ -160,6 +161,33 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
         }
       },
       bodyText: {}
+    }
+  },
+  {
+    name: 'recordatorio_cita_una_hora_simple',
+    description: 'Recordatorio simple enviado una hora antes de una cita.',
+    category: 'utility',
+    language: DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE,
+    status: 'active',
+    headerEnabled: false,
+    headerType: 'none',
+    headerText: '',
+    bodyText: DEFAULT_ONE_HOUR_REMINDER_TEMPLATE_BODY_TEXT,
+    footerText: '',
+    buttons: [],
+    variableExamples: {
+      '{{contact.first_name}}': 'María'
+    },
+    variableBindings: {
+      headerText: {},
+      bodyText: {
+        1: {
+          variableKey: 'contact.first_name',
+          mergeField: '{{contact.first_name}}',
+          label: 'Primer nombre',
+          example: 'María'
+        }
+      }
     }
   },
   {
