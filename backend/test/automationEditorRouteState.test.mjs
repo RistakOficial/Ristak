@@ -17,12 +17,17 @@ test('automation editor route changes remount the editor and clear stale load st
 
   assert.match(
     routeSource,
-    /const LazyAutomationEditor = useMemo\(createAutomationEditor, \[retryKey\]\)/,
-    'the lazy editor type should not be recreated implicitly by automation id'
+    /const LazyAutomationEditor = React\.lazy\(/,
+    'the lazy editor type should stay stable across automation ids'
   )
   assert.match(
     routeSource,
-    /key=\{`\$\{automationId\}:\$\{retryKey\}`\}/,
+    /<LazyLoadErrorBoundary[\s\S]{0,180}resetKey=\{automationId\}[\s\S]{0,180}recoveryKey="route:automation-editor"/,
+    'the shared recovery boundary should clear a stale chunk error when the route changes'
+  )
+  assert.match(
+    routeSource,
+    /<Suspense[\s\S]{0,80}key=\{automationId\}/,
     'the suspense boundary should reset when the active automation id changes'
   )
   assert.match(

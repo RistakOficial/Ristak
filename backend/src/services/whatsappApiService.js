@@ -86,6 +86,7 @@ import {
 import { normalizeMetaDirectWebhookPayload } from './whatsapp/providers/metaDirectWebhookAdapter.js'
 import { disconnectCentralWhatsAppMeta } from './licenseService.js'
 import { resolveCentralBrokerConfig } from './centralBrokerService.js'
+import { resolveFfmpegBinary } from '../utils/ffmpeg.js'
 import { getWhatsAppStatusProjectionSnapshot } from './whatsappStatusProjectionService.js'
 import {
   buildMetaDirectTemplateCreatePayload,
@@ -1079,7 +1080,7 @@ async function runFfmpeg(args = [], options = {}) {
     }
 
     return await new Promise((resolve, reject) => {
-      const binary = process.env.FFMPEG_PATH || 'ffmpeg'
+      const binary = resolveFfmpegBinary()
       const child = spawn(binary, ['-nostdin', ...args], {
         stdio: ['ignore', 'ignore', 'pipe']
       })

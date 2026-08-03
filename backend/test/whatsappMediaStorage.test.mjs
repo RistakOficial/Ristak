@@ -5,9 +5,10 @@ import { spawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { resolveFfmpegBinary } from '../src/utils/ffmpeg.js'
 
 const VALID_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAGUlEQVQokWMwXpVGEmIY1bBqNJSMh2vSAACFAkMQ6K3QUQAAAABJRU5ErkJggg=='
-const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg'
+const FFMPEG = resolveFfmpegBinary()
 
 const ENV_KEYS = [
   'DATABASE_URL',
@@ -466,6 +467,8 @@ test('saveWhatsAppImageDataUrl falla claro cuando Bunny es obligatorio y no est√
     process.env.MEDIA_STORAGE_REQUIRE_BUNNY = 'true'
 
     const whatsappApiService = await import('../src/services/whatsappApiService.js')
+    const mediaStorageService = await import('../src/services/mediaStorageService.js')
+    mediaStorageService.resetCentralStorageConfigCache()
     const database = await import('../src/config/database.js')
     db = database.db
     previousSettings = await db.get(`

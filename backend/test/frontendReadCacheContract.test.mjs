@@ -47,7 +47,12 @@ test('config agrupa JSON pequeño por llave con cache acotado por cuenta', async
   )
   assert.match(
     configHook,
-    /if \(!response\.ok\)[\s\S]*?throw new Error\('Failed to save config'\)[\s\S]*?clearAppConfigReadCache\(\)[\s\S]*?dispatchEvent/,
+    /export function publishPersistedAppConfigValue[\s\S]{0,180}clearAppConfigReadCache\(\)[\s\S]{0,420}dispatchEvent/,
+    'el helper compartido invalida el snapshot antes de publicar el valor persistido'
+  )
+  assert.match(
+    configHook,
+    /if \(!response\.ok\)[\s\S]*?throw new Error\('Failed to save config'\)[\s\S]{0,500}publishPersistedAppConfigValue\(key, newValue, cacheFirst\)/,
     'sólo una mutación confirmada invalida el snapshot antes de publicar el valor nuevo'
   )
   assert.doesNotMatch(configHook, /fetch\(buildConfigUrl\(params\)/)

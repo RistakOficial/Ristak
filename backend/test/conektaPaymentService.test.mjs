@@ -407,6 +407,8 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
 
   const contactId = `contact_conekta_${Date.now()}`
   const createdPaymentIds = []
+  const subscriptionPeriodStart = Math.floor(Date.now() / 1000) + (24 * 60 * 60)
+  const subscriptionPeriodEnd = subscriptionPeriodStart + (30 * 24 * 60 * 60)
 
   await snapshotConektaConfig(async () => {
     await db.run(
@@ -509,9 +511,9 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
         return jsonResponse({
           id: 'sub_test_123',
           status: 'active',
-          billing_cycle_start: 1782000000,
-          billing_cycle_end: 1784678400,
-          next_billing_at: 1784678400
+          billing_cycle_start: subscriptionPeriodStart,
+          billing_cycle_end: subscriptionPeriodEnd,
+          next_billing_at: subscriptionPeriodEnd
         })
       }
 

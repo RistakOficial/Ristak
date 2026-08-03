@@ -3,6 +3,7 @@ import { promises as fs } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { logger } from '../utils/logger.js'
+import { resolveFfmpegBinary } from '../utils/ffmpeg.js'
 
 /**
  * Compresor universal de medios (estilo WhatsApp): todo archivo que sube el
@@ -18,13 +19,11 @@ import { logger } from '../utils/logger.js'
  * compresión nunca debe bloquear una subida.
  */
 
-const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg'
-
 export const WHATSAPP_VOICE_NOTE_MIME = 'audio/ogg; codecs=opus'
 
 function runFfmpeg(args, timeoutMs = 120000) {
   return new Promise((resolve, reject) => {
-    const child = spawn(FFMPEG, args)
+    const child = spawn(resolveFfmpegBinary(), args)
     let stderr = ''
     const timer = setTimeout(() => {
       child.kill('SIGKILL')

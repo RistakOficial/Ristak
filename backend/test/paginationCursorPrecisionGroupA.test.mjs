@@ -25,7 +25,7 @@ test('cursores PostgreSQL del grupo A proyectan microsegundos como texto sin toc
   assert.doesNotMatch(reportContacts, /created_at, TIMESTAMP '1970-01-01 00:00:00'/)
   assert.match(reportContacts, /contactCursorProjectionExpression[\s\S]{0,180}\(\$\{sortExpression\}\)::text/)
   assert.match(reportContacts, /row\?\.cursor_created_at/)
-  assert.match(reportContacts, /created_at,[\s\S]{0,220}AS cursor_created_at/)
+  assert.match(reportContacts, /\$\{contactCursorProjectionExpression\('c'\)\} AS cursor_created_at/)
   assert.match(reportContacts, /\(\$\{cursorSortExpression\}, c\.id\) < \(\?, \?\)/)
   assert.match(reportContacts, /ORDER BY \$\{cursorSortExpression\} DESC, c\.id DESC/)
   assert.match(reportContacts, /created_at: row\.created_at/)

@@ -261,7 +261,10 @@ another account.
 ## Processing
 
 - Images are compressed through the shared media compression service and get a WebP thumbnail when possible.
-- Buffer-based video compatibility paths may transcode through FFmpeg. Legacy
+- Buffer-based video compatibility paths may transcode through FFmpeg. Every
+  backend entry point resolves the bundled static binary directly, so workers,
+  tests and service-level calls do not depend on `server.js` running first;
+  `FFMPEG_PATH` remains an optional operational override. Legacy
   multipart videos stream the original file from disk without FFmpeg, and Sites/
   Forms TUS videos go directly to Bunny Stream for transcoding. Premium media
   accounts always preserve the submitted video source in Ristak.

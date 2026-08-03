@@ -1124,7 +1124,7 @@ test('imported HTML custom video keeps its complete design while Ristak injects 
   }
 })
 
-test('imported HTML custom video receives Bunny HLS without mounting the Bunny or Ristak visual player', async () => {
+test('imported HTML custom video uses Bunny HLS live and Storage in editor without mounting another visual player', async () => {
   let siteId = ''
   const assetId = `site_imported_custom_stream_${Date.now()}`
   const storageUrl = `https://cdn.example.test/sites/${assetId}.mp4`
@@ -1200,8 +1200,9 @@ test('imported HTML custom video receives Bunny HLS without mounting the Bunny o
       preview: true,
       importedNativePreviewMock: true
     })
-    assert.match(editorHtml, new RegExp(`data-rstk-video-src="${playlistUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
-    assert.match(editorHtml, new RegExp(`data-rstk-video-fallback-src="${storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+    assert.match(editorHtml, new RegExp(`data-rstk-video-src="${storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+    assert.doesNotMatch(editorHtml, new RegExp(playlistUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    assert.doesNotMatch(editorHtml, /data-rstk-video-fallback-src=/)
     assert.doesNotMatch(editorHtml, new RegExp(`<video[^>]*\\ssrc="${storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
     assert.match(editorHtml, /data-rstk-video-editor-preview="true"/)
     assert.match(editorHtml, /data-rstk-video-adaptive-quality="true"/)

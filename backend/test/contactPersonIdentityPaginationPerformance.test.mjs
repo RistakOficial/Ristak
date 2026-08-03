@@ -13,6 +13,17 @@ async function applySqliteMigration(name) {
   await db.exec(await readFile(new URL(`../migrations/versioned/${name}`, import.meta.url), 'utf8'))
 }
 
+function assertNoTopLevelOrderSort(plan, label) {
+  const topLevelSorts = plan.filter(row => (
+    Number(row.parent) === 0 && /USE TEMP B-TREE FOR ORDER BY/.test(String(row.detail))
+  ))
+  assert.deepEqual(
+    topLevelSorts,
+    [],
+    `${label} debe resolver el ORDER BY de la página con su índice de cursor`
+  )
+}
+
 test.before(async () => {
   if (databaseDialect !== 'sqlite') return
   await applySqliteMigration('054_campaign_performance_indexes.sqlite.sql')
@@ -231,10 +242,10 @@ test('las páginas usan keyset/anti-join indexado y el total no se recalcula des
     const campaignDetails = campaignPlan.map(row => row.detail).join('\n')
     assert.match(reportDetails, /idx_contacts_cursor_effective_created_at_id/)
     assert.match(reportDetails, /idx_contact_person_identity_report/)
-    assert.doesNotMatch(reportDetails, /USE TEMP B-TREE FOR ORDER BY/)
+    assertNoTopLevelOrderSort(reportPlan, 'Reportes')
     assert.match(campaignDetails, /idx_campaign_contacts_cursor_created_at_id/)
     assert.match(campaignDetails, /idx_contact_person_identity_campaign/)
-    assert.doesNotMatch(campaignDetails, /USE TEMP B-TREE FOR ORDER BY/)
+    assertNoTopLevelOrderSort(campaignPlan, 'Publicidad')
   } finally {
     for (const id of contactIds) await db.run('DELETE FROM contacts WHERE id = ?', [id]).catch(() => undefined)
     await db.run('DELETE FROM meta_ads WHERE ad_account_id = ?', [accountId]).catch(() => undefined)

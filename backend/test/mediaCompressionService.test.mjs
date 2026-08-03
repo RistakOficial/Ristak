@@ -5,8 +5,9 @@ import { promises as fs } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { compressMediaBuffer } from '../src/services/mediaCompressionService.js'
+import { resolveFfmpegBinary } from '../src/utils/ffmpeg.js'
 
-const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg'
+const FFMPEG = resolveFfmpegBinary()
 
 function runFfmpeg(args) {
   return new Promise((resolve, reject) => {
