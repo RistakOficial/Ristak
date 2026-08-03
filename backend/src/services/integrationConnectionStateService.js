@@ -262,6 +262,25 @@ export async function isWhatsAppApiHistoryBackfillPending() {
     cleanString(raw.whatsapp_api_history_direction_repair_version) !== YCLOUD_HISTORY_BACKFILL_VERSION
 }
 
+export async function isWhatsAppConnected() {
+  const [raw, metaDirectConnected, qrConnected] = await Promise.all([
+    getAppConfigRows([
+      'whatsapp_api_enabled',
+      'whatsapp_api_ycloud_api_key_encrypted',
+      'whatsapp_api_key',
+      'whatsapp_api_webhook_endpoint_id'
+    ]),
+    isMetaDirectWhatsAppConnected(),
+    isWhatsAppQrConnected()
+  ])
+  const enabled = enabledFlag(raw.whatsapp_api_enabled, true)
+  const ycloudConnected = enabled && Boolean(
+    cleanString(raw.whatsapp_api_ycloud_api_key_encrypted || raw.whatsapp_api_key) &&
+    cleanString(raw.whatsapp_api_webhook_endpoint_id)
+  )
+  return ycloudConnected || metaDirectConnected || qrConnected
+}
+
 export async function isMetaDirectWhatsAppConnected() {
   const raw = await getAppConfigRows([
     'whatsapp_api_enabled',
@@ -307,4 +326,36 @@ export async function isEmailInboundConnected() {
     cleanString(inbound.host) &&
     cleanString(inbound.username)
   )
+}
+
+export async function isEmailConnected() {
+  const rows = await getAppConfigRows([EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY])
+  const config = parseJson(rows[EMAIL_CONFIG_KEY], null)
+  return Boolean(
+    config?.connected &&
+    cleanString(config.host) &&
+    cleanString(config.username) &&
+    cleanString(rows[EMAIL_PASSWORD_KEY])
+  )
+}
+
+export async function isAnyPaymentProviderConnected() {
+  const states = await Promise.all([
+    isStripeConnected(),
+    isMercadoPagoConnected(),
+    isConektaConnected(),
+    isClipConnected(),
+    isRebillConnected()
+  ])
+  return states.some(Boolean)
+}
+
+export async function isAnyRecurringPaymentProviderConnected() {
+  const states = await Promise.all([
+    isStripeConnected(),
+    isMercadoPagoConnected(),
+    isConektaConnected(),
+    isRebillConnected()
+  ])
+  return states.some(Boolean)
 }

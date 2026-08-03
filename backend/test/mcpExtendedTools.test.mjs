@@ -50,8 +50,10 @@ test('las herramientas extendidas tienen catálogo único y metadata de segurida
       assert.equal(entry.confirmRequired, true, `${entry.name} debe exigir confirmación`)
       assert.equal(entry.idempotencyRequired, true, `${entry.name} debe ser idempotente`)
       assert.equal(entry.inputSchema.properties.confirm.type, 'boolean')
+      assert.equal(entry.inputSchema.properties.approvalTicket.type, 'string')
       assert.equal(entry.inputSchema.properties.idempotencyKey.type, 'string')
       assert.ok(entry.inputSchema.required.includes('confirm'))
+      assert.ok(entry.inputSchema.required.includes('approvalTicket'))
       assert.ok(entry.inputSchema.required.includes('idempotencyKey'))
     } else {
       assert.equal(entry.confirmRequired, false)

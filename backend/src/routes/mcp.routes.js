@@ -50,7 +50,7 @@ const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 const MCP_SERVER_INSTRUCTIONS = [
   'Ristak MCP opera el CRM por acciones de negocio autorizadas.',
   'Lee con ristak.read; modifica borradores con ristak.write; enviar mensajes, registrar pagos, ejecutar automatizaciones o publicar requiere ristak.execute; borrados, cancelaciones y reembolsos requieren ristak.destructive.',
-  'Respeta confirm=true e idempotencyKey cuando la herramienta los solicite. Nunca pidas ni reveles tokens o secretos.',
+  'Para cualquier herramienta con _meta["ristak/confirmationRequired"]=true, llama primero mcp_prepare_action_confirmation con el nombre y los argumentos exactos, entrega approvalUrl a la persona y espera la aprobación. Después ejecuta con confirm=true, el mismo approvalTicket y una idempotencyKey. Nunca pidas ni reveles credenciales o secretos.',
   'Para una landing o sitio personalizado, usa la skill o capacidad web del cliente para generar el documento y llama directamente sites_create_html_draft; esa herramienta ya valida el HTML. Reserva sites_validate_html para un preflight sin escritura.',
   'Después de crear el borrador, abre sites_open_html_live_preview una sola vez y usa sites_patch_html_draft con fragmentos exactos. No vuelvas a leer ni reenviar el documento completo después de cada cambio; usa sites_get_code sólo al entrar a un Site existente o si un parche ya no coincide.',
   'sites_replace_html_draft queda para reescrituras completas. Conserva la revisión devuelta por cada guardado y no cierres ni publiques el borrador mientras iteras.',

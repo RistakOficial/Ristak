@@ -103,6 +103,7 @@ import conversationalAgentRoutes from './routes/conversationalAgent.routes.js'
 import searchRoutes from './routes/search.routes.js'
 import externalRoutes from './routes/external.routes.js'
 import mcpRoutes from './routes/mcp.routes.js'
+import mcpActionConfirmationsRoutes from './routes/mcpActionConfirmations.routes.js'
 import whatsappApiRoutes from './routes/whatsappApi.routes.js'
 import emailRoutes from './routes/email.routes.js'
 import productsRoutes from './routes/products.routes.js'
@@ -657,6 +658,7 @@ const requireWhatsAppFeatureForWhatsAppApiRoute = (() => {
 // autentican con HMAC, timestamp, nonce e installation id dentro del router.
 // El resto de /api/whatsapp-api sigue exigiendo la sesión humana ahí mismo.
 app.use('/api/whatsapp-api', requireWhatsAppFeatureForWhatsAppApiRoute, whatsappApiRoutes)
+app.use('/api/mcp/action-confirmations', mcpActionConfirmationsRoutes)
 // MCP tiene autenticación OAuth propia. Si queda después de costsRoutes, el
 // middleware de sesión humana responde primero y rompe el discovery remoto.
 app.use('/api/mcp', mcpRoutes)

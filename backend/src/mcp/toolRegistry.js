@@ -4,11 +4,20 @@ import { hasFeature, hasModuleFeature, isLicenseEnforced } from '../services/lic
 import { hasUserAccess } from '../utils/userAccess.js'
 import { hasGrantedScope } from '../utils/oauthTokens.js'
 import { logger } from '../utils/logger.js'
+import { getMissingMcpConnectionPrerequisites } from '../services/mcpConnectionPrerequisitesService.js'
+import {
+  consumeMcpActionConfirmation,
+  createMcpActionConfirmation,
+  getMcpActionConfirmationStatus,
+  stripMcpActionControls
+} from '../services/mcpActionConfirmationService.js'
 import { domainToolSpecs } from './domainTools.js'
 import { extendedToolSpecs } from './extendedTools.js'
 import { siteToolSpecs } from './siteTools.js'
+import { capabilityToolSpecs } from './capabilityTools.js'
 
 const SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|database[_-]?url|encrypted|hash|cookie|idempotency)/i
+const AUDIT_SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|database[_-]?url|encrypted|hash|cookie|idempotency|approval[_-]?ticket|file[_-]?base64|data[_-]?url|bytes[_-]?base64)/i
 const MAX_AUDIT_STRING_LENGTH = 2000
 const MAX_AUDIT_JSON_LENGTH = 24000
 const MAX_IDEMPOTENCY_RESULT_LENGTH = 2 * 1024 * 1024
@@ -124,6 +133,24 @@ function sanitizeExternal(value, key = '', depth = 0) {
   )
 }
 
+function sanitizeAuditInput(value, key = '', depth = 0) {
+  if (AUDIT_SECRET_KEY_PATTERN.test(String(key || ''))) return '[redacted]'
+  if (depth > 12) return '[truncated]'
+  if (typeof value === 'string') {
+    return value.length > MAX_AUDIT_STRING_LENGTH
+      ? `${value.slice(0, MAX_AUDIT_STRING_LENGTH)}…`
+      : value
+  }
+  if (!value || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.slice(0, 200).map((item) => sanitizeAuditInput(item, '', depth + 1))
+  return Object.fromEntries(
+    Object.entries(value).slice(0, 300).map(([entryKey, entryValue]) => [
+      entryKey,
+      sanitizeAuditInput(entryValue, entryKey, depth + 1)
+    ])
+  )
+}
+
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue)
   if (!value || typeof value !== 'object') return value
@@ -200,7 +227,7 @@ function toolDefinition(spec) {
     },
     securitySchemes,
     annotations: {
-      readOnlyHint: spec.access === 'read',
+      readOnlyHint: spec.readOnlyHint ?? spec.access === 'read',
       destructiveHint: spec.scope === 'ristak.destructive',
       openWorldHint: spec.openWorld === true || spec.scope === 'ristak.execute'
     },
@@ -209,12 +236,108 @@ function toolDefinition(spec) {
       'ristak/domain': spec.module,
       'ristak/risk': riskLevelFor(spec),
       'ristak/confirmationRequired': spec.confirmRequired === true,
-      'ristak/idempotencyRequired': spec.idempotencyRequired === true
+      'ristak/idempotencyRequired': spec.idempotencyRequired === true,
+      'ristak/connectionPrerequisites': spec.connectionPrerequisites || []
     }
   }
 }
 
-const allSpecs = Object.freeze([...domainToolSpecs, ...siteToolSpecs, ...extendedToolSpecs])
+function businessInputSchema(spec) {
+  const inputSchema = spec?.inputSchema || { type: 'object' }
+  const properties = Object.fromEntries(
+    Object.entries(inputSchema.properties || {}).filter(([key]) => (
+      !['approvalTicket', 'confirm', 'idempotencyKey'].includes(key)
+    ))
+  )
+  return {
+    ...inputSchema,
+    properties,
+    required: (inputSchema.required || []).filter((key) => (
+      !['approvalTicket', 'confirm', 'idempotencyKey'].includes(key)
+    ))
+  }
+}
+
+const ACTION_TICKET_SCHEMA = {
+  type: 'string',
+  minLength: 32,
+  maxLength: 4096,
+  description: 'Pase firmado y de un solo uso emitido por mcp_prepare_action_confirmation.'
+}
+
+const controlToolSpecs = [
+  Object.freeze({
+    name: 'mcp_prepare_action_confirmation',
+    title: 'Solicitar aprobación humana',
+    description: 'Prepara una acción de alto impacto, la liga a sus argumentos exactos y devuelve una página segura para que la persona autenticada la apruebe o rechace.',
+    module: 'settings_api_access',
+    access: 'read',
+    scope: 'ristak.write',
+    risk: 'medium',
+    featureKeys: [],
+    adminOnly: false,
+    confirmRequired: false,
+    idempotencyRequired: false,
+    readOnlyHint: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        toolName: { type: 'string', minLength: 1, maxLength: 180 },
+        arguments: {
+          type: 'object',
+          maxProperties: 200,
+          additionalProperties: true,
+          description: 'Argumentos de negocio exactos, sin confirm, approvalTicket ni idempotencyKey.'
+        }
+      },
+      required: ['toolName', 'arguments'],
+      additionalProperties: false
+    },
+    async execute(context, args) {
+      const target = specByName.get(String(args.toolName || ''))
+      if (!target || controlToolSpecs.includes(target)) {
+        throw makeError('La herramienta solicitada no existe.', 'tool_not_found', 404)
+      }
+      if (!target.confirmRequired) {
+        throw makeError('Esta herramienta no necesita aprobación humana.', 'confirmation_not_required', 409)
+      }
+      const businessArgs = stripMcpActionControls(args.arguments)
+      validateSchemaValue(businessArgs, businessInputSchema(target))
+      await assertToolAuthorization({ ...context, args: businessArgs }, target)
+      return createMcpActionConfirmation(context, target, businessArgs)
+    }
+  }),
+  Object.freeze({
+    name: 'mcp_action_confirmation_status',
+    title: 'Consultar aprobación humana',
+    description: 'Consulta si una solicitud de acción MCP sigue pendiente, fue aprobada, rechazada, utilizada o expiró.',
+    module: 'settings_api_access',
+    access: 'read',
+    scope: 'ristak.read',
+    risk: 'low',
+    featureKeys: [],
+    adminOnly: false,
+    confirmRequired: false,
+    idempotencyRequired: false,
+    inputSchema: {
+      type: 'object',
+      properties: { approvalTicket: ACTION_TICKET_SCHEMA },
+      required: ['approvalTicket'],
+      additionalProperties: false
+    },
+    execute(context, args) {
+      return getMcpActionConfirmationStatus(context, args.approvalTicket)
+    }
+  })
+]
+
+const allSpecs = Object.freeze([
+  ...controlToolSpecs,
+  ...domainToolSpecs,
+  ...siteToolSpecs,
+  ...extendedToolSpecs,
+  ...capabilityToolSpecs
+])
 const specByName = new Map()
 for (const entry of allSpecs) {
   if (!entry?.name || typeof entry.execute !== 'function') {
@@ -224,11 +347,22 @@ for (const entry of allSpecs) {
   specByName.set(entry.name, entry)
 }
 
+async function missingConnectionPrerequisites(context, prerequisites = []) {
+  const key = [...new Set(prerequisites || [])].sort().join('|')
+  if (!key) return []
+  const cache = context.connectionPrerequisiteCache
+  if (cache?.has(key)) return cache.get(key)
+  const pending = getMissingMcpConnectionPrerequisites(prerequisites)
+  cache?.set(key, pending)
+  return pending
+}
+
 async function hasToolPolicy(context, spec) {
   const user = context.user || {}
   if (!hasGrantedScope(context.scopes || context.mcpUser?.scope, spec.scope)) return false
   if (spec.adminOnly && user.role !== 'admin') return false
   if (modulePoliciesFor(spec).some(policy => !hasUserAccess(user, policy.module, policy.access))) return false
+  if ((await missingConnectionPrerequisites(context, spec.connectionPrerequisites)).length) return false
   if (!isLicenseEnforced()) return true
 
   const licenseOptions = {
@@ -244,7 +378,7 @@ async function hasToolPolicy(context, spec) {
   return true
 }
 
-async function assertToolPolicy(context, spec) {
+async function assertToolAuthorization(context, spec) {
   if (!hasGrantedScope(context.scopes || context.mcpUser?.scope, spec.scope)) {
     throw makeError(`La conexión no tiene el scope ${spec.scope}.`, 'insufficient_scope', 403, {
       requiredScope: spec.scope
@@ -264,6 +398,18 @@ async function assertToolPolicy(context, spec) {
       deniedPolicy.access === 'write' ? 'write_access_required' : 'read_access_required',
       403,
       { module: deniedPolicy.module }
+    )
+  }
+  const missingConnections = await missingConnectionPrerequisites(context, spec.connectionPrerequisites)
+  if (missingConnections.length) {
+    const handoffProviders = [...new Set(missingConnections.map(provider => (
+      provider === 'payment_subscriptions' ? 'payments' : provider
+    )))]
+    throw makeError(
+      `Falta conectar: ${missingConnections.join(', ')}. Usa integrations_connection_handoff con: ${handoffProviders.join(', ')}.`,
+      'integration_not_connected',
+      409,
+      { missingConnections, handoffProviders }
     )
   }
   if (isLicenseEnforced()) {
@@ -286,15 +432,20 @@ async function assertToolPolicy(context, spec) {
       }
     }
   }
-  if (spec.confirmRequired && context.args?.confirm !== true) {
-    throw makeError('Esta acción requiere confirmación explícita (confirm=true).', 'confirmation_required', 400)
-  }
+}
+
+function assertToolControls(context, spec) {
   if (spec.idempotencyRequired) {
     const key = String(context.args?.idempotencyKey || '').trim()
     if (key.length < 8 || key.length > 180) {
       throw makeError('idempotencyKey debe tener entre 8 y 180 caracteres.', 'idempotency_key_required', 400)
     }
   }
+}
+
+async function assertToolPolicy(context, spec) {
+  await assertToolAuthorization(context, spec)
+  assertToolControls(context, spec)
 }
 
 async function beginIdempotentCall(context, spec, args) {
@@ -416,7 +567,7 @@ async function recordAudit(context, spec, args, startedAt, { success, result, er
         spec.name,
         riskLevelFor(spec),
         success ? 1 : 0,
-        safeJson(sanitizeExternal(args)),
+        safeJson(sanitizeAuditInput(args)),
         result === undefined ? null : safeJson(outputSummary(result)),
         error?.code || null,
         error?.message ? sanitizeErrorMessage(error.message) : null,
@@ -443,8 +594,21 @@ export function getMcpRegistrySummary() {
   }
 }
 
+export function getMcpToolMetadata(name) {
+  const spec = specByName.get(String(name || ''))
+  if (!spec) return null
+  return {
+    name: spec.name,
+    title: spec.title || spec.name.replaceAll('_', ' '),
+    description: spec.description,
+    riskLevel: riskLevelFor(spec),
+    confirmRequired: spec.confirmRequired === true
+  }
+}
+
 export async function listMcpToolDefinitions(context) {
-  const allowed = await Promise.all(allSpecs.map(entry => hasToolPolicy(context, entry)))
+  const policyContext = { ...context, connectionPrerequisiteCache: new Map() }
+  const allowed = await Promise.all(allSpecs.map(entry => hasToolPolicy(policyContext, entry)))
   return allSpecs
     .filter((_entry, index) => allowed[index])
     .map(toolDefinition)
@@ -454,16 +618,23 @@ export async function callRegisteredMcpTool(context, name, args = {}) {
   const spec = specByName.get(String(name || ''))
   if (!spec) throw makeError(`Tool no soportada: ${name}`, 'tool_not_found', 404)
   const startedAt = new Date().toISOString()
-  const callContext = { ...context, args }
+  const callContext = { ...context, args, connectionPrerequisiteCache: new Map() }
   let reservation = null
 
   try {
     validateSchemaValue(args, spec.inputSchema)
     await assertToolPolicy(callContext, spec)
+    if (spec.confirmRequired && args.confirm !== true) {
+      throw makeError('Esta acción requiere confirm=true después de la aprobación humana.', 'confirmation_required', 400)
+    }
     reservation = await beginIdempotentCall(callContext, spec, args)
     if (reservation.mode === 'replay') {
       await recordAudit(callContext, spec, args, startedAt, { success: true, result: reservation.result })
       return reservation.result
+    }
+
+    if (spec.confirmRequired) {
+      await consumeMcpActionConfirmation(callContext, spec, args)
     }
 
     const result = await spec.execute(callContext, args)
@@ -485,6 +656,7 @@ export const __mcpRegistryTestHooks = {
   allSpecs,
   riskLevelFor,
   stableValue,
+  sanitizeAuditInput,
   sanitizeExternal,
   validateSchemaValue,
   toolDefinition

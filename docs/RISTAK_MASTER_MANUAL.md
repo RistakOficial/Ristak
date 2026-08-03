@@ -9453,20 +9453,34 @@ Incluye:
 - MCP para clientes compatibles.
 
 El MCP externo es un plano de control tipado sobre los servicios de negocio de
-Ristak. El registro actual contiene 240 tools antes del filtrado de autorizacion
+Ristak. El registro actual contiene 336 tools antes del filtrado de autorizacion
 y cubre CRM/contactos, tags, campos personalizados, trigger links, inbox y envio
 de mensajes, chatbot, citas, calendarios, automatizaciones, pagos, productos,
-precios, suscripciones, dashboard, reportes, analytics/tracking, campañas,
-activos multimedia —incluida la subida firmada de archivos locales a Bunny—,
-costos, plantillas de WhatsApp, preferencias moviles,
-estado seguro de integraciones y Sites con sus archivos HTML. El status de
+precios, suscripciones, dashboard, reportes, analytics/tracking, campañas ya
+soportadas por la cuenta, activos multimedia —incluidas subida, reemplazo y ZIP
+firmados—, costos, plantillas de WhatsApp, preferencias moviles, configuración
+de cuenta/usuarios, estado seguro de integraciones y Sites con sus archivos
+HTML. El status de
 Developers y `tools/list` cuentan/muestran solo las tools visibles para el
-usuario, plan, modulos y scopes actuales. No es SQL libre, no es un proxy
-generico de rutas y no autoriza secretos, infraestructura, administracion de
-usuarios ni escritura directa en tablas/ledgers protegidos. Cada accion nueva
+usuario, plan, modulos, scopes y conexiones de proveedores actuales. Una tool
+dependiente de WhatsApp, Email, HighLevel, Google Calendar, pagos o Meta no se
+descubre si esa integración local no está lista, y `tools/call` vuelve a validar
+la conexión. Esta ampliación no agregó nuevas acciones para administrar campañas
+de Meta. No es SQL libre, no es un proxy genérico de rutas y no autoriza secretos,
+infraestructura ni escritura directa en tablas/ledgers protegidos. Cada accion nueva
 de producto que se publique por MCP debe registrarse con schema, contrato de
 salida, feature/modulo, permiso de usuario, scope OAuth, anotaciones de riesgo y
 ejecutor auditable.
+
+Las acciones operativas nuevas incluyen journeys y actualizaciones masivas de
+contactos; lotes persistentes de plantillas/automatizaciones; WhatsApp multimedia;
+preferencias y lectura de chat; suscripciones y decisiones sobre comprobantes;
+recordatorios de citas y sincronización de Google Calendar; carpetas, catálogos y
+pruebas de automatizaciones; submissions y video analytics de Sites; carpetas y
+assets de Media; tracking; configuración de cuenta/notificaciones y administración
+seleccionada de usuarios. Crear usuarios permanece en la interfaz de Ristak:
+el endpoint actual exige contraseña y el MCP no debe transportar contraseñas;
+se expondrá cuando exista invitación sin contraseña.
 
 Las instrucciones de `initialize` explican el flujo HTML code-first a todos los
 clientes compatibles. Cuando existe una skill web local, ésta es responsable de
@@ -9481,11 +9495,27 @@ El servidor remoto usa Streamable HTTP y OAuth 2.1 con PKCE. Los scopes separan
 leer, modificar estado, provocar efectos externos y destruir datos no sean el
 mismo permiso. `tools/list` solo descubre acciones compatibles con licencia,
 acceso de usuario y scopes; `tools/call` vuelve a comprobarlos. Mensajes,
-publicaciones, pagos y borrados requieren las confirmaciones/metadatos de riesgo
-correspondientes y dejan auditoria con secretos redactados.
+publicaciones, pagos y borrados requieren una aprobación humana firmada de un
+solo uso y dejan auditoria con secretos redactados. `confirm=true` no basta: el
+cliente prepara la aprobación con `mcp_prepare_action_confirmation`, el usuario
+abre la URL temporal autenticado en Ristak y revisa un resumen seguro; secretos y
+valores demasiado largos se ocultan o marcan como truncados, aunque el pase queda
+ligado a los argumentos completos. `mcp_action_confirmation_status` confirma si
+el mismo `approvalTicket` que entregó la preparación ya está listo y ese pase se
+consume al ejecutar. El pase dura 15 minutos, queda ligado a usuario,
+cliente/grant OAuth, tool y hash de argumentos; alterar datos, revocarlo o
+reutilizarlo falla cerrado. Acciones destructivas exigen además escribir
+`APROBAR` en la pantalla.
 La edición genérica de pagos no acepta `status`: registrar un pago requiere
 `ristak.execute`; anular, reembolsar o cancelar/eliminar un plan exige
 `ristak.destructive`.
+
+Las conexiones se inician mediante handoffs seguros hacia Configuración de
+Ristak o el OAuth normal de Google; el MCP no recibe ni devuelve credenciales.
+Las desconexiones soportadas reutilizan los controllers oficiales, exigen admin
+y aprobación destructiva. `mcp_runtime_continuity` informa qué jobs,
+automatizaciones publicadas y workers siguen corriendo dentro de Ristak. Ningún
+MCP puede despertar por sí solo una conversación de IA que ya fue cerrada.
 
 El usuario administra estas conexiones en
 `Configuracion > Developers > Conectar con MCP`. El frontend consulta

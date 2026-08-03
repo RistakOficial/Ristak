@@ -55,7 +55,9 @@ test('las specs de Sites tienen nombres únicos y metadata de seguridad completa
 
     if (entry.confirmRequired) {
       assert.equal(entry.inputSchema.properties.confirm.type, 'boolean')
+      assert.equal(entry.inputSchema.properties.approvalTicket.type, 'string')
       assert.ok(entry.inputSchema.required.includes('confirm'))
+      assert.ok(entry.inputSchema.required.includes('approvalTicket'))
     }
     if (entry.idempotencyRequired) {
       assert.equal(entry.inputSchema.properties.idempotencyKey.type, 'string')

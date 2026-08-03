@@ -82,23 +82,37 @@ the same server URL; `tools/list` returns the exact tools available to the user
 who authorized that connection.
 
 The MCP is a typed control plane over Ristak's business services, not a generic
-route proxy and not unrestricted SQL. The current registry contains 240 typed
+route proxy and not unrestricted SQL. The current registry contains 336 typed
 tools before authorization filtering. `GET /api/api-access/mcp/status` and
 `tools/list` report only the subset visible to the current user, plan, modules
-and granted scopes. The registry covers these operational domains:
+and granted scopes. It also removes tools whose provider is not connected in
+this Ristak installation; `tools/call` repeats that connection check so a stale
+catalog cannot bypass it. The registry covers these operational domains:
 
 - contacts, CRM search, tags, custom fields and trigger links;
 - inbox, conversations, outbound messages and conversational chatbot operation;
 - calendars, availability, appointments and automations;
 - payments, payment links/plans, products, prices and subscriptions;
 - dashboard summaries, reports, analytics, attribution and web tracking;
-- campaigns, Meta assets and campaign-builder operations already supported by
-  the account;
+- campaigns and Meta assets already supported by the account, visible only when
+  the corresponding Meta connection exists; this expansion did not add new Meta
+  campaign-management actions;
 - media library assets, folders, storage usage, signed local-file uploads to
-  Bunny.net and permitted lifecycle actions;
+  Bunny.net, signed replacements, temporary ZIP downloads and permitted
+  lifecycle actions;
 - business costs, WhatsApp templates, mobile preferences and safe integration
   status;
 - Sites lifecycle, imported HTML files, preview and controlled publication.
+
+The expanded operational set includes contact journeys and bulk field updates,
+persistent WhatsApp/template and automation batches, multimedia WhatsApp sends,
+read-state and channel preferences, payment subscriptions and transfer-proof
+decisions, appointment reminders and Google Calendar synchronization, automation
+folders/catalogs/tests, Site submissions/video analytics, Media folders/assets,
+tracking configuration and sessions, account settings, notification preferences
+and selected user administration. MCP does not accept a user's raw password, so
+creating a user remains in the authenticated Ristak interface until the product
+has a passwordless invitation flow.
 
 Payment metadata edits cannot change payment status. Recording a payment uses
 `ristak.execute`; refunds, voids and payment-plan cancellation/deletion use
@@ -107,8 +121,8 @@ Payment metadata edits cannot change payment status. Recording a payment uses
 New product actions must enter the MCP through the same registry with an input
 schema, output contract, module/feature gate, OAuth scope, risk annotation and
 auditable executor. "Exponer todo" never means bypassing controllers, writing
-directly into protected ledgers, leaking secrets, managing infrastructure or
-administering users.
+directly into protected ledgers, leaking secrets, managing infrastructure,
+transporting passwords or bypassing the authenticated user-administration rules.
 
 ### Scopes and execution rules
 
@@ -126,8 +140,23 @@ The granted scope is necessary but not sufficient. On every `tools/list` and
 2. `developers` plus the commercial feature for the resource;
 3. the user's module access (`read`, `write` or `admin` as required);
 4. the OAuth scope declared by the tool;
-5. explicit confirmation for high-impact writes, external effects and
-   destructive actions.
+5. the required provider connection, when the tool depends on one;
+6. a signed, single-use human approval for high-impact writes, external effects
+   and destructive actions.
+
+`confirm=true` is not approval by itself. For a protected action the client must
+first call `mcp_prepare_action_confirmation` with the exact tool name and exact
+business arguments. Ristak returns a short-lived URL and a single-use
+`approvalTicket`; the authenticated user opens the URL inside Ristak and reviews
+a safe summary. Sensitive and oversized values are redacted or marked as
+truncated, while the ticket remains bound to the complete arguments. After the
+decision, `mcp_action_confirmation_status` confirms whether that same ticket is
+ready to execute. The final tool call must include the ticket and the same
+arguments, `confirm=true` and its `idempotencyKey`. The ticket is bound to
+the user, OAuth client/grant, tool and normalized argument hash, expires after
+15 minutes and is consumed atomically. Rejecting, altering arguments, changing
+the connection or replaying the ticket fails closed. Destructive approvals also
+require typing `APROBAR` in the Ristak screen.
 
 Business dates are interpreted with the account timezone and new monetary
 records use `account_currency` when the caller does not provide a valid explicit
@@ -228,6 +257,30 @@ The MCP idempotency ledger stores only an `ephemeral` marker for this tool, not
 the temporary header. If a client loses the response or lets it expire, it must
 request a new pass with a new `idempotencyKey`. Revoking or changing the OAuth
 connection invalidates a still-pending pass.
+
+`media_prepare_bunny_replace` uses the same signed multipart transport but binds
+the pass to one existing `assetId` and the exact replacement bytes. The upload
+route invokes the canonical Media replacement operation instead of creating a
+second asset. `media_prepare_archive_download` accepts up to 50 asset IDs and
+returns a signed, 10-minute download URL; that route re-checks the user, active
+OAuth grant, Developers, Media access and current license before streaming the
+canonical ZIP archive. Neither flow returns Bunny credentials or embeds file
+bytes in MCP JSON.
+
+### Integration handoffs and continuity
+
+Connection-dependent tools are visible only when their local provider is ready:
+WhatsApp, Email, HighLevel, Google Calendar, payments, Meta social and Meta Ads
+are evaluated independently. `integrations_connection_handoff` returns either a
+Ristak settings URL or the normal Google OAuth start URL; it never returns or
+accepts provider secrets. Supported disconnects reuse the canonical integration
+controllers, require administrator access and a signed destructive approval.
+
+`mcp_runtime_continuity` reports which jobs, published automations and provider
+workers continue inside Ristak after the AI client closes. The MCP server cannot
+wake a closed Codex, ChatGPT or Claude conversation; persistent behavior must
+live in Ristak automations/jobs or in an external runtime that polls or receives
+webhooks.
 
 ### Connections and audit
 

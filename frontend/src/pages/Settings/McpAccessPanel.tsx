@@ -95,6 +95,9 @@ const MCP_FALLBACK_DOMAINS: McpDomain[] = [
   { key: 'settings_costs', label: 'Costos del negocio', toolCount: null },
   { key: 'settings_whatsapp', label: 'WhatsApp y plantillas', toolCount: null },
   { key: 'settings_mobile', label: 'Preferencias móviles', toolCount: null },
+  { key: 'settings_account', label: 'Cuenta y notificaciones', toolCount: null },
+  { key: 'settings_users', label: 'Usuarios y permisos', toolCount: null },
+  { key: 'settings_api_access', label: 'Developers y conexiones MCP', toolCount: null },
   { key: 'settings_integrations', label: 'Estado de integraciones', toolCount: null },
   { key: 'sites', label: 'Sites y código HTML', toolCount: null }
 ]
@@ -706,7 +709,7 @@ export const McpAccessPanel: React.FC<McpAccessPanelProps> = ({
         <div className={styles.mcpSubsectionHeader}>
           <div>
             <h3>Áreas visibles para ti</h3>
-            <p>El conteo y la lista se filtran por tu usuario, plan, módulos y alcances. No incluyen secretos, infraestructura ni administración de usuarios.</p>
+            <p>El conteo y la lista se filtran por tu usuario, plan, módulos, alcances y conexiones activas. No incluyen secretos, infraestructura, contraseñas ni creación automática de usuarios.</p>
           </div>
           {status?.protocolVersion && <Badge variant="neutral">MCP {status.protocolVersion}</Badge>}
         </div>

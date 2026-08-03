@@ -29,7 +29,7 @@ assert.match(mcpPanelSource, /Herramientas visibles/)
 assert.match(mcpPanelSource, /formatTransportLabel/)
 assert.match(mcpPanelSource, /Áreas disponibles mediante MCP/)
 assert.match(mcpPanelSource, /mcpCapabilityItem/)
-assert.match(mcpPanelSource, /No incluyen secretos, infraestructura ni administración de usuarios/)
+assert.match(mcpPanelSource, /No incluyen secretos, infraestructura, contraseñas ni creación automática de usuarios/)
 assert.match(mcpPanelSource, /codex mcp login ristak/)
 assert.match(mcpPanelSource, /Work mode de ChatGPT que admita plugins o conectores MCP/)
 assert.match(mcpPanelSource, /Settings > Connectors > Add custom connector/)
@@ -54,6 +54,9 @@ for (const domainLabel of [
   'Costos del negocio',
   'WhatsApp y plantillas',
   'Preferencias móviles',
+  'Cuenta y notificaciones',
+  'Usuarios y permisos',
+  'Developers y conexiones MCP',
   'Estado de integraciones',
   'Sites y código HTML'
 ]) {
@@ -69,14 +72,14 @@ assert.match(documentationSource, /codex mcp login ristak/)
 assert.match(documentationSource, /api-access\/mcp\/audit/)
 assert.match(documentationSource, /MCP no manda mensajes espontáneos/)
 assert.match(documentationSource, /MCP no usa el API token de REST\/OpenAPI/)
-assert.match(documentationSource, /235 herramientas tipadas/)
+assert.match(documentationSource, /336 herramientas tipadas/)
 assert.match(documentationSource, /productos, precios y suscripciones/)
 assert.match(documentationSource, /preferencias móviles/)
 
 assert.match(externalAccessDocs, /## MCP setup/)
 assert.match(externalAccessDocs, /normal web session/)
 assert.match(externalAccessDocs, /No REST\/OpenAPI token is generated, copied or stored/)
-assert.match(externalAccessDocs, /235 typed/)
+assert.match(externalAccessDocs, /336 typed/)
 
 const mcpStylesStart = settingsStyles.indexOf('.mcpStatusBar')
 const mcpStylesEnd = settingsStyles.indexOf('.developerInfoField', mcpStylesStart)

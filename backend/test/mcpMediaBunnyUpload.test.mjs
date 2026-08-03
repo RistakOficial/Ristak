@@ -10,6 +10,7 @@ import express from 'express'
 import { databaseReady, db } from '../src/config/database.js'
 import {
   MCP_MEDIA_UPLOAD_TICKET_HEADER,
+  createMcpMediaArchivePreparation,
   createMcpBunnyUploadPreparation,
   authorizeMcpMediaUploadTicket,
   validateMcpMediaUploadFile
@@ -81,6 +82,8 @@ test('el pase firmado ata usuario, metadatos, destino y bytes sin incluir el arc
   assert.equal(prepared.expected.mimeType, 'text/plain')
   assert.equal(prepared.expected.sizeBytes, fixture.bytes.length)
   assert.equal(prepared.expected.sha256, sha256)
+  assert.equal(prepared.operation, 'create')
+  assert.equal(prepared.assetId, null)
   assert.ok(prepared.headers['X-Ristak-Media-Upload-Ticket'])
   assert.equal(JSON.stringify(prepared).includes(fixture.bytes.toString('base64')), false)
 
@@ -102,6 +105,8 @@ test('el pase firmado ata usuario, metadatos, destino y bytes sin incluir el arc
   assert.equal(req.query.module, 'media')
   assert.equal(req.mcpMediaUpload.folderPath, 'Documentos/Pruebas')
   assert.equal(req.mcpMediaUpload.isPublic, false)
+  assert.equal(req.mcpMediaUpload.operation, 'create')
+  assert.equal(req.mcpMediaUpload.assetId, null)
 
   const validated = await validateMcpMediaUploadFile(req.mcpMediaUpload, {
     path: fixture.filePath,
@@ -157,6 +162,19 @@ test('rechaza pases inválidos y archivos cuyo tamaño, MIME o checksum no coinc
   await assert.rejects(
     () => validateMcpMediaUploadFile({ ...base, sha256: 'b'.repeat(64) }, file),
     error => error?.code === 'mcp_upload_checksum_mismatch'
+  )
+  assert.throws(
+    () => createMcpBunnyUploadPreparation({
+      origin: 'https://ristak.example.test',
+      userId: fixture.userId,
+      idempotencyKey: 'mcp-replace-invalid-001',
+      filename: 'archivo.txt',
+      mimeType: 'text/plain',
+      sizeBytes: fixture.bytes.length,
+      sha256: base.sha256,
+      operation: 'replace'
+    }),
+    error => error?.code === 'invalid_mcp_media_upload'
   )
 })
 
@@ -215,7 +233,8 @@ test('el endpoint transmite el multipart validado al flujo canónico y Bunny rec
   resetCentralStorageConfigCache()
 
   let assetId = ''
-  let clientUploadId = ''
+  const clientUploadIds = []
+  const createdAssetIds = []
   try {
     const sha256 = createHash('sha256').update(fixture.bytes).digest('hex')
     const prepared = createMcpBunnyUploadPreparation({
@@ -231,7 +250,7 @@ test('el endpoint transmite el multipart validado al flujo canónico y Bunny rec
       folderPath: 'MCP/Pruebas',
       isPublic: true
     })
-    clientUploadId = prepared.uploadId
+    clientUploadIds.push(prepared.uploadId)
     const form = new FormData()
     form.append('file', new Blob([fixture.bytes], { type: 'text/plain' }), 'nombre-multipart-ignorado.txt')
     const response = await fetch(prepared.uploadUrl, {
@@ -248,6 +267,7 @@ test('el endpoint transmite el multipart validado al flujo canónico y Bunny rec
     assert.equal(payload.data.folderPath, 'MCP/Pruebas')
     assert.equal(payload.data.module, 'media')
     assetId = payload.data.id
+    createdAssetIds.push(assetId)
 
     const uploaded = bunnyRequests.find(entry => entry.method === 'PUT' && entry.body.equals(fixture.bytes))
     assert.ok(uploaded, 'Bunny no recibió los bytes exactos del archivo')
@@ -263,14 +283,67 @@ test('el endpoint transmite el multipart validado al flujo canónico y Bunny rec
       folder_path: 'MCP/Pruebas',
       module: 'media'
     })
+
+    const archive = createMcpMediaArchivePreparation({
+      origin: appOrigin,
+      businessId: 'default',
+      userId: fixture.userId,
+      assetIds: [assetId],
+      filename: 'mcp-e2e.zip'
+    })
+    assert.equal(archive.method, 'GET')
+    assert.equal(archive.itemCount, 1)
+    const archiveResponse = await fetch(archive.downloadUrl)
+    const archiveBytes = Buffer.from(await archiveResponse.arrayBuffer())
+    assert.equal(archiveResponse.status, 200)
+    assert.match(archiveResponse.headers.get('content-type') || '', /application\/zip/)
+    assert.deepEqual([...archiveBytes.subarray(0, 2)], [0x50, 0x4b])
+
+    const replacementBytes = Buffer.from('contenido MCP de reemplazo íntegro\n', 'utf8')
+    const replacement = createMcpBunnyUploadPreparation({
+      origin: appOrigin,
+      businessId: 'default',
+      userId: fixture.userId,
+      clientId: 'codex-e2e',
+      idempotencyKey: 'mcp-bunny-replace-e2e-001',
+      filename: 'archivo-reemplazado.txt',
+      mimeType: 'text/plain',
+      sizeBytes: replacementBytes.length,
+      sha256: createHash('sha256').update(replacementBytes).digest('hex'),
+      operation: 'replace',
+      assetId
+    })
+    clientUploadIds.push(replacement.uploadId)
+    assert.equal(replacement.operation, 'replace')
+    assert.equal(replacement.assetId, assetId)
+
+    const replacementForm = new FormData()
+    replacementForm.append('file', new Blob([replacementBytes], { type: 'text/plain' }), 'ignorado.txt')
+    const replacementResponse = await fetch(replacement.uploadUrl, {
+      method: replacement.method,
+      headers: replacement.headers,
+      body: replacementForm
+    })
+    const replacementPayload = await replacementResponse.json()
+    assert.equal(replacementResponse.status, 200, JSON.stringify(replacementPayload))
+    assert.equal(replacementPayload.success, true)
+    assert.equal(replacementPayload.data.previousId, assetId)
+    assert.equal(replacementPayload.data.asset.originalFilename, 'archivo-reemplazado.txt')
+    createdAssetIds.push(replacementPayload.data.asset.id)
+    assert.ok(
+      bunnyRequests.some(entry => entry.method === 'PUT' && entry.body.equals(replacementBytes)),
+      'Bunny no recibió los bytes exactos del reemplazo'
+    )
   } finally {
-    if (clientUploadId) {
+    for (const clientUploadId of clientUploadIds) {
       await db.run(
         'DELETE FROM media_upload_requests WHERE business_id = ? AND client_upload_id = ?',
         ['default', clientUploadId]
       ).catch(() => undefined)
     }
-    if (assetId) await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+    for (const createdAssetId of createdAssetIds) {
+      await db.run('DELETE FROM media_assets WHERE id = ?', [createdAssetId]).catch(() => undefined)
+    }
     appServer.closeAllConnections?.()
     bunnyServer.closeAllConnections?.()
     await Promise.all([

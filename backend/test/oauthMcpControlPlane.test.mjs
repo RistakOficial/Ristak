@@ -124,6 +124,11 @@ before(async () => {
     'utf8'
   )
   await db.exec(migration)
+  const confirmationMigration = await readFile(
+    new URL('../migrations/versioned/151_mcp_action_confirmations.sqlite.sql', import.meta.url),
+    'utf8'
+  )
+  await db.exec(confirmationMigration)
 
   const username = `oauth_mcp_${crypto.randomUUID()}@example.test`
   const inserted = await db.run(
@@ -178,6 +183,7 @@ after(async () => {
     await new Promise(resolve => fixture.server.close(resolve))
   }
   if (fixture.userId) {
+    await db.run('DELETE FROM mcp_action_confirmations WHERE user_id = ?', [fixture.userId]).catch(() => undefined)
     await db.run('DELETE FROM mcp_audit_log WHERE actor_user_id = ?', [fixture.userId]).catch(() => undefined)
     await db.run('DELETE FROM mcp_idempotency_keys WHERE user_id = ?', [fixture.userId]).catch(() => undefined)
     await db.run('DELETE FROM oauth_authorization_codes WHERE user_id = ?', [fixture.userId]).catch(() => undefined)
@@ -637,10 +643,12 @@ test('authorize nunca redirige hacia una URL no registrada', async () => {
   assert.match(response.text, /dirección de regreso no está registrada/i)
 })
 
-test('migraciones MCP crean grants, idempotencia y auditoría en ambos dialectos', async () => {
-  const [sqliteSql, postgresSql] = await Promise.all([
+test('migraciones MCP crean grants, idempotencia, auditoría y aprobaciones en ambos dialectos', async () => {
+  const [sqliteSql, postgresSql, confirmationSqliteSql, confirmationPostgresSql] = await Promise.all([
     readFile(new URL('../migrations/versioned/129_mcp_oauth_control_plane.sqlite.sql', import.meta.url), 'utf8'),
-    readFile(new URL('../migrations/versioned/129a_mcp_oauth_control_plane.postgres.sql', import.meta.url), 'utf8')
+    readFile(new URL('../migrations/versioned/129a_mcp_oauth_control_plane.postgres.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../migrations/versioned/151_mcp_action_confirmations.sqlite.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../migrations/versioned/151a_mcp_action_confirmations.postgres.sql', import.meta.url), 'utf8')
   ])
 
   for (const source of [sqliteSql, postgresSql]) {
@@ -652,14 +660,22 @@ test('migraciones MCP crean grants, idempotencia y auditoría en ambos dialectos
     assert.match(source, /result_summary_json/i)
     assert.match(source, /expires_at/i)
   }
+  for (const source of [confirmationSqliteSql, confirmationPostgresSql]) {
+    assert.match(source, /CREATE TABLE(?: IF NOT EXISTS)? mcp_action_confirmations/i)
+    assert.match(source, /arguments_hash/i)
+    assert.match(source, /execution_key_hash/i)
+    assert.match(source, /approved/i)
+    assert.match(source, /consumed/i)
+  }
 
   const tables = await db.all(`
     SELECT name FROM sqlite_master
     WHERE type = 'table'
-      AND name IN ('oauth_grants', 'mcp_idempotency_keys', 'mcp_audit_log')
+      AND name IN ('oauth_grants', 'mcp_idempotency_keys', 'mcp_audit_log', 'mcp_action_confirmations')
     ORDER BY name
   `)
   assert.deepEqual(tables.map(row => row.name), [
+    'mcp_action_confirmations',
     'mcp_audit_log',
     'mcp_idempotency_keys',
     'oauth_grants'

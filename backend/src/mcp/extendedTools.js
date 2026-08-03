@@ -50,6 +50,12 @@ const CONFIRM = {
   type: 'boolean',
   description: 'Debe ser true después de confirmar esta acción con la persona usuaria.'
 }
+const APPROVAL_TICKET = {
+  type: 'string',
+  minLength: 32,
+  maxLength: 4096,
+  description: 'Pase firmado y de un solo uso emitido por mcp_prepare_action_confirmation.'
+}
 const SCOPE = { type: 'string', enum: ['all', 'attribution', 'campaigns', 'attributed'] }
 const GROUP_BY = { type: 'string', enum: ['day', 'week', 'month', 'year'] }
 const ANALYTICS_GROUP_BY = { type: 'string', enum: ['day', 'month', 'year'] }
@@ -70,6 +76,7 @@ const GENERIC_PAYLOAD = {
 
 const MUTATION_CONTROLS = {
   confirm: CONFIRM,
+  approvalTicket: APPROVAL_TICKET,
   idempotencyKey: IDEMPOTENCY_KEY
 }
 
@@ -89,13 +96,14 @@ function mutationSchema(inputSchema = schema()) {
       ...(inputSchema.properties || {}),
       ...MUTATION_CONTROLS
     },
-    required: [...new Set([...(inputSchema.required || []), 'confirm', 'idempotencyKey'])]
+    required: [...new Set([...(inputSchema.required || []), 'confirm', 'approvalTicket', 'idempotencyKey'])]
   }
 }
 
 function cleanControls(value = {}) {
   const cleaned = { ...value }
   delete cleaned.confirm
+  delete cleaned.approvalTicket
   delete cleaned.idempotencyKey
   return cleaned
 }
@@ -1112,7 +1120,10 @@ const campaignsTools = [
     params: (args) => ({ draftId: args.draftId }),
     mapResponse: stripSensitiveResponse
   })
-]
+].map(entry => Object.freeze({
+  ...entry,
+  connectionPrerequisites: ['meta_ads']
+}))
 
 const mediaSelectionProperties = {
   assetIds: { type: 'array', maxItems: 250, items: ID },
@@ -1474,6 +1485,7 @@ const commerceTools = [
     scope: 'ristak.execute',
     risk: 'critical',
     openWorld: true,
+    connectionPrerequisites: ['highlevel'],
     handler: highlevelController.syncProducts,
     mapResponse: stripSensitiveResponse
   }),

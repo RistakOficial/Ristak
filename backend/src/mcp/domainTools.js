@@ -22,6 +22,12 @@ const CONFIRM = {
   type: 'boolean',
   description: 'Debe ser true después de confirmar la acción con la persona usuaria.'
 }
+const APPROVAL_TICKET = {
+  type: 'string',
+  minLength: 32,
+  maxLength: 4096,
+  description: 'Pase firmado y de un solo uso emitido por mcp_prepare_action_confirmation.'
+}
 
 function schema(properties = {}, required = []) {
   return { type: 'object', properties, required, additionalProperties: false }
@@ -29,18 +35,19 @@ function schema(properties = {}, required = []) {
 
 function controls({ confirm = false, idempotency = false } = {}) {
   return {
-    ...(confirm ? { confirm: CONFIRM } : {}),
+    ...(confirm ? { confirm: CONFIRM, approvalTicket: APPROVAL_TICKET } : {}),
     ...(idempotency ? { idempotencyKey: IDEMPOTENCY_KEY } : {})
   }
 }
 
 function requiredWith(required = [], { confirm = false, idempotency = false } = {}) {
-  return [...required, ...(confirm ? ['confirm'] : []), ...(idempotency ? ['idempotencyKey'] : [])]
+  return [...required, ...(confirm ? ['confirm', 'approvalTicket'] : []), ...(idempotency ? ['idempotencyKey'] : [])]
 }
 
 function cleanRequestObject(source = {}) {
   const result = { ...source }
   delete result.confirm
+  delete result.approvalTicket
   delete result.idempotencyKey
   return result
 }
@@ -303,6 +310,7 @@ const chatTools = [
     description: 'Envía un mensaje de WhatsApp usando el proveedor configurado y registra la toma humana de la conversación.',
     module: 'chat', access: 'write', scope: 'ristak.execute', risk: 'high',
     featureKeys: ['whatsapp'],
+    connectionPrerequisites: ['whatsapp'],
     handler: whatsappController.sendWhatsAppApiTextMessageView, method: 'POST',
     confirmRequired: true, idempotencyRequired: true,
     inputSchema: schema({
@@ -318,6 +326,7 @@ const chatTools = [
     description: 'Responde por Messenger o Instagram en una conversación enlazada.',
     module: 'chat', access: 'write', scope: 'ristak.execute', risk: 'high',
     featureKeys: ['meta_ads'],
+    connectionPrerequisites: ['meta_social'],
     handler: whatsappController.sendMetaSocialTextMessageView, method: 'POST',
     confirmRequired: true, idempotencyRequired: true,
     inputSchema: schema({
@@ -332,6 +341,7 @@ const chatTools = [
     description: 'Envía un correo al contacto con la cuenta de email conectada en Ristak.',
     module: 'chat', access: 'write', scope: 'ristak.execute', risk: 'high',
     featureKeys: ['email'],
+    connectionPrerequisites: ['email'],
     handler: emailController.sendEmailView, method: 'POST',
     confirmRequired: true, idempotencyRequired: true,
     inputSchema: schema({
@@ -346,6 +356,7 @@ const chatTools = [
     description: 'Envía un mensaje por un canal de conversación administrado por HighLevel.',
     module: 'chat', access: 'write', scope: 'ristak.execute', risk: 'high',
     featureKeys: ['highlevel_integration'],
+    connectionPrerequisites: ['highlevel'],
     handler: highLevelController.sendConversationMessage, method: 'POST',
     confirmRequired: true, idempotencyRequired: true,
     inputSchema: schema({

@@ -123,7 +123,7 @@ Installer/admin panel endpoints (sólo instalaciones gestionadas con token inter
 
 The installer must send `Authorization: Bearer <INTERNAL_INSTALLER_TOKEN>` or `x-internal-installer-token`.
 
-## MCP local-file uploads
+## MCP local-file uploads, replacements and archives
 
 The `media_prepare_bunny_upload` tool prepares a short-lived capability for a
 specific local file. Its arguments are `filename`, `mimeType`, `sizeBytes`,
@@ -160,6 +160,20 @@ automations and other product surfaces can select them through their existing
 Media bindings. This flow is for uploading a new computer file, not for importing
 ZIP files as Sites and not for bypassing the dedicated resumable Sites video
 editor flow.
+
+`media_prepare_bunny_replace` prepares the same multipart contract for one
+existing asset. Its signed pass additionally contains `operation=replace` and
+the exact `assetId`; the public upload route restores those values from the pass
+and calls the normal replacement controller after validating user, active OAuth
+grant, plan, size, MIME and SHA-256. The caller cannot turn a replacement pass
+into a new upload or switch the target asset.
+
+`media_prepare_archive_download` prepares a signed temporary GET URL for at most
+50 selected asset IDs. `/api/media/mcp-archive/:ticket` re-checks the issuing
+user, OAuth grant/client, Developers access, Media access and license before the
+canonical ZIP service streams the archive. The URL expires after 10 minutes,
+uses `no-store` and must be treated as a temporary bearer link. Bunny credentials
+and original asset URLs are never returned as provider secrets.
 
 ## Resumable Sites video uploads
 

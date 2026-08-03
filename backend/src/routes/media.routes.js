@@ -8,6 +8,7 @@ import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import { hasUserAccess } from '../utils/userAccess.js'
 import {
   MEDIA_MAX_UPLOAD_BYTES,
+  authorizeMcpMediaArchiveTicket,
   authorizeMcpMediaUploadTicket,
   cancelResumableVideoUploadHandler,
   createMediaFolderHandler,
@@ -25,6 +26,7 @@ import {
   moveMediaSelectionHandler,
   finalizeResumableVideoUploadHandler,
   prepareResumableVideoUploadHandler,
+  prepareMcpMediaArchiveHandler,
   queueMediaAssetStreamHandler,
   renameMediaAssetHandler,
   renameMediaFolderHandler,
@@ -198,6 +200,15 @@ router.post(
   requireMediaAccess,
   uploadMcpSingleFile,
   uploadMcpBunnyMediaHandler
+)
+router.get(
+  '/mcp-archive/:ticket',
+  authorizeMcpMediaArchiveTicket,
+  requireDevelopersLicense,
+  requireMcpUploadDevelopersAccess,
+  requireMediaLicense,
+  requireMediaAccess,
+  downloadMediaAssetsArchiveHandler
 )
 
 router.use(requireAuth)

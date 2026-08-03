@@ -76,6 +76,13 @@ const CONFIRM_SCHEMA = {
   description: 'Debe ser true después de confirmar esta acción con la persona usuaria.'
 }
 
+const APPROVAL_TICKET_SCHEMA = {
+  type: 'string',
+  minLength: 32,
+  maxLength: 4096,
+  description: 'Pase firmado y de un solo uso emitido por mcp_prepare_action_confirmation.'
+}
+
 const STRUCTURED_OBJECT_SCHEMA = {
   type: 'object',
   maxProperties: 200,
@@ -305,12 +312,12 @@ function makeInputSchema(properties, required = []) {
 function writeControls({ confirmRequired = false } = {}) {
   return {
     idempotencyKey: IDEMPOTENCY_KEY_SCHEMA,
-    ...(confirmRequired ? { confirm: CONFIRM_SCHEMA } : {})
+    ...(confirmRequired ? { confirm: CONFIRM_SCHEMA, approvalTicket: APPROVAL_TICKET_SCHEMA } : {})
   }
 }
 
 function writeRequirements(required = [], { confirmRequired = false } = {}) {
-  return [...required, 'idempotencyKey', ...(confirmRequired ? ['confirm'] : [])]
+  return [...required, 'idempotencyKey', ...(confirmRequired ? ['confirm', 'approvalTicket'] : [])]
 }
 
 function spec(definition) {

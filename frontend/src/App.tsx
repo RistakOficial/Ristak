@@ -84,6 +84,7 @@ import { calendarsService } from '@/services/calendarsService'
 import { flushCalendarAppointmentOutbox } from '@/services/calendarOfflineStore'
 
 const LazyOAuthAuthorize = React.lazy(() => import('@/pages/OAuth/OAuthAuthorize'))
+const LazyMcpActionConfirmation = React.lazy(() => import('@/pages/Mcp/McpActionConfirmation'))
 
 type RouteLocationState = {
   from?: RedirectLocation
@@ -821,6 +822,7 @@ const AppWithNotifications: React.FC = () => {
           <Route path="/login" element={<LazyLogin />} />
           <Route path="/reset-password" element={<LazyResetPassword />} />
           <Route path="/oauth/authorize" element={<ProtectedRoute><LazyOAuthAuthorize /></ProtectedRoute>} />
+          <Route path="/mcp/actions/confirm" element={<ProtectedRoute><LazyMcpActionConfirmation /></ProtectedRoute>} />
           <Route path="/pay/success" element={<LazyPublicPaymentGatewayReturn />} />
           <Route path="/pay/:publicPaymentId" element={<LazyPublicPayment />} />
           <Route path={PHONE_APP_TENANT_PATH} element={<LazyMobileTenantSetup />} />
