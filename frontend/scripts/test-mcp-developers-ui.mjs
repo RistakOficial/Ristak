@@ -84,6 +84,9 @@ const mcpStyles = settingsStyles.slice(mcpStylesStart, mcpStylesEnd)
 assert.ok(mcpStyles.length > 0, 'Debe existir el bloque visual MCP')
 assert.doesNotMatch(mcpStyles, /#[0-9a-f]{3,8}\b/i)
 assert.doesNotMatch(mcpStyles, /rgba?\(/i)
+const mcpStatusBadgeRule = settingsStyles.match(/\.mcpStatusItem:first-child \[data-badge\]\s*\{([^}]*)\}/)?.[1] || ''
+assert.match(mcpStatusBadgeRule, /justify-self:\s*start/, 'La etiqueta de estado MCP debe conservar su ancho natural')
+assert.doesNotMatch(mcpStatusBadgeRule, /width:\s*100%/, 'La etiqueta de estado MCP no debe ocupar toda la celda')
 assert.doesNotMatch(`${settingsSource}\n${mcpPanelSource}`, /<input[^>]+type=["']number["']/i)
 
 console.log('MCP Developers UI contract: OK')

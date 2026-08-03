@@ -936,8 +936,7 @@ body.dark .select:focus {
 }
 
 .mcpStatusItem:first-child [data-badge] {
-  justify-content: center;
-  width: 100%;
+  justify-self: start;
 }
 
 .mcpStatusMessage {
