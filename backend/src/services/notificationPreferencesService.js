@@ -17,6 +17,8 @@ const EVENT_ALIASES = {
   appointment_confirmation: 'appointment_confirmed',
   appointment_reminder: 'appointment_reminders',
   appointment_reminders: 'appointment_reminders',
+  appointment_joined: 'appointment_joined',
+  appointment_link_clicked: 'appointment_joined',
   calendar: 'appointments',
   payment: 'payments',
   payments: 'payments',
@@ -28,6 +30,7 @@ const EVENT_ALIASES = {
 }
 
 const PUSH_CHANNELS = new Set(['push', 'app_push', 'all'])
+const BELL_CHANNELS = new Set(['app', 'app_push', 'app_email', 'app_whatsapp', 'all'])
 const EVENT_FALLBACK_KEYS = {
   appointment_booked: ['appointments'],
   appointment_confirmed: ['appointments'],
@@ -69,6 +72,26 @@ function rowHasPushChannel(row = {}, eventKey = '') {
   const fallbackKeys = EVENT_FALLBACK_KEYS[eventKey] || []
   return fallbackKeys.some((fallbackKey) => (
     hasOwnPreference(row, fallbackKey) && PUSH_CHANNELS.has(normalizeChannel(row[fallbackKey]))
+  ))
+}
+
+function rowHasChannel(row = {}, eventKey = '', allowedChannels = new Set()) {
+  if (hasOwnPreference(row, eventKey)) {
+    return allowedChannels.has(normalizeChannel(row[eventKey]))
+  }
+  const fallbackKeys = EVENT_FALLBACK_KEYS[eventKey] || []
+  return fallbackKeys.some((fallbackKey) => (
+    hasOwnPreference(row, fallbackKey) && allowedChannels.has(normalizeChannel(row[fallbackKey]))
+  ))
+}
+
+function configHasEventPreference(config = {}, eventKey = '') {
+  const fallbackKeys = EVENT_FALLBACK_KEYS[eventKey] || []
+  return Object.values(config.rows || {}).some((row) => (
+    row && typeof row === 'object' && (
+      hasOwnPreference(row, eventKey) ||
+      fallbackKeys.some((fallbackKey) => hasOwnPreference(row, fallbackKey))
+    )
   ))
 }
 
@@ -114,6 +137,9 @@ export async function resolvePushNotificationTargetForEvent(eventKey = '') {
   if (!config) {
     return { configured: false, userIds: null }
   }
+  if (!configHasEventPreference(config, normalizedEventKey)) {
+    return { configured: false, userIds: null }
+  }
 
   const enabledRowKeys = Object.entries(config.rows)
     .filter(([, row]) => row && typeof row === 'object' && rowHasPushChannel(row, normalizedEventKey))
@@ -139,6 +165,37 @@ export async function resolvePushNotificationTargetForEvent(eventKey = '') {
     configured: true,
     userIds: uniqueValues([...adminUserIds, ...explicitUserIds])
   }
+}
+
+async function resolveNotificationTargetForChannels(eventKey = '', allowedChannels = new Set()) {
+  const normalizedEventKey = normalizeEventKey(eventKey)
+  if (!normalizedEventKey) return { configured: false, userIds: null }
+  const config = await getNotificationPreferencesConfig()
+  if (!config) return { configured: false, userIds: null }
+  if (!configHasEventPreference(config, normalizedEventKey)) {
+    return { configured: false, userIds: null }
+  }
+
+  const enabledRowKeys = Object.entries(config.rows)
+    .filter(([, row]) => row && typeof row === 'object' && rowHasChannel(row, normalizedEventKey, allowedChannels))
+    .map(([rowKey]) => String(rowKey || '').trim())
+    .filter(Boolean)
+  if (enabledRowKeys.length === 0) return { configured: true, userIds: [] }
+  if (enabledRowKeys.includes('all')) return { configured: true, userIds: null }
+
+  const [adminUserIds, explicitUserIds] = await Promise.all([
+    enabledRowKeys.includes('admins') ? getActiveUserIds("AND role = 'admin'") : Promise.resolve([]),
+    resolveExplicitUserIds(enabledRowKeys)
+  ])
+  return { configured: true, userIds: uniqueValues([...adminUserIds, ...explicitUserIds]) }
+}
+
+export async function resolveNotificationDeliveryTargetsForEvent(eventKey = '') {
+  const [bell, push] = await Promise.all([
+    resolveNotificationTargetForChannels(eventKey, BELL_CHANNELS),
+    resolveNotificationTargetForChannels(eventKey, PUSH_CHANNELS)
+  ])
+  return { configured: bell.configured || push.configured, bell, push }
 }
 
 // (MOB-002 / NOTI-004) Determina si un contacto coincide con algún filtro de "contactos ocultos".

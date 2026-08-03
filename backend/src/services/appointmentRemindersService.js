@@ -16,6 +16,7 @@ import {
   buildDefaultMessageTemplateFallbackText,
   buildDefaultMessageTemplateSendComponents,
   ensureDefaultAppointmentMessageTemplates,
+  ensureOnlineMeetingMessageTemplate,
   getMessageTemplateProviderState
 } from './messageTemplatesService.js'
 import {
@@ -73,6 +74,8 @@ const SEEDED_CONFIG_KEY = 'appointment_reminders_seeded'
 const DEFAULT_BOOKING_NOTICE_SYSTEM_KEY = 'default_on_booking'
 const DEFAULT_ONE_HOUR_REMINDER_SYSTEM_KEY = 'default_one_hour_before'
 const DEFAULT_CONFIRMATION_SYSTEM_KEY = 'default_one_day_before'
+const ONLINE_MEETING_REMINDER_SYSTEM_KEY = 'online_meeting_join_link_10m'
+const ONLINE_MEETING_TEMPLATE_NAME = 'recordatorio_cita_en_linea_10_minutos'
 const REMINDER_SCHEDULE_CONFLICT_CODE = 'appointment_reminder_schedule_conflict'
 
 // Si un envío quedó pendiente demasiado tiempo (p.ej. cita creada después de
@@ -1473,6 +1476,59 @@ export async function ensureDefaultAppointmentReminder() {
   await setAppConfig(SEEDED_CONFIG_KEY, '1')
 }
 
+export async function syncOnlineMeetingAppointmentReminder(calendarId, { enabled = true } = {}) {
+  const resolvedCalendarId = await resolveAppointmentReminderCalendarId(calendarId, { fallbackToDefault: false })
+  const existing = await db.get(
+    'SELECT * FROM appointment_reminders WHERE calendar_id = ? AND system_key = ? LIMIT 1',
+    [resolvedCalendarId, ONLINE_MEETING_REMINDER_SYSTEM_KEY]
+  )
+
+  if (!enabled) {
+    if (existing?.id) {
+      await db.run(
+        'UPDATE appointment_reminders SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [existing.id]
+      )
+    }
+    return existing ? normalizeReminderRow(existing) : null
+  }
+
+  const template = await ensureOnlineMeetingMessageTemplate()
+  if (!template?.id) throw createServiceError('No se pudo preparar la plantilla para citas en línea.', 500)
+
+  const input = {
+    calendarId: resolvedCalendarId,
+    name: 'Enlace de videollamada · 10 minutos antes',
+    enabled: true,
+    messageType: 'reminder',
+    aiEnabled: false,
+    channel: 'whatsapp',
+    senderMode: 'contact',
+    templateId: template.id,
+    templateName: template.name,
+    templateLanguage: template.language,
+    contentMode: 'template',
+    timingAnchor: 'before_appointment',
+    offsetValue: 10,
+    offsetUnit: 'minutes',
+    smartEnabled: false,
+    bypassAutomations: false
+  }
+
+  if (existing?.id) {
+    return updateAppointmentReminder(existing.id, input)
+  }
+
+  const inserted = await insertAppointmentReminder(input, {
+    systemKey: ONLINE_MEETING_REMINDER_SYSTEM_KEY,
+    ignoreConflict: true
+  })
+  if (inserted.reminder) return inserted.reminder
+
+  logger.warn(`[Citas] El calendario ${resolvedCalendarId} ya tiene otro mensaje automático 10 minutos antes; no se reemplazó la configuración del usuario.`)
+  return null
+}
+
 async function resolveSenderPhone(reminder, contact) {
   const findById = async (id) => {
     if (!id) return null
@@ -1563,7 +1619,7 @@ function buildReminderTemplateComponents(template, context) {
   return components
 }
 
-function buildReminderTemplateVariableOptions(appointment, timezone) {
+async function buildReminderTemplateVariableOptions(appointment, timezone) {
   const context = { contact: appointment, appointment, timezone }
   const appointmentVariableKeys = [
     'cita.titulo',
@@ -1577,6 +1633,15 @@ function buildReminderTemplateVariableOptions(appointment, timezone) {
       renderMessageText(`{{${key}}}`, context)
     ])
   )
+  extraVariables['cita.enlace_ingreso'] = ''
+  if (appointment.meeting_trigger_link_public_id) {
+    const { buildAppointmentMeetingJoinUrl } = await import('./calendarMeetingService.js')
+    extraVariables['cita.enlace_ingreso'] = await buildAppointmentMeetingJoinUrl({
+      appointment,
+      contactId: appointment.contact_id,
+      triggerLinkPublicId: appointment.meeting_trigger_link_public_id
+    })
+  }
 
   return {
     contactId: cleanString(appointment.contact_id),
@@ -1809,7 +1874,7 @@ function getReminderChannelLabel(reminder = {}) {
 }
 
 async function getReminderPlainText(reminder, appointment, timezone) {
-  const variableOptions = buildReminderTemplateVariableOptions(appointment, timezone)
+  const variableOptions = await buildReminderTemplateVariableOptions(appointment, timezone)
   if (reminder.contentMode === 'template') {
     const template = await getPurposeCompatibleReminderTemplate(reminder)
     if (!template) throw new Error('Selecciona un mensaje para renderizar el texto de este recordatorio.')
@@ -2053,13 +2118,13 @@ async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone
         templateId: template.id,
         templateName: providerState.name,
         language: template.language,
-        variableOptions: buildReminderTemplateVariableOptions(appointment, timezone)
+        variableOptions: await buildReminderTemplateVariableOptions(appointment, timezone)
       })
   let renderedTextOverride = deliveryContract.adapted
     ? renderReminderTemplateText(deliveryContract.template, deliveryContext)
     : ''
   if (deliveryContract.adapted) {
-    const variableOptions = buildReminderTemplateVariableOptions(appointment, timezone)
+    const variableOptions = await buildReminderTemplateVariableOptions(appointment, timezone)
     ;[components, renderedTextOverride] = await Promise.all([
       renderTemplateVariablesInValue(components, variableOptions),
       renderTemplateVariables(renderedTextOverride, variableOptions)
@@ -2513,9 +2578,15 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
 
   const appointments = await db.all(`
     SELECT a.id, a.calendar_id, a.title, a.start_time, a.date_added, a.source, a.booking_channel, a.appointment_status, a.status, a.contact_id,
-      c.phone, c.email, c.first_name, c.last_name, c.full_name, c.preferred_whatsapp_phone_number_id
+      c.phone, c.email, c.first_name, c.last_name, c.full_name, c.preferred_whatsapp_phone_number_id,
+      tl.public_id AS meeting_trigger_link_public_id
     FROM appointments a
     JOIN contacts c ON c.id = a.contact_id
+    LEFT JOIN trigger_links tl
+      ON tl.system_scope = 'calendar_meeting'
+      AND tl.owner_id = a.calendar_id
+      AND tl.active = 1
+      AND tl.archived = 0
     WHERE a.deleted_at IS NULL
       AND COALESCE(a.is_test, 0) = 0
       AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN ('cancelled', 'canceled', 'noshow', 'invalid')

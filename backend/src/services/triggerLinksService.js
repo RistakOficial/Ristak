@@ -109,6 +109,9 @@ function mapTriggerLink(row, { baseUrl = '' } = {}) {
     clickCount: Number(row.click_count || 0),
     lastClickedAt: row.last_clicked_at || null,
     createdByUserId: row.created_by_user_id || null,
+    systemManaged: Boolean(Number(row.system_managed || 0)) || Boolean(row.system_scope),
+    systemScope: row.system_scope || '',
+    ownerId: row.owner_id || '',
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null
   }
@@ -188,23 +191,91 @@ export async function listTriggerLinks({ includeArchived = false, baseUrl = '' }
   const rows = await db.all(`
     SELECT *
     FROM trigger_links
-    ${includeArchived ? '' : 'WHERE archived = 0'}
+    WHERE (system_scope IS NULL OR system_scope = '')
+      ${includeArchived ? '' : 'AND archived = 0'}
     ORDER BY archived ASC, updated_at DESC, created_at DESC
   `)
   return rows.map(row => mapTriggerLink(row, { baseUrl })).filter(Boolean)
 }
 
+export async function getSystemTriggerLink(systemScope, ownerId, { includeArchived = false } = {}) {
+  const scope = cleanString(systemScope, 80)
+  const owner = cleanString(ownerId, 180)
+  if (!scope || !owner) return null
+  const row = await db.get(`
+    SELECT *
+    FROM trigger_links
+    WHERE system_scope = ? AND owner_id = ?
+      ${includeArchived ? '' : 'AND archived = 0'}
+    LIMIT 1
+  `, [scope, owner])
+  return mapTriggerLink(row)
+}
+
+export async function upsertSystemTriggerLink({
+  systemScope,
+  ownerId,
+  name,
+  destinationUrl,
+  description = ''
+} = {}) {
+  const scope = cleanString(systemScope, 80)
+  const owner = cleanString(ownerId, 180)
+  const cleanName = cleanString(name, 160)
+  const normalizedDestination = normalizeTriggerLinkDestination(destinationUrl)
+  if (!scope || !owner || !cleanName) throw badRequest('No se pudo configurar el enlace interno del calendario.')
+
+  const existing = await getSystemTriggerLink(scope, owner, { includeArchived: true })
+  if (existing) {
+    await db.run(`
+      UPDATE trigger_links SET
+        name = ?, destination_url = ?, description = ?, active = 1, archived = 0,
+        system_managed = 1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [cleanName, normalizedDestination, cleanString(description, 800) || null, existing.id])
+    return getSystemTriggerLink(scope, owner)
+  }
+
+  const id = createRistakId('trigger_link')
+  const publicId = await createUniquePublicId()
+  await db.run(`
+    INSERT INTO trigger_links (
+      id, public_id, name, destination_url, description, active, archived,
+      click_count, created_by_user_id, system_managed, system_scope, owner_id,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 1, 0, 0, NULL, 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [id, publicId, cleanName, normalizedDestination, cleanString(description, 800) || null, scope, owner])
+  return getSystemTriggerLink(scope, owner)
+}
+
+export async function archiveSystemTriggerLink(systemScope, ownerId) {
+  const existing = await getSystemTriggerLink(systemScope, ownerId, { includeArchived: true })
+  if (!existing) return null
+  await db.run(`
+    UPDATE trigger_links
+    SET active = 0, archived = 1, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [existing.id])
+  return getSystemTriggerLink(systemScope, ownerId, { includeArchived: true })
+}
+
 export async function getTriggerLink(triggerLinkId, { baseUrl = '' } = {}) {
   const id = cleanString(triggerLinkId, 180)
   if (!id) return null
-  return mapTriggerLink(await db.get('SELECT * FROM trigger_links WHERE id = ?', [id]), { baseUrl })
+  return mapTriggerLink(await db.get(`
+    SELECT * FROM trigger_links
+    WHERE id = ? AND (system_scope IS NULL OR system_scope = '')
+  `, [id]), { baseUrl })
 }
 
 export async function getTriggerLinkByPublicId(publicId, { baseUrl = '' } = {}) {
   const id = normalizePublicId(publicId)
   if (!id) return null
   return mapTriggerLink(
-    await db.get('SELECT * FROM trigger_links WHERE public_id = ? AND archived = 0', [id]),
+    await db.get(`
+      SELECT * FROM trigger_links
+      WHERE public_id = ? AND archived = 0 AND (system_scope IS NULL OR system_scope = '')
+    `, [id]),
     { baseUrl }
   )
 }
@@ -295,6 +366,7 @@ export async function listTriggerLinkEvents(triggerLinkId, { limit = 50 } = {}) 
 
 export async function recordTriggerLinkClick(publicId, req = {}, {
   contactId: trustedContactId = '',
+  appointmentId: trustedAppointmentId = '',
   triggerLinkUrl = ''
 } = {}) {
   const normalizedPublicId = normalizePublicId(publicId)
@@ -315,6 +387,7 @@ export async function recordTriggerLinkClick(publicId, req = {}, {
         throw notFound('Enlace de disparo no encontrado.')
       }
       resolvedContactId = recipient.contactId
+      trustedAppointmentId = recipient.appointmentId || ''
       resolvedTriggerLinkUrl = `/trigger-links/${normalizedPublicId}`
     }
   }
@@ -324,6 +397,9 @@ export async function recordTriggerLinkClick(publicId, req = {}, {
     [normalizedPublicId]
   )
   if (!row) throw notFound('Enlace de disparo no encontrado.')
+  if (row.system_scope === 'calendar_meeting' && (!trustedAppointmentId || !resolvedContactId)) {
+    throw notFound('Enlace de disparo no encontrado.')
+  }
 
   const contactId = resolvedContactId
   const contact = contactId
@@ -396,6 +472,19 @@ export async function recordTriggerLinkClick(publicId, req = {}, {
   handleAutomationEvent('trigger-link-clicked', automationPayload).catch(error => {
     logger.warn(`No se pudo disparar automatización de enlace ${row.public_id}: ${error.message}`)
   })
+  if (row.system_scope === 'calendar_meeting' && trustedAppointmentId && contact?.id) {
+    try {
+      const { handleCalendarMeetingLinkClick } = await import('./calendarMeetingService.js')
+      await handleCalendarMeetingLinkClick({
+        appointmentId: trustedAppointmentId,
+        contactId: contact.id,
+        calendarId: row.owner_id,
+        triggerLinkEventId: eventId
+      })
+    } catch (error) {
+      logger.warn(`No se pudo registrar asistencia desde enlace ${row.public_id}: ${error.message}`)
+    }
+  }
   return {
     link: mapTriggerLink({ ...row, click_count: Number(row.click_count || 0) + 1, last_clicked_at: event?.created_at }),
     event: mapTriggerLinkEvent(event),
@@ -412,6 +501,7 @@ export async function recordTriggerLinkRecipientClick(recipientToken, req = {}) 
   }
   return recordTriggerLinkClick(recipient.publicId, req, {
     contactId: recipient.contactId,
+    appointmentId: recipient.appointmentId,
     triggerLinkUrl: `/${cleanString(recipientToken, 4096)}`
   })
 }

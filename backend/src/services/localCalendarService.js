@@ -921,6 +921,26 @@ function getCalendarRawJsonWithBookingForm(calendar = {}, options = {}) {
       baseRaw.timeZone,
       baseRaw.time_zone
     )),
+    meeting: {
+      mode: cleanString(firstDefined(
+        calendar.meetingMode,
+        calendar.meeting_mode,
+        calendar.meeting?.mode,
+        baseRaw.meeting?.mode,
+        baseRaw.meetingMode,
+        baseRaw.meeting_mode,
+        'in_person'
+      )).toLowerCase() === 'online' ? 'online' : 'in_person',
+      url: cleanString(firstDefined(
+        calendar.meetingUrl,
+        calendar.meeting_url,
+        calendar.meeting?.url,
+        baseRaw.meeting?.url,
+        baseRaw.meetingUrl,
+        baseRaw.meeting_url,
+        ''
+      ))
+    },
     bookingForm: normalizeCalendarBookingFormConfig(
       calendar.bookingForm ||
       calendar.booking_form ||
@@ -1557,6 +1577,10 @@ function calendarRowToApi(row = {}) {
     googleCalendarSummary: rawJson?.googleCalendarSummary || rawJson?.google_calendar_summary || rawJson?.summary || '',
     googleCalendarTimeZone: rawJson?.googleCalendarTimeZone || rawJson?.google_calendar_time_zone || rawJson?.timeZone || rawJson?.time_zone || '',
     googleSyncEnabled: Boolean(rawJson?.googleCalendarId || rawJson?.google_calendar_id),
+    meetingMode: cleanString(rawJson?.meeting?.mode || rawJson?.meetingMode || rawJson?.meeting_mode).toLowerCase() === 'online'
+      ? 'online'
+      : 'in_person',
+    meetingUrl: cleanString(rawJson?.meeting?.url || rawJson?.meetingUrl || rawJson?.meeting_url),
     locationId: row.location_id || '',
     groupId: row.group_id || undefined,
     name: row.name || 'Calendario',
@@ -4647,6 +4671,11 @@ export async function deleteLocalCalendar(calendarId) {
   `, [existing.id, existing.id])
 
   await db.transaction(async () => {
+    await db.run(`
+      DELETE FROM appointment_reminder_sends
+      WHERE reminder_id IN (SELECT id FROM appointment_reminders WHERE calendar_id = ?)
+    `, [existing.id])
+    await db.run('DELETE FROM appointment_reminders WHERE calendar_id = ?', [existing.id])
     await db.run(`
       DELETE FROM appointment_participants
       WHERE appointment_id IN (SELECT id FROM appointments WHERE calendar_id = ?)

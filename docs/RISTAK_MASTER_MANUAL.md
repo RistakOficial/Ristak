@@ -2080,6 +2080,29 @@ una fila por URL; al hacer clic, el servidor descifra el contexto, confirma que
 el enlace siga activo y el contacto exista, guarda `trigger_link_events`, emite
 `trigger-link-clicked` y redirige al destino.
 
+Los calendarios pueden ser **Presenciales** o **En línea**. La elección aparece
+al crear el calendario y al principio de `Detalles`, antes de **Lo básico**. En
+modo en línea se exige la URL HTTP/HTTPS de Zoom, Google Meet u otra plataforma;
+esa URL vive en `calendars.raw_json.meeting` y Ristak crea un enlace de disparo
+interno con `system_scope='calendar_meeting'`. No aparece en la librería de
+enlaces ni como variable genérica, porque el único dato público autorizado es
+`{{cita.enlace_ingreso}}` dentro de una cita real.
+
+La plantilla `recordatorio_cita_en_linea_10_minutos` se crea para ese flujo y
+una regla administrada la programa diez minutos antes. Cada render cifra
+`public_id + contact_id + appointment_id` en un token `pce1_*`; el destino real
+no se incluye en el WhatsApp. El primer clic válido registra el evento, comprueba
+que los tres IDs coincidan, marca la cita `showed` y crea la señal idempotente de
+asistencia. Un token reenviado conserva la identidad original y los clics
+repetidos no duplican la transición ni la notificación.
+
+El evento **Ingreso a videollamada** (`appointment_joined`) de Configuración →
+Notificaciones permite escoger por destinatario campanita, push, ambos o
+apagado. Cambiar el calendario a presencial desactiva su regla de diez minutos y
+archiva el enlace interno, lo que invalida los tokens ya emitidos. Si ya existe
+otra regla en el mismo horario, Ristak responde
+`calendar_online_reminder_conflict` y no pisa el mensaje del usuario.
+
 La ruta generica legacy `/trigger-links/<public_id>` se conserva para enlaces
 anonimos ya copiados, pero ningun dato de identidad recibido por query puede
 atribuirle el clic a un contacto ni disparar efectos en su nombre. Esos parametros

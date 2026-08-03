@@ -3805,6 +3805,9 @@ async function initTablesUnlocked() {
         click_count INTEGER DEFAULT 0,
         last_clicked_at DATETIME,
         created_by_user_id TEXT,
+        system_managed INTEGER NOT NULL DEFAULT 0,
+        system_scope TEXT,
+        owner_id TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
@@ -3826,9 +3829,22 @@ async function initTablesUnlocked() {
       )
     `)
 
+    for (const [columnName, columnType] of [
+      ['system_managed', 'INTEGER NOT NULL DEFAULT 0'],
+      ['system_scope', 'TEXT'],
+      ['owner_id', 'TEXT']
+    ]) {
+      try {
+        await db.run(`ALTER TABLE trigger_links ADD COLUMN ${columnName} ${columnType}`)
+      } catch (_) {
+        // Columna ya existe.
+      }
+    }
+
     await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_trigger_links_public_id ON trigger_links(public_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_trigger_links_active ON trigger_links(active, archived)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_trigger_links_updated ON trigger_links(updated_at)')
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_trigger_links_system_owner ON trigger_links(system_scope, owner_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_trigger_link_events_link ON trigger_link_events(trigger_link_id, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_trigger_link_events_contact ON trigger_link_events(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_trigger_link_events_public ON trigger_link_events(public_id, created_at)')

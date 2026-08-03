@@ -63,6 +63,34 @@ asignándolas al calendario predeterminado válido; si no existe, usa el primer
 calendario activo. No se clonan reglas a todas las agendas porque eso mantendría
 el envío cruzado que este contrato busca eliminar.
 
+## Citas Presenciales Y En Línea
+
+Cada calendario guarda en `raw_json.meeting` el modo canónico `in_person` u
+`online`. En modo en línea, `meeting.url` exige una URL HTTP/HTTPS y nunca se
+entrega directamente al contacto. `calendarMeetingService` mantiene una sola
+fila interna de `trigger_links` con `system_scope='calendar_meeting'` y
+`owner_id=<calendar_id>`; esas filas se excluyen del catálogo y de la pantalla de
+enlaces de disparo.
+
+Al activar el modo en línea, Ristak crea también el mensaje automático
+`online_meeting_join_link_10m`, diez minutos antes, con la plantilla
+`recordatorio_cita_en_linea_10_minutos`. La variable
+`{{cita.enlace_ingreso}}` se resuelve para la cita y el contacto exactos. Su
+token opaco cifra además `appointment_id`, por lo que el clic puede comprobar
+calendario, contacto y cita sin aceptar IDs manipulables desde el query string.
+Si el calendario ya tiene otra regla en el mismo horario, la actualización
+responde `409 calendar_online_reminder_conflict` y no reemplaza la configuración
+del usuario.
+
+El clic registra primero `trigger_link_events`, cambia la cita a `showed` y
+guarda la señal idempotente `contact_id + appointment_id` en
+`appointment_attendance_signals`; después dispara automatizaciones,
+sincronización de Google y el aviso de ingreso. El evento configurable
+`appointment_joined` permite elegir campanita, push, ambos o apagado por
+destinatario. Clics repetidos conservan la asistencia sin duplicar el aviso.
+Cambiar el calendario a presencial desactiva la regla y archiva el enlace
+interno; eliminarlo limpia además sus mensajes automáticos.
+
 ## Lecturas Acotadas Para Navegación
 
 Las vistas autenticadas de Calendario leen el espejo local y nunca sincronizan
@@ -360,7 +388,9 @@ Actualiza configuración de calendario.
 
 ### `deleteCalendar(calendarId)`
 
-Elimina calendarios locales de Ristak y sus citas asociadas. Si el calendario es
+Elimina calendarios locales de Ristak, sus citas y sus mensajes automáticos
+asociados; el enlace interno de videollamada queda archivado para invalidar los
+tokens emitidos sin perder auditoría de clics. Si el calendario es
 un espejo de HighLevel, solo se permite eliminarlo localmente cuando HighLevel ya
 no esta configurado en `highlevel_config`; con HighLevel activo el controller
 responde `409` para evitar que el origen remoto lo vuelva a sincronizar.

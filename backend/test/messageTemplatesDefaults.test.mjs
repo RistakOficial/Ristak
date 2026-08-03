@@ -316,7 +316,7 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
 
       const secondRun = await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: true })
       assert.equal(secondRun.submitted, 0)
-      assert.equal(captures.length, 4)
+      assert.equal(captures.length, DEFAULT_TEMPLATE_NAMES.length)
     } finally {
       setYCloudFetchForTest(null)
       await deleteDefaultTemplates()

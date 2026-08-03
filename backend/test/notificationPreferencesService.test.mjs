@@ -4,6 +4,7 @@ import { afterEach, describe, it } from 'node:test'
 import { db, setAppConfig } from '../src/config/database.js'
 import {
   NOTIFICATION_PREFERENCES_CONFIG_KEY,
+  resolveNotificationDeliveryTargetsForEvent,
   resolvePushNotificationTargetForEvent
 } from '../src/services/notificationPreferencesService.js'
 
@@ -134,5 +135,35 @@ describe('notification preferences service', () => {
     assert.equal(booked.userIds, null)
     assert.equal(confirmed.configured, true)
     assert.deepEqual(confirmed.userIds, [])
+  })
+
+  it('separa campanita y push cuando un contacto ingresa a la videollamada', async () => {
+    await deleteTestData()
+    const employeeId = await createTestUser('employee')
+    await setAppConfig(NOTIFICATION_PREFERENCES_CONFIG_KEY, {
+      version: 1,
+      rows: {
+        all: { appointment_joined: 'app' },
+        [`user:${employeeId}`]: { appointment_joined: 'push' }
+      }
+    })
+
+    const targets = await resolveNotificationDeliveryTargetsForEvent('appointment_link_clicked')
+    assert.equal(targets.configured, true)
+    assert.equal(targets.bell.userIds, null)
+    assert.deepEqual(targets.push.userIds, [employeeId])
+  })
+
+  it('usa el fallback del evento nuevo cuando una matriz vieja todavía no lo contiene', async () => {
+    await deleteTestData()
+    await setAppConfig(NOTIFICATION_PREFERENCES_CONFIG_KEY, {
+      version: 1,
+      rows: { all: { appointments: 'app' } }
+    })
+
+    const targets = await resolveNotificationDeliveryTargetsForEvent('appointment_joined')
+    assert.equal(targets.configured, false)
+    assert.equal(targets.bell.configured, false)
+    assert.equal(targets.push.configured, false)
   })
 })

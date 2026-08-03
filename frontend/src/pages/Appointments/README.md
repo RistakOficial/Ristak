@@ -36,6 +36,8 @@ El item de menú vive en `frontend/src/components/layout/Sidebar/Sidebar.tsx` co
 - Permite crear, editar y eliminar horarios bloqueados.
 - Permite configurar mensajes automáticos de cita: recordatorios antes de la cita
   y avisos después de agendar.
+- Permite definir calendarios presenciales o en línea y guardar el enlace de la
+  videollamada sin exponer el destino directo al contacto.
 - Permite abrir configuración de calendarios desde el botón de Settings.
 - Descarta respuestas de rangos/calendarios anteriores cuando una carga más nueva
   o una mutación ya cambió la vista.
@@ -164,6 +166,15 @@ abierto en Configuración son la fuente de verdad para listar, crear, editar y
 eliminar mensajes. `GET /api/appointment-reminders` exige `calendarId`; al
 cambiar de calendario la UI vacía la lista anterior y descarta respuestas
 asíncronas que pertenezcan a la selección previa.
+
+Cuando un calendario es `online`, Ristak agrega una regla administrada diez
+minutos antes con la plantilla `recordatorio_cita_en_linea_10_minutos`. La
+variable **Enlace de ingreso a la cita** (`{{cita.enlace_ingreso}}`) aparece en
+el grupo Citas de las plantillas de WhatsApp y se materializa como URL opaca
+individual. La URL de Zoom/Meet no aparece en el catálogo de enlaces de disparo.
+Si la plantilla oficial todavía está en revisión, el panel de salud conserva el
+motivo y el cron reintenta después de que el proveedor la apruebe; WhatsApp QR
+puede usar el texto renderizado bajo sus reglas existentes.
 
 - El cron sólo combina una regla con citas cuyo `appointments.calendar_id`
   coincide. Un mensaje de un calendario nunca se muestra ni se envía en otro.
@@ -398,11 +409,21 @@ En `/settings/calendars`:
 - `allowOverlaps`: switch `Permitir empalme de citas` del paso
   `Disponibilidad`. Apagado bloquea una segunda cita en el mismo horario;
   encendido permite el empalme sin saltarse horario, bloqueos o máximo diario.
+- `meetingMode`: `in_person` o `online`. Se elige al crear el calendario y al
+  editar el paso `Detalles`, antes de **Lo básico**.
+- `meetingUrl`: sólo aparece y se exige en modo `online`; acepta la URL de Zoom,
+  Google Meet u otra plataforma HTTP/HTTPS. El backend la reemplaza al enviar
+  por un enlace seguro ligado a la cita.
 
 El wizard usa ocho pasos: `Detalles`, `Disponibilidad`, `URL y Datos`, `Cobro`,
 `Mensajes automáticos`, `Avanzado`, `Eventos` y `Estilos y diseños`.
 `Disponibilidad` reúne el horario semanal, duración, cadencia, reglas y buffers;
 `URL y Datos` reúne enlace público, formulario y acción final.
+
+En **Configuración → Notificaciones**, el evento **Ingreso a videollamada**
+permite elegir por destinatario `Apagado`, `Campanita`, `Push celular` o
+`Campanita + push`. El primer clic válido marca la asistencia y genera el aviso;
+los clics posteriores no lo duplican.
 
 En el editor semanal, cada control de hora abre columnas separadas para hora,
 minuto y AM/PM. Mientras el menú está abierto, el campo y el resumen `Horario

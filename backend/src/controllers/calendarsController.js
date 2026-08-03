@@ -55,6 +55,12 @@ import {
   dispatchAppointmentCreatedAutomations
 } from '../services/appointmentAutomationService.js';
 import { INTERNAL_CONTROLLER_CONTEXT } from '../agents/invokeController.js';
+import {
+  archiveCalendarMeetingResources,
+  normalizeCalendarMeetingInput,
+  syncCalendarMeetingResources
+} from '../services/calendarMeetingService.js';
+import { ensureOnlineMeetingMessageTemplate } from '../services/messageTemplatesService.js';
 
 /**
  * Controlador para calendarios de Ristak con sincronizaciones externas opcionales.
@@ -1528,11 +1534,22 @@ export async function createCalendar(req, res) {
       normalizeCalendarAvailabilityWrite(withoutGoogleCalendarLinkMutation(calendarData))
     );
     const safeCalendarData = await enforceCalendarPaymentConfigAccess({}, formSafeCalendarData);
+    const meetingConfig = normalizeCalendarMeetingInput(safeCalendarData);
 
-    let calendar = await localCalendarService.createLocalCalendar({
-      ...safeCalendarData,
-      locationId: locationId || safeCalendarData.locationId
+    let calendar = await db.transaction(async () => {
+      const created = await localCalendarService.createLocalCalendar({
+        ...safeCalendarData,
+        ...meetingConfig,
+        locationId: locationId || safeCalendarData.locationId
+      });
+      await syncCalendarMeetingResources(created);
+      return created;
     });
+    if (calendar.meetingMode === 'online') {
+      ensureOnlineMeetingMessageTemplate({ submitToActiveProvider: true }).catch(error => {
+        logger.warn(`[Calendars Controller] La plantilla de videollamada quedó local, pero no se pudo enviar a revisión: ${error.message}`);
+      });
+    }
 
     if (locationId && accessToken) {
       const syncResult = await localCalendarService.syncLocalCalendarsToHighLevel(locationId, accessToken);
@@ -3589,6 +3606,7 @@ export async function updateCalendar(req, res) {
       normalizeCalendarAvailabilityWrite(withoutGoogleCalendarLinkMutation(updateData))
     );
     const safeUpdateData = await enforceCalendarPaymentConfigAccess(existing, formSafeUpdateData);
+    const meetingConfig = normalizeCalendarMeetingInput(safeUpdateData, existing);
     const paymentSourceConflict = await findCalendarPaymentSourceConflict(existing, safeUpdateData);
     if (paymentSourceConflict) {
       return res.status(400).json({
@@ -3597,7 +3615,19 @@ export async function updateCalendar(req, res) {
       });
     }
 
-    let calendar = await localCalendarService.updateLocalCalendar(id, safeUpdateData, { syncStatus: 'pending' });
+    let calendar = await db.transaction(async () => {
+      const updated = await localCalendarService.updateLocalCalendar(id, {
+        ...safeUpdateData,
+        ...meetingConfig
+      }, { syncStatus: 'pending' });
+      await syncCalendarMeetingResources(updated);
+      return updated;
+    });
+    if (calendar.meetingMode === 'online') {
+      ensureOnlineMeetingMessageTemplate({ submitToActiveProvider: true }).catch(error => {
+        logger.warn(`[Calendars Controller] La plantilla de videollamada quedó local, pero no se pudo enviar a revisión: ${error.message}`);
+      });
+    }
 
     const remoteCalendarId = existing?.ghlCalendarId || id;
     if (context.accessToken && remoteCalendarId && existing?.ghlCalendarId) {
@@ -3607,6 +3637,10 @@ export async function updateCalendar(req, res) {
           bookingCompletion,
           bookingPayment,
           customEvents,
+          meetingMode,
+          meeting_mode,
+          meetingUrl,
+          meeting_url,
           antiTrackingEnabled,
           anti_tracking_enabled,
           availabilityScheduleConfigured,
@@ -3693,6 +3727,7 @@ export async function deleteCalendar(req, res) {
       });
     }
 
+    await archiveCalendarMeetingResources(id);
     const deleted = await localCalendarService.deleteLocalCalendar(id);
 
     await localCalendarService.reconcileCalendarDefaults().catch(error => {

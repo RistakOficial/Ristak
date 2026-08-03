@@ -340,7 +340,9 @@ const normalizeCalendarForConfiguration = (
   bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
   bookingPayment: normalizeCalendarBookingPayment(calendar.bookingPayment),
   bookingDisplay: normalizeCalendarBookingDisplay(calendar.bookingDisplay, calendar.eventColor),
-  customEvents: normalizeCalendarCustomEvents(calendar.customEvents)
+  customEvents: normalizeCalendarCustomEvents(calendar.customEvents),
+  meetingMode: calendar.meetingMode === 'online' ? 'online' : 'in_person',
+  meetingUrl: calendar.meetingUrl || ''
 })
 const CALENDAR_TEMPLATE_EXTRA_CATEGORIES = [
   { id: 'calendar', label: 'Calendario' }
@@ -802,6 +804,17 @@ const isValidCalendarRedirectUrl = (value: string) => {
   }
 }
 
+const isValidCalendarMeetingUrl = (value: string) => {
+  const text = value.trim()
+  if (!text) return false
+  try {
+    const parsed = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`)
+    return ['http:', 'https:'].includes(parsed.protocol) && parsed.hostname.includes('.')
+  } catch {
+    return false
+  }
+}
+
 const canWriteGoogleCalendarOption = (calendar: GoogleCalendarOption) => (
   ['owner', 'writer'].includes(String(calendar.accessRole || '').toLowerCase())
 )
@@ -878,6 +891,8 @@ export const CalendarsConfiguration: React.FC = () => {
     name: '',
     calendarType: 'event',
     eventTitle: 'Cita',
+    meetingMode: 'in_person',
+    meetingUrl: '',
     notes: '',
     eventColor: '#3b82f6',
     isActive: true,
@@ -1930,6 +1945,12 @@ export const CalendarsConfiguration: React.FC = () => {
         return
       }
 
+      if (selectedCalendar.meetingMode === 'online' && !isValidCalendarMeetingUrl(selectedCalendar.meetingUrl || '')) {
+        setCalendarWizardStep('basics')
+        showToast('error', 'Enlace de videollamada requerido', 'Pega una URL válida de Zoom, Google Meet o la plataforma que usarás.')
+        return
+      }
+
       if (bookingPayment.enabled && selectedFormWithPayment) {
         showToast(
           'error',
@@ -1950,6 +1971,8 @@ export const CalendarsConfiguration: React.FC = () => {
         slug: nextSlug,
         widgetSlug: nextSlug,
         eventTitle: selectedCalendar.eventTitle?.trim() || selectedCalendar.name?.trim() || 'Cita',
+        meetingMode: selectedCalendar.meetingMode === 'online' ? 'online' : 'in_person',
+        meetingUrl: selectedCalendar.meetingMode === 'online' ? selectedCalendar.meetingUrl?.trim() || '' : '',
         notes: selectedCalendar.notes?.trim() || '',
         eventColor: selectedCalendar.eventColor || '#3b82f6',
         isActive: selectedCalendar.isActive,
@@ -2038,6 +2061,10 @@ export const CalendarsConfiguration: React.FC = () => {
       showToast('error', 'Nombre requerido', 'Escribe un nombre para el calendario')
       return
     }
+    if (newCalendar.meetingMode === 'online' && !isValidCalendarMeetingUrl(newCalendar.meetingUrl || '')) {
+      showToast('error', 'Enlace de videollamada requerido', 'Pega una URL válida de Zoom, Google Meet o la plataforma que usarás.')
+      return
+    }
 
     setCreatingCalendar(true)
     try {
@@ -2066,6 +2093,8 @@ export const CalendarsConfiguration: React.FC = () => {
         name: '',
         calendarType: 'event',
         eventTitle: 'Cita',
+        meetingMode: 'in_person',
+        meetingUrl: '',
         notes: '',
         eventColor: '#3b82f6',
         isActive: true,
@@ -2286,6 +2315,37 @@ export const CalendarsConfiguration: React.FC = () => {
       flushContent
     >
       <div className={pageStyles.createCalendarForm} data-modal-panel="">
+        <label className={pageStyles.editorField}>
+          <span>Tipo de cita</span>
+          <CustomSelect
+            value={newCalendar.meetingMode || 'in_person'}
+            onValueChange={(meetingMode) => setNewCalendar({
+              ...newCalendar,
+              meetingMode: meetingMode as CalendarType['meetingMode'],
+              meetingUrl: meetingMode === 'online' ? newCalendar.meetingUrl : ''
+            })}
+            options={[
+              { value: 'in_person', label: 'Presencial' },
+              { value: 'online', label: 'En línea' }
+            ]}
+          />
+          <small>Define cómo se realizará cada cita de este calendario.</small>
+        </label>
+
+        {newCalendar.meetingMode === 'online' && (
+          <label className={pageStyles.editorField}>
+            <span>Enlace de videollamada</span>
+            <input
+              type="url"
+              value={newCalendar.meetingUrl || ''}
+              onChange={(event) => setNewCalendar({ ...newCalendar, meetingUrl: event.target.value })}
+              placeholder="https://meet.google.com/..."
+              autoComplete="url"
+            />
+            <small>Ristak lo protegerá con un enlace individual para registrar el ingreso y la asistencia.</small>
+          </label>
+        )}
+
         <label className={pageStyles.editorField}>
           <span>Nombre del calendario</span>
           <input
@@ -3088,6 +3148,44 @@ export const CalendarsConfiguration: React.FC = () => {
             <div className={pageStyles.calendarWizardBody}>
               {currentStep.id === 'basics' && (
                 <>
+                  <section className={pageStyles.editorSection}>
+                    <div className={pageStyles.editorSectionHeader}>
+                      <strong>Formato de la cita</strong>
+                      <span>Elige si la atención ocurre presencialmente o mediante videollamada.</span>
+                    </div>
+                    <div className={pageStyles.editorFields}>
+                      <label className={pageStyles.editorField}>
+                        <span>Tipo de cita</span>
+                        <CustomSelect
+                          value={selectedCalendar.meetingMode || 'in_person'}
+                          onValueChange={(meetingMode) => updateSelectedCalendar({
+                            meetingMode: meetingMode as CalendarType['meetingMode'],
+                            meetingUrl: meetingMode === 'online' ? selectedCalendar.meetingUrl : ''
+                          })}
+                          options={[
+                            { value: 'in_person', label: 'Presencial' },
+                            { value: 'online', label: 'En línea' }
+                          ]}
+                        />
+                        <small>Las citas en línea reciben un recordatorio con acceso seguro 10 minutos antes.</small>
+                      </label>
+
+                      {selectedCalendar.meetingMode === 'online' && (
+                        <label className={pageStyles.editorField}>
+                          <span>Enlace de videollamada</span>
+                          <input
+                            type="url"
+                            value={selectedCalendar.meetingUrl || ''}
+                            onChange={(event) => updateSelectedCalendar({ meetingUrl: event.target.value })}
+                            placeholder="https://zoom.us/j/..."
+                            autoComplete="url"
+                          />
+                          <small>El contacto nunca recibe esta URL directa: Ristak genera su enlace de ingreso y registra asistencia al abrirlo.</small>
+                        </label>
+                      )}
+                    </div>
+                  </section>
+
                   <section className={pageStyles.editorSection}>
                     <div className={pageStyles.editorSectionHeader}>
                       <strong>Lo básico</strong>

@@ -26,14 +26,21 @@ function normalizeContactId(value) {
   return contactId
 }
 
-export async function createTriggerLinkRecipientToken({ publicId, contactId } = {}) {
+function normalizeAppointmentId(value) {
+  const appointmentId = cleanString(value, 180)
+  if (!appointmentId || /[\u0000-\u001f\u007f\s/?#]/.test(appointmentId)) return ''
+  return appointmentId
+}
+
+export async function createTriggerLinkRecipientToken({ publicId, contactId, appointmentId = '' } = {}) {
   const link = normalizePublicId(publicId)
   const contact = normalizeContactId(contactId)
+  const appointment = normalizeAppointmentId(appointmentId)
   if (!link || !contact) return ''
 
   return sealPublicContextClaims({
     purpose: TRIGGER_LINK_RECIPIENT_PURPOSE,
-    claims: { l: link, c: contact }
+    claims: { l: link, c: contact, ...(appointment ? { a: appointment } : {}) }
   })
 }
 
@@ -43,16 +50,18 @@ export async function readTriggerLinkRecipientToken(token) {
   })
   const publicId = normalizePublicId(decoded.claims?.l)
   const contactId = normalizeContactId(decoded.claims?.c)
+  const appointmentId = normalizeAppointmentId(decoded.claims?.a)
   if (!publicId || !contactId) throw new Error('Token de enlace de disparo incompleto')
-  return { publicId, contactId }
+  return { publicId, contactId, ...(appointmentId ? { appointmentId } : {}) }
 }
 
 export async function buildTriggerLinkRecipientUrl({
   publicId,
   contactId,
+  appointmentId = '',
   baseUrl = ''
 } = {}) {
-  const token = await createTriggerLinkRecipientToken({ publicId, contactId })
+  const token = await createTriggerLinkRecipientToken({ publicId, contactId, appointmentId })
   if (!token) return ''
   const path = `/${encodeURIComponent(token)}`
   const base = normalizeBaseUrl(

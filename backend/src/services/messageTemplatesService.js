@@ -83,7 +83,8 @@ const BASE_APPOINTMENT_VARIABLES = [
   ['Título de cita', 'cita.titulo', 'Consulta inicial'],
   ['Fecha de cita', 'cita.fecha', 'viernes 19 de junio'],
   ['Hora de cita', 'cita.hora', '9:00'],
-  ['Fecha y hora de cita', 'cita.fecha_hora', 'viernes, 19 de junio de 2026 9:00']
+  ['Fecha y hora de cita', 'cita.fecha_hora', 'viernes, 19 de junio de 2026 9:00'],
+  ['Enlace de ingreso a la cita', 'cita.enlace_ingreso', 'https://app.ristak.com/pce1_enlace_seguro']
 ].map(([label, key, example]) => ({
   key,
   label,
@@ -134,7 +135,7 @@ const DEFAULT_PAYMENT_TEMPLATE_NAME_LIST = [
   'pago_fallido_reintento'
 ]
 
-const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
+const APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS = [
   {
     name: 'cita_programada',
     providerRevision: 2,
@@ -271,8 +272,63 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
         }
       }
     }
+  },
+  {
+    name: 'recordatorio_cita_en_linea_10_minutos',
+    providerRevision: 1,
+    description: 'Recordatorio automático con el enlace seguro de ingreso a una cita en línea.',
+    category: 'utility',
+    language: DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE,
+    status: 'active',
+    headerEnabled: false,
+    headerType: 'none',
+    headerText: '',
+    bodyText: 'Hola {{1}}, tu cita en línea comienza el {{2}} a las {{3}}. Ingresa aquí: {{4}}',
+    footerText: 'Ristak registrará tu ingreso al abrir el enlace',
+    buttons: [],
+    variableExamples: {
+      '{{contact.first_name}}': 'María',
+      '{{cita.fecha}}': 'viernes 19 de junio',
+      '{{cita.hora}}': '9:00',
+      '{{cita.enlace_ingreso}}': 'https://app.ristak.com/pce1_enlace_seguro'
+    },
+    variableBindings: {
+      headerText: {},
+      bodyText: {
+        1: {
+          variableKey: 'contact.first_name',
+          mergeField: '{{contact.first_name}}',
+          label: 'Primer nombre',
+          example: 'María'
+        },
+        2: {
+          variableKey: 'cita.fecha',
+          mergeField: '{{cita.fecha}}',
+          label: 'Fecha de cita',
+          example: 'viernes 19 de junio'
+        },
+        3: {
+          variableKey: 'cita.hora',
+          mergeField: '{{cita.hora}}',
+          label: 'Hora de cita',
+          example: '9:00'
+        },
+        4: {
+          variableKey: 'cita.enlace_ingreso',
+          mergeField: '{{cita.enlace_ingreso}}',
+          label: 'Enlace de ingreso a la cita',
+          example: 'https://app.ristak.com/pce1_enlace_seguro'
+        }
+      }
+    }
   }
 ]
+const ONLINE_MEETING_MESSAGE_TEMPLATE = APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS.find(
+  template => template.name === 'recordatorio_cita_en_linea_10_minutos'
+)
+const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS.filter(
+  template => template !== ONLINE_MEETING_MESSAGE_TEMPLATE
+)
 const DEFAULT_APPOINTMENT_TEMPLATE_NAMES = new Set(DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES.map(template => template.name))
 const DEFAULT_APPOINTMENT_REVIEW_RETRY_TIMEOUT_MS = 6 * 60 * 60 * 1000
 const DEFAULT_APPOINTMENT_REVIEW_MAX_RETRIES = 2
@@ -897,6 +953,7 @@ export async function getMessageTemplateBundle() {
       SELECT public_id, name
       FROM trigger_links
       WHERE active = 1 AND archived = 0
+        AND (system_scope IS NULL OR system_scope = '')
       ORDER BY name ASC, public_id ASC
     `)
   ])
@@ -918,6 +975,7 @@ export async function getVariableCatalog() {
       SELECT public_id, name
       FROM trigger_links
       WHERE active = 1 AND archived = 0
+        AND (system_scope IS NULL OR system_scope = '')
       ORDER BY name ASC, public_id ASC
     `)
   ])
@@ -2183,6 +2241,24 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToActiveP
   }
 }
 
+export async function ensureOnlineMeetingMessageTemplate({ submitToActiveProvider = false } = {}) {
+  const folder = await ensureDefaultTemplateFolder()
+  const provider = submitToActiveProvider ? await getActiveTemplateProvider() : undefined
+  const ensured = await ensureDefaultMessageTemplate(ONLINE_MEETING_MESSAGE_TEMPLATE, folder.id, { provider })
+  let template = ensured.template
+  if (submitToActiveProvider) {
+    const providerState = getMessageTemplateProviderState(template, provider)
+    const shouldSubmit = !providerState.templateId &&
+      !TEMPLATE_REVIEW_STATES.has(providerState.status) &&
+      providerState.status !== 'APPROVED' &&
+      !isTemplateLockedForEditing(providerState.status)
+    if (shouldSubmit) {
+      template = (await submitMessageTemplateToActiveProvider(template.id)).template
+    }
+  }
+  return template
+}
+
 export async function ensureDefaultPaymentMessageTemplates({ submitToActiveProvider = false, publicBaseUrl = '' } = {}) {
   const results = []
   const folder = await ensureTemplateFolder(DEFAULT_PAYMENT_TEMPLATE_FOLDER, -90)
@@ -2641,7 +2717,7 @@ async function findAppointmentForTemplateVariables({ contactId, appointmentId } 
 
   if (cleanAppointmentId) {
     return db.get(`
-      SELECT id, contact_id, title, start_time, end_time, appointment_status, status
+      SELECT id, calendar_id, contact_id, title, start_time, end_time, appointment_status, status
       FROM appointments
       WHERE id = ?
         AND deleted_at IS NULL
@@ -2654,7 +2730,7 @@ async function findAppointmentForTemplateVariables({ contactId, appointmentId } 
 
   if (!cleanContactId) return null
   return db.get(`
-    SELECT id, contact_id, title, start_time, end_time, appointment_status, status
+    SELECT id, calendar_id, contact_id, title, start_time, end_time, appointment_status, status
     FROM appointments
     WHERE contact_id = ?
       AND deleted_at IS NULL
@@ -2683,10 +2759,19 @@ async function enrichTemplateVariableOptions(template, variableOptions = {}) {
   if (!appointment) return variableOptions
 
   const timezone = cleanString(variableOptions.timezone) || await getAccountTimezone()
-  const appointmentVariables = Object.fromEntries(missingAppointmentKeys.map(key => [
-    key,
-    renderMessageText(`{{${key}}}`, { appointment, timezone })
-  ]))
+  const appointmentVariables = {}
+  for (const key of missingAppointmentKeys) {
+    if (key === 'cita.enlace_ingreso') {
+      const { buildAppointmentMeetingJoinUrl } = await import('./calendarMeetingService.js')
+      appointmentVariables[key] = await buildAppointmentMeetingJoinUrl({
+        appointment,
+        contactId: appointment.contact_id,
+        baseUrl: variableOptions.publicBaseUrl
+      })
+    } else {
+      appointmentVariables[key] = renderMessageText(`{{${key}}}`, { appointment, timezone })
+    }
+  }
 
   return {
     ...variableOptions,

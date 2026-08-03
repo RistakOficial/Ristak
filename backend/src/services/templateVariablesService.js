@@ -344,6 +344,7 @@ async function resolveTriggerLinkToken(rawToken, { contact, publicBaseUrl } = {}
     SELECT id, public_id
     FROM trigger_links
     WHERE archived = 0
+      AND (system_scope IS NULL OR system_scope = '')
       AND (public_id = ? OR id = ?)
     LIMIT 1
   `, [linkId, linkId]).catch(() => null)

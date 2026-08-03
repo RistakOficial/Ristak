@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { BellRing, CalendarCheck2, CalendarClock, CheckCircle2, CreditCard, MessageCircle, RotateCcw, Save, ShieldCheck, Smartphone, UserRound, UsersRound, Vibrate, Volume2, Workflow } from 'lucide-react'
+import { BellRing, CalendarCheck2, CalendarClock, CheckCircle2, CreditCard, MessageCircle, RotateCcw, Save, ShieldCheck, Smartphone, UserRound, UsersRound, Vibrate, Video, Volume2, Workflow } from 'lucide-react'
 import { Badge } from '@/components/common/Badge'
 import { Button, Card, CustomSelect, Switch } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
@@ -14,7 +14,7 @@ import styles from './Settings.module.css'
 const NOTIFICATION_PREFERENCES_CONFIG_KEY = 'notification_preferences_matrix'
 const NOTIFICATION_PREFERENCES_VERSION = 1
 
-type NotificationEventKey = 'conversations' | 'agent_priority' | 'appointment_booked' | 'appointment_confirmed' | 'payments' | 'automation_internal' | 'system'
+type NotificationEventKey = 'conversations' | 'agent_priority' | 'appointment_booked' | 'appointment_confirmed' | 'appointment_joined' | 'payments' | 'automation_internal' | 'system'
 type NotificationChannel = 'off' | 'app' | 'push' | 'email' | 'whatsapp' | 'app_push' | 'app_email' | 'app_whatsapp' | 'all'
 type NotificationRecipientKind = 'all' | 'role' | 'user'
 
@@ -42,6 +42,7 @@ const NOTIFICATION_EVENTS: Array<{
   label: string
   description: string
   icon: React.ComponentType<{ size?: number }>
+  allowedChannels?: NotificationChannel[]
 }> = [
   {
     key: 'conversations',
@@ -66,6 +67,13 @@ const NOTIFICATION_EVENTS: Array<{
     label: 'Confirmaciones de cita',
     description: 'Confirmaciones, cambios y plazos vencidos sin respuesta.',
     icon: CalendarCheck2
+  },
+  {
+    key: 'appointment_joined',
+    label: 'Ingreso a videollamada',
+    description: 'Cuando el contacto abre su enlace seguro de ingreso.',
+    icon: Video,
+    allowedChannels: ['off', 'app', 'push', 'app_push']
   },
   {
     key: 'payments',
@@ -172,6 +180,7 @@ const getFallbackChannel = (
   if (eventKey === 'agent_priority') return legacyPush.conversations ? 'push' : 'off'
   if (eventKey === 'appointment_booked') return legacyPush.appointments ? 'push' : 'off'
   if (eventKey === 'appointment_confirmed') return legacyPush.appointments ? 'push' : 'off'
+  if (eventKey === 'appointment_joined') return recipientId === 'all' ? 'app' : 'off'
   if (eventKey === 'payments') return legacyPush.payments ? 'push' : 'off'
   if (recipientId === 'all' && eventKey === 'system') return 'app'
   if (recipientId === 'admins' && eventKey === 'automation_internal') return 'app'
@@ -605,7 +614,7 @@ export const NotificationSettings: React.FC = () => {
                             aria-label={`${recipient.label}: ${event.label}`}
                             disabled={busy}
                           >
-                            {CHANNEL_OPTIONS.map((option) => (
+                            {CHANNEL_OPTIONS.filter((option) => !event.allowedChannels || event.allowedChannels.includes(option.value)).map((option) => (
                               <option key={option.value} value={option.value}>
                                 {option.label}
                               </option>

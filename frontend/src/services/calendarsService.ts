@@ -156,6 +156,8 @@ export interface Calendar {
   calendarType: string;
   widgetType?: string;
   eventTitle?: string;
+  meetingMode?: 'in_person' | 'online';
+  meetingUrl?: string;
   eventColor: string;
   timeZone?: string;
   isActive: boolean;
