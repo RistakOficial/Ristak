@@ -607,6 +607,13 @@ válido de la misma instalación adopta esa entrega pendiente y vuelve a enviarl
 sin canjear otro code ni reabrir OAuth. YCloud y Baileys no participan en este
 flujo.
 
+El callback firmado `/meta/connect/complete` responde el ACK inmediatamente
+después de validar Meta, guardar el token cifrado, activar el número y elegirlo
+como remitente principal. La creación/revisión de plantillas default y la
+sincronización de tareas de la integración se ejecutan después, en segundo
+plano: son importantes, pero no pueden retrasar el ACK ni hacer que Installer
+muestre una entrega fallida cuando la conexión crítica ya quedó operativa.
+
 Los callbacks Installer -> tenant (`/meta/connect/complete`,
 `/meta/setup-prefill` y `/meta/webhook-relay`) están antes de la autenticación
 humana del router porque usan HMAC, timestamp, nonce e installation ID. Todas las

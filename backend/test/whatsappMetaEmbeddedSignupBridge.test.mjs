@@ -100,9 +100,10 @@ test('el tenant prepara y completa Embedded Signup por backend sin exponer token
 })
 
 test('los callbacks HMAC quedan antes de auth y las rutas humanas siguen protegidas dentro del router', async () => {
-  const [serverSource, routesSource, settingsSource] = await Promise.all([
+  const [serverSource, routesSource, controllerSource, settingsSource] = await Promise.all([
     readFile(join(testDir, '../src/server.js'), 'utf8'),
     readFile(join(testDir, '../src/routes/whatsappApi.routes.js'), 'utf8'),
+    readFile(join(testDir, '../src/controllers/whatsappApiController.js'), 'utf8'),
     readFile(join(testDir, '../../frontend/src/pages/Settings/WhatsAppSettings.tsx'), 'utf8')
   ])
   assert.match(
@@ -125,6 +126,21 @@ test('los callbacks HMAC quedan antes de auth y las rutas humanas siguen protegi
   assert.doesNotMatch(settingsSource, /window\.FB\.login\(/)
   assert.doesNotMatch(settingsSource, /window\.open\([^\n]*ristak-whatsapp-meta/)
   assert.match(settingsSource, /window\.location\.assign\(connectUrl/)
+
+  assert.match(controllerSource, /function scheduleMetaDirectPostConnectionTasks\(req\)/)
+  assert.match(controllerSource, /setImmediate\(\(\) =>/)
+  for (const handlerName of [
+    'completeMetaDirectEmbeddedSignupView',
+    'completeMetaDirectConnectionView'
+  ]) {
+    const handlerStart = controllerSource.indexOf(`export async function ${handlerName}`)
+    const handlerEnd = controllerSource.indexOf('\nexport async function ', handlerStart + 1)
+    const handlerSource = controllerSource.slice(handlerStart, handlerEnd < 0 ? undefined : handlerEnd)
+    const responseIndex = handlerSource.indexOf('res.json({ success: true, data })')
+    const backgroundIndex = handlerSource.indexOf('scheduleMetaDirectPostConnectionTasks(req)')
+    assert.ok(responseIndex >= 0 && backgroundIndex > responseIndex, `${handlerName} debe responder antes del trabajo no crítico`)
+    assert.doesNotMatch(handlerSource, /await ensureDefaultTemplatesForActiveWhatsAppProvider/)
+  }
 })
 
 test('el frontend pide configurar pagos después de conectar Meta por cualquiera de los dos callbacks', async () => {

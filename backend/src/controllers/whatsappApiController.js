@@ -134,11 +134,11 @@ function getWebhookUrl(req) {
   return `${getPublicBaseUrl(req)}${getWhatsAppApiWebhookPath()}`
 }
 
-async function ensureDefaultTemplatesForActiveWhatsAppProvider(req) {
+async function ensureDefaultTemplatesForActiveWhatsAppProvider(req, { publicBaseUrl = '' } = {}) {
   try {
     const result = await ensureDefaultWhatsAppApiMessageTemplates({
       submitToActiveProvider: true,
-      publicBaseUrl: getPublicBaseUrl(req)
+      publicBaseUrl: publicBaseUrl || getPublicBaseUrl(req)
     })
     if (result.errors > 0) {
       const failedNames = result.templates
@@ -152,6 +152,18 @@ async function ensureDefaultTemplatesForActiveWhatsAppProvider(req) {
     logger.warn(`WhatsApp API conectado, pero no se pudieron preparar plantillas default: ${error.message}`)
     return null
   }
+}
+
+function scheduleMetaDirectPostConnectionTasks(req) {
+  const publicBaseUrl = getPublicBaseUrl(req)
+  setImmediate(() => {
+    void ensureDefaultTemplatesForActiveWhatsAppProvider(null, { publicBaseUrl })
+    void syncRegisteredIntegrationCronsForProvider('whatsapp-api', {
+      reason: 'meta-direct-connected'
+    }).catch(error => {
+      logger.warn(`WhatsApp API conectado, pero no se pudieron sincronizar sus tareas internas: ${error.message}`)
+    })
+  })
 }
 
 export async function getWhatsAppApiConnectionStatus(req, res) {
@@ -399,9 +411,8 @@ export async function completeMetaDirectEmbeddedSignupView(req, res) {
       code: req.body?.code,
       signupData: req.body?.signupData || req.body?.signup_data || {}
     })
-    await ensureDefaultTemplatesForActiveWhatsAppProvider(req)
-    await syncRegisteredIntegrationCronsForProvider('whatsapp-api', { reason: 'meta-direct-connected' })
     res.json({ success: true, data })
+    scheduleMetaDirectPostConnectionTasks(req)
   } catch (error) {
     logger.error(`Error finalizando Embedded Signup de Meta: ${error.message}`)
     res.status(error.statusCode || 400).json({
@@ -419,9 +430,8 @@ export async function completeMetaDirectConnectionView(req, res) {
       rawBody: req.rawBody || JSON.stringify(req.body || {}),
       headers: getInstallerSignatureHeaders(req)
     })
-    await ensureDefaultTemplatesForActiveWhatsAppProvider(req)
-    await syncRegisteredIntegrationCronsForProvider('whatsapp-api', { reason: 'meta-direct-connected' })
     res.json({ success: true, data })
+    scheduleMetaDirectPostConnectionTasks(req)
   } catch (error) {
     logger.error(`Error completando Meta directo: ${error.message}`)
     res.status(400).json({
