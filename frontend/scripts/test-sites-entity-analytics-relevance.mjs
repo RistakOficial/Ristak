@@ -77,5 +77,15 @@ assert.match(
   /formatPercent\(stage\.progressionRate\)/,
   'la tasa visible debe usar la progresión de identidades únicas'
 )
+assert.match(
+  stageTable,
+  /detail=\{mode === 'form'[\s\S]*?: undefined\}/,
+  'el embudo no debe mostrar conteos técnicos de intentos debajo de Únicos'
+)
+assert.match(
+  stageTable,
+  /mode === 'form' \? 'sobre intentos de entrada' : 'sobre entradas al embudo'/,
+  'el resumen del embudo debe explicar la conversión con lenguaje de entradas'
+)
 
 console.log('Sites entity analytics relevance contract OK')

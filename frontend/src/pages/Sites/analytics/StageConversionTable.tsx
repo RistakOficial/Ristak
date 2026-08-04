@@ -104,7 +104,7 @@ function StageCell({
           <div className={styles.stageTitleLine}>
             <strong>{stage.label}</strong>
           </div>
-          {stage.terminalAttempts > 0 ? (
+          {mode === 'form' && stage.terminalAttempts > 0 ? (
             <span className={styles.stageDetail}>
               {formatCount(stage.terminalAttempts)} intentos terminaron en esta etapa
             </span>
@@ -178,7 +178,9 @@ function buildColumns(mode: StageConversionTableProps['mode']): Array<Column<Sit
       render: (_value, stage) => (
         <CountMetric
           value={stage.reachedVisitors}
-          detail={`${formatCount(stage.reachedAttempts)} intentos`}
+          detail={mode === 'form'
+            ? `${formatCount(stage.reachedAttempts)} intentos`
+            : undefined}
         />
       )
     }
@@ -281,7 +283,7 @@ export function StageConversionTable({
             <div>
               <dt>Entradas</dt>
               <dd>{formatCount(analytics.entrants)}</dd>
-              <span>intentos</span>
+              <span>{mode === 'form' ? 'intentos' : 'recorridos iniciados'}</span>
             </div>
             <div>
               <dt>Visitantes únicos</dt>
@@ -291,14 +293,16 @@ export function StageConversionTable({
             <div>
               <dt>Completaron</dt>
               <dd>{formatCount(analytics.completedVisitors)}</dd>
-              <span>{formatCount(analytics.completedAttempts)} intentos</span>
+              {mode === 'form' ? (
+                <span>{formatCount(analytics.completedAttempts)} intentos</span>
+              ) : null}
             </div>
             <div>
               <dt>Conversión total</dt>
               <dd>
                 {analytics.entrants > 0 ? formatPercent(analytics.conversionRate) : 'Sin dato'}
               </dd>
-              <span>sobre intentos de entrada</span>
+              <span>{mode === 'form' ? 'sobre intentos de entrada' : 'sobre entradas al embudo'}</span>
             </div>
           </dl>
 

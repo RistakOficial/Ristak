@@ -456,8 +456,10 @@ verificado: divide las identidades del cohort que avanzaron a una página
 posterior entre las identidades del cohort que alcanzaron la página actual. Una
 entrada directa, incluso si comparte `visitor_id` con otra pestaña o visita, no
 se cose a otro `page_journey_id` para fabricar avance. Los conteos de intentos y
-abandono siguen disponibles en el contrato de datos aunque la tabla principal no
-los muestre como columnas.
+abandono siguen disponibles en el contrato de datos para diagnóstico, pero el
+embudo principal no repite esos conteos técnicos debajo de `Únicos`. La interfaz
+habla de entradas, visitantes y recorridos; `intentos` se reserva para el detalle
+de formularios, donde sí representa una ejecución iniciada del formulario.
 El catálogo temporal que relaciona cada `public_page_id` con su posición fija
 explícitamente el ID como texto y el orden como entero. Este contrato es
 obligatorio en PostgreSQL: los parámetros sin tipo dentro de `VALUES` se

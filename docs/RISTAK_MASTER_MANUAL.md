@@ -1275,7 +1275,10 @@ el mismo `page_journey_id` entre las que alcanzaron la página actual. La últim
 fila coincide así con `completedVisitors`; compartir `visitor_id` entre pestañas
 o visitas distintas no cose recorridos separados. Los conteos detallados de
 intentos, avance y abandono permanecen en el contrato analítico para diagnóstico
-y lecturas futuras.
+y lecturas futuras, pero el embudo no imprime el conteo técnico de intentos
+debajo de cada valor de `Únicos`. Su resumen usa entradas y recorridos iniciados;
+el término `intentos` permanece únicamente en el detalle de formularios, donde
+describe una ejecución iniciada del formulario.
 La consulta tipa explícitamente el catálogo temporal de páginas como
 `page_id = texto` y `page_order = entero`; así el detalle individual conserva el
 mismo resultado en SQLite y PostgreSQL y no depende de la inferencia de tipos de
