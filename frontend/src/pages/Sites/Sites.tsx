@@ -47016,7 +47016,6 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const totalSubmissions = trackingAggregate?.submissions ?? null
   const totalQualifiedConversions = trackingAggregate?.qualifiedConversions ?? null
   const totalConvertingVisitors = trackingAggregate?.convertingVisitors ?? null
-  const totalUnattributedConversions = trackingAggregate?.unattributedConversions ?? null
   const conversionRate = trackingAggregate && trackingAggregate.visitors > 0
     ? trackingAggregate.conversionRate
     : null
@@ -47944,16 +47943,6 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
             <strong>{scopeSiteLabel}</strong>
             <span>{scopeDescription}</span>
           </div>
-
-          {!isVideosView && totalUnattributedConversions !== null && totalUnattributedConversions > 0 && (
-            <div className={styles.sitesAnalyticsScope} role="status">
-              <strong>Conversiones sin atribución web</strong>
-              <span>
-                {formatSitesCompactNumber(totalUnattributedConversions)} conversiones calificadas no tienen identidad web comprobable.
-                Se conservan en el total, pero no se adjudican a un visitante ni inflan la tasa.
-              </span>
-            </div>
-          )}
 
           {isVideosView ? renderVideoAnalytics() : renderEntityAnalytics()}
           {isVideosView && !selectedVideoId && (hasPreviousVideos || hasMoreVideos) && (

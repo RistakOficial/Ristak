@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
-const [sitesPage, stageTable] = await Promise.all([
+const [sitesPage, stageTable, stageStyles] = await Promise.all([
   readFile(new URL('../src/pages/Sites/Sites.tsx', import.meta.url), 'utf8'),
-  readFile(new URL('../src/pages/Sites/analytics/StageConversionTable.tsx', import.meta.url), 'utf8')
+  readFile(new URL('../src/pages/Sites/analytics/StageConversionTable.tsx', import.meta.url), 'utf8'),
+  readFile(new URL('../src/pages/Sites/analytics/StageConversionTable.module.css', import.meta.url), 'utf8')
 ])
 
 assert.match(
@@ -40,6 +41,21 @@ assert.match(
   stageTable,
   /<strong>\{stage\.label\}<\/strong>/,
   'el nombre de cada etapa debe permanecer visible'
+)
+assert.doesNotMatch(
+  sitesPage,
+  /Conversiones sin atribución web|totalUnattributedConversions/,
+  'la interfaz no debe exponer diagnósticos internos de atribución web'
+)
+assert.doesNotMatch(
+  stageTable,
+  /methodNotes|una misma persona puede contar más de una vez|Antes de eso se mantiene como En curso/,
+  'el recorrido no debe ocupar espacio con notas metodológicas para el usuario'
+)
+assert.doesNotMatch(
+  stageStyles,
+  /\.methodNotes/,
+  'los estilos de las notas metodológicas deben eliminarse junto con su interfaz'
 )
 
 console.log('Sites entity analytics relevance contract OK')

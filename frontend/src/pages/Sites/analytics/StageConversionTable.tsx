@@ -365,23 +365,6 @@ export function StageConversionTable({
             </div>
           </dl>
 
-          <div className={styles.methodNotes}>
-            <p>
-              <CircleHelp size={15} aria-hidden="true" />
-              <span>
-                <strong>Visitantes únicos</strong> son identidades first-party del navegador:
-                una misma persona puede contar más de una vez si cambia de dispositivo o borra sus datos.
-              </span>
-            </p>
-            <p>
-              <CircleHelp size={15} aria-hidden="true" />
-              <span>
-                <strong>Abandono confirmado</strong> aparece cuando el intento permanece sin actividad
-                durante 30 minutos. Antes de eso se mantiene como En curso.
-              </span>
-            </p>
-          </div>
-
           {(trackedFrom || warnings.length > 0 || excludedRevisions > 0) ? (
             <div className={styles.coverageNotice} data-coverage={analytics.coverage.status}>
               <div>

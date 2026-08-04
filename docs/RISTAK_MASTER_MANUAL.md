@@ -1065,7 +1065,10 @@ muestra rankings comparativos y actividad por periodo; al seleccionar un embudo
 o formulario oculta los rankings entre entidades y conserva únicamente sus KPIs,
 su recorrido y su serie temporal. El inventario de elementos publicados no se
 presenta como métrica de rendimiento y las etapas del recorrido muestran nombre
-y orden sin etiquetas redundantes de tipo o terminación.
+y orden sin etiquetas redundantes de tipo o terminación. La interfaz tampoco
+expone avisos internos sobre conversiones sin identidad web ni notas metodológicas
+permanentes sobre visitantes únicos o abandono; esos criterios siguen aplicándose
+en los cálculos y sólo se conservan las métricas accionables.
 El contrato rechaza scopes o modos desconocidos y exige un rango completo de fechas
 de calendario del negocio. `dateFrom` y `dateTo` deben venir juntos, en formato
 estricto `YYYY-MM-DD`, representar días reales y no estar invertidos; un rango
