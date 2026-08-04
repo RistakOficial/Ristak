@@ -3849,7 +3849,8 @@ semana, y a partir de 7 dias muestran fecha larga en espanol (`29 de junio`,
 agregando año solo si no pertenece al año actual). Los separadores dentro del
 historial de conversacion pueden seguir usando `Hoy` para agrupar el dia actual.
 La bandeja desktop marca mensajes no leidos con el contador numerico y el resaltado
-del renglon, sin punto adicional antes del numero.
+del renglon, sin punto adicional antes del numero. En cada fila, ese contador se
+muestra inmediatamente antes de la hora, el dia o la fecha del ultimo mensaje.
 
 ## Citas y calendarios
 

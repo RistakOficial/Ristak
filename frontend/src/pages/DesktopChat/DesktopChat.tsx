@@ -9749,7 +9749,10 @@ export const DesktopChat: React.FC = () => {
                       <span className={styles.chatRowBody}>
                         <span className={styles.chatRowTop}>
                           <strong>{getContactName(contact)}</strong>
-                          <small>{contact.lastMessageDate ? formatChatListTimestamp(contact.lastMessageDate, timezone) : ''}</small>
+                          <span className={styles.chatRowMeta}>
+                            {unread > 0 ? <span className={styles.unread} aria-label={`${unread} mensajes no leídos`}>{unread > 99 ? '99+' : unread}</span> : null}
+                            <small>{contact.lastMessageDate ? formatChatListTimestamp(contact.lastMessageDate, timezone) : ''}</small>
+                          </span>
                         </span>
                         <span className={styles.chatPreviewLine}>
                           <span className={styles.agentPriorityText}>
@@ -9758,7 +9761,6 @@ export const DesktopChat: React.FC = () => {
                         </span>
                       </span>
                       <span className={styles.chatRowAside}>
-                        {unread > 0 ? <span className={styles.unread} aria-label={`${unread} mensajes no leídos`}>{unread > 99 ? '99+' : unread}</span> : null}
                         {renderChatActionsMenu(contact)}
                       </span>
                     </div>
@@ -9804,7 +9806,10 @@ export const DesktopChat: React.FC = () => {
                       <span className={styles.chatRowBody}>
                         <span className={styles.chatRowTop}>
                           <strong>{getContactName(contact)}</strong>
-                          <small>{contact.lastMessageDate ? formatChatListTimestamp(contact.lastMessageDate, timezone) : ''}</small>
+                          <span className={styles.chatRowMeta}>
+                            {unread > 0 ? <span className={styles.unread} aria-label={`${unread} mensajes no leídos`}>{unread > 99 ? '99+' : unread}</span> : null}
+                            <small>{contact.lastMessageDate ? formatChatListTimestamp(contact.lastMessageDate, timezone) : ''}</small>
+                          </span>
                         </span>
                         <span className={styles.chatPreviewLine}>
                           {agentStatusLabel ? <span className={styles.agentInboxStatusText}>{agentStatusLabel}</span> : null}
@@ -9812,7 +9817,6 @@ export const DesktopChat: React.FC = () => {
                         </span>
                       </span>
                       <span className={styles.chatRowAside}>
-                        {unread > 0 ? <span className={styles.unread} aria-label={`${unread} mensajes no leídos`}>{unread > 99 ? '99+' : unread}</span> : null}
                         {renderChatActionsMenu(contact)}
                       </span>
                     </div>

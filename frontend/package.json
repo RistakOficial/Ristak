@@ -6,6 +6,7 @@
     "dev": "vite",
     "design:audit": "node scripts/audit-design-system.mjs",
     "test:chat-notification-placement": "node scripts/test-chat-notification-placement.mjs",
+    "test:chat-unread-order": "node scripts/test-chat-unread-order.mjs",
     "test:notification-center": "node scripts/test-notification-center.mjs",
     "test:chat-reconciliation": "node scripts/test-chat-message-reconciliation.mjs",
     "test:chat-delivery-state": "node scripts/test-chat-message-delivery-state.mjs",

@@ -693,9 +693,18 @@
 }
 
 .chatRowTop strong {
+  min-width: 0;
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
   font-weight: 700;
+}
+
+.chatRowMeta {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
 }
 
 .chatRowTop small,
