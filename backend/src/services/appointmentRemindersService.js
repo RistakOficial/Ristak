@@ -1489,8 +1489,27 @@ export async function syncOnlineMeetingAppointmentReminder(calendarId, { enabled
         'UPDATE appointment_reminders SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
         [existing.id]
       )
+      return normalizeReminderRow(await db.get(
+        'SELECT * FROM appointment_reminders WHERE id = ?',
+        [existing.id]
+      ))
     }
-    return existing ? normalizeReminderRow(existing) : null
+    return null
+  }
+
+  // Esta regla se administra al crearla y al prender/apagar el modo en línea,
+  // pero su contenido sigue siendo configuración del usuario. Guardar el
+  // calendario no debe reemplazar una plantilla aprobada, el remitente ni otros
+  // ajustes que el usuario ya personalizó en Mensajes automáticos.
+  if (existing?.id) {
+    await db.run(
+      'UPDATE appointment_reminders SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [existing.id]
+    )
+    return normalizeReminderRow(await db.get(
+      'SELECT * FROM appointment_reminders WHERE id = ?',
+      [existing.id]
+    ))
   }
 
   const template = await ensureOnlineMeetingMessageTemplate()
@@ -1513,10 +1532,6 @@ export async function syncOnlineMeetingAppointmentReminder(calendarId, { enabled
     offsetUnit: 'minutes',
     smartEnabled: false,
     bypassAutomations: false
-  }
-
-  if (existing?.id) {
-    return updateAppointmentReminder(existing.id, input)
   }
 
   const inserted = await insertAppointmentReminder(input, {

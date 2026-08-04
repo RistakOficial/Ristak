@@ -13,6 +13,8 @@ import {
   handleCalendarMeetingLinkClick,
   syncCalendarMeetingResources
 } from '../src/services/calendarMeetingService.js'
+import { createMessageTemplate } from '../src/services/messageTemplatesService.js'
+import { updateAppointmentReminder } from '../src/services/appointmentRemindersService.js'
 import {
   listTriggerLinks,
   recordTriggerLinkClick,
@@ -26,6 +28,8 @@ test('una cita en línea usa enlace opaco, oculta el destino interno y marca asi
   const calendarId = `calendar_meeting_${suffix}`
   const appointmentId = `appointment_meeting_${suffix}`
   const concurrentAppointmentId = `appointment_meeting_concurrent_${suffix}`
+  const customTemplateName = `acceso_videollamada_personalizado_${suffix}`
+  let customTemplateId = ''
 
   try {
     await db.run(
@@ -68,6 +72,64 @@ test('una cita en línea usa enlace opaco, oculta el destino interno y marca asi
       'Hola {{1}}, tu cita en línea comienza el {{2}} a las {{3}}. Ingresa a la videollamada aquí: {{4}}\n\nTe esperamos.'
     )
     assert.equal(onlineTemplate?.footer_text, 'Mensaje automático de Ristak')
+
+    const customTemplate = await createMessageTemplate({
+      folderId: null,
+      name: customTemplateName,
+      description: 'Plantilla aprobada elegida por el usuario para su videollamada.',
+      category: 'utility',
+      language: 'es_MX',
+      status: 'active',
+      headerEnabled: false,
+      headerType: 'none',
+      bodyText: 'Ingresa a tu cita desde aquí: {{1}}',
+      footerText: 'Mensaje automático',
+      buttons: [],
+      variableExamples: {
+        '{{cita.enlace_ingreso}}': 'https://app.ristak.test/pce1_enlace_seguro'
+      },
+      variableBindings: {
+        headerText: {},
+        bodyText: {
+          1: {
+            variableKey: 'cita.enlace_ingreso',
+            mergeField: '{{cita.enlace_ingreso}}',
+            label: 'Enlace de ingreso a la cita',
+            example: 'https://app.ristak.test/pce1_enlace_seguro'
+          }
+        }
+      }
+    })
+    customTemplateId = customTemplate.id
+    await db.run(`
+      UPDATE whatsapp_message_templates
+      SET provider_template_name = ?, provider_template_id = ?, provider_status = 'APPROVED'
+      WHERE id = ?
+    `, [customTemplateName, `provider_${suffix}`, customTemplateId])
+    await updateAppointmentReminder(reminder.id, {
+      calendarId,
+      templateId: customTemplateId,
+      templateName: customTemplateName,
+      templateLanguage: 'es_MX',
+      contentMode: 'template'
+    })
+
+    await syncCalendarMeetingResources({ ...calendar, meetingMode: 'in_person', meetingUrl: '' })
+    const disabledCustomReminder = await db.get(
+      "SELECT * FROM appointment_reminders WHERE calendar_id = ? AND system_key = 'online_meeting_join_link_10m'",
+      [calendarId]
+    )
+    assert.equal(disabledCustomReminder?.enabled, 0)
+    assert.equal(disabledCustomReminder?.template_id, customTemplateId)
+
+    await syncCalendarMeetingResources(calendar)
+    const preservedCustomReminder = await db.get(
+      "SELECT * FROM appointment_reminders WHERE calendar_id = ? AND system_key = 'online_meeting_join_link_10m'",
+      [calendarId]
+    )
+    assert.equal(preservedCustomReminder?.enabled, 1)
+    assert.equal(preservedCustomReminder?.template_id, customTemplateId)
+    assert.equal(preservedCustomReminder?.template_name, customTemplateName)
 
     const start = new Date(Date.now() + 60 * 60 * 1000)
     const appointment = await createLocalAppointment({
@@ -131,6 +193,10 @@ test('una cita en línea usa enlace opaco, oculta el destino interno y marca asi
     await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => undefined)
     await db.run('DELETE FROM appointments WHERE id = ?', [concurrentAppointmentId]).catch(() => undefined)
     await db.run('DELETE FROM appointment_reminders WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+    if (customTemplateId) {
+      await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [customTemplateId]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_templates WHERE name = ? AND language = ?', [customTemplateName, 'es_MX']).catch(() => undefined)
+    }
     const links = await db.all("SELECT id FROM trigger_links WHERE system_scope = 'calendar_meeting' AND owner_id = ?", [calendarId]).catch(() => [])
     for (const link of links) {
       await db.run('DELETE FROM trigger_link_events WHERE trigger_link_id = ?', [link.id]).catch(() => undefined)

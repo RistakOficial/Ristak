@@ -2215,6 +2215,13 @@ que los tres IDs coincidan, marca la cita `showed` y crea la señal idempotente 
 asistencia. Un token reenviado conserva la identidad original y los clics
 repetidos no duplican la transición ni la notificación.
 
+La regla administrada sólo fija su configuración inicial. Después de creada, la
+plantilla, el remitente y los demás ajustes visibles pertenecen al usuario:
+guardar otra vez el calendario o apagar y volver a encender el modo en línea sólo
+desactiva/reactiva la misma regla y nunca sustituye una plantilla personalizada.
+Esto evita reemplazar una plantilla ya aprobada por otra pendiente o rechazada y
+conserva la entrega configurada por el negocio.
+
 El evento **Ingreso a videollamada** (`appointment_joined`) de Configuración →
 Notificaciones permite escoger por destinatario campanita, push, ambos o
 apagado. Cambiar el calendario a presencial desactiva su regla de diez minutos y
