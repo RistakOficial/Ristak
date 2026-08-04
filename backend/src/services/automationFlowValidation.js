@@ -11,6 +11,7 @@ const MAX_FLOW_BYTES = 2 * 1024 * 1024 // 2MB: límite defensivo para el JSON de
 export const START_NODE_TYPE = 'start'
 const TRIGGER_LINK_WAIT_ACTIONS = new Set(['click_link', 'trigger_link_click', 'trigger-link-click'])
 const REPLY_MESSAGE_WAIT_ACTIONS = new Set(['reply_message', 'reply-message'])
+const APPOINTMENT_PAST_DUE_ACTIONS = new Set(['continue', 'specific_node', 'exit'])
 const SENT_MESSAGE_NODE_TYPES = new Set(['channel-whatsapp', 'channel-messenger', 'channel-instagram'])
 const DRIP_INTERVAL_UNITS = new Set(['minutes', 'hours', 'days'])
 const DEFAULT_REPLY_ACTION_CHANNELS = new Set(['whatsapp', 'messenger', 'instagram', 'email'])
@@ -306,6 +307,28 @@ function hasPath(edges, from, to) {
   return false
 }
 
+function appointmentPastDueRoutingEdges(nodes, edges) {
+  const nodeIds = new Set(nodes.map((node) => node.id))
+  const routingEdges = nodes.flatMap((node) => {
+    const config = isPlainObject(node.config) ? node.config : {}
+    if (
+      node.type !== 'logic-wait' ||
+      config.mode !== 'appointment' ||
+      String(config.appointmentOffset || 'before') !== 'before' ||
+      config.appointmentPastDueAction !== 'specific_node'
+    ) return []
+    const targetNodeId = String(config.appointmentPastDueTargetNodeId || '').trim()
+    if (!targetNodeId || !nodeIds.has(targetNodeId) || targetNodeId === node.id) return []
+    return [{
+      id: `virtual-appointment-past-due-${node.id}`,
+      sourceNodeId: node.id,
+      sourceHandle: 'appointment-past-due',
+      targetNodeId
+    }]
+  })
+  return [...edges, ...routingEdges]
+}
+
 function commentTriggerPlatform(trigger) {
   if (trigger?.type === 'trigger-instagram-comment') return 'instagram'
   if (trigger?.type === 'trigger-facebook-comment') return 'facebook'
@@ -536,6 +559,29 @@ export function validateFlowForPublish(flow) {
 
   nodes
     .filter((node) => node.type === 'logic-wait')
+    .forEach((node) => {
+      const config = isPlainObject(node.config) ? node.config : {}
+      if (
+        config.mode !== 'appointment' ||
+        String(config.appointmentOffset || 'before') !== 'before'
+      ) return
+      const action = String(config.appointmentPastDueAction || 'continue')
+      if (!APPOINTMENT_PAST_DUE_ACTIONS.has(action)) {
+        errors.push('El paso Esperar tiene una acción inválida para una cita cuyo tiempo ya pasó')
+        return
+      }
+      if (action !== 'specific_node') return
+      const targetNodeId = String(config.appointmentPastDueTargetNodeId || '').trim()
+      const targetNode = nodes.find((candidate) => candidate.id === targetNodeId)
+      if (!targetNodeId) {
+        errors.push('El paso Esperar necesita elegir un evento para una cita cuyo tiempo ya pasó')
+      } else if (!targetNode || targetNode.type === START_NODE_TYPE || targetNode.id === node.id) {
+        errors.push('El evento elegido para una cita cuyo tiempo ya pasó no es válido')
+      }
+    })
+
+  nodes
+    .filter((node) => node.type === 'logic-wait')
     .forEach((node) => validateReplyMessageWaitSource({ node, nodes, edges, errors }))
 
   nodes
@@ -622,7 +668,7 @@ export function validateFlowForPublish(flow) {
     }
   }
 
-  if (detectCycle(nodes, edges)) {
+  if (detectCycle(nodes, appointmentPastDueRoutingEdges(nodes, edges))) {
     errors.push('El flujo tiene un ciclo: una rama regresa a un paso anterior')
   }
 

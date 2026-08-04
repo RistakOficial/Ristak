@@ -2564,6 +2564,8 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       appointmentOffset: 'before',
       offsetAmount: 1,
       offsetUnit: 'hours',
+      appointmentPastDueAction: 'continue',
+      appointmentPastDueTargetNodeId: '',
       // respuesta
       replyChannel: 'any',
       replySourceNodeId: '',
@@ -2638,6 +2640,15 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       if (mode === 'appointment') {
         if ((Number(config.offsetAmount) || 0) <= 0 && str(config.appointmentOffset) !== 'at') {
           errors.push('Define cuánto tiempo antes o después de la cita')
+        }
+        if ((str(config.appointmentOffset) || 'before') === 'before') {
+          const pastDueAction = str(config.appointmentPastDueAction) || 'continue'
+          if (!['continue', 'specific_node', 'exit'].includes(pastDueAction)) {
+            errors.push('Elige qué debe pasar si ya pasó el tiempo de espera')
+          }
+          if (pastDueAction === 'specific_node' && !str(config.appointmentPastDueTargetNodeId)) {
+            errors.push('Selecciona el evento al que debe pasar si ya pasó el tiempo')
+          }
         }
       }
       if (mode === 'reply') {

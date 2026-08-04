@@ -1520,7 +1520,15 @@ cambio de hora de la misma cita conserva la ejecución activa en su nodo actual,
 actualiza el contexto canónico y recalcula sólo una espera relativa a la cita;
 una espera genérica mantiene su plazo y los pasos posteriores reciben el horario
 nuevo. Las acciones ya ejecutadas no se repiten. Si el nuevo momento relativo ya
-pasó, el flujo continúa de inmediato. Sólo cuando no existe una ejecución activa
+pasó y el paso está configurado como **Antes de la cita**, la espera aplica
+**¿Qué quieres que pase si ya pasó el tiempo?**: puede continuar al siguiente
+evento, saltar a un evento específico o sacar la ejecución del flujo. El salto
+es parte del grafo lógico aunque no dibuje otro conector; el editor y el backend
+rechazan destinos eliminados, el propio paso, el inicio y cualquier salto que
+forme un ciclo. La política también aplica cuando el contacto llega por primera
+vez al paso después del momento calculado. No aplica al vencimiento normal de
+una espera que sí comenzó a tiempo: cuando llega su `resume_at`, continúa por la
+salida normal **Llegó el momento**. Sólo cuando no existe una ejecución activa
 correspondiente, la reprogramación abre una vuelta nueva según los disparadores,
 incluso si el flujo tiene desactivado el reingreso histórico: se atiende el nuevo
 ciclo sin duplicar una vuelta todavía viva. Una cancelación saca inmediatamente

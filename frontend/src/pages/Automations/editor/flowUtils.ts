@@ -132,6 +132,41 @@ export function hasPath(edges: AutomationEdge[], from: string, to: string): bool
   return false
 }
 
+/**
+ * Los saltos configurados dentro de una espera de cita también forman parte del
+ * recorrido real del flujo, aunque no se dibujen como conectores en el canvas.
+ * Los exponemos como aristas virtuales para validar entradas, variables y ciclos.
+ */
+export function getAppointmentPastDueRoutingEdges(
+  nodes: AutomationNode[],
+  edges: AutomationEdge[],
+  excludedSourceNodeId = ''
+): AutomationEdge[] {
+  const routingEdges = nodes.flatMap((node) => {
+    if (node.id === excludedSourceNodeId || node.type !== 'logic-wait') return []
+    const config = node.config || {}
+    if (
+      config.mode !== 'appointment' ||
+      (config.appointmentOffset || 'before') !== 'before' ||
+      config.appointmentPastDueAction !== 'specific_node'
+    ) return []
+    const targetNodeId = typeof config.appointmentPastDueTargetNodeId === 'string'
+      ? config.appointmentPastDueTargetNodeId.trim()
+      : ''
+    if (!targetNodeId) return []
+    return [{
+      id: `virtual-appointment-past-due-${node.id}`,
+      sourceNodeId: node.id,
+      sourceHandle: 'appointment-past-due',
+      targetNodeId,
+      targetHandle: 'in',
+      animated: false,
+      metadata: { virtual: true }
+    } satisfies AutomationEdge]
+  })
+  return [...edges, ...routingEdges]
+}
+
 type SentMessageChannel = 'whatsapp' | 'messenger' | 'instagram' | 'any'
 
 const SENT_MESSAGE_CHANNELS: Record<string, SentMessageChannel> = {

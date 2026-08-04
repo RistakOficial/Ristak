@@ -1,6 +1,13 @@
 import type { AutomationEdge, AutomationNode } from '@/services/automationsService'
 import { getNodeDefinition, validateNodeConfig } from './nodeRegistry'
-import { getStartTriggers, getWaitMessageSourceOptions, hasPath, isStartNode, nodeHasInput } from './flowUtils'
+import {
+  getAppointmentPastDueRoutingEdges,
+  getStartTriggers,
+  getWaitMessageSourceOptions,
+  hasPath,
+  isStartNode,
+  nodeHasInput
+} from './flowUtils'
 import { conditionVariableTokenFromField, isConditionVariableField } from './crmFields'
 import {
   BASE_VARIABLES,
@@ -123,6 +130,34 @@ function validateWaitReplyMessageSource(
   }
 }
 
+function validateAppointmentPastDueRouting(
+  node: AutomationNode,
+  nodes: AutomationNode[],
+  edges: AutomationEdge[],
+  result: FlowValidationResult
+) {
+  if (node.type !== 'logic-wait') return
+  const config = node.config || {}
+  if (
+    config.mode !== 'appointment' ||
+    (config.appointmentOffset || 'before') !== 'before' ||
+    config.appointmentPastDueAction !== 'specific_node'
+  ) return
+  const targetNodeId = typeof config.appointmentPastDueTargetNodeId === 'string'
+    ? config.appointmentPastDueTargetNodeId.trim()
+    : ''
+  if (!targetNodeId) return
+  const targetNode = nodes.find((candidate) => candidate.id === targetNodeId)
+  if (!targetNode || isStartNode(targetNode) || !nodeHasInput(targetNode) || targetNode.id === node.id) {
+    pushNodeError(result, node.id, 'El evento elegido para el tiempo vencido ya no es válido')
+    return
+  }
+  const routingEdgesWithoutCurrentJump = getAppointmentPastDueRoutingEdges(nodes, edges, node.id)
+  if (hasPath(routingEdgesWithoutCurrentJump, targetNodeId, node.id)) {
+    pushNodeError(result, node.id, 'El evento elegido para el tiempo vencido provocaría un ciclo')
+  }
+}
+
 /**
  * Validación completa del flujo antes de publicar.
  * Devuelve mensajes claros en español y los errores por nodo.
@@ -133,6 +168,7 @@ export function validateAutomationFlow(
   options: FlowVariableCatalogOptions = {}
 ): FlowValidationResult {
   const result: FlowValidationResult = { valid: true, issues: [], nodeErrors: {} }
+  const routingEdges = getAppointmentPastDueRoutingEdges(nodes, edges)
 
   const startNode = nodes.find(isStartNode)
 
@@ -167,13 +203,14 @@ export function validateAutomationFlow(
     validateNodeConfig(definition, node.config || {}).forEach((error) => {
       pushNodeError(result, node.id, error)
     })
-    unavailableDynamicTokens(node, nodes, edges, options).forEach((token) => {
+    unavailableDynamicTokens(node, nodes, routingEdges, options).forEach((token) => {
       pushNodeError(result, node.id, `La variable {{${token}}} ya no está disponible`)
     })
-    unavailableConditionVariableFields(node, nodes, edges, options).forEach((reference) => {
+    unavailableConditionVariableFields(node, nodes, routingEdges, options).forEach((reference) => {
       pushNodeError(result, node.id, `El dato "${reference.label}" ya no está disponible para esta condición`)
     })
-    validateWaitReplyMessageSource(node, nodes, edges, result)
+    validateWaitReplyMessageSource(node, nodes, routingEdges, result)
+    validateAppointmentPastDueRouting(node, nodes, edges, result)
   })
 
   // 3. Conexiones válidas
@@ -185,7 +222,7 @@ export function validateAutomationFlow(
   })
 
   // 4. Pasos sueltos (sin conexión de entrada)
-  const connectedTargets = new Set(edges.map((edge) => edge.targetNodeId))
+  const connectedTargets = new Set(routingEdges.map((edge) => edge.targetNodeId))
   nodes.forEach((node) => {
     if (isStartNode(node) || !nodeHasInput(node)) return
     if (!connectedTargets.has(node.id)) {
@@ -195,9 +232,9 @@ export function validateAutomationFlow(
 
   // 5. Ciclos
   const hasCycle = nodes.some((node) =>
-    edges
+    routingEdges
       .filter((edge) => edge.sourceNodeId === node.id)
-      .some((edge) => hasPath(edges, edge.targetNodeId, node.id))
+      .some((edge) => hasPath(routingEdges, edge.targetNodeId, node.id))
   )
   if (hasCycle) {
     result.issues.push({ message: 'El flujo tiene un ciclo: una rama regresa a un paso anterior' })

@@ -119,9 +119,14 @@ Usa estos formatos de forma intencional:
   todo el progreso ya realizado: actualiza el contexto canónico y, si está en una
   espera relativa a la cita, recalcula `resume_at` con el horario nuevo. Una
   espera genérica conserva su propio plazo; los nodos posteriores relacionados
-  con la cita usan la hora actualizada. Si el nuevo momento relativo ya pasó, la
-  ejecución continúa inmediatamente. Sólo cuando ya no existe una ejecución
-  activa correspondiente, la reprogramación puede iniciar una vuelta nueva según
+  con la cita usan la hora actualizada. Si el nuevo momento relativo de una espera
+  **Antes de la cita** ya pasó, aplica la política persistida del nodo: continuar
+  al siguiente evento, saltar a un evento específico válido o salir del flujo.
+  La misma política aplica si la ejecución entra por primera vez a ese nodo
+  después del instante calculado. No la apliques cuando una espera iniciada a
+  tiempo vence normalmente: el scheduler debe liberarla por su salida normal.
+  Sólo cuando ya no existe una ejecución activa correspondiente, la
+  reprogramación puede iniciar una vuelta nueva según
   los disparadores de la automatización, incluso si el reingreso histórico está
   desactivado. Al cancelar la cita, cualquier ejecución activa ligada sale del
   flujo y no revive la hora anterior. Si una integración sustituye el ID, exige

@@ -69,6 +69,7 @@ const WAIT_KIND_TRIGGER_LINK_CLICK = 'trigger-link-click'
 const WAIT_KIND_EVENT_ACTION = 'event-action'
 const WAIT_KIND_CONDITION = 'condition'
 const WAIT_KIND_APPOINTMENT = 'appointment'
+const APPOINTMENT_PAST_DUE_ACTIONS = new Set(['continue', 'specific_node', 'exit'])
 const WAIT_KIND_GOAL = 'goal'
 const WAIT_KIND_DRIP = 'drip'
 // (AUTO-005) Espera especial para reintentar el MISMO nodo que falló de forma
@@ -1355,6 +1356,19 @@ function edgesFrom(flow, nodeId, handle) {
   return (flow.edges || []).filter(
     (edge) => edge.sourceNodeId === nodeId && (handle === undefined || edge.sourceHandle === handle)
   )
+}
+
+function automationJumpTarget(flow, sourceNodeId, targetNodeId) {
+  const cleanTargetNodeId = cleanString(targetNodeId)
+  if (!cleanTargetNodeId) return { node: null, error: '' }
+  const targetNode = getNode(flow, cleanTargetNodeId)
+  if (!targetNode || targetNode.type === 'start' || targetNode.id === sourceNodeId) {
+    return {
+      node: null,
+      error: 'El evento configurado como destino ya no es válido; la ejecución salió del flujo'
+    }
+  }
+  return { node: targetNode, error: '' }
 }
 
 function nodeLabel(node) {
@@ -5466,6 +5480,46 @@ function appointmentWaitTarget(config = {}, ctx = {}) {
   }
 }
 
+function appointmentPastDueResult(config = {}) {
+  if ((str(config.appointmentOffset) || 'before') !== 'before') {
+    return { handle: 'out', detail: 'La cita ya llegó al momento configurado' }
+  }
+  const configuredAction = str(config.appointmentPastDueAction) || 'continue'
+  const action = APPOINTMENT_PAST_DUE_ACTIONS.has(configuredAction)
+    ? configuredAction
+    : 'continue'
+  if (action === 'exit') {
+    return {
+      stop: true,
+      handle: 'out',
+      detail: 'El momento antes de la cita ya había pasado; la ejecución salió del flujo según la configuración'
+    }
+  }
+  if (action === 'specific_node') {
+    const targetNodeId = cleanString(config.appointmentPastDueTargetNodeId)
+    if (!targetNodeId) {
+      return {
+        stop: true,
+        handle: 'out',
+        detail: 'No hay un evento configurado para continuar cuando el tiempo antes de la cita ya pasó',
+        output: {
+          status: 'error',
+          error: 'Falta el evento de destino para el tiempo vencido de la cita'
+        }
+      }
+    }
+    return {
+      handle: 'out',
+      targetNodeId,
+      detail: 'El momento antes de la cita ya había pasado; se continuó en el evento configurado'
+    }
+  }
+  return {
+    handle: 'out',
+    detail: 'El momento antes de la cita ya había pasado; se continuó con el siguiente evento'
+  }
+}
+
 // Nodo de acción: responder un comentario a mitad de un flujo. Usa el
 // ctx.commentId/ctx.platform del disparo de comentario y exige que la acción
 // declarada coincida con esa plataforma.
@@ -6090,7 +6144,7 @@ async function executeResolvedNode(node, ctx, enrollment) {
           }
         }
         if (new Date(resumeAt).getTime() <= Date.now()) {
-          return { handle: 'out', detail: 'La cita ya llegó al momento configurado' }
+          return appointmentPastDueResult(config)
         }
         return {
           wait: {
@@ -6457,6 +6511,23 @@ async function runFrom(flow, enrollment, startNodeId, ctx) {
         enrollment.executionOutcome = 'success'
       }
       break
+    }
+
+    const jump = automationJumpTarget(flow, node.id, result.targetNodeId)
+    if (jump.error) {
+      enrollment.status = 'exited'
+      addLog(enrollment, {
+        nodeId: node.id,
+        label: nodeLabel(node),
+        status: 'error',
+        outcome: 'error',
+        detail: jump.error
+      })
+      break
+    }
+    if (jump.node) {
+      currentId = jump.node.id
+      continue
     }
 
     const edge = edgesFrom(flow, node.id, result.handle)[0] || (node.type === 'start' ? edgesFrom(flow, node.id)[0] : null)
@@ -6982,8 +7053,25 @@ export async function controlAutomationEnrollment({
         lastAutomationEventType: pendingWaitCompletion.eventType || ''
       }
       const currentNode = getNode(automation.flow, enrollment.currentNodeId)
+      let pendingHandle = pendingWaitCompletion.handle || 'out'
+      let pendingTargetNodeId = pendingWaitCompletion.targetNodeId || ''
+      let pendingDetail = pendingWaitCompletion.detail || 'La espera se cumplió mientras estaba pausada'
       if (pendingWaitCompletion.appointmentRecheck && currentNode) {
         const result = await executeNode(currentNode, ctx, enrollment)
+        if (result.stop) {
+          enrollment.status = 'exited'
+          enrollment.resumeAt = null
+          enrollment.waitKind = null
+          addLog(enrollment, {
+            nodeId: currentNode.id,
+            label: nodeLabel(currentNode) || 'Esperar',
+            status: result.output?.status === 'error' ? 'error' : 'info',
+            outcome: result.output?.status === 'error' ? 'error' : undefined,
+            detail: result.detail || 'La ejecución salió del flujo según la configuración de la espera'
+          })
+          await saveEnrollment(enrollment)
+          return reloadEnrollmentResult(enrollment.id)
+        }
         if (result.wait) {
           enrollment.status = 'waiting'
           enrollment.waitKind = result.wait.kind
@@ -7002,14 +7090,18 @@ export async function controlAutomationEnrollment({
           await saveEnrollment(enrollment)
           return reloadEnrollmentResult(enrollment.id)
         }
+        pendingHandle = result.handle || 'out'
+        pendingTargetNodeId = result.targetNodeId || ''
+        pendingDetail = result.detail || pendingDetail
       }
       await continueEnrollmentAfterEvent({
         automation,
         enrollment,
         ctx,
-        handle: pendingWaitCompletion.handle || 'out',
+        handle: pendingHandle,
+        targetNodeId: pendingTargetNodeId,
         label: nodeLabel(currentNode) || 'Esperar',
-        detail: pendingWaitCompletion.detail || 'La espera se cumplió mientras estaba pausada'
+        detail: pendingDetail
       })
       return reloadEnrollmentResult(enrollment.id)
     }
@@ -7195,6 +7287,7 @@ async function continueEnrollmentAfterEvent({
   enrollment,
   ctx,
   handle = 'out',
+  targetNodeId = '',
   label = 'Esperar',
   detail
 }) {
@@ -7211,9 +7304,27 @@ async function continueEnrollmentAfterEvent({
     status: 'ok',
     detail
   })
+  const jump = automationJumpTarget(
+    automation.flow,
+    enrollment.currentNodeId,
+    targetNodeId
+  )
+  if (jump.error) {
+    enrollment.status = 'exited'
+    addLog(enrollment, {
+      nodeId: enrollment.currentNodeId,
+      label,
+      status: 'error',
+      outcome: 'error',
+      detail: jump.error
+    })
+    await saveEnrollment(enrollment)
+    return
+  }
   const edge = edgesFrom(automation.flow, enrollment.currentNodeId, handle)[0]
-  if (edge) {
-    await runFrom(automation.flow, enrollment, edge.targetNodeId, ctx)
+  const nextNodeId = jump.node?.id || edge?.targetNodeId || ''
+  if (nextNodeId) {
+    await runFrom(automation.flow, enrollment, nextNodeId, ctx)
   } else {
     enrollment.status = 'completed'
     addLog(enrollment, {
@@ -7446,7 +7557,8 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
             addLog(enrollment, {
               nodeId: enrollment.currentNodeId,
               label: nodeLabel(currentNode) || 'Esperar',
-              status: 'info',
+              status: result.output?.status === 'error' ? 'error' : 'info',
+              outcome: result.output?.status === 'error' ? 'error' : undefined,
               detail: result.detail || 'La cita ligada fue cancelada; la ejecución salió automáticamente del flujo'
             })
             await saveEnrollment(enrollment)
@@ -7475,12 +7587,14 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
             continue
           }
           pendingMatch.handle = result.handle || 'out'
+          pendingMatch.targetNodeId = result.targetNodeId || ''
           pendingMatch.detail = result.detail || eventCompletionDetail(eventType, ctx)
         }
         enrollment.context = {
           ...(enrollment.context || {}),
           __pendingWaitCompletion: {
             handle: pendingMatch.handle || 'out',
+            targetNodeId: pendingMatch.targetNodeId || '',
             detail: pendingMatch.detail || eventCompletionDetail(eventType, ctx),
             appointmentRecheck: Boolean(pendingMatch.appointmentRecheck),
             eventType,
@@ -7523,7 +7637,8 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
         addLog(enrollment, {
           nodeId: currentNode.id,
           label: nodeLabel(currentNode) || 'Esperar',
-          status: 'info',
+          status: result.output?.status === 'error' ? 'error' : 'info',
+          outcome: result.output?.status === 'error' ? 'error' : undefined,
           detail: result.detail || 'La cita ligada fue cancelada; la ejecución salió automáticamente del flujo'
         })
         await saveEnrollment(enrollment)
@@ -7547,6 +7662,7 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
         continue
       }
       match.handle = result.handle || 'out'
+      match.targetNodeId = result.targetNodeId || ''
       match.detail = result.detail || eventCompletionDetail(eventType, ctx)
     }
 
@@ -7555,6 +7671,7 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
       enrollment,
       ctx,
       handle: match.handle || 'out',
+      targetNodeId: match.targetNodeId || '',
       label: nodeLabel(currentNode) || 'Esperar',
       detail: match.detail || eventCompletionDetail(eventType, ctx)
     })
@@ -8661,6 +8778,7 @@ export async function processDueResumes() {
         } else if (isAppointmentWait) {
           const target = appointmentWaitTarget(currentNode.config || {}, ctx)
           const targetMs = target.resumeAt ? new Date(target.resumeAt).getTime() : Number.NaN
+          const storedTargetMs = row.resume_at ? new Date(row.resume_at).getTime() : Number.NaN
           if (!target.resumeAt || (Number.isFinite(targetMs) && targetMs > Date.now())) {
             enrollment.status = 'waiting'
             enrollment.waitKind = WAIT_KIND_APPOINTMENT
@@ -8679,6 +8797,37 @@ export async function processDueResumes() {
                 : 'La cita todavía no tiene un horario válido; la ejecución seguirá esperando'
             })
             await saveEnrollment(enrollment)
+            continue
+          }
+          const appointmentTargetChanged =
+            Number.isFinite(targetMs) &&
+            Number.isFinite(storedTargetMs) &&
+            Math.abs(targetMs - storedTargetMs) > 1000
+          if (appointmentTargetChanged) {
+            const result = appointmentPastDueResult(currentNode.config || {})
+            if (result.stop) {
+              enrollment.status = 'exited'
+              enrollment.resumeAt = null
+              enrollment.waitKind = null
+              addLog(enrollment, {
+                nodeId: row.current_node_id,
+                label: nodeLabel(currentNode) || 'Esperar',
+                status: result.output?.status === 'error' ? 'error' : 'info',
+                outcome: result.output?.status === 'error' ? 'error' : undefined,
+                detail: result.detail
+              })
+              await saveEnrollment(enrollment)
+              continue
+            }
+            await continueEnrollmentAfterEvent({
+              automation,
+              enrollment,
+              ctx,
+              handle: result.handle || 'out',
+              targetNodeId: result.targetNodeId || '',
+              label: nodeLabel(currentNode) || 'Esperar',
+              detail: result.detail
+            })
             continue
           }
           appointmentWaitDetail = 'La cita llegó al momento configurado después de validar su horario actual'

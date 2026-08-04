@@ -1,7 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Check, ChevronRight, Copy, Loader2, Pencil, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
-import type { AutomationWebhookActionTestResult } from '@/services/automationsService'
+import type {
+  AutomationEdge,
+  AutomationNode,
+  AutomationWebhookActionTestResult
+} from '@/services/automationsService'
 import { MetaPostSelector } from '@/components/MetaPostSelector/MetaPostSelector'
 import { CustomSelect } from './config/configPrimitives'
 import {
@@ -46,6 +50,9 @@ interface NodeConfigBubbleProps {
   bounds: { width: number; height: number }
   onChange: (config: ConfigValue) => void
   waitMessageSources?: WaitMessageSourceOption[]
+  currentNodeId?: string
+  nodes?: AutomationNode[]
+  edges?: AutomationEdge[]
   onRefreshWebhookSample?: (endpointId: string) => Promise<Record<string, unknown> | null>
   onTestWebhookAction?: (config: ConfigValue) => Promise<AutomationWebhookActionTestResult>
   onOpenRichEmailEditor: (request: EmailRichEditorRequest) => void
@@ -98,6 +105,9 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
   bounds,
   onChange,
   waitMessageSources = [],
+  currentNodeId,
+  nodes = [],
+  edges = [],
   onRefreshWebhookSample,
   onTestWebhookAction,
   onOpenRichEmailEditor,
@@ -872,7 +882,14 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
           />
         )}
         {definition.configComponent === 'wait' && (
-          <WaitConfigEditor config={config} onChange={onChange} messageSources={waitMessageSources} />
+          <WaitConfigEditor
+            config={config}
+            onChange={onChange}
+            messageSources={waitMessageSources}
+            currentNodeId={currentNodeId}
+            nodes={nodes}
+            edges={edges}
+          />
         )}
         {definition.configComponent === 'drip' && (
           <DripConfigEditor config={config} onChange={onChange} />

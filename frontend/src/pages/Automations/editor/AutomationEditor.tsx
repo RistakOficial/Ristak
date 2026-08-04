@@ -1997,6 +1997,9 @@ export const AutomationEditor: React.FC = () => {
               bounds={canvasBounds}
               onChange={handleConfigChange}
               waitMessageSources={waitMessageSources}
+              currentNodeId={configNode.id}
+              nodes={nodes}
+              edges={edges}
               onRefreshWebhookSample={refreshWebhookSample}
               onTestWebhookAction={testWebhookAction}
               onOpenRichEmailEditor={handleOpenRichEmailEditor}

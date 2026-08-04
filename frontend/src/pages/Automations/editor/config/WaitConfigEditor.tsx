@@ -10,12 +10,19 @@ import {
   MousePointerClick
 } from 'lucide-react'
 import { CustomSelect } from './configPrimitives'
-import { CHANNEL_OPTIONS_WITH_ANY } from '../nodeRegistry'
+import type { AutomationEdge, AutomationNode } from '@/services/automationsService'
+import { CHANNEL_OPTIONS_WITH_ANY, getNodeDefinition } from '../nodeRegistry'
 import {
   allTriggersProvideEventContext,
   type AdvancedConditionConfig
 } from '../crmFields'
-import type { WaitMessageSourceOption } from '../flowUtils'
+import {
+  getAppointmentPastDueRoutingEdges,
+  hasPath,
+  isStartNode,
+  nodeHasInput,
+  type WaitMessageSourceOption
+} from '../flowUtils'
 import { FlowVariablesContext } from '../variablesCatalog'
 import {
   CatalogSelect,
@@ -43,6 +50,9 @@ interface WaitConfigEditorProps {
   config: Config
   onChange: (config: Config) => void
   messageSources?: WaitMessageSourceOption[]
+  currentNodeId?: string
+  nodes?: AutomationNode[]
+  edges?: AutomationEdge[]
 }
 
 const str = (value: unknown): string => (typeof value === 'string' ? value : '')
@@ -73,7 +83,14 @@ const EXPECTED_ACTIONS = [
   { value: 'custom_event', label: 'Evento personalizado' }
 ]
 
-export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onChange, messageSources = [] }) => {
+export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({
+  config,
+  onChange,
+  messageSources = [],
+  currentNodeId = '',
+  nodes = [],
+  edges = []
+}) => {
   const { user } = useAuth()
   const flowVariables = React.useContext(FlowVariablesContext)
   const hasAppointmentsAccess = hasLicenseFeature(user, ['appointments'])
@@ -95,6 +112,32 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
     if (action.value === 'book_appointment') return hasAppointmentsAccess
     return true
   })
+  const appointmentPastDueTargetOptions = React.useMemo(() => {
+    if (!currentNodeId) return []
+    const routingEdgesWithoutCurrentJump = getAppointmentPastDueRoutingEdges(
+      nodes,
+      edges,
+      currentNodeId
+    )
+    return nodes
+      .filter((candidate) => (
+        candidate.id !== currentNodeId &&
+        !isStartNode(candidate) &&
+        nodeHasInput(candidate) &&
+        !hasPath(routingEdgesWithoutCurrentJump, candidate.id, currentNodeId)
+      ))
+      .sort((left, right) => (
+        left.position.x - right.position.x || left.position.y - right.position.y
+      ))
+      .map((candidate, index) => {
+        const customTitle = str(candidate.config?.customTitle).trim()
+        const defaultTitle = candidate.label || getNodeDefinition(candidate.type)?.label || 'Evento'
+        return {
+          value: candidate.id,
+          label: `${index + 1}. ${customTitle || defaultTitle}`
+        }
+      })
+  }, [currentNodeId, edges, nodes])
 
   useEffect(() => {
     if (!firstMessageSource) return
@@ -245,6 +288,41 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
                 onChange={(offsetAmount, offsetUnit) => set({ offsetAmount, offsetUnit })}
               />
             </Field>
+          )}
+          {(str(config.appointmentOffset) || 'before') === 'before' && (
+            <>
+              <Field
+                label="¿Qué quieres que pase si ya pasó el tiempo?"
+                help="Se aplica si el contacto llega a esta espera después del momento configurado."
+              >
+                <CustomSelect
+                  options={[
+                    { value: 'continue', label: 'Pasar al siguiente evento' },
+                    { value: 'specific_node', label: 'Pasar a un evento específico' },
+                    { value: 'exit', label: 'Salir del flujo' }
+                  ]}
+                  value={str(config.appointmentPastDueAction) || 'continue'}
+                  onValueChange={(next) => set({ appointmentPastDueAction: next })}
+                  aria-label="Qué hacer si ya pasó el tiempo"
+                />
+              </Field>
+              {str(config.appointmentPastDueAction) === 'specific_node' && (
+                <Field
+                  label="Evento al que debe pasar"
+                  help={appointmentPastDueTargetOptions.length === 0
+                    ? 'Agrega otro evento válido al flujo para poder seleccionarlo.'
+                    : 'No se muestran eventos que provocarían un ciclo.'}
+                >
+                  <CustomSelect
+                    options={appointmentPastDueTargetOptions}
+                    value={str(config.appointmentPastDueTargetNodeId)}
+                    onValueChange={(next) => set({ appointmentPastDueTargetNodeId: next })}
+                    placeholder="Selecciona un evento"
+                    aria-label="Evento específico si ya pasó el tiempo"
+                  />
+                </Field>
+              )}
+            </>
           )}
         </>
       )}

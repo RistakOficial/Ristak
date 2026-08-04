@@ -566,3 +566,62 @@ test('publicar detecta ciclos en el flujo', () => {
   const errors = validateFlowForPublish(flow)
   assert.ok(errors.some((message) => message.includes('ciclo')))
 })
+
+test('Esperar antes de una cita valida el evento elegido cuando el tiempo ya pasó', () => {
+  const waitNode = {
+    id: 'wait-appointment',
+    type: 'logic-wait',
+    position: { x: 100, y: 0 },
+    config: {
+      mode: 'appointment',
+      appointmentOffset: 'before',
+      offsetAmount: 3,
+      offsetUnit: 'days',
+      appointmentPastDueAction: 'specific_node',
+      appointmentPastDueTargetNodeId: ''
+    }
+  }
+  const targetNode = actionNode('late-target')
+  const flow = {
+    nodes: [startNode(), waitNode, targetNode],
+    edges: [edge('e1', 'start', 'wait-appointment')]
+  }
+
+  let errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('necesita elegir un evento')))
+
+  waitNode.config.appointmentPastDueTargetNodeId = 'late-target'
+  errors = validateFlowForPublish(flow)
+  assert.deepEqual(errors, [])
+
+  waitNode.config.appointmentPastDueTargetNodeId = 'missing-node'
+  errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('no es válido')))
+})
+
+test('el salto por tiempo vencido de una cita no puede regresar a un evento anterior', () => {
+  const previousNode = actionNode('previous')
+  const waitNode = {
+    id: 'wait-appointment',
+    type: 'logic-wait',
+    position: { x: 200, y: 0 },
+    config: {
+      mode: 'appointment',
+      appointmentOffset: 'before',
+      offsetAmount: 3,
+      offsetUnit: 'days',
+      appointmentPastDueAction: 'specific_node',
+      appointmentPastDueTargetNodeId: 'previous'
+    }
+  }
+  const flow = {
+    nodes: [startNode(), previousNode, waitNode],
+    edges: [
+      edge('e1', 'start', 'previous'),
+      edge('e2', 'previous', 'wait-appointment')
+    ]
+  }
+
+  const errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('ciclo')))
+})
