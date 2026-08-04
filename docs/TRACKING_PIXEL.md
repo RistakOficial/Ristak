@@ -408,6 +408,12 @@ necesario alrededor del rango para no declarar abandono sólo porque el siguient
 salto ocurrió inmediatamente fuera del límite. Por página expone vistas,
 intentos/visitantes alcanzados, avance, siguiente página, entradas directas,
 actividad y abandono; llegar a la última página completa el recorrido.
+La tasa visible por etapa usa identidades únicas: divide las identidades que
+después alcanzaron una página posterior entre las identidades que alcanzaron la
+página actual. La coincidencia se conserva aunque el navegador haya abierto un
+nuevo intento medible, pero una entrada directa con otra identidad no fabrica
+avance. Los conteos de intentos y abandono siguen disponibles en el contrato de
+datos aunque la tabla principal no los muestre como columnas.
 El catálogo temporal que relaciona cada `public_page_id` con su posición fija
 explícitamente el ID como texto y el orden como entero. Este contrato es
 obligatorio en PostgreSQL: los parámetros sin tipo dentro de `VALUES` se

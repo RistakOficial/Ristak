@@ -522,9 +522,11 @@ test('page funnel analytics keeps reloads, direct entries, progress, and hidden 
         reachedAttempts: intro.reachedAttempts,
         reachedVisitors: intro.reachedVisitors,
         advancedAttempts: intro.advancedAttempts,
+        progressedVisitors: intro.progressedVisitors,
         inProgressAttempts: intro.inProgressAttempts,
         droppedAttempts: intro.droppedAttempts,
         advanceRate: intro.advanceRate,
+        progressionRate: intro.progressionRate,
         dropOffRate: intro.dropOffRate,
         directEntries: intro.directEntries
       },
@@ -534,9 +536,11 @@ test('page funnel analytics keeps reloads, direct entries, progress, and hidden 
         reachedAttempts: 10,
         reachedVisitors: 10,
         advancedAttempts: 8,
+        progressedVisitors: 8,
         inProgressAttempts: 1,
         droppedAttempts: 1,
         advanceRate: 80,
+        progressionRate: 80,
         dropOffRate: 10,
         directEntries: 0
       }
@@ -556,9 +560,11 @@ test('page funnel analytics keeps reloads, direct entries, progress, and hidden 
         reachedAttempts: offer.reachedAttempts,
         reachedVisitors: offer.reachedVisitors,
         advancedAttempts: offer.advancedAttempts,
+        progressedVisitors: offer.progressedVisitors,
         droppedAttempts: offer.droppedAttempts,
         inProgressAttempts: offer.inProgressAttempts,
         advanceRate: offer.advanceRate,
+        progressionRate: offer.progressionRate,
         dropOffRate: offer.dropOffRate,
         directEntries: offer.directEntries
       },
@@ -568,9 +574,11 @@ test('page funnel analytics keeps reloads, direct entries, progress, and hidden 
         reachedAttempts: 9,
         reachedVisitors: 9,
         advancedAttempts: 4,
+        progressedVisitors: 4,
         droppedAttempts: 5,
         inProgressAttempts: 0,
         advanceRate: 44.4,
+        progressionRate: 44.4,
         dropOffRate: 55.6,
         directEntries: 1
       }
@@ -591,6 +599,7 @@ test('page funnel analytics keeps reloads, direct entries, progress, and hidden 
         reachedVisitors: thanks.reachedVisitors,
         terminalAttempts: thanks.terminalAttempts,
         advanceRate: thanks.advanceRate,
+        progressionRate: thanks.progressionRate,
         dropOffRate: thanks.dropOffRate
       },
       {
@@ -600,6 +609,7 @@ test('page funnel analytics keeps reloads, direct entries, progress, and hidden 
         reachedVisitors: 4,
         terminalAttempts: 4,
         advanceRate: 0,
+        progressionRate: 0,
         dropOffRate: 0
       }
     )
@@ -607,6 +617,121 @@ test('page funnel analytics keeps reloads, direct entries, progress, and hidden 
     await cleanupSyntheticData({
       siteIds: [siteId],
       hiddenFilter: hiddenContactId
+    })
+  }
+})
+
+test('page funnel progression rate follows a unique visitor across split journeys without counting unrelated or earlier direct traffic', async () => {
+  const suffix = testSuffix('page_unique_progression')
+  const siteId = `site_${suffix}`
+  const cleanupFilter = `unused_filter_${suffix}`
+  const pages = [
+    { id: `page_intro_${suffix}`, title: 'Ingreso', sortOrder: 0 },
+    { id: `page_calendar_${suffix}`, title: 'Calendario', sortOrder: 1 }
+  ]
+
+  try {
+    await insertPublicSite({
+      id: siteId,
+      name: 'Embudo de progresión única',
+      slug: `embudo-progresion-${suffix}`,
+      siteType: 'landing_page',
+      theme: { pageMode: 'funnel', pages }
+    })
+    const site = await getSite(siteId, {
+      includeBlocks: false,
+      includeSubmissions: false,
+      includeTrackingStats: false
+    })
+    const pageFlowRevision = extractTrackingContext(await renderPublicSiteHtml(site, {
+      pageId: pages[0].id,
+      trackingEnabled: true,
+      preview: false
+    })).pageFlowRevision
+    const base = DateTime.utc().minus({ hours: 2 })
+
+    for (const event of [
+      {
+        eventKey: 'shared_intro',
+        page: pages[0],
+        sessionId: `session_${suffix}_shared_intro`,
+        visitorId: `visitor_${suffix}_shared`,
+        pageJourneyId: `journey_${suffix}_shared_intro`,
+        at: base.toISO()
+      },
+      {
+        eventKey: 'intro_only',
+        page: pages[0],
+        sessionId: `session_${suffix}_intro_only`,
+        visitorId: `visitor_${suffix}_intro_only`,
+        pageJourneyId: `journey_${suffix}_intro_only`,
+        at: base.plus({ seconds: 10 }).toISO()
+      },
+      {
+        eventKey: 'earlier_calendar',
+        page: pages[1],
+        sessionId: `session_${suffix}_earlier_calendar`,
+        visitorId: `visitor_${suffix}_reverse_order`,
+        pageJourneyId: `journey_${suffix}_earlier_calendar`,
+        at: base.plus({ seconds: 20 }).toISO()
+      },
+      {
+        eventKey: 'later_intro',
+        page: pages[0],
+        sessionId: `session_${suffix}_later_intro`,
+        visitorId: `visitor_${suffix}_reverse_order`,
+        pageJourneyId: `journey_${suffix}_later_intro`,
+        at: base.plus({ seconds: 30 }).toISO()
+      },
+      {
+        eventKey: 'shared_calendar_split_journey',
+        page: pages[1],
+        sessionId: `session_${suffix}_shared_calendar`,
+        visitorId: `visitor_${suffix}_shared`,
+        pageJourneyId: `journey_${suffix}_shared_calendar`,
+        at: base.plus({ minutes: 1 }).toISO()
+      },
+      {
+        eventKey: 'unrelated_direct_calendar',
+        page: pages[1],
+        sessionId: `session_${suffix}_direct`,
+        visitorId: `visitor_${suffix}_direct`,
+        pageJourneyId: `journey_${suffix}_direct`,
+        at: base.plus({ minutes: 2 }).toISO()
+      }
+    ]) {
+      await insertNativePageView({
+        suffix,
+        eventKey: event.eventKey,
+        siteId,
+        pageId: event.page.id,
+        pageTitle: event.page.title,
+        sessionId: event.sessionId,
+        visitorId: event.visitorId,
+        pageFlowRevision,
+        pageJourneyId: event.pageJourneyId,
+        at: event.at
+      })
+    }
+
+    const summary = await getSitesTrackingSummary({
+      siteIds: [siteId],
+      breakdownSiteIds: [siteId],
+      pageFunnelSiteId: siteId,
+      ...await analyticsDateWindow()
+    })
+    const [intro, calendar] = summary.pageFunnels[siteId].stages
+
+    assert.equal(intro.reachedVisitors, 3)
+    assert.equal(intro.advancedVisitors, 0)
+    assert.equal(intro.progressedVisitors, 1)
+    assert.equal(intro.progressionRate, 33.3)
+    assert.equal(calendar.reachedVisitors, 3)
+    assert.equal(calendar.directEntries, 3)
+  } finally {
+    await cleanupSyntheticData({
+      siteIds: [siteId],
+      hiddenFilter: cleanupFilter
     })
   }
 })
@@ -1396,10 +1521,12 @@ test('form journey analytics separates live progress from legacy answer coverage
         answeredVisitors: first.answeredVisitors,
         advancedAttempts: first.advancedAttempts,
         advancedVisitors: first.advancedVisitors,
+        progressedVisitors: first.progressedVisitors,
         inProgressAttempts: first.inProgressAttempts,
         droppedAttempts: first.droppedAttempts,
         terminalAttempts: first.terminalAttempts,
         advanceRate: first.advanceRate,
+        progressionRate: first.progressionRate,
         dropOffRate: first.dropOffRate
       },
       {
@@ -1410,10 +1537,12 @@ test('form journey analytics separates live progress from legacy answer coverage
         answeredVisitors: 1,
         advancedAttempts: 3,
         advancedVisitors: 2,
+        progressedVisitors: 2,
         inProgressAttempts: 1,
         droppedAttempts: 1,
         terminalAttempts: 0,
         advanceRate: 60,
+        progressionRate: 50,
         dropOffRate: 20
       }
     )
@@ -1441,10 +1570,12 @@ test('form journey analytics separates live progress from legacy answer coverage
         answeredVisitors: second.answeredVisitors,
         advancedAttempts: second.advancedAttempts,
         advancedVisitors: second.advancedVisitors,
+        progressedVisitors: second.progressedVisitors,
         inProgressAttempts: second.inProgressAttempts,
         droppedAttempts: second.droppedAttempts,
         terminalAttempts: second.terminalAttempts,
         advanceRate: second.advanceRate,
+        progressionRate: second.progressionRate,
         dropOffRate: second.dropOffRate
       },
       {
@@ -1455,10 +1586,12 @@ test('form journey analytics separates live progress from legacy answer coverage
         answeredVisitors: 2,
         advancedAttempts: 2,
         advancedVisitors: 2,
+        progressedVisitors: 2,
         inProgressAttempts: 0,
         droppedAttempts: 1,
         terminalAttempts: 0,
         advanceRate: 66.7,
+        progressionRate: 100,
         dropOffRate: 33.3
       }
     )
@@ -1486,10 +1619,12 @@ test('form journey analytics separates live progress from legacy answer coverage
         answeredVisitors: third.answeredVisitors,
         advancedAttempts: third.advancedAttempts,
         advancedVisitors: third.advancedVisitors,
+        progressedVisitors: third.progressedVisitors,
         inProgressAttempts: third.inProgressAttempts,
         droppedAttempts: third.droppedAttempts,
         terminalAttempts: third.terminalAttempts,
         advanceRate: third.advanceRate,
+        progressionRate: third.progressionRate,
         dropOffRate: third.dropOffRate
       },
       {
@@ -1500,10 +1635,12 @@ test('form journey analytics separates live progress from legacy answer coverage
         answeredVisitors: 1,
         advancedAttempts: 2,
         advancedVisitors: 2,
+        progressedVisitors: 2,
         inProgressAttempts: 0,
         droppedAttempts: 0,
         terminalAttempts: 2,
         advanceRate: 100,
+        progressionRate: 100,
         dropOffRate: 0
       }
     )

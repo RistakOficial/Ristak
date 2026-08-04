@@ -74,15 +74,13 @@ function StageHeader({
 
 function CountMetric({
   value,
-  detail,
-  tone
+  detail
 }: {
   value: number
   detail?: string
-  tone?: 'loss'
 }) {
   return (
-    <div className={styles.countMetric} data-tone={tone}>
+    <div className={styles.countMetric}>
       <strong>{formatCount(value)}</strong>
       {detail ? <span>{detail}</span> : null}
     </div>
@@ -137,7 +135,7 @@ function buildColumns(mode: StageConversionTableProps['mode']): Array<Column<Sit
     {
       key: 'label',
       header: 'Etapa',
-      width: '34%',
+      width: mode === 'funnel' ? '52%' : '40%',
       fixed: true,
       sortable: false,
       render: (_value, stage) => <StageCell stage={stage} mode={mode} />
@@ -152,7 +150,7 @@ function buildColumns(mode: StageConversionTableProps['mode']): Array<Column<Sit
             : 'Intentos que llegaron a esta etapa, incluidas visitas repetidas de una misma identidad.'}
         />
       ),
-      width: '11%',
+      width: mode === 'funnel' ? '16%' : '15%',
       sortable: false,
       render: (_value, stage) => (
         <CountMetric
@@ -173,7 +171,7 @@ function buildColumns(mode: StageConversionTableProps['mode']): Array<Column<Sit
           help="Identidades first-party distintas que alcanzaron esta etapa. No equivale a personas verificadas."
         />
       ),
-      width: '10%',
+      width: mode === 'funnel' ? '16%' : '15%',
       sortable: false,
       render: (_value, stage) => (
         <CountMetric
@@ -193,7 +191,7 @@ function buildColumns(mode: StageConversionTableProps['mode']): Array<Column<Sit
           help="Identidades que guardaron por lo menos una respuesta dentro de esta etapa."
         />
       ),
-      width: '11%',
+      width: '15%',
       sortable: false,
       render: (_value, stage) => (
         stage.answeredVisitors === undefined
@@ -208,95 +206,32 @@ function buildColumns(mode: StageConversionTableProps['mode']): Array<Column<Sit
     })
   }
 
-  columns.push(
-    {
-      key: 'advancedVisitors',
-      header: (
-        <StageHeader
-          label="Avance / final"
-          help="Identidades que pasaron a otra etapa. Si el recorrido termina aquí, muestra los intentos terminales."
-        />
-      ),
-      width: '12%',
-      sortable: false,
-      render: (_value, stage) => {
-        const endedHere = (
-          stage.terminalAttempts > 0 &&
-          stage.advancedAttempts === 0 &&
-          stage.nextStages.length === 0
-        )
-
-        return (
-          <div className={styles.advanceMetric}>
-            <CountMetric
-              value={endedHere ? stage.terminalAttempts : stage.advancedVisitors}
-              detail={endedHere
-                ? 'intentos terminaron aquí'
-                : `${formatCount(stage.advancedAttempts)} intentos`}
-            />
-            {stage.nextStages.length ? (
-              <div className={styles.nextStageItems}>
-                {stage.nextStages.map(nextStage => (
-                  <span key={nextStage.stageId}>
-                    A {nextStage.label}: {formatCount(nextStage.attempts)} intentos ·{' '}
-                    {stage.reachedAttempts > 0 ? formatPercent(nextStage.rate) : 'Sin tasa'}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        )
-      }
-    },
-    {
-      key: 'advanceRate',
-      header: (
-        <StageHeader
-          label="Tasa"
-          help="Porcentaje de intentos que alcanzaron la etapa y después avanzaron."
-        />
-      ),
-      width: '9%',
-      sortable: false,
-      render: (_value, stage) => {
-        const endedHere = (
-          stage.terminalAttempts > 0 &&
-          stage.advancedAttempts === 0 &&
-          stage.nextStages.length === 0
-        )
-
-        return (
-          <Badge variant={endedHere ? 'neutral' : 'primary'} className={styles.rateValue}>
-            {endedHere
-              ? 'Final'
-              : stage.reachedAttempts > 0 ? formatPercent(stage.advanceRate) : 'Sin dato'}
-          </Badge>
-        )
-      }
-    },
-    {
-      key: 'droppedVisitors',
-      header: (
-        <StageHeader
-          label="No avanzaron"
-          help="Abandono confirmado. Los intentos con actividad reciente permanecen separados como En curso."
-        />
-      ),
-      width: '13%',
-      sortable: false,
-      render: (_value, stage) => (
-        <CountMetric
-          value={stage.droppedVisitors}
-          detail={[
-            `${formatCount(stage.droppedAttempts)} intentos`,
-            stage.reachedAttempts > 0 ? formatPercent(stage.dropOffRate) : 'Sin tasa',
-            `${formatCount(stage.inProgressVisitors)} identidades en curso (${formatCount(stage.inProgressAttempts)} intentos)`
-          ].join(' · ')}
-          tone={stage.droppedVisitors > 0 ? 'loss' : undefined}
-        />
+  columns.push({
+    key: 'progressionRate',
+    header: (
+      <StageHeader
+        label="Tasa"
+        help={mode === 'funnel'
+          ? 'Porcentaje de identidades únicas de esta página que también llegaron a una página posterior del embudo.'
+          : 'Porcentaje de identidades únicas que alcanzaron esta etapa y después avanzaron.'}
+      />
+    ),
+    width: mode === 'funnel' ? '16%' : '15%',
+    sortable: false,
+    render: (_value, stage) => {
+      const endedHere = (
+        stage.terminalAttempts > 0 &&
+        stage.advancedAttempts === 0 &&
+        stage.nextStages.length === 0
       )
+
+      const rate = endedHere
+        ? 'Final'
+        : stage.reachedVisitors > 0 ? formatPercent(stage.progressionRate) : 'Sin dato'
+
+      return <span className={styles.rateValue}>{rate}</span>
     }
-  )
+  })
 
   return columns
 }

@@ -12547,25 +12547,29 @@ async function getSitesFormJourneySummary(siteIds = [], dateFilters = {}, statsB
     const stages = definition.stages.map(stage => {
       const row = stageRowById.get(stage.stageId) || {}
       const reachedAttempts = Number(row.reached_attempts || 0)
+      const reachedVisitors = Number(row.reached_visitors || 0)
       const answeredAttempts = Number(row.answered_attempts || 0)
       const advancedAttempts = Number(row.advanced_attempts || 0)
+      const advancedVisitors = Number(row.advanced_visitors || 0)
       return {
         stageId: stage.stageId,
         kind: stage.kind,
         label: stage.label,
         order: stage.order,
         reachedAttempts,
-        reachedVisitors: Number(row.reached_visitors || 0),
+        reachedVisitors,
         answeredAttempts,
         answeredVisitors: Number(row.answered_visitors || 0),
         advancedAttempts,
-        advancedVisitors: Number(row.advanced_visitors || 0),
+        advancedVisitors,
+        progressedVisitors: advancedVisitors,
         terminalAttempts: Number(row.terminal_attempts || 0),
         inProgressAttempts: Number(row.in_progress_attempts || 0),
         inProgressVisitors: Number(row.in_progress_visitors || 0),
         droppedAttempts: Number(row.dropped_attempts || 0),
         droppedVisitors: Number(row.dropped_visitors || 0),
         advanceRate: formatSiteAnalyticsRate(advancedAttempts, reachedAttempts),
+        progressionRate: formatSiteAnalyticsRate(advancedVisitors, reachedVisitors),
         dropOffRate: formatSiteAnalyticsRate(Number(row.dropped_attempts || 0), reachedAttempts),
         directEntries: Number(row.direct_entries || 0),
         nextStages: (transitionByStep.get(stage.stageId) || []).map(target => ({
@@ -12815,6 +12819,8 @@ export function buildSitesPageJourneyCte({
           change.visitor_key,
           change.page_id,
           change.page_order,
+          MIN(change.started_at) AS first_activity,
+          MAX(change.started_at) AS last_activity,
           MIN(change.change_sequence) AS first_sequence,
           MAX(change.change_sequence) AS last_sequence,
           MAX(CASE WHEN EXISTS (
@@ -12885,6 +12891,16 @@ async function getSitesPageFunnelSummary(siteIds = [], dateFilters = {}, hiddenF
             ELSE NULL
           END) AS advanced_visitors,
           COUNT(DISTINCT CASE
+            WHEN stage.page_order < ? AND EXISTS (
+              SELECT 1
+              FROM journey_stage later_stage
+              WHERE later_stage.visitor_key = stage.visitor_key
+                AND later_stage.page_order > stage.page_order
+                AND later_stage.last_activity >= stage.first_activity
+            ) THEN stage.visitor_key
+            ELSE NULL
+          END) AS progressed_visitors,
+          COUNT(DISTINCT CASE
             WHEN stage.page_order = ? THEN stage.journey_id
             ELSE NULL
           END) AS terminal_attempts,
@@ -12936,6 +12952,7 @@ async function getSitesPageFunnelSummary(siteIds = [], dateFilters = {}, hiddenF
         ORDER BY stage.page_order ASC
       `, [
         ...cte.params,
+        lastPageOrder,
         lastPageOrder,
         lastPageOrder,
         lastPageOrder,
@@ -13068,6 +13085,7 @@ async function getSitesPageFunnelSummary(siteIds = [], dateFilters = {}, hiddenF
       const reachedVisitors = Number(row.reached_visitors || 0)
       const advancedAttempts = Number(row.advanced_attempts || 0)
       const advancedVisitors = Number(row.advanced_visitors || 0)
+      const progressedVisitors = Number(row.progressed_visitors || 0)
       const targets = (transitionsByPage.get(page.id) || []).map(target => ({
         ...target,
         rate: formatSiteAnalyticsRate(target.attempts, reachedAttempts)
@@ -13084,6 +13102,7 @@ async function getSitesPageFunnelSummary(siteIds = [], dateFilters = {}, hiddenF
         answeredVisitors: 0,
         advancedAttempts,
         advancedVisitors,
+        progressedVisitors,
         terminalAttempts: Number(row.terminal_attempts || 0),
         inProgressAttempts: Number(row.in_progress_attempts || 0),
         inProgressVisitors: Number(row.in_progress_visitors || 0),
@@ -13092,6 +13111,9 @@ async function getSitesPageFunnelSummary(siteIds = [], dateFilters = {}, hiddenF
         advanceRate: page.order === lastPageOrder
           ? 0
           : formatSiteAnalyticsRate(advancedAttempts, reachedAttempts),
+        progressionRate: page.order === lastPageOrder
+          ? 0
+          : formatSiteAnalyticsRate(progressedVisitors, reachedVisitors),
         dropOffRate: page.order === lastPageOrder
           ? 0
           : formatSiteAnalyticsRate(Number(row.dropped_attempts || 0), reachedAttempts),

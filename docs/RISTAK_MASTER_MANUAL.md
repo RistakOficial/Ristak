@@ -1259,6 +1259,12 @@ llegada a la página final. Conserva un margen de 30 minutos alrededor del rango
 para no declarar abandono cuando el salto inmediato quedó justo fuera del
 límite. Vistas legacy, de otra revisión o sin identidad de recorrido no se
 mezclan y degradan cobertura a `partial`/`unavailable`.
+La tabla principal mantiene sólo etapa, vistas, identidades únicas y tasa. Esa
+tasa divide las identidades que después alcanzaron una página posterior entre
+las identidades de la página actual; conserva la coincidencia de la misma
+identidad aunque exista otro intento medible y no atribuye como avance una
+entrada directa de otra identidad. Los conteos detallados de intentos, avance y
+abandono permanecen en el contrato analítico para diagnóstico y lecturas futuras.
 La consulta tipa explícitamente el catálogo temporal de páginas como
 `page_id = texto` y `page_order = entero`; así el detalle individual conserva el
 mismo resultado en SQLite y PostgreSQL y no depende de la inferencia de tipos de

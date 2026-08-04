@@ -403,12 +403,14 @@ export interface SitesStageFunnelStage {
   answeredVisitors?: number
   advancedAttempts: number
   advancedVisitors: number
+  progressedVisitors: number
   terminalAttempts: number
   inProgressAttempts: number
   inProgressVisitors: number
   droppedAttempts: number
   droppedVisitors: number
   advanceRate: number
+  progressionRate: number
   dropOffRate: number
   directEntries: number
   nextStages: SitesStageFunnelNextStage[]

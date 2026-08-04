@@ -62,5 +62,20 @@ assert.doesNotMatch(
   /\.methodNotes/,
   'los estilos de las notas metodológicas deben eliminarse junto con su interfaz'
 )
+assert.doesNotMatch(
+  stageTable,
+  /label="Avance \/ final"|label="No avanzaron"/,
+  'la tabla de recorrido no debe mostrar columnas redundantes de avance o abandono'
+)
+assert.doesNotMatch(
+  stageTable,
+  /<Badge[^>]*className=\{styles\.rateValue\}/,
+  'la tasa debe mostrarse como texto plano y no como badge o chip de estado'
+)
+assert.match(
+  stageTable,
+  /formatPercent\(stage\.progressionRate\)/,
+  'la tasa visible debe usar la progresión de identidades únicas'
+)
 
 console.log('Sites entity analytics relevance contract OK')
