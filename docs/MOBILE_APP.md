@@ -1359,15 +1359,17 @@ de esa fila. `Todos` queda fijo.
 
 `Chatbot` tambien queda fijo inmediatamente despues de `Todos` en las tres
 superficies moviles: `/movil`, React Native (`mobile/`) y SwiftUI (`ios/app`).
-Sustituye el acceso flotante del robot en el encabezado de la bandeja. Al
-seleccionarlo permanece marcado y abre, debajo de la fila normal y tras un
-separador, un segundo nivel con `Todos`, `Activos`, `Pausados 24 horas` y
-`Meta cumplida`. Ese `Todos` no significa toda la bandeja: es exclusivamente la
-union de contactos con un agente activo, un agente pausado o una meta cumplida
+Al seleccionarlo permanece marcado y abre, debajo de la fila normal y tras un
+separador, un segundo nivel con `Todos`, `Activos`, `Pausados 24 horas` y `Meta
+cumplida`. Ese `Todos` no significa toda la bandeja: es exclusivamente la union
+de contactos con un agente activo, un agente pausado o una meta cumplida
 pendiente de abrir. No incluye omitidos, no asignados ni conversaciones
 normales. Abrir una meta la marca como revisada y la retira del subfiltro; el
 panel conserva su superficie normal y solo los chips seleccionados cambian de
-estado visual.
+estado visual. A diferencia de escritorio, las tres superficies móviles
+conservan además el robot en la esquina del encabezado: ese botón abre el Hub
+para encender, apagar, pausar o personalizar el agente y no es reemplazado por
+el filtro de inventario.
 
 Esa biblioteca debe incluir los filtros rapidos del chat movil, la entrada de
 `Comentarios`, cada WhatsApp conectado cuando hay mas de un numero y las familias
@@ -1448,9 +1450,10 @@ mensajes entrantes pendientes; si el ultimo mensaje es saliente, aunque el
 backend mande `unreadCount`, la UI nativa no debe mostrarlo como notificacion.
 El avatar nativo debe mantener iniciales/foto en relleno
 Ristak y reservar el color de red social para aro/badge, igual que
-`PhoneChat.module.css`. La bandeja no muestra un acceso de robot en el
-encabezado: el inventario del agente se abre desde el filtro `Chatbot`. Los
-controles del agente dentro de una conversación conservan su función propia.
+`PhoneChat.module.css`. La bandeja conserva el robot del encabezado como acceso
+operativo al Hub del agente; el filtro `Chatbot` organiza su inventario de
+conversaciones y no sustituye ese botón. Los controles del agente dentro de una
+conversación conservan también su función propia.
 
 La lista de chats nativa usa una interaccion simplificada respecto a `PhoneChat`:
 mantener presionada una fila abre `Mas acciones` con feedback haptico. La primera

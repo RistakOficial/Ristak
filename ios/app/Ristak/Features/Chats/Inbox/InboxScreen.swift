@@ -10,11 +10,15 @@ struct InboxScreen: View {
     let onOpenChat: (ChatContact) -> Void
 
     @Environment(ShellState.self) private var shell
+    @Environment(AccessStore.self) private var access
 
     @State private var activeSheet: InboxSheet?
     /// Cámara global (foto/video) del header — flujo separado de `activeSheet`.
     @State private var cameraPickerPresented = false
     @State private var cameraShareVM: CameraShareViewModel?
+    /// En móvil el robot del header es el acceso operativo para encender,
+    /// pausar y personalizar el agente; el filtro Chatbot no lo sustituye.
+    @State private var showsAgentHub = false
 
     enum InboxSheet: Identifiable {
         case more(ChatContact)
@@ -53,6 +57,16 @@ struct InboxScreen: View {
                 viewModel.searchTextDidChange()
             }
             .toolbar {
+                if access.canRead(module: .aiAgent) {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            showsAgentHub = true
+                        } label: {
+                            AgentBotGlyph(color: RistakTheme.accent, size: 22)
+                        }
+                        .accessibilityLabel("Agente conversacional")
+                    }
+                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     // Cámara global (a la IZQUIERDA del «+»): toma foto/video y
                     // lo manda a uno o varios contactos por WhatsApp.
@@ -71,6 +85,14 @@ struct InboxScreen: View {
                     .accessibilityLabel("Nuevo chat")
                     .accessibilityIdentifier("ristak-inbox-new-chat")
                 }
+            }
+            .sheet(
+                isPresented: $showsAgentHub,
+                onDismiss: { viewModel.refreshAgentAvailability() }
+            ) {
+                AgentHubSheet()
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
             }
             .sheet(item: $activeSheet) { sheet in
                 sheetContent(sheet)

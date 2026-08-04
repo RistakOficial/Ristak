@@ -169,7 +169,7 @@ import {
 } from './calendarOutbox';
 import { GlobalImageViewer, openImageViewer, openInAppBrowser } from './mediaViewer';
 import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant, type ChatLiveEvent, type ChatLiveMessageEvent } from './api';
-import { hasLicenseFeature, hasPhoneSectionAccess, hasWebAnalyticsAccess } from './access';
+import { hasLicenseFeature, hasModuleAccess, hasPhoneSectionAccess, hasWebAnalyticsAccess } from './access';
 import {
   createVerifiedUserCacheRecord,
   getCachedVerifiedUser,
@@ -1819,6 +1819,7 @@ function PhoneShell({
   onChangeServer: () => Promise<void>;
 }) {
   const [activeSection, setActiveSection] = useState<PhoneSection>('chat');
+  const canUseConversationalAgent = user ? hasModuleAccess(user, 'ai_agent', 'read') : false;
   const allowedNavItems = useMemo(() => {
     return PHONE_NAV_ITEMS.filter((item) => hasPhoneSectionAccess(user, item.key));
   }, [user]);
@@ -2134,6 +2135,7 @@ function PhoneShell({
               baseUrl={baseUrl}
               initialAccountCurrency={String(mobileAppConfig.account_currency || '')}
               initialAccountTimezone={String(mobileAppConfig.account_timezone || '')}
+              canUseConversationalAgent={canUseConversationalAgent}
               customLabels={customLabels}
               settings={mobileChatSettings}
               notificationContactId={notificationContactId}
@@ -2844,6 +2846,7 @@ function LoginScreen({
 function ChatScreen({
   api,
   baseUrl = '',
+  canUseConversationalAgent = true,
   customLabels = DEFAULT_CUSTOM_LABELS,
   footer,
   initialAccountCurrency = '',
@@ -2861,6 +2864,7 @@ function ChatScreen({
 }: {
   api: RistakApiClient;
   baseUrl?: string;
+  canUseConversationalAgent?: boolean;
   customLabels?: CustomLabels;
   footer?: React.ReactNode;
   initialAccountCurrency?: string;
@@ -2923,6 +2927,7 @@ function ChatScreen({
   const [agentStatesByContactId, setAgentStatesByContactId] = useState<Record<string, ConversationAgentState[]>>({});
   const [agentStateLoadingId, setAgentStateLoadingId] = useState<string | null>(null);
   const [agentBusyAction, setAgentBusyAction] = useState<AgentAction | null>(null);
+  const [agentHubOpen, setAgentHubOpen] = useState(false);
   const [cameraAttachment, setCameraAttachment] = useState<ConversationDraftAttachment | null>(null);
   const [cameraRecipients, setCameraRecipients] = useState<ChatContact[]>([]);
   const [cameraCaption, setCameraCaption] = useState('');
@@ -4897,7 +4902,17 @@ function ChatScreen({
       >
       <View style={styles.chatListHeader}>
         <View style={styles.chatTopActionRow}>
-          <View />
+          {canUseConversationalAgent ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Agente conversacional"
+              onPress={() => setAgentHubOpen(true)}
+              style={({ pressed }) => [styles.headerIconButton, pressed && styles.pressed]}
+            >
+              <LiquidControlBackground />
+              <Bot size={25} color={COLORS.accent} strokeWidth={2.15} />
+            </Pressable>
+          ) : <View />}
           <View style={styles.chatHeaderActions}>
             <Pressable
               accessibilityRole="button"
@@ -5144,6 +5159,11 @@ function ChatScreen({
         onSetDraft={setCustomFilterDraft}
         onSetMode={setFilterManagerMode}
         onToggleVisible={toggleVisibleFilter}
+      />
+      <NativeAgentHubSheet
+        api={api}
+        open={agentHubOpen}
+        onClose={() => setAgentHubOpen(false)}
       />
       <ChatMoreSheet
         contact={sheetContact}

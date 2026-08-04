@@ -2812,13 +2812,15 @@ se cierra el segundo nivel y la bandeja vuelve al inventario general
 correspondiente.
 
 Este mismo contrato aplica a las tres superficies móviles (`/movil`, Android
-React Native e iOS SwiftUI): `Chatbot` queda fijo después de `Todos`, elimina el
-robot flotante del encabezado de la bandeja y despliega el mismo segundo nivel.
+React Native e iOS SwiftUI): `Chatbot` queda fijo después de `Todos` y despliega
+el mismo segundo nivel. A diferencia de desktop, móvil conserva el robot en la
+esquina del encabezado porque es el acceso operativo al Hub para encender,
+apagar, pausar y personalizar el agente; el filtro sólo organiza su inventario.
 Las apps consultan por separado los estados globales `active`/`paused` y las
 metas `goalCompletedUnreviewed`, y unen únicamente esos resultados. El panel no
 cambia de color al activar el filtro; solamente cambia el estado del chip. Los
-controles contextuales del agente dentro de una conversación no forman parte de
-este acceso de bandeja y se conservan.
+controles contextuales del agente dentro de una conversación también se
+conservan.
 
 El historial de `/chat` conserva una textura punteada ligera, con los puntos
 espaciados para que el fondo se sienta limpio y no compita con los mensajes.
@@ -3557,7 +3559,9 @@ seleccionarlo, debajo de los filtros normales aparece un bloque separado con
 `Todos`, `Activos`, `Pausados 24 horas` y `Meta cumplida`. La union `Todos` de
 ese bloque contiene solamente chats activos, pausados o con meta pendiente de
 abrir; nunca se rellena con toda la bandeja ni con omitidos/no asignados. Esta
-seleccion tampoco pinta el panel de otro color.
+seleccion tampoco pinta el panel de otro color. El robot de la esquina sigue
+presente y abre la configuración operativa del agente; filtro y robot tienen
+responsabilidades distintas y deben coexistir.
 
 Las fotos de perfil de contactos WhatsApp se guardan en
 `whatsapp_api_contacts.profile_picture_url`, no en el perfil del numero de

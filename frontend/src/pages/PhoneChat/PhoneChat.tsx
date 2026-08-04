@@ -293,11 +293,55 @@ const phoneChatStorage = createAuthScopedLocalStorageNamespace(PHONE_CHAT_PERSIS
 function getScopedPhoneChatStorageKey(prefix: string) {
   return phoneChatStorage.getKey(prefix)
 }
+const AGENT_STATUS_PHRASE_ROTATION_MS = 4400
+type AgentStatusPhraseLabels = {
+  customers: string
+  leads: string
+}
+
 function formatSentenceLabel(label: string) {
   const trimmed = label.trim()
   if (!trimmed) return trimmed
   if (trimmed === trimmed.toLocaleUpperCase('es-MX')) return trimmed
   return trimmed.charAt(0).toLocaleLowerCase('es-MX') + trimmed.slice(1)
+}
+
+function buildAgentStatusPhrases({ customers, leads }: AgentStatusPhraseLabels) {
+  const customersName = formatSentenceLabel(customers)
+  const leadsName = formatSentenceLabel(leads)
+
+  return [
+    'Modo chamba: leyendo chats.',
+    'Ando cazando mensajes nuevos.',
+    `Checando señales de ${customersName}.`,
+    'Aquí atento como compa de guardia.',
+    'Leyendo y armando respuesta.',
+    'Si preguntan, aquí estoy.',
+    'Revisando tono y urgencia.',
+    'Atento al chat, sin drama.',
+    'Sacando la respuesta fina.',
+    'No se me va ni un mensaje.',
+    'En vivo y con café digital.',
+    'Este chat ya lo traigo.',
+    'Buscando la mejor jugada.',
+    'Leyendo entre líneas, jefe.',
+    `Ojo puesto en ${leadsName}.`,
+    `Midiendo intención en ${leadsName}.`,
+    'Listo para entrar al quite.',
+    'Afinando respuesta con flow.',
+    'Aquí, chambeando bonito.',
+    'Escaneando mensajes pendientes.',
+    'Si se pone bueno, aviso.',
+    'Traigo radar de citas prendido.',
+    `Viendo qué ${leadsName} necesitan ayuda.`,
+    'Procesando el cotorreo.',
+    'Poniéndome trucha con este chat.',
+    `Revisando señales de compra en ${leadsName}.`,
+    'No descanso, nomás cargo pila.',
+    `Cuidando la bandeja de ${customersName}.`,
+    'Leyendo rápido y sin hacer show.',
+    `Listo para responderle a ${customersName}.`
+  ]
 }
 
 const CHAT_SWIPE_ACTION_WIDTH = 184
@@ -5350,6 +5394,7 @@ export const PhoneChat: React.FC = () => {
     options?: { notify?: boolean; enabled?: boolean }
   ) => Promise<ConversationalAgentDef | null>>(async () => null)
   agentDefsRef.current = agentDefs
+  const [agentStatusPhraseIndex, setAgentStatusPhraseIndex] = useState(0)
   const [manualAgentSendPrompt, setManualAgentSendPrompt] = useState<ManualAgentSendPrompt | null>(null)
   const [archivedChatIds, setArchivedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_ARCHIVED_STATE_KEY))
   const [mutedChatIds, setMutedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_MUTED_STATE_KEY))
@@ -7110,6 +7155,23 @@ export const PhoneChat: React.FC = () => {
           parseSortableDateValue(leftState?.signalAt || left.lastMessageDate || left.createdAt)
       })
   }, [agentPriorityChatIdSet, agentPriorityViewOpen, agentStates, archivedViewOpen, chatFilter, chats])
+  const agentStatusPhrases = useMemo(() => buildAgentStatusPhrases({
+    customers: customersLabel,
+    leads: leadsLabel
+  }), [customersLabel, leadsLabel])
+  useEffect(() => {
+    if (!agentEnabled) {
+      setAgentStatusPhraseIndex(0)
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      setAgentStatusPhraseIndex((current) => (current + 1) % agentStatusPhrases.length)
+    }, AGENT_STATUS_PHRASE_ROTATION_MS)
+
+    return () => window.clearInterval(intervalId)
+  }, [agentEnabled, agentStatusPhrases.length])
+  const agentStatusPhrase = agentStatusPhrases[agentStatusPhraseIndex % agentStatusPhrases.length]
   const activeContactAgentStates = useMemo(
     () => {
       if (!activeContact?.id) return []
@@ -22442,6 +22504,18 @@ export const PhoneChat: React.FC = () => {
     </button>
   )
 
+  const renderAgentStatusBubble = (className = '') => (
+    <div className={`${styles.agentStatusBubble} ${className}`.trim()} aria-hidden="true">
+      <span className={styles.agentStatusLabel}>
+        <span className={styles.agentStatusDot} />
+        Activo
+      </span>
+      <span key={agentStatusPhraseIndex} className={styles.agentStatusPhrase}>
+        {agentStatusPhrase}
+      </span>
+    </div>
+  )
+
   const renderPaymentChoiceList = (target: 'sheet' | 'wide') => (
     <div
       className={styles.paymentChoiceList}
@@ -22641,8 +22715,25 @@ export const PhoneChat: React.FC = () => {
           <header className={`${styles.chatListHeader} ${sidebarSearchExpanded ? styles.chatListHeaderSearchExpanded : ''} ${wideSidebarEditing ? styles.chatListHeaderWideMode : ''}`}>
             {!isWideChatDevice && (
               <div className={styles.topActionRow} aria-hidden={sidebarSearchExpanded}>
-                <span className={styles.topActionSpacer} aria-hidden="true" />
+                {renderAgentRobotButton({
+                  active: agentEnabled,
+                  label: 'Agente conversacional',
+                  onClick: openAgentHubMenu
+                })}
+                {agentEnabled && renderAgentStatusBubble()}
                 {renderChatHeaderActions()}
+              </div>
+            )}
+            {isWideChatDevice && wideSidebarMode === 'chats' && !sidebarSearchExpanded && (
+              <div className={styles.tabletAgentHeroRow}>
+                {renderAgentRobotButton({
+                  active: agentEnabled,
+                  className: styles.tabletAgentInboxButton,
+                  label: 'Abrir agente conversacional',
+                  onClick: openAgentHubMenu,
+                  robotSize: 58
+                })}
+                {agentEnabled && renderAgentStatusBubble(styles.tabletAgentStatusBubble)}
               </div>
             )}
             <div className={styles.chatTitleRow} aria-hidden={sidebarSearchExpanded}>
