@@ -10260,14 +10260,17 @@ export const DesktopChat: React.FC = () => {
                   </div>
                   <div><dt><Tag size={14} /> Estado</dt><dd>{stageLabel}</dd></div>
                 </dl>
-                <ContactSearchInput
-                  value={(contactInfoData || activeContact).referredByContact || null}
-                  onChange={handleUpdateContactReferrer}
-                  label="Recomendado por"
-                  placeholder="Buscar contacto que lo recomendó..."
-                  allowCreate={false}
-                  excludeContactIds={[activeContact.id]}
-                />
+                <div className={styles.referrerField}>
+                  <ContactSearchInput
+                    value={(contactInfoData || activeContact).referredByContact || null}
+                    onChange={handleUpdateContactReferrer}
+                    label="Recomendado por"
+                    placeholder="Buscar contacto que lo recomendó..."
+                    density="compact"
+                    allowCreate={false}
+                    excludeContactIds={[activeContact.id]}
+                  />
+                </div>
                 <div className={styles.contactTools}>
                   <div className={styles.contactTagTool}>
                     <TagPicker
@@ -10289,10 +10292,16 @@ export const DesktopChat: React.FC = () => {
                     {savingTags ? <small>Guardando etiquetas...</small> : null}
                   </div>
                   {hasAutomationsAccess && (
-                    <button type="button" className={styles.automationButton} onClick={openAutomationModal}>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      fullWidth
+                      className={styles.automationButton}
+                      onClick={openAutomationModal}
+                    >
                       <Workflow size={15} />
                       <span>Mandar a automatización</span>
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -10385,7 +10394,7 @@ export const DesktopChat: React.FC = () => {
                       </Button>
                     </div>
                     <div className={styles.metricsGrid}>
-                      <span><strong>{formatCurrencyNoDecimals(contactPayments.filter(isSuccessfulPayment).reduce((sum, payment) => sum + payment.amount, 0), accountCurrency)}</strong><small>Total Pagado</small></span>
+                      <span><strong>{formatCurrencyNoDecimals(contactPayments.filter(isSuccessfulPayment).reduce((sum, payment) => sum + payment.amount, 0), accountCurrency)}</strong><small>Total pagado</small></span>
                       <span><strong>{contactAppointments.length}</strong><small>Citas totales</small></span>
                       <span><strong>{Number(activeContact.messageCount || messages.length)}</strong><small>Mensajes</small></span>
                     </div>
@@ -10407,7 +10416,7 @@ export const DesktopChat: React.FC = () => {
                   <div className={styles.infoSection}>
                     <div className={styles.sectionTitleRow}>
                       <h3>Próximas citas</h3>
-                      <button type="button" onClick={openNewAppointment}>Nueva</button>
+                      <Button type="button" variant="ghost" size="sm" onClick={openNewAppointment}>Nueva</Button>
                     </div>
                     <div className={styles.compactList}>
                       {contactAppointments.slice(0, 3).map((appointment) => {
@@ -10438,7 +10447,7 @@ export const DesktopChat: React.FC = () => {
                   <div className={styles.infoSection}>
                     <div className={styles.sectionTitleRow}>
                       <h3>Pagos</h3>
-                      <button type="button" onClick={() => setPaymentOpen(true)}>Registrar</button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setPaymentOpen(true)}>Registrar</Button>
                     </div>
                     <div className={styles.compactList}>
                       {contactPayments.slice(0, 3).map((payment) => (
@@ -10459,9 +10468,9 @@ export const DesktopChat: React.FC = () => {
                       <div className={styles.sectionTitleRow}>
                         <h3>Historial del agente</h3>
                         {agentCompletionEvents.length > 2 ? (
-                          <button type="button" onClick={() => setAgentHistoryExpanded((current) => !current)}>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => setAgentHistoryExpanded((current) => !current)}>
                             {agentHistoryExpanded ? 'Ver menos' : `Ver ${agentCompletionEvents.length}`}
-                          </button>
+                          </Button>
                         ) : null}
                       </div>
                       <div className={styles.agentHistoryList}>

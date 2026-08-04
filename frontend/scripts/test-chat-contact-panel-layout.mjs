@@ -40,6 +40,31 @@ assert.match(
   'el selector de WhatsApp debe activar su ajuste legible dentro de la ficha compacta'
 )
 assert.match(
+  desktopChatSource,
+  /className=\{styles\.referrerField\}[\s\S]*label="Recomendado por"[\s\S]*density="compact"/,
+  'el recomendador debe conservar la densidad compacta y su separación dentro de la ficha'
+)
+assert.match(
+  desktopChatStyles,
+  /\.referrerField\s*\{[\s\S]*?margin-top:\s*18px;[\s\S]*?padding-top:\s*18px;[\s\S]*?border-top:\s*1px solid var\(--chat-border\)/,
+  'los datos de referencia deben formar un bloque legible separado de la identidad principal'
+)
+assert.match(
+  infoPanelBlocks,
+  /--chat-border:\s*var\(--border\)/,
+  'la ficha debe usar los bordes temados del sistema de diseño'
+)
+assert.match(
+  desktopChatStyles,
+  /\.infoSection\s*\{[\s\S]*?padding:\s*18px/,
+  'todas las secciones de la ficha deben compartir el mismo ritmo interior'
+)
+assert.match(
+  desktopChatSource,
+  /<Button[\s\S]*?variant="secondary"[\s\S]*?className=\{styles\.automationButton\}/,
+  'la acción de automatización debe usar el botón global del producto'
+)
+assert.match(
   desktopChatStyles,
   /\.whatsappReplySelect \[data-ristak-dropdown-trigger\] > span:first-child\s*\{[\s\S]*?white-space:\s*normal/,
   'el número de respuesta debe mostrar su texto completo en varias líneas cuando haga falta'

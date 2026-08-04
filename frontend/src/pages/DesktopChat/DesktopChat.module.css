@@ -62,8 +62,14 @@
 }
 
 .infoPanel {
+  --chat-border: var(--border);
+  --chat-border-strong: var(--border-strong);
+  --chat-soft: var(--surface-2);
+  --chat-soft-strong: var(--surface-hover);
+
   overflow: auto;
   border-left: 1px solid var(--chat-border);
+  background: var(--bg-soft);
 }
 
 .inboxHeader,
@@ -3696,11 +3702,12 @@
 }
 
 .infoPanel {
-  padding-bottom: 12px;
+  padding-bottom: 16px;
 }
 
 .infoHeader {
   justify-content: flex-start;
+  padding: 18px;
 }
 
 .infoHeaderBody {
@@ -3723,7 +3730,7 @@
 }
 
 .infoSection {
-  padding: 16px;
+  padding: 18px;
   border-bottom: 1px solid var(--chat-border);
 }
 
@@ -3732,7 +3739,8 @@
   margin: 0;
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
-  font-weight: 740;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
 .sectionTitleRow {
@@ -3740,7 +3748,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .sectionTitleRow button {
@@ -3751,13 +3759,13 @@
 
 .detailList {
   display: grid;
-  gap: 10px;
-  margin: 12px 0 0;
+  gap: 14px;
+  margin: 14px 0 0;
 }
 
 .detailList div {
   display: grid;
-  gap: 3px;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -3768,16 +3776,19 @@
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
   font-weight: 500;
+  line-height: 1.35;
 }
 
 .detailList dd {
   display: grid;
+  gap: 5px;
   width: 100%;
   min-width: 0;
   max-width: 100%;
   margin: 0;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
+  line-height: 1.4;
 }
 
 .detailList dd > [data-layout='block'] {
@@ -3792,7 +3803,8 @@
 }
 
 .whatsappReplySelect [data-ristak-dropdown-trigger] {
-  padding-block: 8px;
+  min-height: var(--app-control-height, 40px);
+  padding-block: 6px;
 }
 
 .whatsappReplySelect [data-ristak-dropdown-trigger] > span:first-child {
@@ -3892,8 +3904,14 @@
 
 .contactTools {
   display: grid;
-  gap: 10px;
-  margin-top: 14px;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.referrerField {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--chat-border);
 }
 
 .contactTagTool {
@@ -3909,8 +3927,8 @@
 .contactTagTitle {
   color: var(--color-text-tertiary);
   font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
+  font-weight: 600;
+  line-height: 1.35;
   text-transform: uppercase;
 }
 
@@ -3919,26 +3937,9 @@
   font-size: 11px;
 }
 
-.automationButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
+.automationButton[data-btn] {
   width: 100%;
-  min-height: 34px;
-  border: 1px solid var(--chat-border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.automationButton:hover {
-  border-color: var(--chat-border-strong);
-  background: var(--chat-soft);
-  color: var(--color-text-primary);
+  justify-content: center;
 }
 
 .contactJourneySection {
@@ -3955,6 +3956,10 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.summaryHeaderRow {
+  margin-bottom: 12px;
 }
 
 .summaryJourneyButton[data-btn] {
@@ -3976,15 +3981,16 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 0;
 }
 
 .metricsGrid span {
   display: grid;
-  gap: 4px;
-  padding: 10px;
+  gap: 5px;
+  min-width: 0;
+  padding: 11px 10px;
   border: 1px solid var(--chat-border);
-  border-radius: 8px;
+  border-radius: var(--radius-ctl);
   background: var(--chat-soft);
 }
 
@@ -3997,12 +4003,13 @@
 .metricsGrid small {
   color: var(--color-text-tertiary);
   font-size: 11px;
+  line-height: 1.35;
 }
 
 .compactList {
   display: grid;
-  gap: 9px;
-  margin-top: 11px;
+  gap: 12px;
+  margin-top: 0;
 }
 
 .compactList > div,
@@ -4010,7 +4017,7 @@
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
   width: 100%;
-  gap: 8px;
+  gap: 10px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -4038,6 +4045,7 @@
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   font-weight: 500;
+  line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4046,6 +4054,7 @@
 .mutedLine {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
+  line-height: 1.4;
 }
 
 .mutedLine {

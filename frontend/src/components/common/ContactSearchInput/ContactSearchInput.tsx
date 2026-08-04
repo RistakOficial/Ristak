@@ -22,6 +22,7 @@ interface ContactSearchInputProps {
   onChange: (contact: ContactSearchInputContact | null) => void;
   label?: string;
   placeholder?: string;
+  density?: 'default' | 'compact';
   required?: boolean;
   error?: string;
   disabled?: boolean;
@@ -69,6 +70,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
   onChange,
   label = 'Contacto',
   placeholder = 'Buscar o agregar contacto...',
+  density = 'default',
   required = false,
   error,
   disabled = false,
@@ -468,7 +470,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
   ) : null;
 
   return (
-    <div className={styles.wrapper}>
+    <div className={styles.wrapper} data-density={density}>
       <label className={styles.label}>
         {label} {required && <span className={styles.required}>*</span>}
       </label>
