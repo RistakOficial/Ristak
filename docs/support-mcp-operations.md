@@ -102,8 +102,10 @@ source "$HOME/.ristak-secrets/installer/render-support-mcp.env"
 set +a
 ```
 
-Ese archivo no se commitea ni se imprime. Si no existe o falta una credencial
-necesaria, detente y pide acceso; no inventes valores.
+Los CLI y servidores MCP del Installer lo cargan automáticamente después de su
+`.env`, sin sobrescribir variables ya presentes. `RISTAK_SUPPORT_ENV_FILE`
+permite usar otra ruta. El archivo no se commitea ni se imprime. Si no existe o
+falta una credencial necesaria, detente y pide acceso; no inventes valores.
 
 ## Herramientas MCP internas
 
