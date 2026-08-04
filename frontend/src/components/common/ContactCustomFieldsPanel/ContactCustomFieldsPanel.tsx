@@ -17,7 +17,8 @@ import {
   getContactCustomFieldDisplayLabel,
   getContactCustomFieldIdentity,
   getContactCustomFieldKeys,
-  isReservedContactCustomField
+  isReservedContactCustomField,
+  resolveContactCustomFieldGroup
 } from '@/utils/contactCustomFields'
 import { formatDateToISO } from '@/utils/format'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -340,10 +341,12 @@ const buildGroups = (
     // carpeta). Los que NO tienen carpeta caen todos en un unico grupo
     // "sin archivar" etiquetado con `unfiledLabel` (por defecto "Campos
     // personalizados"), para que no se dupliquen headers.
-    const folderLabel = folder?.name || field.folderName || field.fieldGroup
-    const label = folderLabel || unfiledLabel
-    const groupId = folderId || (folderLabel ? `group:${folderLabel}` : 'unfiled')
-    ensureGroup(groupId, label).fields.push(field)
+    const group = resolveContactCustomFieldGroup(
+      folder?.name || field.folderName || field.fieldGroup,
+      folderId,
+      unfiledLabel
+    )
+    ensureGroup(group.id, group.label).fields.push(field)
   })
 
   const folderOrder = new Map(folders.map((folder, index) => [folder.id, index]))

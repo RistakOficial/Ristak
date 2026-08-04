@@ -2103,8 +2103,10 @@ Capacidades:
   campos personalizados se muestra completo en la ficha de contacto, el panel
   derecho del chat desktop y la info de contacto del chat movil. Sus carpetas se
   respetan como secciones desplegables; los campos sin carpeta quedan bajo
-  "Campos personalizados". La edicion se guarda como actualizacion manual del
-  contacto y conserva el flujo normal de automatizaciones. Los tipos de opcion
+  "Campos personalizados". El grupo heredado `general` tambien se normaliza bajo
+  ese mismo titulo y nunca se muestra como una seccion separada. La edicion se
+  guarda como actualizacion manual del contacto y conserva el flujo normal de
+  automatizaciones. Los tipos de opcion
   tienen semantica distinta y persistente:
   `radio` muestra varias opciones y guarda una; `dropdown` muestra una lista y
   guarda una; `checkboxes` muestra varias casillas y guarda un arreglo; y

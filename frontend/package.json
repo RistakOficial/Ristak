@@ -35,6 +35,7 @@
     "test:appointment-modal-contract": "node scripts/test-appointment-modal-contract.mjs",
     "test:appointment-confirmation-reply-draft": "node --experimental-strip-types --test scripts/test-appointment-confirmation-reply-draft.mjs",
     "test:contact-detail-summary": "node --experimental-strip-types --test scripts/test-contact-detail-summary.mjs",
+    "test:contact-custom-field-group-label": "node --experimental-strip-types --test scripts/test-contact-custom-field-group-label.mjs",
     "test:appointment-reminder-ordering": "node --experimental-strip-types --test scripts/test-appointment-reminder-ordering.mjs",
     "test:calendar-commercial-reports": "node scripts/test-calendar-commercial-reports.mjs",
     "test:calendar-offline-contract": "node scripts/test-calendar-offline-contract.mjs",

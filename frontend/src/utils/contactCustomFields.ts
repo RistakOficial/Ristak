@@ -66,6 +66,28 @@ export function getContactCustomFieldDisplayLabel(field?: ContactCustomFieldLike
   return cleanString(field?.label || field?.name || field?.fieldKey || field?.key || field?.id) || `Dato ${index + 1}`
 }
 
+export function resolveContactCustomFieldGroup(
+  label: unknown,
+  folderId: unknown,
+  unfiledLabel = 'Campos personalizados'
+) {
+  const normalizedLabel = cleanString(label)
+  const normalizedFolderId = cleanString(folderId)
+  const isDefaultGroup = !normalizedLabel || normalizedLabel.toLocaleLowerCase('es-MX') === 'general'
+
+  if (isDefaultGroup) {
+    return {
+      id: 'unfiled',
+      label: unfiledLabel
+    }
+  }
+
+  return {
+    id: normalizedFolderId || `group:${normalizedLabel}`,
+    label: normalizedLabel
+  }
+}
+
 const WHATSAPP_RESERVED_CUSTOM_FIELD_KEYS = new Set([
   'whatsapp_api_provider',
   'whatsapp_api_first_message',
