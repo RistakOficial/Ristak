@@ -1502,8 +1502,11 @@ horaria efectiva de la cuenta.
 Un `Evento objetivo` configurado para terminar o remover sólo saca al contacto
 cuando el evento base y todos sus filtros quedan comprobados. Un campo ausente
 en el payload no se considera coincidencia silenciosa, y los conectores Y/O se
-evalúan con los valores reales del evento y del contacto hidratado. Esta misma
-regla aplica a la evaluación inmediata: tener la etiqueta, el pago o la cita no
+evalúan con los valores reales del evento y del contacto hidratado. Cuando esa
+coincidencia termina o remueve al contacto, la inscripción queda en estado
+`completed` (Completado/Terminado), no en `exited` (Salió): cumplir el objetivo
+es una terminación exitosa del flujo. La misma regla aplica a la evaluación
+inmediata: tener la etiqueta, el pago o la cita no
 basta si fallan los filtros adicionales. Las variantes que exigen un hecho nuevo
 —perder/recibir etiqueta, reembolso, pago fallido, cancelacion o reprogramacion—
 no se autocumplen en modo inmediato usando historial acumulado. `No ha

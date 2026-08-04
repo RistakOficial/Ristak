@@ -5440,7 +5440,7 @@ test('objetivo de cita usa el evento de cada ejecución y no el historial del co
     assert.equal(rows.length, 2)
     const firstRow = rows.find((row) => row.id === firstEnrollment.id)
     const secondRow = rows.find((row) => row.id !== firstEnrollment.id)
-    assert.equal(firstRow?.status, 'exited')
+    assert.equal(firstRow?.status, 'completed')
     assert.equal(secondRow?.status, 'waiting')
 
     await handleAutomationEvent('appointment-booked', {
@@ -5453,7 +5453,7 @@ test('objetivo de cita usa el evento de cada ejecución y no el historial del co
       'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ? ORDER BY entered_at, id',
       [automationId, contactId]
     )
-    assert.equal(rows.every((row) => row.status === 'exited'), true)
+    assert.equal(rows.every((row) => row.status === 'completed'), true)
     const completedSecondRow = rows.find((row) => row.id === secondRow.id)
     const secondLog = JSON.parse(completedSecondRow?.log || '[]')
     assert.equal(
@@ -5710,7 +5710,7 @@ test('todos los eventos objetivo candidatos se cumplen sólo en la ejecución ac
         'SELECT * FROM automation_enrollments WHERE id = ?',
         [enrollment.id]
       )
-      assert.equal(row.status, 'exited', item.key)
+      assert.equal(row.status, 'completed', item.key)
       const log = JSON.parse(row.log || '[]')
       assert.equal(
         log.some((entry) => /Objetivo cumplido en esta ejecución/.test(entry.detail || '')),
@@ -5820,7 +5820,8 @@ test('un objetivo terminal sólo saca al contacto cuando todos sus filtros queda
       product: `product_${suffix}`
     })
     row = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
-    assert.equal(row.status, 'exited')
+    assert.equal(row.status, 'completed')
+    assert.equal(row.execution_outcome, 'success')
     assert.equal(row.wait_kind, null)
     assert.equal(row.resume_at, null)
     assert.equal(
@@ -5941,7 +5942,8 @@ test('un objetivo inmediato respeta sus filtros antes de terminar la automatizac
     assert.equal(nonMatching.currentNodeId, 'done')
 
     const matching = await enrollContactManually({ automationId, contactId: matchingContactId })
-    assert.equal(matching.status, 'exited')
+    assert.equal(matching.status, 'completed')
+    assert.equal(matching.executionOutcome, 'success')
     assert.equal(matching.currentNodeId, 'tag-goal')
 
     const nonMatchingAdvanced = await enrollContactManually({
@@ -5955,7 +5957,7 @@ test('un objetivo inmediato respeta sus filtros antes de terminar la automatizac
       automationId: advancedAutomationId,
       contactId: matchingContactId
     })
-    assert.equal(matchingAdvanced.status, 'exited')
+    assert.equal(matchingAdvanced.status, 'completed')
     assert.equal(matchingAdvanced.currentNodeId, 'advanced-goal')
   } finally {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id IN (?, ?)', [automationId, advancedAutomationId])
@@ -6053,7 +6055,7 @@ test('un objetivo de pago inmediato respeta el comparador y el producto seleccio
     assert.equal(greater.currentNodeId, 'done')
 
     const greaterOrEqual = await enrollContactManually({ automationId: greaterOrEqualAutomationId, contactId })
-    assert.equal(greaterOrEqual.status, 'exited')
+    assert.equal(greaterOrEqual.status, 'completed')
     assert.equal(greaterOrEqual.currentNodeId, 'payment-goal')
 
     const differentProduct = await enrollContactManually({
@@ -6250,7 +6252,8 @@ test('objetivo sin respuesta vence por ejecución y una respuesta nueva lo desca
     await processDueResumes()
 
     let row = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [first.id])
-    assert.equal(row.status, 'exited')
+    assert.equal(row.status, 'completed')
+    assert.equal(row.execution_outcome, 'success')
     assert.equal(
       JSON.parse(row.log || '[]').some((entry) => /no respondió dentro del tiempo/.test(entry.detail || '')),
       true

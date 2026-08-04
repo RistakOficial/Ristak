@@ -6477,7 +6477,11 @@ async function executeResolvedNode(node, ctx, enrollment) {
         if (onMet === 'continue') {
           return { handle: 'out', detail: 'Objetivo cumplido: continúa por la salida "cumplido"' }
         }
-        return { stop: true, detail: 'Objetivo cumplido: el contacto sale de la automatización' }
+        return {
+          stop: true,
+          terminalStatus: 'completed',
+          detail: 'Objetivo cumplido: la ejecución termina correctamente'
+        }
       }
       if (onNotMet === 'wait' || onNotMet === 'timeout-branch') {
         const resumeAt = goalWindowDeadline(config, ctx)
@@ -6711,7 +6715,7 @@ async function runFrom(flow, enrollment, startNodeId, ctx) {
     })
 
     if (result.stop) {
-      enrollment.status = 'exited'
+      enrollment.status = result.terminalStatus === 'completed' ? 'completed' : 'exited'
       if (outcome !== 'error' && !hasUnresolvedExecutionErrors(enrollment.log)) {
         enrollment.executionOutcome = 'success'
       }
@@ -7703,7 +7707,7 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
 
       const onMet = str(goalNode.config?.onMet) || 'end-automation'
       if (onMet === 'end-automation' || onMet === 'remove' || onMet === 'end-branch') {
-        enrollment.status = onMet === 'end-branch' ? 'completed' : 'exited'
+        enrollment.status = 'completed'
         enrollment.resumeAt = null
         enrollment.waitKind = null
         await saveEnrollment(enrollment)
@@ -9077,7 +9081,7 @@ export async function processDueResumes() {
         })
         const onMet = str(currentNode.config?.onMet) || 'end-automation'
         if (onMet === 'end-automation' || onMet === 'remove' || onMet === 'end-branch') {
-          enrollment.status = onMet === 'end-branch' ? 'completed' : 'exited'
+          enrollment.status = 'completed'
           await saveEnrollment(enrollment)
           continue
         }
