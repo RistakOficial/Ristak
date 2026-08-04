@@ -7144,15 +7144,21 @@ mapping queda convertido a `destinationType/saveMode = custom` con su
 formulario ejecutable. Contactos, submissions y automatizaciones leen así la
 misma respuesta desde el primer envío, sin exigir una visita manual al Panel de
 contenido. Guardar manualmente `new_custom` también lo materializa de inmediato.
-Un `textarea` sólo se interpreta como `message` cuando su nombre, etiqueta o
-atributos realmente representan mensaje/comentarios; una pregunta larga con
-identidad propia crea un campo `textarea`. Si una llave ya existe con un tipo
-incompatible, Ristak no pisa la definición: crea o reutiliza una llave tipada
-estable. Reescribir o resubir el mismo campo conserva su definición y no la
-duplica.
+`message` no es un campo principal persistible de `contacts`. Un `textarea` cuyo
+nombre, etiqueta o atributos representan mensaje, notas o comentarios se
+materializa como el campo personalizado `form_message`; una pregunta larga con
+identidad propia conserva su propia llave y tipo `textarea`. Importaciones
+anteriores que todavía declaran `destinationType/saveMode = standard` con
+`destinationKey = message` se actualizan defensivamente al mismo campo
+personalizado durante el submit, antes de guardar el contacto. Así la respuesta
+no queda solamente en `public_site_submissions` ni desaparece de la ficha del
+contacto. El editor ya no ofrece **Mensaje o nota** entre los campos del sistema.
+Si una llave ya existe con un tipo incompatible, Ristak no pisa la definición:
+crea o reutiliza una llave tipada estable. Reescribir o resubir el mismo campo
+conserva su definición y no la duplica.
 El selector coloca primero la asociacion ya detectada o guardada y ordena los
 destinos del sistema por prioridad operativa: nombre completo, correo,
-telefono/WhatsApp, ciudad, direccion, empresa, nombre, apellido y mensaje. Los
+telefono/WhatsApp, ciudad, direccion, empresa, nombre y apellido. Los
 campos personalizados ya existentes aparecen despues, subiendo al inicio del
 grupo el que ya esta asociado. Cuando la pregunta ya coincide con una definición
 compatible, `Crear campo nuevo` se oculta: el usuario puede conservar el destino,

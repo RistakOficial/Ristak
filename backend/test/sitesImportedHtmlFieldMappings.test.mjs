@@ -347,6 +347,16 @@ test('stable form + field identities isolate repeated fields while pagePath guar
       }),
       error => error?.status === 409
     )
+    await assert.rejects(
+      () => updateImportedSiteFieldMapping(siteId, {
+        pagePath: 'inicio.html',
+        formId: 'inicio_lead',
+        fieldId: 'email',
+        destinationType: 'standard',
+        destinationKey: 'message'
+      }),
+      error => error?.status === 400 && /campo del sistema/i.test(error.message)
+    )
   } finally {
     if (siteId) {
       const imported = await getImportedSiteBySiteId(siteId).catch(() => null)
@@ -925,7 +935,7 @@ test('per-option ids collapse into four logical questions and legacy mappings no
       formId: 'perfil_medico',
       fieldId: 'rol_decision',
       destinationType: 'standard',
-      destinationKey: 'message'
+      destinationKey: 'company'
     })
     const configured = await getImportedSiteBySiteId(siteId)
     form = activeMapping(configured, '', 'perfil_medico')
@@ -979,7 +989,7 @@ test('per-option ids collapse into four logical questions and legacy mappings no
     assert.equal(form.fields.filter(field => field.present !== false).length, 4)
     assertIncludes(mappingField(form, 'rol_decision'), {
       destinationType: 'standard',
-      destinationKey: 'message',
+      destinationKey: 'company',
       hasStableFieldId: false,
       present: true
     })
@@ -1104,13 +1114,13 @@ test('a legacy choice group on a secondary HTML page can be associated without d
       formId: 'prioridad_contacto',
       fieldId: 'prioridad',
       destinationType: 'standard',
-      destinationKey: 'message'
+      destinationKey: 'company'
     })
     const patchedForm = activeMapping(patched, 'perfil.html', 'prioridad_contacto')
     assert.equal(patchedForm.fields.filter(field => field.present !== false).length, 1)
     assertIncludes(mappingField(patchedForm, 'prioridad'), {
       destinationType: 'standard',
-      destinationKey: 'message',
+      destinationKey: 'company',
       present: true
     })
     assert.equal(
@@ -1160,7 +1170,7 @@ test('radio and checkbox groups stay as one field and stable-id changes create a
       formId: 'perfil_lead',
       fieldId: 'plan_elegido',
       destinationType: 'standard',
-      destinationKey: 'message'
+      destinationKey: 'company'
     })
 
     const rewritten = await updateImportedSiteCodeFiles(siteId, {
@@ -1180,7 +1190,7 @@ test('radio and checkbox groups stay as one field and stable-id changes create a
     form = activeMapping(rewritten.import, '', 'perfil_lead')
     assertIncludes(mappingField(form, 'plan_elegido'), {
       destinationType: 'standard',
-      destinationKey: 'message',
+      destinationKey: 'company',
       present: true
     })
     assert.equal(mappingField(form, 'correo_principal').present, false)

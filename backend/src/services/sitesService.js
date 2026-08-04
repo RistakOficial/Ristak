@@ -544,7 +544,9 @@ const IMPORTED_EDITABLE_CONTENT_TYPES = new Set([
   'video',
   'choice_option'
 ])
-const IMPORTED_FORM_STANDARD_FIELDS = new Set(['full_name', 'first_name', 'last_name', 'phone', 'email', 'message'])
+const IMPORTED_FORM_STANDARD_FIELDS = new Set(['full_name', 'first_name', 'last_name', 'phone', 'email'])
+const IMPORTED_FORM_LEGACY_MESSAGE_FIELD_KEY = 'message'
+const IMPORTED_FORM_MESSAGE_CUSTOM_FIELD_KEY = 'form_message'
 const NATIVE_FORM_STANDARD_SYSTEM_FIELDS = new Set(['full_name', 'first_name', 'last_name', 'phone', 'email'])
 const NATIVE_FORM_CUSTOM_SYSTEM_FIELDS = new Set(['city', 'company', 'address_1'])
 const IMPORTED_FORM_SYSTEM_FIELDS = new Set([
@@ -2179,6 +2181,30 @@ function getImportedStandardAliasKey(haystack = '') {
   if (hasImportedAlias(haystack, IMPORTED_STANDARD_FIELD_ALIASES.full_name)) return 'full_name'
   if (hasImportedAlias(haystack, IMPORTED_STANDARD_FIELD_ALIASES.message)) return 'message'
   return ''
+}
+
+function getImportedFieldRoute(field = {}, fallbackKey = 'custom_field') {
+  const destinationType = field.ignored
+    ? 'ignored'
+    : cleanString(field.destinationType || field.destination_type || field.saveMode || field.save_mode || 'custom').toLowerCase()
+  const destinationKey = normalizeImportedFieldKey(
+    field.destinationKey || field.destination_key || field.customFieldKey || field.custom_field_key ||
+      field.sourceName || field.source_name || field.fieldId || field.field_id || field.label,
+    fallbackKey
+  )
+
+  // `message` se ofreció históricamente como campo estándar, pero contacts no
+  // tiene una columna con ese nombre. Convertimos ese contrato legacy a un campo
+  // personalizado real para no perder respuestas de formularios ya publicados.
+  if (destinationType === 'standard' && destinationKey === IMPORTED_FORM_LEGACY_MESSAGE_FIELD_KEY) {
+    return {
+      destinationType: 'new_custom',
+      destinationKey: IMPORTED_FORM_MESSAGE_CUSTOM_FIELD_KEY,
+      upgradedLegacyMessage: true
+    }
+  }
+
+  return { destinationType, destinationKey, upgradedLegacyMessage: false }
 }
 
 function getImportedCustomHintDestination(haystack = '', allowedKeys = null) {
@@ -4474,6 +4500,9 @@ function inferImportedFieldDestination(field = {}) {
 
   const explicitStandardAlias = explicit ? getImportedStandardAliasKey(explicit) : ''
   if (explicitStandardAlias) {
+    if (explicitStandardAlias === IMPORTED_FORM_LEGACY_MESSAGE_FIELD_KEY) {
+      return { destinationType: 'custom', destinationKey: IMPORTED_FORM_MESSAGE_CUSTOM_FIELD_KEY, confidence: 0.96 }
+    }
     return { destinationType: 'standard', destinationKey: explicitStandardAlias, confidence: 0.96 }
   }
 
@@ -4491,6 +4520,9 @@ function inferImportedFieldDestination(field = {}) {
 
   const standardAlias = getImportedStandardAliasKey(haystack)
   if (standardAlias) {
+    if (standardAlias === IMPORTED_FORM_LEGACY_MESSAGE_FIELD_KEY) {
+      return { destinationType: 'custom', destinationKey: IMPORTED_FORM_MESSAGE_CUSTOM_FIELD_KEY, confidence: 0.9 }
+    }
     if (suppressAmbiguousName && ['first_name', 'full_name'].includes(standardAlias)) {
       const customHint = getImportedCustomHintDestination(haystack)
       if (customHint) return customHint
@@ -4936,24 +4968,34 @@ async function materializeImportedCustomFieldMappings({ site, imported, mappings
     }
 
     const nextFields = []
-    for (const field of Array.isArray(mapping?.fields) ? mapping.fields : []) {
-      if (field?.present === false || isImportedAmbiguousFieldMapping(field)) {
-        nextFields.push(field)
+    for (const originalField of Array.isArray(mapping?.fields) ? mapping.fields : []) {
+      if (originalField?.present === false || isImportedAmbiguousFieldMapping(originalField)) {
+        nextFields.push(originalField)
         continue
       }
 
-      const destinationType = field.ignored
-        ? 'ignored'
-        : cleanString(field.destinationType || field.saveMode || '').toLowerCase()
+      const route = getImportedFieldRoute(originalField, 'custom_field')
+      const destinationType = route.destinationType
+      const field = route.upgradedLegacyMessage
+        ? {
+            ...originalField,
+            destinationType,
+            destinationKey: route.destinationKey,
+            saveMode: destinationType,
+            ignored: false,
+            customFieldDefinitionId: undefined,
+            customFieldKey: route.destinationKey,
+            customFieldLabel: cleanString(originalField.customFieldLabel || originalField.label) || route.destinationKey,
+            customFieldDataType: cleanString(originalField.customFieldDataType) || importedFieldDefinitionDataType(originalField),
+            customFieldSyncTarget: cleanString(originalField.customFieldSyncTarget) || 'local'
+          }
+        : originalField
       if (destinationType === 'standard' || destinationType === 'ignored') {
         nextFields.push(field)
         continue
       }
 
-      const destinationKey = normalizeImportedFieldKey(
-        field.destinationKey || field.customFieldKey || field.sourceName || field.fieldId || field.label,
-        'custom_field'
-      )
+      const destinationKey = route.destinationKey
       if (IMPORTED_FORM_SYSTEM_FIELDS.has(destinationKey)) {
         nextFields.push({
           ...field,
@@ -5147,13 +5189,7 @@ function getImportedSourceFieldOptions(fieldMapping = {}, detectedField = {}) {
 }
 
 function getImportedSourceFieldSettings({ site, imported, mapping, fieldMapping, detectedField }) {
-  const destinationType = fieldMapping?.ignored
-    ? 'ignored'
-    : cleanString(fieldMapping?.destinationType || fieldMapping?.saveMode || 'custom')
-  const destinationKey = normalizeImportedFieldKey(
-    fieldMapping?.destinationKey || fieldMapping?.customFieldKey || fieldMapping?.sourceName || fieldMapping?.fieldId,
-    'custom_field'
-  )
+  const { destinationType, destinationKey } = getImportedFieldRoute(fieldMapping, 'custom_field')
   const internalName = normalizeImportedFieldKey(fieldMapping?.sourceName || fieldMapping?.fieldId || destinationKey, 'field')
   const settings = {
     pageId: DEFAULT_FUNNEL_PAGE_ID,
@@ -5179,7 +5215,7 @@ function getImportedSourceFieldSettings({ site, imported, mapping, fieldMapping,
       fieldMapping?.customFieldDataType || fieldMapping?.custom_field_data_type
     )
     if (customFieldDefinitionId) settings.customFieldDefinitionId = customFieldDefinitionId
-    settings.customFieldKey = normalizeImportedFieldKey(fieldMapping?.customFieldKey || destinationKey, 'custom_field')
+    settings.customFieldKey = destinationKey
     settings.customFieldLabel = cleanString(fieldMapping?.customFieldLabel || fieldMapping?.label || detectedField?.label) || settings.customFieldKey
     settings.customFieldDataType = destinationType === 'custom' && configuredDataType
       ? configuredDataType
@@ -39919,8 +39955,19 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields, allo
 
     consumedRawKeys.add(rawKey)
     acceptedRawFields[rawKey] = value
-    const destinationType = field.ignored ? 'ignored' : cleanString(field.destinationType || field.saveMode || 'custom')
-    const destinationKey = normalizeImportedFieldKey(field.destinationKey || field.sourceName || rawKey, 'custom_field')
+    const route = getImportedFieldRoute({ ...field, sourceName: field.sourceName || rawKey }, 'custom_field')
+    const { destinationType, destinationKey } = route
+    const routedField = route.upgradedLegacyMessage
+      ? {
+          ...field,
+          destinationType,
+          destinationKey,
+          saveMode: destinationType,
+          customFieldKey: destinationKey,
+          customFieldLabel: cleanString(field.customFieldLabel || field.label) || destinationKey,
+          customFieldSyncTarget: cleanString(field.customFieldSyncTarget) || 'local'
+        }
+      : field
 
     if (destinationType === 'ignored') {
       mappedFields.ignored[rawKey] = value
@@ -39935,7 +39982,7 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields, allo
     if (destinationType === 'standard' && NATIVE_FORM_CUSTOM_SYSTEM_FIELDS.has(destinationKey)) {
       mappedFields.system[destinationKey] = value
       addImportedCustomField(customFields, {
-        ...field,
+        ...routedField,
         destinationKey,
         customFieldKey: destinationKey,
         customFieldLabel: getNativeSystemFieldLabel(destinationKey, field.label),
@@ -39945,7 +39992,7 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields, allo
     }
 
     mappedFields.custom[destinationKey] = value
-    addImportedCustomField(customFields, { ...field, destinationKey }, value, context)
+    addImportedCustomField(customFields, { ...routedField, destinationKey }, value, context)
   }
 
   for (const [rawKey, value] of Object.entries(rawFields)) {

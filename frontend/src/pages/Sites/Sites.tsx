@@ -26016,14 +26016,16 @@ const ImportedHtmlEditorPanel: React.FC<{
     const getPanelFieldRouteValue = (field: ImportedSiteFieldMapping) => {
       if (field.ignored || field.destinationType === 'ignored' || field.saveMode === 'ignored') return 'ignored'
       if (field.destinationType === 'standard' || field.saveMode === 'standard') {
-        return `standard:${field.destinationKey || inferImportedStandardKey(field)}`
+        const standardKey = normalizeImportedDestinationKey(field.destinationKey || inferImportedStandardKey(field), '')
+        if (standardKey === 'message') return `new_custom:${IMPORTED_FORM_MESSAGE_CUSTOM_FIELD_KEY}`
+        return `standard:${standardKey}`
       }
       const selectedCustomField = findImportedCustomFieldDefinition(activeImportedCustomFields, field)
       if (selectedCustomField) return `custom:${selectedCustomField.definitionId}`
       if ((field.destinationType === 'custom' || field.saveMode === 'custom') && field.customFieldDefinitionId) {
         return `missing_custom:${field.customFieldDefinitionId}`
       }
-      return `new_custom:${field.customFieldKey || field.destinationKey || normalizeImportedDestinationKey(field.sourceName || field.fieldId, 'campo_personalizado')}`
+      return `new_custom:${getImportedNewCustomFieldKey(field)}`
     }
 
     const closeNativeElementDetail = () => {
@@ -26218,7 +26220,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                           selectedCustomField && !isImportedCustomFieldCompatible(selectedCustomField, field)
                         )
                         const currentValue = importedFieldMappingOverrides[routeKey] || getPanelFieldRouteValue(field)
-                        const newCustomValue = currentValue.startsWith('new_custom:') ? currentValue : `new_custom:${field.customFieldKey || field.destinationKey || normalizeImportedDestinationKey(field.sourceName || field.fieldId, 'campo_personalizado')}`
+                        const newCustomValue = currentValue.startsWith('new_custom:') ? currentValue : `new_custom:${getImportedNewCustomFieldKey(field)}`
                         const prioritizedSystemFields = getPrioritizedImportedSystemFieldOptions(field, currentValue)
                         const prioritizedCustomFields = getPrioritizedImportedCustomFields(activeImportedCustomFields, currentValue, field)
                         const pending = importedFieldMappingPendingKeys.has(routeKey)
@@ -27444,9 +27446,10 @@ const importedSystemFieldOptions = [
   { value: 'address_1', label: 'Dirección 1' },
   { value: 'company', label: 'Empresa' },
   { value: 'first_name', label: 'Nombre' },
-  { value: 'last_name', label: 'Apellido' },
-  { value: 'message', label: 'Mensaje o nota' }
+  { value: 'last_name', label: 'Apellido' }
 ]
+
+const IMPORTED_FORM_MESSAGE_CUSTOM_FIELD_KEY = 'form_message'
 
 const normalizeImportedDestinationKey = (value: string, fallback: string) =>
   (value || fallback || 'campo_personalizado')
@@ -27566,25 +27569,6 @@ const importedStandardFieldAliases: Record<string, string[]> = {
     'nombre_cliente',
     'your_name'
   ],
-  message: [
-    'message',
-    'mensaje',
-    'comments',
-    'comment',
-    'comentario',
-    'comentarios',
-    'observacion',
-    'observaciones',
-    'notes',
-    'note',
-    'nota',
-    'notas',
-    'details',
-    'detalle',
-    'detalles',
-    'description',
-    'descripción'
-  ],
   city: [
     'city',
     'ciudad',
@@ -27640,8 +27624,15 @@ const detectImportedSystemKey = (field: ImportedSiteFieldMapping) => {
   if (hasImportedStandardAlias(text, importedStandardFieldAliases.last_name)) return 'last_name'
   if (hasImportedStandardAlias(text, importedStandardFieldAliases.first_name)) return 'first_name'
   if (hasImportedStandardAlias(text, importedStandardFieldAliases.full_name)) return 'full_name'
-  if (hasImportedStandardAlias(text, importedStandardFieldAliases.message)) return 'message'
   return ''
+}
+
+const getImportedNewCustomFieldKey = (field: ImportedSiteFieldMapping) => {
+  const configuredKey = normalizeImportedDestinationKey(
+    field.customFieldKey || field.destinationKey || field.sourceName || field.fieldId,
+    'campo_personalizado'
+  )
+  return configuredKey === 'message' ? IMPORTED_FORM_MESSAGE_CUSTOM_FIELD_KEY : configuredKey
 }
 
 const inferImportedStandardKey = (field: ImportedSiteFieldMapping) => {

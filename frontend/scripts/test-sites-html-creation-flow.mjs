@@ -267,10 +267,19 @@ assert.deepEqual(
     'Dirección 1',
     'Empresa',
     'Nombre',
-    'Apellido',
-    'Mensaje o nota'
+    'Apellido'
   ],
-  'el selector debe priorizar identidad, contacto y ubicación antes de los destinos secundarios'
+  'el selector debe mostrar únicamente destinos persistibles del contacto'
+)
+assert.doesNotMatch(
+  importedSystemFieldOptionsSource,
+  /Mensaje o nota|value: 'message'/,
+  'message no debe reaparecer como campo del sistema porque contacts no tiene ese destino'
+)
+assert.match(
+  sitesSource,
+  /standardKey === 'message'[^\n]+new_custom:\$\{IMPORTED_FORM_MESSAGE_CUSTOM_FIELD_KEY\}/,
+  'los mapeos legacy standard.message deben mostrarse como campo personalizado recuperable'
 )
 
 const importedFieldPrioritySource = sourceBetween(

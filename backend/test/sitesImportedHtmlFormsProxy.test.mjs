@@ -37,6 +37,7 @@ async function deleteSites(siteIds = []) {
 test('imported HTML forms materialize Forms-page source forms and route submissions to them', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const email = `html-proxy-${suffix}@example.test`
+  const legacyEmail = `html-proxy-legacy-${suffix}@example.test`
   const previousConfig = {
     domain: await getAppConfig(DOMAIN_KEYS.domain),
     verified: await getAppConfig(DOMAIN_KEYS.verified),
@@ -114,6 +115,11 @@ test('imported HTML forms materialize Forms-page source forms and route submissi
       files: [{ path: '', content: savedHtml }]
     })
 
+    const messageMapping = updated.import.formMappings[0].fields.find(field => field.sourceName === 'message')
+    assert.equal(messageMapping?.destinationType, 'custom')
+    assert.equal(messageMapping?.destinationKey, 'form_message')
+    assert.ok(messageMapping?.customFieldDefinitionId)
+
     assert.equal(updated.import.formMappings[0].formSiteId, sourceFormId)
     sourceForm = await getSite(sourceFormId, { includeBlocks: true, includeSubmissions: true })
     assert.equal(sourceForm.theme.pages[0].buttonText, 'Enviar lead')
@@ -175,13 +181,17 @@ test('imported HTML forms materialize Forms-page source forms and route submissi
       }
     )
 
-    const contact = await db.get('SELECT full_name, email FROM contacts WHERE id = ?', [result.contactId])
+    const contact = await db.get('SELECT full_name, email, custom_fields FROM contacts WHERE id = ?', [result.contactId])
     assert.equal(contact.full_name, 'Ana Proxy')
     assert.equal(contact.email, email)
+    const contactMessage = JSON.parse(contact.custom_fields || '[]').find(field => field.fieldKey === 'form_message')
+    assert.equal(contactMessage?.value, 'Necesito detalles')
+    assert.equal(contactMessage?.definitionId, messageMapping.customFieldDefinitionId)
 
-    const submission = await db.get('SELECT site_id, form_site_id, meta_json FROM public_site_submissions WHERE id = ?', [result.submissionId])
+    const submission = await db.get('SELECT site_id, form_site_id, mapped_fields_json, meta_json FROM public_site_submissions WHERE id = ?', [result.submissionId])
     assert.equal(submission.site_id, siteId)
     assert.equal(submission.form_site_id, sourceFormId)
+    assert.equal(JSON.parse(submission.mapped_fields_json).custom.form_message, 'Necesito detalles')
     assert.equal(JSON.parse(submission.meta_json).formSiteId, sourceFormId)
 
     sourceForm = await getSite(sourceFormId, { includeBlocks: true, includeSubmissions: true })
@@ -204,12 +214,60 @@ test('imported HTML forms materialize Forms-page source forms and route submissi
       new Set(automationIds),
       'el envío HTML debe disparar tanto el formulario visible en Formularios como su identidad importada estable'
     )
+
+    const legacyMappings = updated.import.formMappings.map(mapping => ({
+      ...mapping,
+      fields: mapping.fields.map(field => field.sourceName === 'message'
+        ? {
+            ...field,
+            destinationType: 'standard',
+            destinationKey: 'message',
+            saveMode: 'standard',
+            customFieldDefinitionId: undefined,
+            customFieldKey: undefined,
+            customFieldLabel: undefined,
+            customFieldDataType: undefined,
+            customFieldSyncTarget: undefined
+          }
+        : field)
+    }))
+    await db.run(
+      'UPDATE public_site_imports SET form_mappings_json = ? WHERE site_id = ?',
+      [JSON.stringify(legacyMappings), siteId]
+    )
+
+    const legacyResult = await createSubmissionFromRequest(
+      {
+        headers: { host: 'example.test', 'user-agent': 'node-test' },
+        hostname: 'example.test',
+        path: `/${created.site.slug}`,
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' }
+      },
+      {
+        siteId,
+        importedFormId: updated.import.formMappings[0].formId,
+        rawFields: {
+          full_name: 'Laura Legacy',
+          email: legacyEmail,
+          plan: 'starter',
+          message: 'Respuesta recuperada desde un mapeo anterior'
+        }
+      }
+    )
+    assert.equal(legacyResult.mappedFields.standard.message, undefined)
+    assert.equal(legacyResult.mappedFields.custom.form_message, 'Respuesta recuperada desde un mapeo anterior')
+    const legacyContact = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [legacyResult.contactId])
+    assert.equal(
+      JSON.parse(legacyContact.custom_fields || '[]').find(field => field.fieldKey === 'form_message')?.value,
+      'Respuesta recuperada desde un mapeo anterior'
+    )
   } finally {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id IN (?, ?)', automationIds).catch(() => undefined)
     await db.run('DELETE FROM automations WHERE id IN (?, ?)', automationIds).catch(() => undefined)
     if (siteId) await deleteSite(siteId).catch(() => undefined)
     if (sourceFormId) await deleteSite(sourceFormId).catch(() => undefined)
-    await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE email IN (?, ?)', [email, legacyEmail]).catch(() => undefined)
     await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain || '')
     await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified || '')
     await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt || '')
