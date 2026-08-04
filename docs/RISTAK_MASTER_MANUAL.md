@@ -5020,6 +5020,12 @@ empezar y aplica el mismo enfriamiento de 15 minutos. Esto cubre tanto errores
 estructurales de plantilla como saldo insuficiente u otros rechazos terminales
 del proveedor. El claim atómico existente decide qué instancia puede reintentar,
 por lo que dos workers no mandan dos copias.
+La reconciliación y el aprendizaje de contratos legacy resuelven
+`provider_message_id`, `ycloud_message_id` y `wamid` por búsquedas indexadas
+independientes. No deben volver a unir esos tres identificadores con un único
+`OR` sobre todo el historial: en cuentas con muchos mensajes esa consulta puede
+agotar el `statement_timeout` antes de llamar a WhatsApp y dejar un recordatorio
+válido en `error`.
 
 La insignia **Con errores** del panel representa fallos que siguen vigentes, no
 todo el historial. Un envío `sent` posterior resuelve los errores anteriores de

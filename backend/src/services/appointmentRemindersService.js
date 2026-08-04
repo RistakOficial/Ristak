@@ -1723,18 +1723,47 @@ async function getLearnedTemplateBodyParameterCount({
   const cleanFromPhone = cleanString(fromPhone)
   if (!cleanTemplateName || !cleanLanguage) return null
 
+  // Cada identificador se resuelve por separado para que PostgreSQL pueda usar
+  // su índice. Un JOIN con tres OR obligaba a recorrer whatsapp_api_messages y,
+  // en cuentas con historial grande, agotaba el statement_timeout antes de
+  // enviar el recordatorio.
   const rows = await db.all(`
-    SELECT m.error_message, m.updated_at
-    FROM whatsapp_api_template_sends s
-    JOIN whatsapp_api_messages m
-      ON m.provider_message_id = s.provider_message_id
-      OR m.ycloud_message_id = s.ycloud_message_id
-      OR m.wamid = s.wamid
-    WHERE LOWER(COALESCE(s.template_name, '')) = LOWER(?)
-      AND LOWER(COALESCE(s.language, '')) = LOWER(?)
-      AND (? = '' OR COALESCE(s.from_phone, '') = ?)
-      AND LOWER(COALESCE(m.status, '')) = 'failed'
-    ORDER BY m.updated_at DESC
+    WITH matching_sends AS (
+      SELECT provider_message_id, ycloud_message_id, wamid
+      FROM whatsapp_api_template_sends
+      WHERE LOWER(COALESCE(template_name, '')) = LOWER(?)
+        AND LOWER(COALESCE(language, '')) = LOWER(?)
+        AND (? = '' OR COALESCE(from_phone, '') = ?)
+    ),
+    matched_failures AS (
+      SELECT m.error_message, m.updated_at
+      FROM matching_sends s
+      JOIN whatsapp_api_messages m
+        ON m.provider_message_id = s.provider_message_id
+      WHERE NULLIF(s.provider_message_id, '') IS NOT NULL
+        AND LOWER(COALESCE(m.status, '')) = 'failed'
+
+      UNION
+
+      SELECT m.error_message, m.updated_at
+      FROM matching_sends s
+      JOIN whatsapp_api_messages m
+        ON m.ycloud_message_id = s.ycloud_message_id
+      WHERE NULLIF(s.ycloud_message_id, '') IS NOT NULL
+        AND LOWER(COALESCE(m.status, '')) = 'failed'
+
+      UNION
+
+      SELECT m.error_message, m.updated_at
+      FROM matching_sends s
+      JOIN whatsapp_api_messages m
+        ON m.wamid = s.wamid
+      WHERE NULLIF(s.wamid, '') IS NOT NULL
+        AND LOWER(COALESCE(m.status, '')) = 'failed'
+    )
+    SELECT error_message, updated_at
+    FROM matched_failures
+    ORDER BY updated_at DESC
     LIMIT 20
   `, [
     cleanTemplateName,
@@ -1756,21 +1785,54 @@ async function reconcileFailedTemplateReminderSends(appointmentIds = []) {
 
   const placeholders = ids.map(() => '?').join(', ')
   const rows = await db.all(`
-    SELECT
-      ars.reminder_id,
-      ars.appointment_id,
-      ars.sent_message_id,
-      m.error_message,
-      m.updated_at
-    FROM appointment_reminder_sends ars
-    JOIN whatsapp_api_messages m
-      ON m.provider_message_id = ars.sent_message_id
-      OR m.ycloud_message_id = ars.sent_message_id
-      OR m.wamid = ars.sent_message_id
-    WHERE ars.status = 'sent'
-      AND ars.appointment_id IN (${placeholders})
-      AND LOWER(COALESCE(m.status, '')) = 'failed'
-    ORDER BY m.updated_at DESC
+    WITH candidate_sends AS (
+      SELECT reminder_id, appointment_id, sent_message_id
+      FROM appointment_reminder_sends
+      WHERE status = 'sent'
+        AND appointment_id IN (${placeholders})
+        AND NULLIF(sent_message_id, '') IS NOT NULL
+    ),
+    matched_failures AS (
+      SELECT
+        ars.reminder_id,
+        ars.appointment_id,
+        ars.sent_message_id,
+        m.error_message,
+        m.updated_at
+      FROM candidate_sends ars
+      JOIN whatsapp_api_messages m
+        ON m.provider_message_id = ars.sent_message_id
+      WHERE LOWER(COALESCE(m.status, '')) = 'failed'
+
+      UNION
+
+      SELECT
+        ars.reminder_id,
+        ars.appointment_id,
+        ars.sent_message_id,
+        m.error_message,
+        m.updated_at
+      FROM candidate_sends ars
+      JOIN whatsapp_api_messages m
+        ON m.ycloud_message_id = ars.sent_message_id
+      WHERE LOWER(COALESCE(m.status, '')) = 'failed'
+
+      UNION
+
+      SELECT
+        ars.reminder_id,
+        ars.appointment_id,
+        ars.sent_message_id,
+        m.error_message,
+        m.updated_at
+      FROM candidate_sends ars
+      JOIN whatsapp_api_messages m
+        ON m.wamid = ars.sent_message_id
+      WHERE LOWER(COALESCE(m.status, '')) = 'failed'
+    )
+    SELECT reminder_id, appointment_id, sent_message_id, error_message, updated_at
+    FROM matched_failures
+    ORDER BY updated_at DESC
   `, ids)
 
   let reconciled = 0

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { DateTime } from 'luxon'
-import { db, setAppConfig } from '../src/config/database.js'
+import { databaseDialect, db, setAppConfig } from '../src/config/database.js'
 import { invalidateTimezoneCache } from '../src/utils/dateUtils.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
@@ -28,6 +28,22 @@ import {
 } from '../src/services/whatsappQrService.js'
 
 const TEST_CALENDAR_ID = 'calendar_test'
+
+test('los IDs de entrega de WhatsApp tienen índices directos para reconciliar recordatorios', async () => {
+  const indexRows = databaseDialect === 'postgres'
+    ? await db.all(`
+        SELECT indexname AS name
+        FROM pg_indexes
+        WHERE schemaname = current_schema()
+          AND tablename = 'whatsapp_api_messages'
+      `)
+    : await db.all('PRAGMA index_list(whatsapp_api_messages)')
+  const indexNames = new Set(indexRows.map((row) => String(row.name || '')))
+
+  assert.ok(indexNames.has('idx_whatsapp_api_messages_provider_message_id'))
+  assert.ok(indexNames.has('idx_whatsapp_api_messages_ycloud_message_id'))
+  assert.ok(indexNames.has('idx_whatsapp_api_messages_wamid'))
+})
 
 await db.run(`
   INSERT INTO calendars (id, name, is_active, source)

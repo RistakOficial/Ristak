@@ -5695,6 +5695,12 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_business_phone_id_date ON whatsapp_api_messages(business_phone_number_id, message_timestamp, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_created ON whatsapp_api_messages(created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_wamid ON whatsapp_api_messages(wamid)')
+    if (!usePostgres) {
+      // En PostgreSQL estos índices se instalan con migraciones CONCURRENTLY para
+      // no bloquear escrituras de WhatsApp durante el arranque de una cuenta grande.
+      await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_provider_message_id ON whatsapp_api_messages(provider_message_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_ycloud_message_id ON whatsapp_api_messages(ycloud_message_id)')
+    }
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_meta_message ON whatsapp_api_messages(meta_message_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_provider_message ON whatsapp_api_messages(provider, provider_message_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_source_adapter ON whatsapp_api_messages(source_adapter)')
