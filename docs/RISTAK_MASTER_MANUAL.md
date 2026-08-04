@@ -1068,7 +1068,9 @@ presenta como métrica de rendimiento y las etapas del recorrido muestran nombre
 y orden sin etiquetas redundantes de tipo o terminación. La interfaz tampoco
 expone avisos internos sobre conversiones sin identidad web ni notas metodológicas
 permanentes sobre visitantes únicos o abandono; esos criterios siguen aplicándose
-en los cálculos y sólo se conservan las métricas accionables.
+en los cálculos y sólo se conservan las métricas accionables. El detalle de un
+embudo o formulario tampoco repite el nombre seleccionado ni una leyenda de
+alcance con zona horaria encima de sus gráficas.
 El contrato rechaza scopes o modos desconocidos y exige un rango completo de fechas
 de calendario del negocio. `dateFrom` y `dateTo` deben venir juntos, en formato
 estricto `YYYY-MM-DD`, representar días reales y no estar invertidos; un rango

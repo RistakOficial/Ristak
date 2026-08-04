@@ -47175,9 +47175,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     : typeLabel
   const scopeDescription = isVideosView
     ? `${formatSitesCompactNumber(videoInventory?.total)} videos en el alcance · ${formatSitesCompactNumber(videoInventory?.originsTotal)} orígenes · ${selectedVideoMode ? currentVideoLabel : 'vista agregada'} · ${analyticsSummary?.meta?.timezone || 'zona de la cuenta'}`
-    : selectedSiteId
-      ? `Métricas del ${entityLabel} seleccionado · ${analyticsSummary?.meta?.timezone || 'zona de la cuenta'}`
-      : `Todos los ${entityPluralLabel} publicados · ${analyticsSummary?.meta?.timezone || 'zona de la cuenta'}`
+    : `Todos los ${entityPluralLabel} publicados · ${analyticsSummary?.meta?.timezone || 'zona de la cuenta'}`
   const kpiCards = isVideosView
     ? selectedVideoMode
       ? [
@@ -47939,10 +47937,12 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
             ))}
           </div>
 
-          <div className={styles.sitesAnalyticsScope}>
-            <strong>{scopeSiteLabel}</strong>
-            <span>{scopeDescription}</span>
-          </div>
+          {(isVideosView || !selectedSiteId) && (
+            <div className={styles.sitesAnalyticsScope}>
+              <strong>{scopeSiteLabel}</strong>
+              <span>{scopeDescription}</span>
+            </div>
+          )}
 
           {isVideosView ? renderVideoAnalytics() : renderEntityAnalytics()}
           {isVideosView && !selectedVideoId && (hasPreviousVideos || hasMoreVideos) && (

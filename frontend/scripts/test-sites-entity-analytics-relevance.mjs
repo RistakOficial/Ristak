@@ -22,10 +22,15 @@ assert.doesNotMatch(
   /Elementos en vivo|activeEntityCount/,
   'el inventario de publicación no debe ocupar espacio en las analíticas de rendimiento'
 )
-assert.match(
+assert.doesNotMatch(
   sitesPage,
   /Métricas del \$\{entityLabel\} seleccionado/,
-  'el contexto individual debe describir al elemento seleccionado, no resumir el inventario'
+  'el detalle individual no debe repetir el elemento seleccionado ni su zona horaria'
+)
+assert.match(
+  sitesPage,
+  /\{\(isVideosView \|\| !selectedSiteId\) && \(\s*<div className=\{styles\.sitesAnalyticsScope\}>/,
+  'el encabezado de alcance debe ocultarse en el detalle individual de embudos y formularios'
 )
 assert.match(
   sitesPage,
