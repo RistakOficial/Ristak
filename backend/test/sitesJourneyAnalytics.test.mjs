@@ -366,7 +366,7 @@ async function cleanupSyntheticData({ siteIds, hiddenFilter }) {
   ).catch(() => undefined)
 }
 
-test('page funnel analytics keeps reloads, direct entries, progress, and hidden contacts honest', async () => {
+test('page funnel analytics keeps reloads and direct entries visible without adding them to the entrant cohort', async () => {
   const suffix = testSuffix('page_journey')
   const siteId = `site_${suffix}`
   const hiddenContactId = `hidden_contact_${suffix}`
@@ -474,6 +474,42 @@ test('page funnel analytics keeps reloads, direct entries, progress, and hidden 
       at: staleBase.plus({ minutes: 20 }).toISO()
     })
 
+    const directProgressIdentity = {
+      sessionId: `page_session_${suffix}_direct_progress`,
+      visitorId: `page_visitor_${suffix}_direct_progress`,
+      pageFlowRevision,
+      pageJourneyId: `page_journey_${suffix}_direct_progress`
+    }
+    await insertNativePageView({
+      suffix,
+      eventKey: 'direct_offer_progress',
+      siteId,
+      pageId: pageIds.offer,
+      pageTitle: 'Oferta',
+      ...directProgressIdentity,
+      at: staleBase.plus({ minutes: 21 }).toISO()
+    })
+    await insertNativePageView({
+      suffix,
+      eventKey: 'direct_offer_progress_thanks',
+      siteId,
+      pageId: pageIds.thanks,
+      pageTitle: 'Gracias',
+      ...directProgressIdentity,
+      at: staleBase.plus({ minutes: 21, seconds: 10 }).toISO()
+    })
+    await insertNativePageView({
+      suffix,
+      eventKey: 'direct_thanks',
+      siteId,
+      pageId: pageIds.thanks,
+      pageTitle: 'Gracias',
+      sessionId: `page_session_${suffix}_direct_thanks`,
+      visitorId: `page_visitor_${suffix}_direct_thanks`,
+      pageFlowRevision,
+      at: staleBase.plus({ minutes: 22 }).toISO()
+    })
+
     for (const [offset, page] of pages.entries()) {
       await insertNativePageView({
         suffix,
@@ -510,9 +546,9 @@ test('page funnel analytics keeps reloads, direct entries, progress, and hidden 
     assert.equal(funnel.completedVisitors, 4)
     assert.equal(funnel.conversionRate, 40)
 
-    assert.equal(summary.bySiteId[siteId].views, 24)
-    assert.equal(summary.bySiteId[siteId].visitors, 11)
-    assert.equal(summary.bySiteId[siteId].sessions, 11)
+    assert.equal(summary.bySiteId[siteId].views, 27)
+    assert.equal(summary.bySiteId[siteId].visitors, 13)
+    assert.equal(summary.bySiteId[siteId].sessions, 13)
 
     const [intro, offer, thanks] = funnel.stages
     assert.deepEqual(
@@ -570,17 +606,17 @@ test('page funnel analytics keeps reloads, direct entries, progress, and hidden 
       },
       {
         stageId: pageIds.offer,
-        totalViews: 9,
-        reachedAttempts: 9,
-        reachedVisitors: 9,
+        totalViews: 10,
+        reachedAttempts: 8,
+        reachedVisitors: 8,
         advancedAttempts: 4,
         progressedVisitors: 4,
-        droppedAttempts: 5,
+        droppedAttempts: 4,
         inProgressAttempts: 0,
-        advanceRate: 44.4,
-        progressionRate: 44.4,
-        dropOffRate: 55.6,
-        directEntries: 1
+        advanceRate: 50,
+        progressionRate: 50,
+        dropOffRate: 50,
+        directEntries: 2
       }
     )
     assert.deepEqual(offer.nextStages, [{
@@ -588,7 +624,7 @@ test('page funnel analytics keeps reloads, direct entries, progress, and hidden 
       label: 'Gracias',
       attempts: 4,
       visitors: 4,
-      rate: 44.4
+      rate: 50
     }])
 
     assert.deepEqual(
@@ -598,16 +634,18 @@ test('page funnel analytics keeps reloads, direct entries, progress, and hidden 
         reachedAttempts: thanks.reachedAttempts,
         reachedVisitors: thanks.reachedVisitors,
         terminalAttempts: thanks.terminalAttempts,
+        directEntries: thanks.directEntries,
         advanceRate: thanks.advanceRate,
         progressionRate: thanks.progressionRate,
         dropOffRate: thanks.dropOffRate
       },
       {
         stageId: pageIds.thanks,
-        totalViews: 4,
+        totalViews: 6,
         reachedAttempts: 4,
         reachedVisitors: 4,
         terminalAttempts: 4,
+        directEntries: 1,
         advanceRate: 0,
         progressionRate: 0,
         dropOffRate: 0
@@ -621,7 +659,7 @@ test('page funnel analytics keeps reloads, direct entries, progress, and hidden 
   }
 })
 
-test('page funnel progression rate follows a unique visitor across split journeys without counting unrelated or earlier direct traffic', async () => {
+test('page funnel excludes split and direct journeys even when they share a visitor identity', async () => {
   const suffix = testSuffix('page_unique_progression')
   const siteId = `site_${suffix}`
   const cleanupFilter = `unused_filter_${suffix}`
@@ -724,9 +762,10 @@ test('page funnel progression rate follows a unique visitor across split journey
 
     assert.equal(intro.reachedVisitors, 3)
     assert.equal(intro.advancedVisitors, 0)
-    assert.equal(intro.progressedVisitors, 1)
-    assert.equal(intro.progressionRate, 33.3)
-    assert.equal(calendar.reachedVisitors, 3)
+    assert.equal(intro.progressedVisitors, 0)
+    assert.equal(intro.progressionRate, 0)
+    assert.equal(calendar.reachedAttempts, 0)
+    assert.equal(calendar.reachedVisitors, 0)
     assert.equal(calendar.directEntries, 3)
   } finally {
     await cleanupSyntheticData({

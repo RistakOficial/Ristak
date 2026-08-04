@@ -441,18 +441,23 @@ sólo conserva contexto de Site cuando host + ruta demuestran exactamente la
 entidad; si no, se degrada a `external_pixel` sin IDs nativos para que no
 contamine el embudo.
 
-El cohort de páginas toma recorridos cuyo primer evento cae en el rango,
-reconstruye transiciones con una separación de 30 minutos y conserva el margen
-necesario alrededor del rango para no declarar abandono sólo porque el siguiente
-salto ocurrió inmediatamente fuera del límite. Por página expone vistas,
-intentos/visitantes alcanzados, avance, siguiente página, entradas directas,
-actividad y abandono; llegar a la última página completa el recorrido.
-La tasa visible por etapa usa identidades únicas: divide las identidades que
-después alcanzaron una página posterior entre las identidades que alcanzaron la
-página actual. La coincidencia se conserva aunque el navegador haya abierto un
-nuevo intento medible, pero una entrada directa con otra identidad no fabrica
-avance. Los conteos de intentos y abandono siguen disponibles en el contrato de
-datos aunque la tabla principal no los muestre como columnas.
+El cohort de páginas toma únicamente recorridos cuyo primer cambio verificable
+ocurre en la primera página y cae en el rango. Reconstruye sus transiciones con
+una separación de 30 minutos y conserva el margen necesario alrededor del rango
+para no declarar abandono sólo porque el siguiente salto ocurrió inmediatamente
+fuera del límite. Por página expone las vistas brutas y las entradas directas
+como contexto, pero intentos/visitantes alcanzados, avance, siguiente página,
+actividad, abandono y terminales pertenecen exclusivamente a ese cohort de
+entrada. Por eso la última etapa muestra exactamente los recorridos del cohort
+que completaron el embudo, no todas las identidades que abrieron su URL.
+
+La tasa visible por etapa usa identidades únicas dentro del mismo recorrido
+verificado: divide las identidades del cohort que avanzaron a una página
+posterior entre las identidades del cohort que alcanzaron la página actual. Una
+entrada directa, incluso si comparte `visitor_id` con otra pestaña o visita, no
+se cose a otro `page_journey_id` para fabricar avance. Los conteos de intentos y
+abandono siguen disponibles en el contrato de datos aunque la tabla principal no
+los muestre como columnas.
 El catálogo temporal que relaciona cada `public_page_id` con su posición fija
 explícitamente el ID como texto y el orden como entero. Este contrato es
 obligatorio en PostgreSQL: los parámetros sin tipo dentro de `VALUES` se

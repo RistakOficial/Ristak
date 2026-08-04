@@ -12797,6 +12797,12 @@ export function buildSitesPageJourneyCte({
           ) AS change_sequence
         FROM page_changes_unsequenced
       ),
+      funnel_journeys AS (
+        SELECT journey_id
+        FROM page_changes
+        WHERE change_sequence = 1
+          AND page_order = 0
+      ),
       journey_bounds AS (
         SELECT
           journey_id,
@@ -12880,32 +12886,42 @@ async function getSitesPageFunnelSummary(siteIds = [], dateFilters = {}, hiddenF
           stage.page_id,
           stage.page_order,
           COALESCE(view_totals.total_views, 0) AS total_views,
-          COUNT(DISTINCT stage.journey_id) AS reached_attempts,
-          COUNT(DISTINCT stage.visitor_key) AS reached_visitors,
           COUNT(DISTINCT CASE
-            WHEN stage.page_order < ? AND stage.advanced = 1 THEN stage.journey_id
+            WHEN funnel.journey_id IS NOT NULL THEN stage.journey_id
+            ELSE NULL
+          END) AS reached_attempts,
+          COUNT(DISTINCT CASE
+            WHEN funnel.journey_id IS NOT NULL THEN stage.visitor_key
+            ELSE NULL
+          END) AS reached_visitors,
+          COUNT(DISTINCT CASE
+            WHEN funnel.journey_id IS NOT NULL
+              AND stage.page_order < ?
+              AND stage.advanced = 1
+            THEN stage.journey_id
             ELSE NULL
           END) AS advanced_attempts,
           COUNT(DISTINCT CASE
-            WHEN stage.page_order < ? AND stage.advanced = 1 THEN stage.visitor_key
+            WHEN funnel.journey_id IS NOT NULL
+              AND stage.page_order < ?
+              AND stage.advanced = 1
+            THEN stage.visitor_key
             ELSE NULL
           END) AS advanced_visitors,
           COUNT(DISTINCT CASE
-            WHEN stage.page_order < ? AND EXISTS (
-              SELECT 1
-              FROM journey_stage later_stage
-              WHERE later_stage.visitor_key = stage.visitor_key
-                AND later_stage.page_order > stage.page_order
-                AND later_stage.last_activity >= stage.first_activity
-            ) THEN stage.visitor_key
+            WHEN funnel.journey_id IS NOT NULL
+              AND stage.page_order < ?
+              AND stage.advanced = 1
+            THEN stage.visitor_key
             ELSE NULL
           END) AS progressed_visitors,
           COUNT(DISTINCT CASE
-            WHEN stage.page_order = ? THEN stage.journey_id
+            WHEN funnel.journey_id IS NOT NULL AND stage.page_order = ? THEN stage.journey_id
             ELSE NULL
           END) AS terminal_attempts,
           COUNT(DISTINCT CASE
-            WHEN stage.page_order < ?
+            WHEN funnel.journey_id IS NOT NULL
+              AND stage.page_order < ?
               AND progress.completed = 0
               AND progress.deepest_page_order = stage.page_order
               AND bounds.last_activity > ?
@@ -12913,7 +12929,8 @@ async function getSitesPageFunnelSummary(siteIds = [], dateFilters = {}, hiddenF
             ELSE NULL
           END) AS in_progress_attempts,
           COUNT(DISTINCT CASE
-            WHEN stage.page_order < ?
+            WHEN funnel.journey_id IS NOT NULL
+              AND stage.page_order < ?
               AND progress.completed = 0
               AND progress.deepest_page_order = stage.page_order
               AND bounds.last_activity > ?
@@ -12921,7 +12938,8 @@ async function getSitesPageFunnelSummary(siteIds = [], dateFilters = {}, hiddenF
             ELSE NULL
           END) AS in_progress_visitors,
           COUNT(DISTINCT CASE
-            WHEN stage.page_order < ?
+            WHEN funnel.journey_id IS NOT NULL
+              AND stage.page_order < ?
               AND progress.completed = 0
               AND progress.deepest_page_order = stage.page_order
               AND bounds.last_activity <= ?
@@ -12929,7 +12947,8 @@ async function getSitesPageFunnelSummary(siteIds = [], dateFilters = {}, hiddenF
             ELSE NULL
           END) AS dropped_attempts,
           COUNT(DISTINCT CASE
-            WHEN stage.page_order < ?
+            WHEN funnel.journey_id IS NOT NULL
+              AND stage.page_order < ?
               AND progress.completed = 0
               AND progress.deepest_page_order = stage.page_order
               AND bounds.last_activity <= ?
@@ -12943,6 +12962,7 @@ async function getSitesPageFunnelSummary(siteIds = [], dateFilters = {}, hiddenF
         FROM journey_stage stage
         INNER JOIN journey_bounds bounds ON bounds.journey_id = stage.journey_id
         INNER JOIN journey_progress progress ON progress.journey_id = stage.journey_id
+        LEFT JOIN funnel_journeys funnel ON funnel.journey_id = stage.journey_id
         LEFT JOIN (
           SELECT page_id, COUNT(*) AS total_views
           FROM scoped
@@ -12975,6 +12995,7 @@ async function getSitesPageFunnelSummary(siteIds = [], dateFilters = {}, hiddenF
         INNER JOIN page_changes next
           ON next.journey_id = current.journey_id
          AND next.change_sequence = current.change_sequence + 1
+        INNER JOIN funnel_journeys funnel ON funnel.journey_id = current.journey_id
         WHERE next.page_order > current.page_order
         GROUP BY current.page_id, next.page_id
         ORDER BY current.page_id ASC, attempts DESC, next.page_id ASC
@@ -12992,6 +13013,7 @@ async function getSitesPageFunnelSummary(siteIds = [], dateFilters = {}, hiddenF
             ELSE NULL
           END) AS completed_visitors
         FROM journey_stage first_stage
+        INNER JOIN funnel_journeys funnel ON funnel.journey_id = first_stage.journey_id
         LEFT JOIN journey_stage final_stage
           ON final_stage.journey_id = first_stage.journey_id
          AND final_stage.page_order = ?

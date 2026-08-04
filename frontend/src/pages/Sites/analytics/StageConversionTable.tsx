@@ -168,7 +168,9 @@ function buildColumns(mode: StageConversionTableProps['mode']): Array<Column<Sit
       header: (
         <StageHeader
           label="Únicos"
-          help="Identidades first-party distintas que alcanzaron esta etapa. No equivale a personas verificadas."
+          help={mode === 'funnel'
+            ? 'Identidades first-party del recorrido que comenzó en la primera página y alcanzó esta etapa. Las entradas directas no se suman aquí.'
+            : 'Identidades first-party distintas que alcanzaron esta etapa. No equivale a personas verificadas.'}
         />
       ),
       width: mode === 'funnel' ? '16%' : '15%',
@@ -212,7 +214,7 @@ function buildColumns(mode: StageConversionTableProps['mode']): Array<Column<Sit
       <StageHeader
         label="Tasa"
         help={mode === 'funnel'
-          ? 'Porcentaje de identidades únicas de esta página que también llegaron a una página posterior del embudo.'
+          ? 'Porcentaje de identidades del recorrido iniciado en la primera página que avanzaron desde esta etapa dentro del mismo embudo.'
           : 'Porcentaje de identidades únicas que alcanzaron esta etapa y después avanzaron.'}
       />
     ),

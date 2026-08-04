@@ -1260,11 +1260,15 @@ para no declarar abandono cuando el salto inmediato quedó justo fuera del
 límite. Vistas legacy, de otra revisión o sin identidad de recorrido no se
 mezclan y degradan cobertura a `partial`/`unavailable`.
 La tabla principal mantiene sólo etapa, vistas, identidades únicas y tasa. Esa
-tasa divide las identidades que después alcanzaron una página posterior entre
-las identidades de la página actual; conserva la coincidencia de la misma
-identidad aunque exista otro intento medible y no atribuye como avance una
-entrada directa de otra identidad. Los conteos detallados de intentos, avance y
-abandono permanecen en el contrato analítico para diagnóstico y lecturas futuras.
+tasa y la columna de identidades pertenecen al cohort que comenzó su recorrido
+en la primera página: los intentos directos a etapas posteriores permanecen
+visibles sólo dentro de vistas/entradas directas y no se suman como alcanzados,
+avance ni terminales. La tasa divide las identidades del cohort que avanzaron en
+el mismo `page_journey_id` entre las que alcanzaron la página actual. La última
+fila coincide así con `completedVisitors`; compartir `visitor_id` entre pestañas
+o visitas distintas no cose recorridos separados. Los conteos detallados de
+intentos, avance y abandono permanecen en el contrato analítico para diagnóstico
+y lecturas futuras.
 La consulta tipa explícitamente el catálogo temporal de páginas como
 `page_id = texto` y `page_order = entero`; así el detalle individual conserva el
 mismo resultado en SQLite y PostgreSQL y no depende de la inferencia de tipos de
@@ -5936,9 +5940,12 @@ declara si la cobertura del recorrido es completa, parcial o no disponible.
 humana verificada.
 
 Al elegir una landing publicada en modo embudo, la vista reconstruye la
-conversión página a página para la topología vigente: alcance, avance, siguiente
-página, actividad y abandono. Revisiones anteriores o vistas sin identidad de
-recorrido se excluyen con advertencia. Una landing normal conserva el resumen
+conversión página a página para la topología vigente. El alcance, avance,
+siguiente página, terminales, actividad y abandono se calculan sólo sobre el
+cohort que inició en la primera página; las aperturas directas de páginas
+posteriores siguen visibles como vistas, pero no se presentan como personas que
+terminaron el embudo. Revisiones anteriores o vistas sin identidad de recorrido
+se excluyen con advertencia. Una landing normal conserva el resumen
 de vistas, visitantes, sesiones y conversiones. En la categoría Sitios, el
 filtro separa Sitios web y Embudos antes de elegir una pieza específica, y el
 dashboard recalcula métricas, videos asociados y conversiones sólo para esa
