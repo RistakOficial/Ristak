@@ -130,8 +130,14 @@ final class ConversationViewModel {
     private(set) var hasLoadedOnce = false
     private(set) var loadErrorMessage: String?
     private(set) var accessDenied = false
-    /// La hidratación desde caché instantánea corre una sola vez por hilo.
+    private(set) var isShowingCachedData = false
+    /// La lectura del fallback local corre una sola vez por hilo.
     private var threadCacheHydrated = false
+    private var cachedThreadFallback: [ChatMessage] = []
+    private var cachedThreadMarkerFallback: [ConversationActivityMarker] = []
+    private var threadCacheFallbackTask: Task<Void, Never>?
+    private var threadCacheFallbackTaskID: UUID?
+    private var initialFreshResponseResolved = false
 
     /// Backpressure compartido por SSE, push, fallback y envíos. Una ráfaga puede
     /// confirmar una vez después del request en vuelo, pero nunca crear un loop
@@ -245,9 +251,9 @@ final class ConversationViewModel {
         self.contactID = contactID
         self.seedContact = seedContact
         self.onInboxActivity = onInboxActivity
-        // Caché instantánea: hidrata ANTES del primer render para que el hilo
-        // se pinte con los últimos mensajes sin flash de vacío/spinner.
-        hydrateThreadFromCache()
+        // Prepara el fallback antes del primer render, pero no lo publica: la
+        // respuesta viva conserva autoridad sobre el primer paint.
+        prepareThreadCacheFallback()
         // Igual para el estado del agente: el robot del header se pinta en el
         // PRIMER frame desde caché, sin esperar el fetch en frío (~10 s).
         hydrateAgentStatesFromCache()
@@ -287,16 +293,16 @@ final class ConversationViewModel {
             )
             performanceSpanFinished = true
         }
-        // Caché instantánea (Round 6 #4): pinta los últimos mensajes guardados
-        // al instante; el spinner solo aparece si NO hay nada cacheado. Luego se
-        // revalida contra la red (merge identity-preserving con ids estables).
-        hydrateThreadFromCache()
+        // Live-first: prepara el snapshot sin publicarlo. La red arranca ya y la
+        // copia local sólo se revela tras la gracia o ante un fallo.
+        prepareThreadCacheFallback()
         // Robot del header al instante desde caché (idempotente vs. el hidrato
         // del init). La revalidación de red sigue corriendo abajo.
         hydrateAgentStatesFromCache()
         isLoadingInitial = timeline.isEmpty
         loadErrorMessage = nil
         accessDenied = false
+        scheduleThreadCacheFallback()
         defer { isLoadingInitial = false }
 
         // Nada de esto depende de la conversación: se lanza EN PARALELO para que
@@ -313,6 +319,7 @@ final class ConversationViewModel {
             allowsSilentRecovery = true
             performanceOutcome = .success
         } catch is ConversationHistoryTemporarilyUnavailableError {
+            _ = revealThreadCacheFallback()
             // Inbox y conversación todavía discrepan. No declares éxito ni
             // muestres un vacío falso: queda un estado reintentable y el gate
             // permite una recuperación silenciosa acotada por SSE/fallback.
@@ -320,6 +327,7 @@ final class ConversationViewModel {
             loadErrorMessage = "Los mensajes todavía se están sincronizando. Reintenta en un momento."
             performanceOutcome = .unavailable
         } catch let error as RistakAPIError {
+            _ = revealThreadCacheFallback()
             if error.isAccessDenied {
                 accessDenied = true
                 performanceOutcome = .unavailable
@@ -338,6 +346,7 @@ final class ConversationViewModel {
         } catch is CancellationError {
             performanceOutcome = .cancelled
         } catch {
+            _ = revealThreadCacheFallback()
             allowsSilentRecovery = true
             loadErrorMessage = "No se pudo cargar la conversación."
         }
@@ -537,11 +546,16 @@ final class ConversationViewModel {
         // Primer pintado: los mensajes visibles no deben esperar al journey
         // completo ni a programados. En un contacto sin caché esta suspensión
         // permite que SwiftUI pinte el hilo apenas responde `/conversation`.
+        let preservesVisibleCache = reset
+            && fresh.isEmpty
+            && isShowingCachedData
+            && !serverMessages.isEmpty
         applyServerMessages(
             merged,
             contexts: freshContexts,
             cacheWritePermit: recent.writePermit
         )
+        acceptFreshConversationResponse(keepingCachedFallback: preservesVisibleCache)
         hasOlderMessages = !oldestPageExhausted && serverMessages.count >= JourneyService.defaultMessageLimit
         await Task.yield()
 
@@ -597,9 +611,10 @@ final class ConversationViewModel {
 
         let first = try await fetch()
         guard enabled else { return first }
+        let knownExistingMessageCount = max(serverMessages.count, cachedThreadFallback.count)
         let shouldRetry = ConversationInitialEmptyResponsePolicy.shouldRetry(
             freshMessageCount: first.messages.count,
-            existingMessageCount: serverMessages.count,
+            existingMessageCount: knownExistingMessageCount,
             seedMessageCount: seedContact?.messageCount ?? 0,
             seedHasLastMessageDate: seedContact?.lastMessageDate != nil
         )
@@ -610,7 +625,7 @@ final class ConversationViewModel {
         guard retry.messages.isEmpty else { return retry }
         if ConversationInitialEmptyResponsePolicy.shouldFailAsTemporarilyUnavailable(
             finalFreshMessageCount: retry.messages.count,
-            existingMessageCount: serverMessages.count,
+            existingMessageCount: knownExistingMessageCount,
             seedMessageCount: seedContact?.messageCount ?? 0,
             seedHasLastMessageDate: seedContact?.lastMessageDate != nil
         ) {
@@ -633,22 +648,60 @@ final class ConversationViewModel {
         return ConversationTimelineBuilder.buildMarkers(from: events, formatters: formatters)
     }
 
-    /// Hidrata el hilo desde la caché instantánea (los mensajes del servidor
-    /// que se vieron por última vez). No marca `hasLoadedOnce`: la revalidación
-    /// contra la red sigue corriendo normal.
-    private func hydrateThreadFromCache() {
+    /// Prepara el hilo guardado sin publicarlo. No marca `hasLoadedOnce`: la
+    /// petición viva conserva autoridad sobre el primer paint.
+    private func prepareThreadCacheFallback() {
         guard !threadCacheHydrated else { return }
         threadCacheHydrated = true
         guard serverMessages.isEmpty else { return }
-        let cached = ChatThreadSnapshotCache.load(contactID: contactID)
-        guard !cached.isEmpty else { return }
-        serverMessages = cached
-        // Markers cacheados: el PRIMER pintado ya incluye pagos/citas en su sitio,
-        // así se elimina la segunda pasada de red tardía que reacomodaba el hilo
-        // al entrar. Se fija antes de `rebuildCombined` para que el timeline se
-        // construya una sola vez con todo dentro.
-        activityMarkers = ChatThreadSnapshotCache.loadMarkers(contactID: contactID)
+        cachedThreadFallback = ChatThreadSnapshotCache.load(contactID: contactID)
+        cachedThreadMarkerFallback = ChatThreadSnapshotCache.loadMarkers(contactID: contactID)
+    }
+
+    private func scheduleThreadCacheFallback() {
+        cancelThreadCacheFallback()
+        initialFreshResponseResolved = false
+        guard !cachedThreadFallback.isEmpty else { return }
+        let taskID = UUID()
+        threadCacheFallbackTaskID = taskID
+        threadCacheFallbackTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: ChatLiveFirstCachePolicy.fallbackGrace)
+            } catch {
+                return
+            }
+            guard let self,
+                  self.threadCacheFallbackTaskID == taskID else { return }
+            _ = self.revealThreadCacheFallback()
+        }
+    }
+
+    @discardableResult
+    private func revealThreadCacheFallback() -> Bool {
+        guard ChatLiveFirstCachePolicy.shouldReveal(
+            hasCachedData: !cachedThreadFallback.isEmpty,
+            freshResolved: initialFreshResponseResolved,
+            requestIsCurrent: !hasLoadedOnce,
+            isCancelled: Task.isCancelled
+        ) else { return false }
+        cancelThreadCacheFallback()
+        serverMessages = cachedThreadFallback
+        activityMarkers = cachedThreadMarkerFallback
+        isShowingCachedData = true
         rebuildCombined()
+        return true
+    }
+
+    private func acceptFreshConversationResponse(keepingCachedFallback: Bool) {
+        initialFreshResponseResolved = true
+        cancelThreadCacheFallback()
+        if !keepingCachedFallback { isShowingCachedData = false }
+    }
+
+    private func cancelThreadCacheFallback() {
+        threadCacheFallbackTask?.cancel()
+        threadCacheFallbackTask = nil
+        threadCacheFallbackTaskID = nil
     }
 
     /// Guarda los markers de actividad para que el próximo arranque del hilo los
@@ -970,6 +1023,7 @@ final class ConversationViewModel {
         stopRealtime()
         scheduledTickTask?.cancel()
         scheduledTickTask = nil
+        cancelThreadCacheFallback()
         attachmentPreparationTasks.values.forEach { $0.cancel() }
         attachmentPreparationTasks.removeAll()
         attachmentPreparationCount = 0

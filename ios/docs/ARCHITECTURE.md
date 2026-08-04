@@ -133,8 +133,10 @@ resultado viejo no puede hidratar, cachear ni ejecutar rollback sobre la cuenta
 que acaba de entrar.
 
 El arranque de Chats nunca espera ese contexto completo ni tapa el shell con un
-loader. Si existe snapshot se pinta de inmediato; en frio, inbox y directorio se
-solapan mientras navegacion, buscador y chrome permanecen visibles. Numeros,
+loader. Inbox e hilo salen a red de inmediato; si existe snapshot queda oculto
+durante 350 ms y sólo se publica como fallback identificado cuando la respuesta
+viva tarda o falla. En frio, inbox y directorio se solapan mientras navegacion,
+buscador y chrome permanecen visibles. Numeros,
 labels, integraciones, flags y etiquetas llegan despues en una tarea satelite:
 primero construye un snapshot puro y solo lo aplica si siguen coincidiendo task
 ID, namespace, generacion y sesion, y si la tarea no fue cancelada. El registro

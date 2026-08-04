@@ -203,6 +203,10 @@ import {
   shouldRunChatReconciliation,
 } from './chatRefreshPolicy';
 import {
+  CHAT_LIVE_FIRST_CACHE_GRACE_MS,
+  shouldRevealChatCacheFallback,
+} from './chatLiveFirstPolicy';
+import {
   getOldestConversationHistoryCursor,
   hasNewRenderableConversationHistoryMessage,
   isConversationHistoryCursorOlder,
@@ -886,11 +890,11 @@ const CHAT_REALTIME_REFRESH_DEBOUNCE_MS = 80;
 // antes que PostgreSQL en cuentas grandes.
 const CHAT_INBOX_REQUEST_TIMEOUT_MS = 20000;
 // Última bandeja cargada por cliente API (WeakMap: una sesión nueva crea otro
-// cliente y no hereda la bandeja de la cuenta anterior). Permite pintar la
-// lista al instante cuando ChatScreen se remonta al cambiar de sección.
+// cliente y no hereda la bandeja de la cuenta anterior). Queda lista como
+// fallback sin adelantar al request vivo cuando ChatScreen se remonta.
 const nativeInboxCache = new WeakMap<RistakApiClient, ChatContact[]>();
-// Copia en disco de la bandeja + conversaciones (offline-first tipo WhatsApp):
-// sobrevive al cierre de la app y se pinta al instante en el arranque en frío.
+// Copia en disco de la bandeja + conversaciones para respaldo móvil:
+// sobrevive al cierre de la app, pero sólo se revela si la red tarda o falla.
 const conversationMessageMemCache = new WeakMap<RistakApiClient, Map<string, ChatMessage[]>>();
 const CONVERSATION_MESSAGE_MEM_CACHE_CONTACT_LIMIT = 20;
 function getConversationMessageMemCache(api: RistakApiClient, contactId: string) {
@@ -2930,17 +2934,14 @@ function ChatScreen({
   const canUseCanonicalInboxCache = !settings.selectedWhatsAppPhoneId || settings.selectedWhatsAppPhoneId === 'all';
   const currentChatListScopeKey = `${query.trim()}|phone:${canUseCanonicalInboxCache ? 'all' : settings.selectedWhatsAppPhoneId}`;
   const canonicalInboxScopeKey = '|phone:all';
-  const cachedCanonicalInbox = canUseCanonicalInboxCache
-    ? nativeInboxCache.get(api) || peekCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, [])
-    : [];
   const hasCanonicalInboxSnapshot = canUseCanonicalInboxCache && (
     Boolean(nativeInboxCache.get(api)?.length) || hasCachedValue(NATIVE_INBOX_CACHE_KEY)
   );
   const firstSyncWasCompleted = hasCanonicalInboxSnapshot
     || hasCachedValue(MOBILE_CACHE_KEYS.firstSyncCompleted);
-  // Hidratar desde la caché en memoria: ChatScreen se desmonta al cambiar de
-  // sección y sin esto cada regreso pinta vacío -> spinner -> lista (flash).
-  const [chats, setChats] = useState<ChatContact[]>(() => cachedCanonicalInbox);
+  // Live-first: el snapshot queda preparado pero oculto. La red arranca en el
+  // primer frame y la copia local sólo se revela tras la gracia o ante un fallo.
+  const [chats, setChats] = useState<ChatContact[]>([]);
   const [inboxCacheHydrated, setInboxCacheHydrated] = useState(() => hasCanonicalInboxSnapshot);
   const initialBusinessTimezone = normalizeRequiredBusinessTimezone(initialAccountTimezone);
   const initialCurrency = normalizeRequiredCurrencyCode(initialAccountCurrency);
@@ -2949,7 +2950,8 @@ function ChatScreen({
   const [accountCurrency, setAccountCurrency] = useState(initialCurrency || DEFAULT_ACCOUNT_CURRENCY);
   const [accountCurrencyReady, setAccountCurrencyReady] = useState(Boolean(initialCurrency));
   const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(() => !hasCanonicalInboxSnapshot);
+  const [loading, setLoading] = useState(true);
+  const [showingCachedInbox, setShowingCachedInbox] = useState(false);
   const [firstSyncProgress, setFirstSyncProgress] = useState<MobileFirstSyncProgress | null>(() => (
     firstSyncWasCompleted
       ? null
@@ -2971,7 +2973,7 @@ function ChatScreen({
   const cameraSendLockedRef = useRef(false);
   const chatListGenerationRef = useRef(0);
   const chatListLoadedQueryRef = useRef('');
-  const chatListLoadedScopeRef = useRef(hasCanonicalInboxSnapshot ? canonicalInboxScopeKey : '');
+  const chatListLoadedScopeRef = useRef('');
   const chatMountedRef = useRef(true);
   const chatsRef = useRef(chats);
   const selectedChatRef = useRef(selected);
@@ -3008,8 +3010,9 @@ function ChatScreen({
     }
   }, [api, canonicalInboxScopeKey, chats, currentChatListScopeKey]);
   selectedChatRef.current = selected;
-  // Hidratar la bandeja desde disco en frío: la caché en memoria se pierde al
-  // cerrar la app, así que si arrancamos vacíos leemos la copia local guardada.
+  // Hidratar la bandeja desde disco en frío sin pintarla todavía. La petición
+  // viva empieza apenas termina esta lectura acotada; el snapshot queda listo
+  // como fallback, no como primera fuente visual.
   useEffect(() => {
     if (!canUseCanonicalInboxCache) {
       setInboxCacheHydrated(true);
@@ -3023,8 +3026,6 @@ function ChatScreen({
     void readCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, []).then((cached) => {
       if (!alive) return;
       nativeInboxCache.set(api, cached);
-      setChats((current) => (current.length ? current : cached));
-      setLoading(false);
     }).finally(() => {
       if (alive) setInboxCacheHydrated(true);
     });
@@ -3094,23 +3095,14 @@ function ChatScreen({
     Keyboard.dismiss();
     const requestId = conversationOpenRequestRef.current + 1;
     conversationOpenRequestRef.current = requestId;
-    const mountConversation = () => {
-      if (!chatMountedRef.current || requestId !== conversationOpenRequestRef.current) return;
-      conversationRouteProgress.stopAnimation();
-      conversationRouteProgress.setValue(0);
-      setConversationClosing(false);
-      setSelected(contact);
-    };
-    const cacheKey = conversationCacheKey(contact.id);
-    if (hasCachedValue(cacheKey) || getConversationMessageMemCache(api, contact.id).length) {
-      mountConversation();
-      return;
-    }
-    // The critical bootstrap intentionally does not parse every thread file.
-    // Load just the tapped snapshot before mounting so useState can paint it on
-    // frame one instead of showing an avoidable hydration loader.
-    void preloadCacheKeys([cacheKey]).finally(mountConversation);
-  }, [api, conversationRouteProgress]);
+    if (!chatMountedRef.current || requestId !== conversationOpenRequestRef.current) return;
+    conversationRouteProgress.stopAnimation();
+    conversationRouteProgress.setValue(0);
+    setConversationClosing(false);
+    // Montar ya dispara la red. El archivo local se hidrata dentro del hilo en
+    // paralelo y sólo se revela si rebasa la gracia live-first.
+    setSelected(contact);
+  }, [conversationRouteProgress]);
 
   const closeChatConversation = useCallback(() => {
     if (!selected || conversationClosing) return;
@@ -3140,17 +3132,50 @@ function ChatScreen({
         // Never leave rows from another search/phone scope on screen. Besides
         // being misleading, a failed filtered request used to look like a
         // successful result because the previous scope counted as cache.
-        const canonicalCache = requestScopeKey === canonicalInboxScopeKey
-          ? nativeInboxCache.get(api) || []
-          : [];
-        chatsRef.current = canonicalCache;
-        setChats(canonicalCache);
+        chatsRef.current = [];
+        setChats([]);
+        setShowingCachedInbox(false);
       }
     }
     setError('');
     chatListRequestAbortRef.current?.abort();
     const controller = new AbortController();
     chatListRequestAbortRef.current = controller;
+    const cachedRowsForRequest = requestScopeKey === canonicalInboxScopeKey && !requestQuery
+      ? nativeInboxCache.get(api) || peekCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, [])
+      : [];
+    const hasCachedRowsForRequest = requestScopeKey === canonicalInboxScopeKey
+      && !requestQuery
+      && cachedRowsForRequest.length > 0;
+    let freshResolved = false;
+    let cacheWasRevealed = false;
+    let cacheRevealTimer: ReturnType<typeof setTimeout> | null = null;
+    const revealCachedInbox = () => {
+      if (!shouldRevealChatCacheFallback({
+        freshResolved,
+        hasCachedData: hasCachedRowsForRequest,
+        requestIsCurrent: chatListRequestAbortRef.current === controller && !controller.signal.aborted,
+      })) return false;
+      cacheWasRevealed = true;
+      chatListLoadedQueryRef.current = requestQuery;
+      chatListLoadedScopeRef.current = requestScopeKey;
+      chatsRef.current = cachedRowsForRequest;
+      setChats(cachedRowsForRequest);
+      setLoading(false);
+      setShowingCachedInbox(true);
+      return true;
+    };
+    const acceptFreshInbox = () => {
+      freshResolved = true;
+      if (cacheRevealTimer) {
+        clearTimeout(cacheRevealTimer);
+        cacheRevealTimer = null;
+      }
+      setShowingCachedInbox(false);
+    };
+    if (!silent && hasCachedRowsForRequest) {
+      cacheRevealTimer = setTimeout(revealCachedInbox, CHAT_LIVE_FIRST_CACHE_GRACE_MS);
+    }
     let resolveRequestSettled: () => void = () => undefined;
     const requestSettled = new Promise<void>((resolve) => {
       resolveRequestSettled = resolve;
@@ -3171,6 +3196,7 @@ function ChatScreen({
       });
       if (!chatMountedRef.current) return null;
       if (generation !== chatListGenerationRef.current) return null;
+      acceptFreshInbox();
       chatLastInboxReconcileAtRef.current = Date.now();
       chatListLoadedQueryRef.current = requestQuery;
       chatListLoadedScopeRef.current = requestScopeKey;
@@ -3215,8 +3241,10 @@ function ChatScreen({
       console.warn('[RistakNative][chat] loadChats failed', err);
       if (!chatMountedRef.current) return null;
       if (generation === chatListGenerationRef.current) {
-        const hasVisibleCache = !scopeChanged && chatsRef.current.length > 0;
+        const revealedFallback = cacheWasRevealed || (!silent && revealCachedInbox());
+        const hasVisibleCache = revealedFallback || (!scopeChanged && chatsRef.current.length > 0);
         if (!silent && !hasVisibleCache) {
+          setShowingCachedInbox(false);
           setError(timedOut
             ? 'El servidor tardó demasiado en responder. Revisa tu conexión e intenta de nuevo.'
             : err instanceof Error ? err.message : 'No se pudo cargar la bandeja.');
@@ -3224,6 +3252,7 @@ function ChatScreen({
       }
       return null;
     } finally {
+      if (cacheRevealTimer) clearTimeout(cacheRevealTimer);
       clearTimeout(requestTimeout);
       if (chatListRequestAbortRef.current === controller) chatListRequestAbortRef.current = null;
       if (chatListRequestSettledRef.current === requestSettled) {
@@ -4817,6 +4846,11 @@ function ChatScreen({
           ) : null}
         </View>
       </View>
+      {showingCachedInbox ? (
+        <View style={styles.chatCacheFallbackNotice} accessibilityRole="text">
+          <Text style={styles.chatCacheFallbackText}>Mostrando información guardada</Text>
+        </View>
+      ) : null}
       {loading ? (
         <View style={styles.centerState}>
           <Text style={styles.caption}>Preparando chats...</Text>
@@ -21217,12 +21251,13 @@ function NativeConversationScreen({
     : peekCache<ChatMessage[]>(conversationCacheKey(contact.id), []);
   const hasCachedConversationSnapshot = Boolean(getConversationMessageMemCache(api, contact.id).length)
     || hasCachedValue(conversationCacheKey(contact.id));
-  const [messages, setMessages] = useState<ChatMessage[]>(() => cachedConversationMessages);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationCacheHydrated, setConversationCacheHydrated] = useState(() => hasCachedConversationSnapshot);
   const [journeyEvents, setJourneyEvents] = useState<JourneyEvent[]>([]);
   const [localActivityMarkers, setLocalActivityMarkers] = useState<ConversationActivityMarker[]>([]);
   const [completionNotice, setCompletionNotice] = useState<NativeConversationSuccessNotice | null>(null);
-  const [loading, setLoading] = useState(() => !hasCachedConversationSnapshot);
+  const [loading, setLoading] = useState(true);
+  const [showingCachedConversation, setShowingCachedConversation] = useState(false);
   const [conversationLoadError, setConversationLoadError] = useState('');
   const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
   const [draft, setDraft] = useState('');
@@ -21307,6 +21342,10 @@ function NativeConversationScreen({
   const chatReadInFlightRef = useRef(false);
   const chatReadVersionRef = useRef(0);
   const messagesRef = useRef<ChatMessage[]>([]);
+  const conversationCacheFallbackRef = useRef<ChatMessage[]>(cachedConversationMessages);
+  const conversationFreshResolvedRef = useRef(false);
+  const conversationPrimaryFailedRef = useRef(false);
+  const conversationCacheRevealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sendLockedRef = useRef(false);
   const sendIntentRef = useRef<{ signature: string; externalId: string } | null>(null);
   const locationSendIntentRef = useRef<{
@@ -21340,6 +21379,35 @@ function NativeConversationScreen({
     });
   }, []);
 
+  const clearConversationCacheRevealTimer = useCallback(() => {
+    if (!conversationCacheRevealTimerRef.current) return;
+    clearTimeout(conversationCacheRevealTimerRef.current);
+    conversationCacheRevealTimerRef.current = null;
+  }, []);
+
+  const revealCachedConversation = useCallback(() => {
+    const cached = conversationCacheFallbackRef.current;
+    if (!shouldRevealChatCacheFallback({
+      freshResolved: conversationFreshResolvedRef.current,
+      hasCachedData: cached.length > 0,
+      requestIsCurrent: activeConversationContactIdRef.current === contact.id,
+    })) return false;
+    clearConversationCacheRevealTimer();
+    messagesRef.current = cached;
+    setMessages(cached);
+    setConversationLoadError('');
+    setLoading(false);
+    setShowingCachedConversation(true);
+    return true;
+  }, [clearConversationCacheRevealTimer, contact.id]);
+
+  const acceptFreshConversation = useCallback(() => {
+    conversationFreshResolvedRef.current = true;
+    conversationPrimaryFailedRef.current = false;
+    clearConversationCacheRevealTimer();
+    setShowingCachedConversation(false);
+  }, [clearConversationCacheRevealTimer]);
+
   const openNativeContentFocus = useCallback((item: NativeContentFocusItem) => {
     if (!item.url) return;
     setContentFocusItem(item);
@@ -21371,13 +21439,16 @@ function NativeConversationScreen({
     // No escribimos durante la hidratación inicial: un [] prematuro borraría la
     // copia de disco antes de alcanzarla a leer. Ya hidratado, [] sí es un valor
     // autoritativo y debe limpiar cualquier hilo fantasma anterior.
-    if (!conversationCacheHydrated) return;
+    if (
+      !conversationCacheHydrated
+      || (!conversationFreshResolvedRef.current && !showingCachedConversation)
+    ) return;
     setConversationMessageMemCache(api, contact.id, messages);
     const latestMessages = messages
       .slice(-CONVERSATION_MESSAGE_CACHE_LIMIT)
       .map(stripNativeMessageTransientCacheData);
     writeCache(conversationCacheKey(contact.id), latestMessages);
-  }, [api, messages, contact.id, conversationCacheHydrated]);
+  }, [api, messages, contact.id, conversationCacheHydrated, showingCachedConversation]);
 
   useEffect(() => {
     agentStatesRef.current = agentStates;
@@ -21406,6 +21477,13 @@ function NativeConversationScreen({
     chatReadVersionRef.current = 0;
     setSending(false);
     setConversationLoadError('');
+    conversationFreshResolvedRef.current = false;
+    conversationPrimaryFailedRef.current = false;
+    conversationCacheFallbackRef.current = getConversationMessageMemCache(api, contact.id).length
+      ? getConversationMessageMemCache(api, contact.id)
+      : peekCache<ChatMessage[]>(conversationCacheKey(contact.id), []);
+    clearConversationCacheRevealTimer();
+    setShowingCachedConversation(false);
     conversationHasOlderMessagesRef.current = false;
     conversationHistoryCursorRef.current = null;
     conversationHistoryExhaustedContactIdRef.current = null;
@@ -21419,13 +21497,14 @@ function NativeConversationScreen({
       Boolean(getConversationMessageMemCache(api, contact.id).length)
       || hasCachedValue(conversationCacheKey(contact.id)),
     );
-  }, [api, contact.id]);
+  }, [api, clearConversationCacheRevealTimer, contact.id]);
 
   useEffect(() => () => {
     conversationPrimaryAbortRef.current?.abort();
     conversationSupplementalAbortRef.current?.abort();
     conversationSupplementalGenerationRef.current += 1;
-  }, []);
+    clearConversationCacheRevealTimer();
+  }, [clearConversationCacheRevealTimer]);
 
   const loadConversation = useCallback(async (silent = false, background = false) => {
     const requestId = loadRequestRef.current + 1;
@@ -21439,6 +21518,7 @@ function NativeConversationScreen({
       resolveRequestSettled = resolve;
     });
     conversationPrimaryRequestSettledRef.current = requestSettled;
+    if (!silent && !background) conversationPrimaryFailedRef.current = false;
     // Si ya hay mensajes en pantalla (caché hidratada), refrescamos sin spinner:
     // la lista anterior se queda visible y se reemplaza cuando llega lo nuevo.
     if (!silent && !background && !messagesRef.current.length) {
@@ -21469,6 +21549,7 @@ function NativeConversationScreen({
         () => api.getContactJourney(contactId, primaryAbortController.signal, false),
       );
       if (requestId !== loadRequestRef.current || activeConversationContactIdRef.current !== contactId) return;
+      acceptFreshConversation();
       const journey = openingResult.items;
       const usedFullJourneyRecovery = openingResult.usedRecovery;
       const messageJourney = normalizeJourneyEventsForMessages(journey);
@@ -21606,7 +21687,11 @@ function NativeConversationScreen({
       // A rejected primary request never falls through to /journey and never
       // starts hidden retry loops. Keep cache visible or expose one manual retry.
       if (!background && !messagesRef.current.length) {
-        setConversationLoadError(err instanceof Error ? err.message : 'No se pudo cargar la conversación.');
+        if (!silent) conversationPrimaryFailedRef.current = true;
+        const revealedFallback = revealCachedConversation();
+        if (!revealedFallback) {
+          setConversationLoadError(err instanceof Error ? err.message : 'No se pudo cargar la conversación.');
+        }
       }
     } finally {
       if (conversationPrimaryAbortRef.current === primaryAbortController) {
@@ -21620,7 +21705,7 @@ function NativeConversationScreen({
         setLoading(false);
       }
     }
-  }, [api, appBaseUrl, contact.id]);
+  }, [acceptFreshConversation, api, appBaseUrl, contact.id, revealCachedConversation]);
   conversationLoadLatestRef.current = loadConversation;
 
   const loadOlderConversationMessages = useCallback(async () => {
@@ -21698,11 +21783,13 @@ function NativeConversationScreen({
     }
   }, [api, appBaseUrl, contact.id, loading]);
 
-  // Hidratar el hilo desde disco al abrirlo: si no hay copia en memoria (arranque
-  // en frío) leemos la última conversación guardada y la pintamos al instante
-  // mientras loadConversation trae los mensajes nuevos.
+  // Hidratar el hilo desde disco en paralelo. La copia se conserva oculta hasta
+  // que venza la gracia live-first o la petición viva falle.
   useEffect(() => {
     if (getConversationMessageMemCache(api, contact.id).length || hasCachedValue(conversationCacheKey(contact.id))) {
+      conversationCacheFallbackRef.current = getConversationMessageMemCache(api, contact.id).length
+        ? getConversationMessageMemCache(api, contact.id)
+        : peekCache<ChatMessage[]>(conversationCacheKey(contact.id), []);
       setConversationCacheHydrated(true);
       return undefined;
     }
@@ -21710,8 +21797,7 @@ function NativeConversationScreen({
     void readCache<ChatMessage[]>(conversationCacheKey(contact.id), []).then((cached) => {
       if (!alive) return;
       setConversationMessageMemCache(api, contact.id, cached);
-      setMessages((current) => (current.length ? current : cached));
-      setLoading(false);
+      conversationCacheFallbackRef.current = cached;
     }).finally(() => {
       if (alive) setConversationCacheHydrated(true);
     });
@@ -21721,9 +21807,24 @@ function NativeConversationScreen({
   }, [api, contact.id]);
 
   useEffect(() => {
-    if (!conversationCacheHydrated) return;
+    if (!conversationCacheHydrated || conversationFreshResolvedRef.current) return undefined;
+    clearConversationCacheRevealTimer();
+    if (conversationPrimaryFailedRef.current) {
+      revealCachedConversation();
+      return undefined;
+    }
+    if (conversationCacheFallbackRef.current.length) {
+      conversationCacheRevealTimerRef.current = setTimeout(
+        revealCachedConversation,
+        CHAT_LIVE_FIRST_CACHE_GRACE_MS,
+      );
+    }
+    return clearConversationCacheRevealTimer;
+  }, [clearConversationCacheRevealTimer, conversationCacheHydrated, revealCachedConversation]);
+
+  useEffect(() => {
     void loadConversation();
-  }, [conversationCacheHydrated, loadConversation]);
+  }, [loadConversation]);
 
   useEffect(() => {
     if (
@@ -23881,6 +23982,12 @@ function NativeConversationScreen({
           }} style={styles.clearSearchButton}>
             <X size={17} color={COLORS.muted} strokeWidth={2.45} />
           </Pressable>
+        </View>
+      ) : null}
+
+      {showingCachedConversation ? (
+        <View style={styles.chatCacheFallbackNotice} accessibilityRole="text">
+          <Text style={styles.chatCacheFallbackText}>Mostrando información guardada</Text>
         </View>
       ) : null}
 
@@ -30806,6 +30913,21 @@ function createAppStyles() {
   caption: {
     color: COLORS.muted,
     fontSize: 12,
+  },
+  chatCacheFallbackNotice: {
+    alignSelf: 'center',
+    marginVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+  },
+  chatCacheFallbackText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '600',
   },
   input: {
     minHeight: 50,

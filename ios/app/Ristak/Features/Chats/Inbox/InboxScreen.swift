@@ -169,6 +169,11 @@ struct InboxScreen: View {
                     .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
             }
 
+            if viewModel.isShowingCachedData, !viewModel.isSearchActive {
+                CacheRefreshPillRow()
+                    .listRowSeparator(.hidden)
+            }
+
             if viewModel.archivedViewActive {
                 ArchivedAccessRow(count: viewModel.archivedCount, isBackRow: true)
                     .onTapGesture { viewModel.closeArchivedView() }

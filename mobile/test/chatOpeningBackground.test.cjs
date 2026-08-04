@@ -41,11 +41,33 @@ const {
 } = require('../src/conversationOpeningPolicy.ts');
 const { mergeNativeChatMessagesAuthoritatively } = require('../src/chatMessageMerge.ts');
 const { resolveNotificationChatContact } = require('../src/notificationChatRouting.ts');
+const {
+  CHAT_LIVE_FIRST_CACHE_GRACE_MS,
+  shouldRevealChatCacheFallback,
+} = require('../src/chatLiveFirstPolicy.ts');
 
 const appSource = fs.readFileSync(require.resolve('../src/App.tsx'), 'utf8');
 const backgroundSource = fs.readFileSync(require.resolve('../src/background.ts'), 'utf8');
 const notificationSource = fs.readFileSync(require.resolve('../src/notifications.ts'), 'utf8');
 const indexSource = fs.readFileSync(require.resolve('../index.ts'), 'utf8');
+
+test('la UI móvil da prioridad a la red y reserva caché como fallback', () => {
+  assert.equal(CHAT_LIVE_FIRST_CACHE_GRACE_MS, 350);
+  assert.equal(shouldRevealChatCacheFallback({
+    freshResolved: false,
+    hasCachedData: true,
+    requestIsCurrent: true,
+  }), true);
+  assert.equal(shouldRevealChatCacheFallback({
+    freshResolved: true,
+    hasCachedData: true,
+    requestIsCurrent: true,
+  }), false);
+  assert.match(appSource, /const \[chats, setChats\] = useState<ChatContact\[]>\(\[\]\)/);
+  assert.match(appSource, /setTimeout\(revealCachedInbox, CHAT_LIVE_FIRST_CACHE_GRACE_MS\)/);
+  assert.match(appSource, /setTimeout\(\s*revealCachedConversation,\s*CHAT_LIVE_FIRST_CACHE_GRACE_MS/);
+  assert.doesNotMatch(appSource, /preloadCacheKeys\(\[cacheKey\]\)\.finally\(mountConversation\)/);
+});
 
 test('prioriza el hilo del push y luego las conversaciones realmente recientes', () => {
   const chats = [
@@ -410,8 +432,9 @@ test('el ancla al ultimo mensaje se consume una sola vez cuando ya existen filas
   assert.equal(gate.consume(11), false);
 });
 
-test('App fija offset cero, conserva indice cero y precarga el hilo antes de montarlo', () => {
-  assert.match(appSource, /preloadCacheKeys\(\[cacheKey\]\)\.finally\(mountConversation\)/);
+test('App monta el hilo antes de leer caché y conserva el ancla nativa en offset cero', () => {
+  assert.doesNotMatch(appSource, /preloadCacheKeys\(\[cacheKey\]\)\.finally\(mountConversation\)/);
+  assert.match(appSource, /setSelected\(contact\);/);
   assert.match(appSource, /conversationLatestAnchorGateRef\.current\.consume\(conversationRenderItems\.length\)/);
   assert.match(appSource, /scrollConversationToLatest\(false\)/);
   assert.match(appSource, /maintainVisibleContentPosition=\{\{ minIndexForVisible: 0, autoscrollToTopThreshold: 24 \}\}/);

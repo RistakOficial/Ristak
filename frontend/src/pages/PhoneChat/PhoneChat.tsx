@@ -221,6 +221,10 @@ import {
   type MobileVideoAttachment
 } from '@/services/mobileAppService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
+import {
+  MOBILE_CHAT_CACHE_FALLBACK_GRACE_MS,
+  shouldRevealMobileChatCacheFallback
+} from './chatLiveFirstPolicy'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { filterApprovedWhatsAppApiTemplates, getWhatsAppApiProviderLabel, isWhatsAppPhoneApiAvailable, isWhatsAppTemplateCompatibleWithPhone, whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact, ContactCustomField } from '@/types'
@@ -5296,10 +5300,10 @@ export const PhoneChat: React.FC = () => {
   const [wideAppointmentDefaults, setWideAppointmentDefaults] = useState<PhoneCalendarCreateRequest | null>(null)
   const [wideAppointmentContact, setWideAppointmentContact] = useState<Contact | null>(null)
   const activeRailSection = isWideChatDevice ? wideRailSection : 'chat'
-  const [initialFastStartInbox] = useState(() => readChatFastStartInbox(selectedChatPhoneId))
-  const [chats, setChats] = useState<ChatContact[]>(() => initialFastStartInbox?.chats || [])
-  const [chatsLoading, setChatsLoading] = useState(() => !initialFastStartInbox?.chats.length)
+  const [chats, setChats] = useState<ChatContact[]>([])
+  const [chatsLoading, setChatsLoading] = useState(true)
   const [chatsRefreshing, setChatsRefreshing] = useState(false)
+  const [chatsUsingCachedData, setChatsUsingCachedData] = useState(false)
   const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false)
   const [chatsError, setChatsError] = useState('')
   const [chatQuery, setChatQuery] = useState('')
@@ -5398,6 +5402,7 @@ export const PhoneChat: React.FC = () => {
   const [contactJourney, setContactJourney] = useState<JourneyEvent[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [messagesRefreshing, setMessagesRefreshing] = useState(false)
+  const [messagesUsingCachedData, setMessagesUsingCachedData] = useState(false)
   const [olderMessagesLoading, setOlderMessagesLoading] = useState(false)
   const [conversationSearchOpen, setConversationSearchOpen] = useState(false)
   const [conversationSearchQuery, setConversationSearchQuery] = useState('')
@@ -7453,7 +7458,6 @@ export const PhoneChat: React.FC = () => {
   const loadChats = useCallback(async (options: { append?: boolean; showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean } = {}) => {
     const silentRefresh = options.silent === true
     const append = options.append === true
-    const showCacheRefresh = options.showCacheRefresh === true && !silentRefresh
     const useCache = options.useCache !== false && !silentRefresh
     const trimmed = chatQuery.trim()
     const phoneFilterParams: Record<string, string> = selectedChatPhoneFilterActive && effectiveSelectedChatPhone
@@ -7490,27 +7494,10 @@ export const PhoneChat: React.FC = () => {
     )
     const cachedChats = !append && cacheEnabled && useCache ? readPhoneDailyCache<ChatContact[]>(cacheKey, timezone) : null // (MOB-007) bucket por día del negocio
     const fastStartInbox = !append && cacheEnabled && useCache && !cachedChats ? readChatFastStartInbox(selectedChatPhoneId) : null
-    const showedCachedChats = Boolean(cachedChats || fastStartInbox)
-
-    if (!append && (cachedChats || fastStartInbox)) {
-      const cachedList = cachedChats
-        ? Array.isArray(cachedChats.data) ? cachedChats.data : []
-        : fastStartInbox?.chats || []
-      chatListCursorRef.current = null
-      chatListHasAppendedRef.current = false
-      chatListHasMoreRef.current = true
-      chatListLoadedSearchRef.current = ''
-      const cachedRequestedContact = requestedContactParam
-        ? cachedList.find((contact) => contact.id === requestedContactParam) || null
-        : null
-      applyLoadedChats(cachedList, cachedRequestedContact)
-      setChatsLoading(false)
-      setChatsRefreshing(showCacheRefresh)
-      // Pintamos el caché al instante y disparamos UNA recarga silenciosa (una página
-      // fusionada) para traer lo fresco de inmediato, sin esperar al intervalo de respaldo.
-      void loadChats({ silent: true })
-      return
-    }
+    const cachedList = cachedChats
+      ? Array.isArray(cachedChats.data) ? cachedChats.data : []
+      : fastStartInbox?.chats || []
+    const hasCachedChats = cachedList.length > 0
 
     if (!append) {
       if (!silentRefresh) {
@@ -7523,6 +7510,7 @@ export const PhoneChat: React.FC = () => {
       // Coalescamos cargas no-append concurrentes. La recarga explícita trae una sola página
       // y conserva la frontera profunda cuando el usuario ya reveló más historial.
       setChatsRefreshing(false)
+      if (!hasCachedChats) setChatsUsingCachedData(false)
       chatsRequestRef.current?.abort()
     }
 
@@ -7535,13 +7523,54 @@ export const PhoneChat: React.FC = () => {
       chatsRequestRef.current = controller
     }
 
+    let freshResolved = false
+    let cacheWasRevealed = false
+    let cacheRevealTimer: number | null = null
+    const revealCachedChats = () => {
+      const requestIsCurrent = chatsRequestRef.current === controller && !controller.signal.aborted
+      if (!shouldRevealMobileChatCacheFallback({
+        freshResolved,
+        hasCachedData: hasCachedChats,
+        requestIsCurrent
+      })) return false
+
+      cacheWasRevealed = true
+      chatListCursorRef.current = null
+      chatListHasAppendedRef.current = false
+      chatListHasMoreRef.current = true
+      chatListLoadedSearchRef.current = ''
+      const cachedRequestedContact = requestedContactParam
+        ? cachedList.find((contact) => contact.id === requestedContactParam) || null
+        : null
+      applyLoadedChats(cachedList, cachedRequestedContact)
+      setChatsLoading(false)
+      setChatsUsingCachedData(true)
+      setChatsRefreshing(true)
+      return true
+    }
+    const acceptFreshResponse = () => {
+      freshResolved = true
+      if (cacheRevealTimer !== null) {
+        window.clearTimeout(cacheRevealTimer)
+        cacheRevealTimer = null
+      }
+      setChatsUsingCachedData(false)
+      setChatsRefreshing(false)
+    }
+
+    if (!append && !silentRefresh && hasCachedChats) {
+      // La red sale YA. El snapshot queda oculto una gracia corta y sólo se
+      // revela si el servidor no alcanzó a responder, evitando el flash viejo→nuevo.
+      cacheRevealTimer = window.setTimeout(revealCachedChats, MOBILE_CHAT_CACHE_FALLBACK_GRACE_MS)
+    }
+
     const fetchChatPage = async (cursor: ChatListKeysetCursor | null) => {
       const params: Record<string, string> = {
         ...(trimmed ? { q: trimmed } : {}),
         ...phoneFilterParams,
         // Una lista nunca debe esperar proveedores externos. El backend nuevo
         // usa esta señal solo para encolar avatares faltantes en segundo plano.
-        warmProfilePictures: !cursor && !showedCachedChats ? 'true' : 'false',
+        warmProfilePictures: !cursor && !hasCachedChats ? 'true' : 'false',
         limit: String(CHAT_LIST_PAGE_SIZE),
         ...(cursor ? {
           beforeMessageDate: cursor.beforeMessageDate,
@@ -7575,6 +7604,7 @@ export const PhoneChat: React.FC = () => {
         // el caché no cuenta porque podría estar viejo o reordenado por mensajes nuevos.
         const freshPage = dedupeChatsById(await fetchChatPage(null))
         if (chatsRequestRef.current !== controller) return
+        acceptFreshResponse()
 
         const currentCursor = chatListCursorRef.current
         const preserveDeepCursor = Boolean(
@@ -7603,6 +7633,7 @@ export const PhoneChat: React.FC = () => {
         // instante y se rellena al hacer scroll.
         const freshPage = dedupeChatsById(await fetchChatPage(null))
         if (chatsRequestRef.current !== controller) return
+        acceptFreshResponse()
 
         // En búsqueda (o al venir de una), REEMPLAZAMOS; en lista completa fusionamos sobre el
         // caché para no encoger la lista.
@@ -7656,11 +7687,19 @@ export const PhoneChat: React.FC = () => {
         window.setTimeout(() => void loadChats({ silent: true }), 0)
         return
       }
-      if (!append && !showedCachedChats && !silentRefresh) {
-        setChatsError('No se pudieron cargar los chats.')
-        setChats([])
+      if (!append && !silentRefresh && chatsRequestRef.current === controller) {
+        const revealedFallback = cacheWasRevealed || revealCachedChats()
+        if (!revealedFallback) {
+          setChatsUsingCachedData(false)
+          setChatsError('No se pudieron cargar los chats.')
+          setChats([])
+        }
       }
     } finally {
+      if (cacheRevealTimer !== null) {
+        window.clearTimeout(cacheRevealTimer)
+        cacheRevealTimer = null
+      }
       if (append) {
         if (chatListLoadMoreRequestRef.current === controller) {
           chatListLoadMoreRequestRef.current = null
@@ -7670,9 +7709,9 @@ export const PhoneChat: React.FC = () => {
       } else {
         if (chatsRequestRef.current === controller) {
           chatsRequestRef.current = null
+          setChatsLoading(false)
+          setChatsRefreshing(false)
         }
-        setChatsLoading(false)
-        setChatsRefreshing(false)
       }
     }
   }, [
@@ -8287,7 +8326,6 @@ export const PhoneChat: React.FC = () => {
       activeContactIdRef.current === contactId
     )
     const silentRefresh = options.silent === true
-    const showCacheRefresh = options.showCacheRefresh === true && !silentRefresh
     const useCache = options.useCache !== false && !silentRefresh
     const shouldRefreshActivityJourney = !silentRefresh || Date.now() - conversationActivityLoadedAtRef.current >= CHAT_ACTIVITY_REFRESH_INTERVAL_MS
     if (!silentRefresh) {
@@ -8298,12 +8336,21 @@ export const PhoneChat: React.FC = () => {
     }
     const cacheKey = getPhoneDailyCacheKey('phone-chat', 'conversation', locationId || 'default', contactId)
     const cachedConversation = useCache ? readPhoneDailyCache<{ journey: JourneyEvent[]; messages: ChatMessage[]; agentCompletions?: ConversationalAgentCompletionEvent[] }>(cacheKey, timezone) : null // (MOB-007) bucket por día del negocio
-    const showedCachedConversation = Boolean(cachedConversation)
+    const cachedJourney = cachedConversation && Array.isArray(cachedConversation.data.journey) ? cachedConversation.data.journey : []
+    const cachedMessages = cachedConversation && Array.isArray(cachedConversation.data.messages) ? cachedConversation.data.messages : []
+    const cachedAgentCompletions = cachedConversation && Array.isArray(cachedConversation.data.agentCompletions) ? cachedConversation.data.agentCompletions : []
+    const hasCachedConversation = cachedMessages.length > 0 || cachedJourney.length > 0 || cachedAgentCompletions.length > 0
+    let freshResolved = false
+    let cacheWasRevealed = false
+    let cacheRevealTimer: number | null = null
+    const revealCachedConversation = () => {
+      if (!shouldRevealMobileChatCacheFallback({
+        freshResolved,
+        hasCachedData: hasCachedConversation,
+        requestIsCurrent: isCurrentConversationLoad()
+      })) return false
 
-    if (cachedConversation) {
-      const cachedJourney = Array.isArray(cachedConversation.data.journey) ? cachedConversation.data.journey : []
-      const cachedMessages = Array.isArray(cachedConversation.data.messages) ? cachedConversation.data.messages : []
-      const cachedAgentCompletions = Array.isArray(cachedConversation.data.agentCompletions) ? cachedConversation.data.agentCompletions : []
+      cacheWasRevealed = true
       contactJourneyRef.current = cachedJourney
       setContactJourney((currentJourney) => (
         areJourneyEventsEquivalent(currentJourney, cachedJourney) ? currentJourney : cachedJourney
@@ -8318,8 +8365,21 @@ export const PhoneChat: React.FC = () => {
       conversationHasOlderMessagesRef.current = cachedJourney.filter(isConversationJourneyMessage).length >= CHAT_CONVERSATION_MESSAGE_LIMIT &&
         conversationHistoryExhaustedContactIdRef.current !== contactId
       setMessagesLoading(false)
-      setMessagesRefreshing(showCacheRefresh)
-    } else if (!silentRefresh) {
+      setMessagesUsingCachedData(true)
+      setMessagesRefreshing(true)
+      return true
+    }
+    const acceptFreshConversation = () => {
+      freshResolved = true
+      if (cacheRevealTimer !== null) {
+        window.clearTimeout(cacheRevealTimer)
+        cacheRevealTimer = null
+      }
+      setMessagesUsingCachedData(false)
+      setMessagesRefreshing(false)
+    }
+
+    if (!silentRefresh) {
       setMessages([])
       setAgentCompletionEvents([])
       setContactJourney([])
@@ -8329,6 +8389,12 @@ export const PhoneChat: React.FC = () => {
       setOlderMessagesLoading(false)
       setMessagesLoading(true)
       setMessagesRefreshing(false)
+      setMessagesUsingCachedData(false)
+      if (hasCachedConversation) {
+        // Igual que la bandeja: primero sale la red; el snapshot sólo entra si
+        // la respuesta no llegó dentro de la gracia perceptual.
+        cacheRevealTimer = window.setTimeout(revealCachedConversation, MOBILE_CHAT_CACHE_FALLBACK_GRACE_MS)
+      }
     }
 
     const scheduledMessagesPromise = whatsappApiService.getScheduledMessages(contactId).catch(() => [])
@@ -8351,6 +8417,7 @@ export const PhoneChat: React.FC = () => {
         throwOnError: true
       })
       if (!isCurrentConversationLoad()) return
+      acceptFreshConversation()
       const receivedFullPage = journey.filter(isConversationJourneyMessage).length >= CHAT_CONVERSATION_MESSAGE_LIMIT
       conversationHasOlderMessagesRef.current = receivedFullPage &&
         conversationHistoryExhaustedContactIdRef.current !== contactId
@@ -8409,13 +8476,21 @@ export const PhoneChat: React.FC = () => {
         timezone
       ) // (MOB-007)
     } catch {
-      if (isCurrentConversationLoad() && !showedCachedConversation && !silentRefresh) {
-        setMessages([])
-        setAgentCompletionEvents([])
-        setContactJourney([])
-        contactJourneyRef.current = []
+      if (isCurrentConversationLoad() && !silentRefresh) {
+        const revealedFallback = cacheWasRevealed || revealCachedConversation()
+        if (!revealedFallback) {
+          setMessagesUsingCachedData(false)
+          setMessages([])
+          setAgentCompletionEvents([])
+          setContactJourney([])
+          contactJourneyRef.current = []
+        }
       }
     } finally {
+      if (cacheRevealTimer !== null) {
+        window.clearTimeout(cacheRevealTimer)
+        cacheRevealTimer = null
+      }
       if (isCurrentConversationLoad()) {
         setMessagesLoading(false)
         setMessagesRefreshing(false)
@@ -15936,10 +16011,10 @@ export const PhoneChat: React.FC = () => {
           <span className={styles.emptyChatsIcon}>
             <Icon name="whatsapp" size={34} />
           </span>
-          {chatsRefreshing && (
+          {chatsUsingCachedData && (
             <span className={styles.cacheRefreshPill} role="status">
-              <Loader2 size={14} className={styles.spinIcon} />
-              Actualizando chats
+              {chatsRefreshing && <Loader2 size={14} className={styles.spinIcon} />}
+              {chatsRefreshing ? 'Mostrando información guardada, actualizando chats' : 'Mostrando información guardada'}
             </span>
           )}
           <strong>Aún no hay chats</strong>
@@ -15954,10 +16029,10 @@ export const PhoneChat: React.FC = () => {
 
     return (
       <>
-        {chatsRefreshing && (
+        {chatsUsingCachedData && (
           <div className={styles.cacheRefreshPill} role="status">
-            <Loader2 size={14} className={styles.spinIcon} />
-            Mostrando lo guardado, actualizando chats
+            {chatsRefreshing && <Loader2 size={14} className={styles.spinIcon} />}
+            {chatsRefreshing ? 'Mostrando información guardada, actualizando chats' : 'Mostrando información guardada'}
           </div>
         )}
         {renderChatSelectionBar()}
@@ -16489,10 +16564,10 @@ export const PhoneChat: React.FC = () => {
             Cargando mensajes anteriores
           </div>
         )}
-        {messagesRefreshing && (
+        {messagesUsingCachedData && (
           <div className={styles.cacheRefreshPill} role="status">
-            <Loader2 size={14} className={styles.spinIcon} />
-            Mostrando lo guardado, actualizando conversación
+            {messagesRefreshing && <Loader2 size={14} className={styles.spinIcon} />}
+            {messagesRefreshing ? 'Mostrando información guardada, actualizando conversación' : 'Mostrando información guardada'}
           </div>
         )}
         {conversationMessageGroups.map((group) => (

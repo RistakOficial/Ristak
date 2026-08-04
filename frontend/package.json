@@ -13,6 +13,7 @@
     "test:chat-error-popover": "node scripts/test-chat-error-popover.mjs",
     "test:chat-contact-panel-layout": "node scripts/test-chat-contact-panel-layout.mjs",
     "test:desktop-chat-live-first-paint": "node scripts/test-desktop-chat-live-first-paint.mjs",
+    "test:mobile-chat-live-first-paint": "node scripts/test-mobile-chat-live-first-paint.mjs",
     "test:chatbot-filter-hierarchy": "node scripts/test-chatbot-filter-hierarchy.mjs",
     "test:chat-channel": "node scripts/test-chat-message-channel.mjs",
     "test:chat-audio-playback": "node scripts/test-chat-audio-playback.mjs",

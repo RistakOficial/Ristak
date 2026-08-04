@@ -194,6 +194,10 @@ struct ConversationScreen: View {
                 // una `Section` por día cuya cabecera es la píldora de fecha que
                 // flota arriba mientras te desplazas dentro de ese día.
                 LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    if viewModel.isShowingCachedData {
+                        CacheRefreshPillRow()
+                            .padding(.vertical, RistakTheme.Spacing.xs)
+                    }
                     olderMessagesHeader
 
                     if viewModel.timeline.isEmpty {

@@ -126,9 +126,9 @@ struct ChatsRootView: View {
             // existiera la marca explícita del bootstrap.
             cache.store(true, for: ChatSnapshotKey.firstSyncCompleted)
         }
-        // El shell siempre queda montado desde el primer frame. Sin snapshot se
-        // muestra su estado vacío silencioso; con snapshot se ven los chats de
-        // inmediato. La red revalida debajo y jamás vuelve a tapar la navegación.
+        // El shell siempre queda montado desde el primer frame. La red tiene una
+        // gracia corta para pintar primero; el snapshot sólo aparece, marcado,
+        // si la respuesta tarda o falla y jamás tapa la navegación.
         _ = await viewModel.initialLoad(markFirstSyncCompleted: !alreadyPrepared)
     }
 

@@ -118,7 +118,9 @@ solo en capa flotante; copy en español.
   → Más acciones (agente, cita, pago, programar, etiqueta, leído, archivar),
   swipe nativo por fila: izquierda **Más → Archivar/Restaurar** y derecha
   **No leído → Fijar/Desfijar**, con fijados arriba y estado local persistente,
-  cache en disco para arranque en frío, progreso real por etapas durante la
+  cache en disco para fallback de arranque en frío: inbox e hilo piden la red
+  primero, esconden el snapshot 350 ms y sólo lo muestran identificado si la
+  respuesta viva tarda o falla; progreso real por etapas durante la
   primera conexión sin snapshot; si los contactos ya están listos pero la
   bandeja sufre timeout, abre en modo degradado y la reintenta silenciosamente
   en vez de bloquear toda la app en 78 %. SSE + polling 20s, badge de no leídos.

@@ -458,7 +458,10 @@ test('la carga canonica conserva el outbox y la cache escribe vacio solo despues
   const source = fs.readFileSync(require.resolve('../src/App.tsx'), 'utf8');
   const mergeSource = fs.readFileSync(require.resolve('../src/chatMessageMerge.ts'), 'utf8');
 
-  assert.match(source, /if \(!conversationCacheHydrated\) return;/);
+  assert.match(
+    source,
+    /if \([\s\S]{0,120}!conversationCacheHydrated[\s\S]{0,180}!conversationFreshResolvedRef\.current && !showingCachedConversation[\s\S]{0,40}\) return;/,
+  );
   assert.match(source, /writeCache\(conversationCacheKey\(contact\.id\), latestMessages\)/);
   assert.match(source, /retainNativeLocalOutboxMessages\(current\)/);
   assert.match(source, /mergeNativeChatMessagesAuthoritatively\([\s\S]*!sendLockedRef\.current,[\s\S]*retainedOutboxMessages/);

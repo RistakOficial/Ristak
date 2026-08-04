@@ -174,14 +174,14 @@ struct ArchivedAccessRow: View {
     }
 }
 
-// MARK: - Píldora de cache-refresh (doc 03 §4.9)
+// MARK: - Aviso de fallback local live-first
 
 struct CacheRefreshPillRow: View {
     var body: some View {
         HStack(spacing: RistakTheme.Spacing.xs) {
-            ProgressView()
-                .controlSize(.mini)
-            Text("Mostrando lo guardado, actualizando chats")
+            Image(systemName: "internaldrive")
+                .font(.caption)
+            Text("Mostrando información guardada")
                 .font(.caption)
                 .foregroundStyle(RistakTheme.textDim)
         }

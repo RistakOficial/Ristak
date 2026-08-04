@@ -29,7 +29,9 @@ Service extensions, or Apple native code in this folder. Apple work belongs in
 - Chat inbox from `/api/contacts/chats`.
 - First connection without a local snapshot shows real, retryable progress for
   account setup, configuration, contacts, conversations, and local cache; later
-  launches paint the cached state and revalidate silently.
+  launches request the live inbox immediately and keep the cached state hidden
+  for a 350 ms grace. Cache appears only as a labeled fallback when live data is
+  slow or unavailable.
 - Native chat inbox parity pass for `/movil`: same high-level header, search,
   quick filter chips, unread emphasis, contact avatar ring/channel badge, and
   last-message preview rules.
@@ -42,7 +44,8 @@ Service extensions, or Apple native code in this folder. Apple work belongs in
   appointment form, and business-timezone grouping.
 - Native payments, analytics, settings, bottom dock, and notification parity
   passes from the mobile migration worktrees.
-- Conversation view that paints a per-contact disk snapshot first, opens at the
+- Conversation view that mounts and requests live messages first, holds the
+  per-contact disk snapshot behind the same 350 ms labeled fallback, opens at the
   latest message, treats transport failures as retryable errors instead of an
   empty chat, and reconciles through `/api/contacts/:id/conversation` with a
   bounded journey recovery only for contradictory empty results.

@@ -1,14 +1,13 @@
 import Foundation
 
-/// Cache-first de la bandeja (doc research/03 §4.9 MOB-007): guarda un
-/// snapshot de las primeras filas para pintar al instante en el arranque en
-/// frío, mientras corre UNA recarga silenciosa (píldora «Mostrando lo
-/// guardado, actualizando chats»).
+/// Respaldo local de la bandeja (doc research/03 §4.9 MOB-007): guarda un
+/// snapshot de las primeras filas. La UI lo conserva oculto durante una gracia
+/// live-first y sólo lo revela, identificado, si la respuesta viva tarda o falla.
 ///
 /// Round 6 #4: migrado a `RistakSnapshotCache`. El snapshot vive bajo la llave
 /// `chat:inbox` del caché global, que se PRECARGA a memoria en el arranque
-/// (SessionStore) ANTES de pintar el shell — así la bandeja lee de memoria sin
-/// golpe a disco por pantalla (cero flash) y el namespaceado por cuenta lo
+/// (SessionStore) ANTES de pintar el shell — así el fallback se prepara desde
+/// memoria sin golpe a disco por pantalla y el namespaceado por cuenta lo
 /// gestiona el propio caché.
 ///
 /// Serializa un SUBSET de campos con los mismos nombres del contrato JSON y

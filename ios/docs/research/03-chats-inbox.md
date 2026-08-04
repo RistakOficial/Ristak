@@ -446,8 +446,7 @@ any/all/none; números con eq/neq/gt/gte/lt/lte/between (semántica en
 
 ### 4.2 Orden de filas dentro de la lista
 
-1. Píldora de cache-refresh (si aplica): «Mostrando lo guardado, actualizando
-   chats» con spinner.
+1. Aviso de fallback local (si aplica): «Mostrando información guardada».
 2. Barra de selección múltiple (si hay selección).
 3. **Fila fija `Asistente Personal AI`** — visible si OpenAI configurado +
    `mobile_chat_ai_agent_enabled` + sin selección + sin vista archivados +
@@ -609,11 +608,12 @@ selección = toggle (no abre chat).
   archives aparecerán aquí.»), prioritarias «Sin conversaciones prioritarias»,
   general «Cuando llegue un mensaje de WhatsApp, Messenger o Instagram
   aparecerá aquí.».
-- **Cache-first (web MOB-007)**: pinta cache diario por
-  (tenant, número, tz) al instante + snapshot "fast start" (300 filas máx), y
-  dispara UNA recarga silenciosa fusionada; píldora «Mostrando lo guardado,
-  actualizando chats». RN aún no replica el estado cache-refresh exacto
-  (checklist L242-246).
+- **Live-first con fallback local**: `/movil`, Android e iOS disparan el inbox
+  vivo inmediatamente y mantienen oculto el snapshot por 350 ms. Si el servidor
+  responde antes, la cache nunca se pinta; si tarda o falla, se revela con
+  «Mostrando información guardada». El resultado fresco, incluido `[]`, conserva
+  autoridad y reemplaza el fallback salvo la protección ya documentada para un
+  vacío transitorio contradictorio.
 - **Refresco vivo**: web repolling silencioso (~20 s) fusionando la primera
   página sobre la cola ya cargada (sin colapsar profundidad de scroll);
   RN: intervalo + al volver a foreground + evento de push; pull-to-refresh

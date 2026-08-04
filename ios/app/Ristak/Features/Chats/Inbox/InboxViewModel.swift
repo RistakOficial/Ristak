@@ -100,8 +100,12 @@ final class InboxViewModel {
     private(set) var isLoadingMore = false
     private(set) var loadMoreFailed = false
     private(set) var isSilentRefreshing = false
-    /// Píldora «Mostrando lo guardado, actualizando chats» (cache-first).
+    /// El snapshot sólo se publica tras la gracia live-first o si falla la red.
     private(set) var isShowingCachedData = false
+    private var cachedFallbackRows: [ChatContact] = []
+    private var cacheFallbackTask: Task<Void, Never>?
+    private var cacheFallbackTaskID: UUID?
+    private var initialFreshResponseResolved = false
     private(set) var loadErrorMessage: String?
     private(set) var isAccessDenied = false
 
@@ -249,16 +253,13 @@ final class InboxViewModel {
         }
         guard let newNamespace else { return }
 
-        // Cache-first: solo hidrata si la red del arranque optimista todavía no
-        // pintó filas. Si ya hay datos vivos, se guardan ahora que existe un
-        // namespace seguro en vez de regresarlos a un snapshot anterior.
+        // Live-first: prepara el snapshot pero no lo publica todavía. Si ya hay
+        // datos vivos, se guardan ahora que existe un namespace seguro.
         if rows.isEmpty {
-            let cached = ChatInboxDiskCache.load()
-            if !cached.isEmpty {
-                rows = cached
-                isShowingCachedData = true
-                syncUnreadBadge()
-                prefetchAvatars(cached)
+            cachedFallbackRows = ChatInboxDiskCache.load()
+            isShowingCachedData = false
+            if isInitialLoading && !initialFreshResponseResolved {
+                scheduleCacheFallback()
             }
         } else {
             persistCacheSnapshot()
@@ -285,6 +286,7 @@ final class InboxViewModel {
     }
 
     private func clearAccountScopedState() {
+        cancelCacheFallback()
         activitySessionGeneration &+= 1
         invalidateRefreshBackpressure()
         for task in unknownContactResolutionTasks.values { task.cancel() }
@@ -292,6 +294,8 @@ final class InboxViewModel {
         unknownContactResolutionIDs.removeAll()
         unknownActivityBuffer.removeAll()
         rows = []
+        cachedFallbackRows = []
+        initialFreshResponseResolved = false
         hasMore = false
         isShowingCachedData = false
         loadErrorMessage = nil
@@ -404,6 +408,7 @@ final class InboxViewModel {
         isInitialLoading = rows.isEmpty
         loadErrorMessage = nil
         isAccessDenied = false
+        scheduleCacheFallback()
 
         // Directorio e inbox son las únicas fuentes primarias. Sus esperas de red
         // se solapan para que el arranque pague el timeout más lento, no la suma.
@@ -419,6 +424,7 @@ final class InboxViewModel {
         let hasUsablePrimaryState = primaries.inboxLoaded
             || primaries.directory != nil
             || hadVisibleRows
+            || !rows.isEmpty
         if markFirstSyncCompleted, hasUsablePrimaryState {
             RistakSnapshotCache.shared.store(true, for: ChatSnapshotKey.firstSyncCompleted)
         }
@@ -448,6 +454,52 @@ final class InboxViewModel {
             return await directoryPrewarmTask.value
         }
         return try? await contactsService.fetchPickerContacts(limit: 100)
+    }
+
+    private func scheduleCacheFallback() {
+        cancelCacheFallback()
+        initialFreshResponseResolved = false
+        guard !cachedFallbackRows.isEmpty else { return }
+        let taskID = UUID()
+        cacheFallbackTaskID = taskID
+        cacheFallbackTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: ChatLiveFirstCachePolicy.fallbackGrace)
+            } catch {
+                return
+            }
+            guard let self,
+                  self.cacheFallbackTaskID == taskID else { return }
+            _ = self.revealCachedFallback(requestIsCurrent: true)
+        }
+    }
+
+    @discardableResult
+    private func revealCachedFallback(requestIsCurrent: Bool) -> Bool {
+        guard ChatLiveFirstCachePolicy.shouldReveal(
+            hasCachedData: !cachedFallbackRows.isEmpty,
+            freshResolved: initialFreshResponseResolved,
+            requestIsCurrent: requestIsCurrent,
+            isCancelled: Task.isCancelled
+        ) else { return false }
+        cancelCacheFallback()
+        rows = cachedFallbackRows
+        isShowingCachedData = true
+        syncUnreadBadge()
+        prefetchAvatars(rows)
+        return true
+    }
+
+    private func acceptFreshInboxResponse(keepingCachedFallback: Bool = false) {
+        initialFreshResponseResolved = true
+        cancelCacheFallback()
+        if isShowingCachedData && !keepingCachedFallback { isShowingCachedData = false }
+    }
+
+    private func cancelCacheFallback() {
+        cacheFallbackTask?.cancel()
+        cacheFallbackTask = nil
+        cacheFallbackTaskID = nil
     }
 
     /// Incluye la primera página dentro del mismo backpressure que SSE/polling.
@@ -673,16 +725,30 @@ final class InboxViewModel {
             // Si el usuario cambió query/número mientras esta carga volaba,
             // descartar el lote (llega otro reload con los params nuevos).
             guard fetchKey == currentFetchKey else { return false }
+            let wasShowingCachedData = isShowingCachedData
+            let hasHiddenCachedFallback = page.isEmpty
+                && rows.isEmpty
+                && !cachedFallbackRows.isEmpty
+                && !wasShowingCachedData
+            let preservesCachedFallback = page.isEmpty
+                && (wasShowingCachedData || hasHiddenCachedFallback)
+            acceptFreshInboxResponse(keepingCachedFallback: preservesCachedFallback)
             validateStoredDestinations(in: page)
-            let isReplace = rows.isEmpty || isShowingCachedData || loadedFetchKey != fetchKey
+            let isReplace = rows.isEmpty || wasShowingCachedData || loadedFetchKey != fetchKey
             if isReplace {
-                if page.isEmpty, !rows.isEmpty || isShowingCachedData {
+                if page.isEmpty, !rows.isEmpty || wasShowingCachedData || hasHiddenCachedFallback {
                     // Vacío TRANSITORIO durante bootstrap/replace (un 200 con []
                     // mientras aún hay chats): NO tirar lo que ya se muestra (caché
                     // o filas previas) ni envenenar el snapshot de disco con []. Se
                     // conserva y se espera al siguiente refresh (poll/SSE), igual
                     // que el camino vivo (mergeRefresh) que nunca vacía la bandeja.
                     // No se tocan serverOffset/hasMore.
+                    if hasHiddenCachedFallback {
+                        rows = cachedFallbackRows
+                        isShowingCachedData = true
+                    } else if wasShowingCachedData {
+                        isShowingCachedData = true
+                    }
                 } else {
                     let reconciled = reconcilePendingActivities(in: page, serverPage: page)
                     if rows != reconciled { rows = reconciled }
@@ -706,7 +772,7 @@ final class InboxViewModel {
             loadedFetchKey = fetchKey
             if loadErrorMessage != nil { loadErrorMessage = nil }
             if isAccessDenied { isAccessDenied = false }
-            if isShowingCachedData { isShowingCachedData = false }
+            if isShowingCachedData && !preservesCachedFallback { isShowingCachedData = false }
             persistCacheSnapshot()
             syncUnreadBadge()
             prefetchAvatars(rows)
@@ -719,6 +785,7 @@ final class InboxViewModel {
             }
             return true
         } catch let error as RistakAPIError {
+            _ = revealCachedFallback(requestIsCurrent: fetchKey == currentFetchKey)
             isAccessDenied = error.isAccessDenied
             // Conserva el fallo aun con snapshot para diagnóstico/reintento, pero
             // `InboxScreen` solo pinta el error a pantalla completa cuando no hay
@@ -728,6 +795,7 @@ final class InboxViewModel {
                 : "No se pudieron cargar los chats."
             return false
         } catch {
+            _ = revealCachedFallback(requestIsCurrent: fetchKey == currentFetchKey)
             loadErrorMessage = "No se pudieron cargar los chats."
             return false
         }

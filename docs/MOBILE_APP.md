@@ -150,9 +150,11 @@ La unica excepcion de apertura es un gate de una sola ejecucion: cuando aparecen
 las primeras filas reales, `onContentSizeChange` lleva el offset invertido a
 cero exactamente una vez. Ese gate no vuelve a reaccionar a imagenes, prepends o
 polls y por eso no pelea con el dedo del usuario. La lista no rebota ni aplica
-overscroll; el mensaje mas reciente queda junto al composer. Antes de montar un
-hilo, Android precarga solo su archivo de cache si existe para que el primer
-frame ya tenga mensajes. Un timeout o `5xx` sin snapshot produce error inline,
+overscroll; el mensaje mas reciente queda junto al composer. Android monta el
+hilo y dispara `/conversation` inmediatamente; el archivo local se lee en
+paralelo y queda oculto durante una gracia de 350 ms. Si la respuesta viva llega
+antes, el snapshot nunca se pinta. Si la red rebasa esa gracia o falla, se muestra
+la copia local con el aviso `Mostrando información guardada`. Un timeout o `5xx` sin snapshot produce error inline,
 sin abrir `/journey` ni iniciar reintentos ocultos, y deja un boton manual;
 nunca se presenta como `Aun no hay mensajes`. Un `200 []` contradictorio con el
 preview/conteo del inbox intenta una sola recuperacion por journey y jamas borra
@@ -225,7 +227,7 @@ limpia su estado fallido. La cache del hilo no se escribe antes de terminar la
 hidratacion inicial, pero despues de hidratarse una respuesta autoritativa vacia
 si debe persistir `[]` para retirar mensajes fantasma.
 
-Arranque offline-first de Android: antes de pedir datos frescos al servidor,
+Arranque con respaldo offline de Android: antes de exponer el shell,
 `mobile/` precarga solamente los cinco snapshots necesarios para la primera
 pintura (bandeja, marca de first sync, configuracion/labels del shell y catalogo
 de filtros), con presupuesto total de 4 MiB, y entonces expone el shell. La
@@ -239,13 +241,14 @@ general cubre configuracion y labels del shell,
 bandeja y conversaciones, bootstrap/rangos de calendario, catalogos del chat,
 capacidad de Pagos (plan, pasarelas y HighLevel), productos, pagos recientes,
 impuestos, Analiticas (KPIs, grafica, embudo, origen y numeros) y paneles de
-Ajustes. Cada pantalla pinta el ultimo estado correspondiente a su rango o
-scope exacto y lo revalida en segundo plano; un timeout no la vacia ni oculta
+Ajustes. Las pantallas no-chat pueden pintar el ultimo estado correspondiente a
+su rango o scope exacto y revalidarlo en segundo plano; un timeout no las vacia ni oculta
 flujos que ya estaban verificados. Una respuesta fresca exitosa, incluso `[]`,
 es autoritativa y reemplaza el snapshot. Esa copia vive en `expo-file-system`
 bajo el namespace del servidor/cuenta conectada; `SecureStore` queda solo para
-token/base URL y preferencias chicas. El primer render no debe mostrar un
-spinner circular ni vaciar la pantalla si ya hay datos guardados. El task
+token/base URL y preferencias chicas. En bandeja e hilo, la red manda sobre el
+primer paint: la cache se conserva oculta 350 ms y sólo aparece como fallback
+marcado, sin el salto visual de chats viejos a recientes. El task
 `ristak-inbox-refresh` refresca la bandeja y, con concurrencia dos, hasta seis
 hilos recientes ausentes o atrasados cuando Android concede una ventana. El
 task headless `ristak-chat-notification-refresh-v1` hace una ruta distinta y
@@ -281,15 +284,17 @@ timeout, termina como arranque degradado, abre el producto y reintenta por
 SSE/polling; no queda encerrado en una etapa satelite.
 
 iOS nunca cubre el shell con un overlay de bootstrap: mantiene navegacion,
-buscador y chrome montados desde el primer frame. Pinta cualquier snapshot de
-inmediato o conserva un vacio silencioso mientras inbox y directorio cargan en
-paralelo. Numeros, labels, integraciones, flags y etiquetas llegan despues en una
+buscador y chrome montados desde el primer frame. Inbox e hilo lanzan la red
+inmediatamente y mantienen cualquier snapshot oculto durante la misma gracia de
+350 ms; sólo lo revelan, identificado como información guardada, si la respuesta
+viva tarda o falla. Mientras tanto conserva un vacio silencioso y el directorio
+carga en paralelo. Numeros, labels, integraciones, flags y etiquetas llegan despues en una
 tarea satelite cuyo snapshot puro solo puede aplicarse si siguen coincidiendo
 task ID, namespace, generacion y sesion, y si la tarea no fue cancelada.
 
 Al completar o entrar en modo degradado, Android guarda
 `mobile:first-sync:completed` dentro del namespace de esa cuenta, por lo que los
-siguientes arranques pintan cache y revalidan en silencio. Una cuenta con cero
+siguientes arranques preparan cache como fallback y priorizan la respuesta viva. Una cuenta con cero
 chats tambien puede completar. iOS guarda la misma marca cuando obtiene estado
 primario utilizable de inbox o directorio. Logout o cambio de cuenta limpia la
 marca junto con sus snapshots.

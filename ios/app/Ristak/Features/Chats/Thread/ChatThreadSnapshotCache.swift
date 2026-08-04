@@ -1,9 +1,9 @@
 import Foundation
 
-/// Caché instantánea del hilo (Round 6 #4): guarda los últimos N mensajes del
+/// Respaldo local del hilo (Round 6 #4): guarda los últimos N mensajes del
 /// servidor por contacto bajo `chat:thread:<contactId>` en `RistakSnapshotCache`
-/// para reabrir un chat mostrando los mensajes previos AL INSTANTE, y luego
-/// revalidar (merge identity-preserving con ids estables).
+/// para reabrir un chat con fallback rápido si la carga viva tarda o falla
+/// (merge identity-preserving con ids estables).
 ///
 /// `ChatMessage` (modelo de Core) NO es `Codable` porque se CONSTRUYE con el
 /// parser del journey. Por eso serializamos con un DTO local `Codable` que

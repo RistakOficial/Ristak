@@ -2,7 +2,8 @@ import Foundation
 
 /// Estado puro que decide qué pinta el hilo durante el arranque. La carga de
 /// agente, detalle de contacto, números u otros satélites no forma parte del
-/// input: una timeline real o cacheada manda y debe verse inmediatamente.
+/// input: una timeline viva o un fallback cacheado ya revelado manda sobre los
+/// estados secundarios de carga y error.
 enum ConversationInitialPresentation: Equatable {
     case accessDenied
     case error(String)
@@ -19,7 +20,7 @@ enum ConversationInitialPresentation: Equatable {
         if accessDenied { return .accessDenied }
 
         // El contenido primario gana sobre fallos/cargas secundarias. Esto
-        // conserva visible el snapshot mientras la red o satélites terminan.
+        // conserva visible el fallback mientras la red o satélites terminan.
         if hasLoadedOnce || !timelineIsEmpty { return .content }
 
         if let loadErrorMessage { return .error(loadErrorMessage) }

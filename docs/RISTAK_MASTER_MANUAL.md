@@ -3264,8 +3264,12 @@ reintenta silenciosamente, en vez de encerrar al negocio en un loader. Tras
 completar —incluso con cero chats o con ese fallback— la marca evita repetir el
 progreso mientras exista esa cache.
 
-`ios/app` no usa overlay de bootstrap. Mantiene el shell montado, pinta cualquier
-snapshot de inmediato y solicita inbox/directorio en paralelo. Numeros, labels,
+`ios/app` no usa overlay de bootstrap. Mantiene el shell montado y solicita
+inbox/directorio en paralelo. En `/movil`, `mobile/` e iOS, bandeja e hilo son
+live-first: la peticion al servidor sale de inmediato y el snapshot local queda
+oculto durante 350 ms. Si la respuesta viva llega antes, la cache nunca se pinta;
+si tarda o falla, aparece como fallback con el aviso `Mostrando informacion
+guardada`. Numeros, labels,
 integraciones, flags y etiquetas llegan despues en una tarea satelite que
 construye un snapshot puro y solo lo aplica si siguen coincidiendo task ID,
 namespace, generacion y sesion, y si no fue cancelada. Logout o cambio de cuenta
@@ -3274,7 +3278,8 @@ sesion. Este flujo no contradice la paginacion: no descarga todos los mensajes d
 todos los hilos al dispositivo.
 Al entrar a un chat nuevo, desktop, `/movil`, `mobile/` e iOS presentan el
 timeline en el ultimo mensaje disponible. Ese anclaje inicial se mantiene
-mientras termina la hidratacion de caché, mensajes, media y actividad; no usa
+mientras termina la hidratacion de mensajes, media y actividad; si la cache
+entra como fallback despues de la gracia, comparte ese mismo anclaje. No usa
 animación para corregir una posición intermedia. Al insertar mensajes antiguos
 arriba del hilo, la UI debe conservar la posición visible del usuario y nunca
 forzar scroll al último mensaje.

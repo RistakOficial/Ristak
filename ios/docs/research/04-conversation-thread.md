@@ -120,10 +120,11 @@ Cliente (RN, App.tsx:18860–18888; `/movil` PhoneChat.tsx:5706–5780):
   (comparación por referencia/JSON, App.tsx:18817–18840).
 - `/movil` (PhoneChat.tsx:9006–9021): reconciliación del hilo abierto cada **7 s** + al
   focus/visibilitychange; interval extra de 12 s solo si hay salientes con acuse pendiente.
-- `/movil` además cachea la conversación por día del negocio en localStorage
-  (`readPhoneDailyCache`/`writePhoneDailyCache`, PhoneChat.tsx:7729–7795, máx. 360k chars) y
-  muestra pill "Mostrando lo guardado, actualizando conversación" mientras refresca.
-  RN no cachea el hilo en disco. **Para iOS nativo: cache opcional; el patrón mínimo es el de RN.**
+- `/movil`, Android e iOS conservan un snapshot acotado del hilo, pero la
+  apertura es live-first: montan el hilo y disparan `/conversation` de inmediato,
+  mantienen la copia local oculta 350 ms y sólo la revelan si la red tarda o
+  falla. El fallback visible muestra «Mostrando información guardada»; una
+  respuesta fresca previa evita por completo el flash del snapshot.
 - Reconciliación de mensajes optimistas (RN, App.tsx:22675–22712): un envío optimista con id
   `local-*`/`template-*`/`clabe-*`/`location-*` se elimina cuando llega la copia del servidor con
   mismo texto (o ambos con attachment) en ventana de ±4 min (`NATIVE_OPTIMISTIC_RECONCILE_WINDOW_MS`).
@@ -890,7 +891,7 @@ de Info de `/movil` (mejor que el Alert de RN).
 | Sistema | `Cita confirmada[: <título>]` (RN) / `Cita confirmada por IA: <título> · <fecha>.` (/movil) |
 | Markers | `Pago completado`, `Cobro registrado`, `Cita agendada`, `Cita confirmada` |
 | Destacado | `Destacado` |
-| Paginación (/movil) | `Cargando mensajes anteriores`, `Mostrando lo guardado, actualizando conversación` |
+| Paginación (/movil) | `Cargando mensajes anteriores`; fallback local: `Mostrando información guardada` |
 | Scheduled placeholder | `(mensaje programado)` |
 
 Haptics RN: long-press globo → `Impact.Medium`; swipe reply dispara → `Impact.Light`;
