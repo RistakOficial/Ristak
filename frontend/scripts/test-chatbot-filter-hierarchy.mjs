@@ -28,6 +28,31 @@ assert.match(
 )
 assert.match(
   desktopChatSource,
+  /type AgentInboxStatusFilter = 'all' \| 'active' \| 'paused' \| 'completed'/,
+  'la bandeja Chatbot sólo debe ofrecer el conjunto útil y sus tres estados'
+)
+assert.match(
+  desktopChatSource,
+  /const DEFAULT_AGENT_INBOX_STATUS_FILTER: AgentInboxStatusFilter = 'all'/,
+  'al entrar a Chatbot se debe mostrar la unión de los chats relevantes'
+)
+assert.doesNotMatch(
+  desktopChatSource,
+  /\{ id: '(?:skipped|unassigned)', label: '(?:Omitidos|No asignados)' \}/,
+  'Omitidos y No asignados no pertenecen a la bandeja Chatbot'
+)
+assert.match(
+  desktopChatSource,
+  /const hasUnreviewedGoal = contact\.agentGoalCompletedUnreviewed === true[\s\S]*return hasActiveAgent \|\| hasPausedAgent \|\| hasUnreviewedGoal/,
+  'Chatbot sólo debe unir activos, pausados y metas que siguen sin revisar'
+)
+assert.match(
+  desktopChatSource,
+  /const goalCompletedUnreviewed = chatFilter === 'agent'[\s\S]*loadChats\(\{ goalCompletedUnreviewed \}\)/,
+  'la bandeja debe pedir al servidor las metas pendientes de abrir'
+)
+assert.match(
+  desktopChatSource,
   /aria-pressed=\{filter\.id === chatFilter\}/,
   'el filtro principal Chatbot debe comunicar que permanece seleccionado'
 )
@@ -40,6 +65,16 @@ assert.doesNotMatch(
   desktopChatStyles,
   /\.inboxHeader \.agentInboxButton/,
   'los estilos de la burbuja flotante del encabezado deben quedar eliminados'
+)
+assert.doesNotMatch(
+  desktopChatSource,
+  /styles\.(?:pageAgentInbox|inboxPanelAgent|chatRowAgentAssigned)/,
+  'seleccionar Chatbot no debe cambiar el color del panel'
+)
+assert.doesNotMatch(
+  desktopChatStyles,
+  /\.(?:pageAgentInbox|inboxPanelAgent|chatRowAgentAssigned)/,
+  'la bandeja Chatbot debe conservar la misma superficie visual que las demás'
 )
 
 console.log('Desktop Chat chatbot filter hierarchy contract OK')

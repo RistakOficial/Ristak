@@ -178,7 +178,7 @@ import {
 import styles from './DesktopChat.module.css'
 
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers'
-type AgentInboxStatusFilter = 'active' | 'completed' | 'paused' | 'skipped' | 'unassigned'
+type AgentInboxStatusFilter = 'all' | 'active' | 'paused' | 'completed'
 type AdvancedChannelFilter = 'all' | 'whatsapp' | 'messenger' | 'instagram' | 'webchat' | 'sms' | 'email'
 type AdvancedSocialFilter = 'all' | 'facebook' | 'instagram' | 'messenger' | 'whatsapp' | 'google' | 'unknown'
 type AdvancedOriginFilter = 'all' | 'meta' | 'site' | 'organic' | 'trigger' | 'unknown'
@@ -436,13 +436,12 @@ const BASE_CHAT_FILTERS: Array<{ id: Exclude<ChatFilter, 'customers' | 'agent'>;
   { id: 'appointments', label: 'Con cita' }
 ]
 
-const DEFAULT_AGENT_INBOX_STATUS_FILTER: AgentInboxStatusFilter = 'active'
+const DEFAULT_AGENT_INBOX_STATUS_FILTER: AgentInboxStatusFilter = 'all'
 const AGENT_INBOX_STATUS_FILTERS: Array<{ id: AgentInboxStatusFilter; label: string }> = [
+  { id: 'all', label: 'Todos' },
   { id: 'active', label: 'Activos' },
-  { id: 'completed', label: 'Meta cumplida' },
   { id: 'paused', label: 'Pausados 24 horas' },
-  { id: 'skipped', label: 'Omitidos' },
-  { id: 'unassigned', label: 'No asignados' }
+  { id: 'completed', label: 'Meta cumplida' }
 ]
 
 const CHAT_REQUEST_TIMEOUT_MS = 20000
@@ -1151,32 +1150,31 @@ function upsertAgentStateList(current: ConversationAgentState[] = [], state: Con
   return [state, ...current.filter((item) => !sameState(item))]
 }
 
-function hasAgentInboxHistory(state: ConversationAgentState | null | undefined) {
-  if (!state) return false
-  if (state.activatedAt || state.activationSource || state.agentId || state.signal) return true
-  if (state.lastReplyAt || state.lastAnsweredInboundMessageId) return true
-  return state.status === 'paused' ||
-    state.status === 'skipped' ||
-    state.status === 'human' ||
-    state.status === 'completed' ||
-    state.status === 'discarded'
+function isAgentInboxContactVisible(
+  contact: DesktopChatContact,
+  states: Array<ConversationAgentState | null | undefined>,
+  filter: AgentInboxStatusFilter
+) {
+  const hasActiveAgent = states.some((state) => state?.status === 'active')
+  const hasPausedAgent = states.some((state) => state?.status === 'paused')
+  const hasUnreviewedGoal = contact.agentGoalCompletedUnreviewed === true
+
+  if (filter === 'active') return hasActiveAgent
+  if (filter === 'paused') return hasPausedAgent
+  if (filter === 'completed') return hasUnreviewedGoal
+  return hasActiveAgent || hasPausedAgent || hasUnreviewedGoal
 }
 
-function isAgentInboxStateVisible(state: ConversationAgentState | null | undefined, filter: AgentInboxStatusFilter) {
-  const hasHistory = hasAgentInboxHistory(state)
-  if (filter === 'unassigned') return !hasHistory
-  if (!state || !hasHistory) return false
-  if (filter === 'skipped') {
-    return state.status === 'skipped' || state.status === 'human' || state.status === 'discarded' || state.signal === 'discarded'
-  }
-  return state.status === filter
-}
-
-function getAgentInboxStatusLabel(state: ConversationAgentState | null | undefined) {
-  if (state?.status === 'paused') return 'Pausado 24 horas'
-  if (state?.status === 'skipped' || state?.status === 'human' || state?.status === 'discarded' || state?.signal === 'discarded') return 'Omitido'
-  if (state?.status === 'completed') return 'Meta cumplida'
-  if (state?.status === 'active') return 'Activo'
+function getAgentInboxStatusLabel(
+  contact: DesktopChatContact,
+  states: Array<ConversationAgentState | null | undefined>,
+  filter: AgentInboxStatusFilter
+) {
+  if (filter === 'completed' && contact.agentGoalCompletedUnreviewed === true) return 'Meta cumplida'
+  if (filter === 'paused' && states.some((state) => state?.status === 'paused')) return 'Pausado 24 horas'
+  if (states.some((state) => state?.status === 'active')) return 'Activo'
+  if (states.some((state) => state?.status === 'paused')) return 'Pausado 24 horas'
+  if (contact.agentGoalCompletedUnreviewed === true) return 'Meta cumplida'
   return ''
 }
 
@@ -3703,57 +3701,56 @@ export const DesktopChat: React.FC = () => {
   const agentInboxSourceChats = useMemo(() => {
     const rows = new Map<string, DesktopChatContact>()
     visibleChatsForList.forEach((contact) => {
-      rows.set(contact.id, contact)
+      const states = agentStateLists[contact.id]?.length
+        ? agentStateLists[contact.id]
+        : [agentStates[contact.id]]
+      if (isAgentInboxContactVisible(contact, states, 'all')) {
+        rows.set(contact.id, contact)
+      }
     })
     allAgentStates.forEach((state) => {
-      if (!hasAgentInboxHistory(state) || rows.has(state.contactId)) return
+      if (!['active', 'paused'].includes(state.status) || rows.has(state.contactId)) return
       rows.set(state.contactId, createAgentInboxContactFromState(state))
     })
     return Array.from(rows.values())
-  }, [allAgentStates, visibleChatsForList])
+  }, [agentStateLists, agentStates, allAgentStates, visibleChatsForList])
   const agentInboxStatusCounts = useMemo(() => {
     const counts: Record<AgentInboxStatusFilter, number> = {
+      all: 0,
       active: 0,
       completed: 0,
-      paused: 0,
-      skipped: 0,
-      unassigned: 0
+      paused: 0
     }
 
-	    agentInboxSourceChats.forEach((contact) => {
-	      if (archivedChatIdSet.has(contact.id)) return
-	      const states = agentStateLists[contact.id] || []
-	      const primaryState = agentStates[contact.id]
-	      if (!states.length && isAgentInboxStateVisible(primaryState, 'unassigned')) {
-	        counts.unassigned += 1
-	        return
-	      }
-	      const visibleStates = states.length ? states : [primaryState].filter(Boolean) as ConversationAgentState[]
-	      if (visibleStates.some((state) => state?.status === 'active')) counts.active += 1
-	      if (visibleStates.some((state) => state?.status === 'completed')) counts.completed += 1
-	      if (visibleStates.some((state) => state?.status === 'paused')) counts.paused += 1
-	      if (visibleStates.some((state) => isAgentInboxStateVisible(state, 'skipped'))) counts.skipped += 1
-	    })
+    agentInboxSourceChats.forEach((contact) => {
+      if (archivedChatIdSet.has(contact.id)) return
+      const states = agentStateLists[contact.id]?.length
+        ? agentStateLists[contact.id]
+        : [agentStates[contact.id]]
+      if (isAgentInboxContactVisible(contact, states, 'all')) counts.all += 1
+      if (isAgentInboxContactVisible(contact, states, 'active')) counts.active += 1
+      if (isAgentInboxContactVisible(contact, states, 'paused')) counts.paused += 1
+      if (isAgentInboxContactVisible(contact, states, 'completed')) counts.completed += 1
+    })
 
     return counts
-	  }, [agentInboxSourceChats, agentStateLists, agentStates, archivedChatIdSet])
+  }, [agentInboxSourceChats, agentStateLists, agentStates, archivedChatIdSet])
   const agentAssignedChatCount = agentInboxStatusCounts[agentInboxStatusFilter]
   const listBaseChats = useMemo(
     () => (chatFilter === 'agent' ? agentInboxSourceChats : visibleChatsForList).filter((contact) => {
-	      if (chatFilter === 'agent') {
-	        const states = agentStateLists[contact.id] || []
-	        return !archivedChatIdSet.has(contact.id) && (
-	          states.length
-	            ? states.some((state) => isAgentInboxStateVisible(state, agentInboxStatusFilter))
-	            : isAgentInboxStateVisible(agentStates[contact.id], agentInboxStatusFilter)
-	        )
+      if (chatFilter === 'agent') {
+        const states = agentStateLists[contact.id]?.length
+          ? agentStateLists[contact.id]
+          : [agentStates[contact.id]]
+        return !archivedChatIdSet.has(contact.id) &&
+          isAgentInboxContactVisible(contact, states, agentInboxStatusFilter)
       }
       if (archivedViewOpen) return archivedChatIdSet.has(contact.id)
       if (archivedChatIdSet.has(contact.id)) return false
       if (agentPriorityChatIdSet.has(contact.id)) return false
       return true
     }),
-	    [agentInboxSourceChats, agentInboxStatusFilter, agentPriorityChatIdSet, agentStateLists, agentStates, archivedChatIdSet, archivedViewOpen, chatFilter, visibleChatsForList]
+    [agentInboxSourceChats, agentInboxStatusFilter, agentPriorityChatIdSet, agentStateLists, agentStates, archivedChatIdSet, archivedViewOpen, chatFilter, visibleChatsForList]
   )
   const agentAssignedViewOpen = chatFilter === 'agent'
   const hasTextOrAdvancedChatFilters = isChatQueryActive || activeAdvancedFilterCount > 0
@@ -3762,7 +3759,7 @@ export const DesktopChat: React.FC = () => {
   const hasActiveChatFilters = hasTextOrAdvancedChatFilters || chatFilter !== 'all' || hasAgentInboxStatusFilter
   const filteredChats = useMemo(() => {
     return listBaseChats
-      .filter((contact) => (isChatQueryActive ? true : contactMatchesQuery(contact, normalizedChatQuery)))
+      .filter((contact) => contactMatchesQuery(contact, normalizedChatQuery))
       .filter((contact) => contactMatchesAdvancedFilters(contact, advancedFilters))
       .filter((contact) => {
         const isComment = isCommentContact(contact)
@@ -3785,7 +3782,7 @@ export const DesktopChat: React.FC = () => {
         if (chatFilter === 'customers') return contact.status === 'customer'
         return true
       })
-  }, [advancedFilters, chatFilter, commentsView, commentsPlatform, isChatQueryActive, normalizedChatQuery, listBaseChats])
+  }, [advancedFilters, chatFilter, commentsView, commentsPlatform, normalizedChatQuery, listBaseChats])
   const agentPriorityChatRows = useMemo(() => {
     if (archivedViewOpen || chatFilter !== 'all' || isChatQueryActive || activeAdvancedFilterCount > 0) return []
     return visibleChatsForList
@@ -3964,38 +3961,28 @@ export const DesktopChat: React.FC = () => {
   const inboxTitle = archivedViewOpen
     ? 'Archivados'
     : agentAssignedViewOpen
-    ? agentInboxStatusFilter === 'active' ? 'Chats activos' : AGENT_INBOX_STATUS_FILTERS.find((filter) => filter.id === agentInboxStatusFilter)?.label || 'Chats del bot'
+    ? agentInboxStatusFilter === 'all' ? 'Chatbot' : AGENT_INBOX_STATUS_FILTERS.find((filter) => filter.id === agentInboxStatusFilter)?.label || 'Chatbot'
     : 'Conversaciones'
   const inboxSubtitle = archivedViewOpen
     ? `${filteredChats.length} de ${archivedChatCount} archivados`
     : agentAssignedViewOpen
-    ? agentInboxStatusFilter === 'unassigned'
-      ? `${filteredChats.length} chats que nunca han entrado al bot`
-      : `${filteredChats.length} de ${agentAssignedChatCount} en esta bandeja`
+    ? `${filteredChats.length} de ${agentAssignedChatCount} en esta bandeja`
     : `${visibleChatCount} de ${Math.max(0, visibleChatsForList.length - archivedChatCount)} visibles`
   const agentInboxEmptyTitle = agentInboxStatusFilter === 'paused'
     ? 'Sin chats pausados 24 horas'
-    : agentInboxStatusFilter === 'skipped'
-    ? 'Sin chats omitidos'
     : agentInboxStatusFilter === 'completed'
-    ? 'Sin metas cumplidas'
-    : agentInboxStatusFilter === 'unassigned'
-    ? 'Sin chats no asignados'
+    ? 'Sin metas pendientes de revisar'
     : agentInboxStatusFilter === 'active'
     ? 'Sin chats activos del bot'
-    : 'Sin chats del bot'
+    : 'Sin chats pendientes del chatbot'
   const agentInboxEmptyDescription = agentInboxStatusFilter === 'paused'
     ? 'Cuando pauses un chat por 24 horas, aparecerá aquí hasta que se reactive solo o lo prendas manualmente.'
-    : agentInboxStatusFilter === 'skipped'
-    ? 'Cuando saques un chat a humano u omitas el bot, aparecerá aquí para que puedas reactivarlo cuando quieras.'
     : agentInboxStatusFilter === 'completed'
-    ? 'Cuando un contacto cumpla el objetivo configurado, quedará visible aquí.'
-    : agentInboxStatusFilter === 'unassigned'
-    ? 'Los contactos que nunca han entrado al chatbot aparecerán aquí.'
+    ? 'Cuando un contacto cumpla el objetivo, aparecerá aquí hasta que una persona abra su chat.'
     : agentInboxStatusFilter === 'active'
     ? 'Cuando el bot esté atendiendo una conversación activa, aparecerá aquí.'
     : conversationAgentEnabled
-    ? 'Cuando el bot atienda, pause, omita o cierre una conversación, aparecerá aquí.'
+    ? 'Aquí aparecen los chats activos, pausados y las metas cumplidas que todavía no has abierto.'
     : 'Cuando enciendas el chatbot y tome chats, aparecerán aquí.'
   const emptyChatTitle = archivedViewOpen
     ? 'No hay chats archivados'
@@ -4448,7 +4435,11 @@ export const DesktopChat: React.FC = () => {
         if (nextCursor) chatListCursorRef.current = nextCursor
         if (pageChats.length > 0) chatListHasAppendedRef.current = true
         chatListHasMoreRef.current = pageChats.length >= CHAT_LIST_PAGE_SIZE && cursorAdvanced
-        setChats((currentChats) => dedupeChatsById([...currentChats, ...pageChats]))
+        setChats((currentChats) => dedupeChatsById(
+          goalCompletedUnreviewed
+            ? [...pageChats, ...currentChats]
+            : [...currentChats, ...pageChats]
+        ))
       } else if (hasSearch) {
         const pageChats = await fetchChatPage(null)
 
@@ -4463,7 +4454,6 @@ export const DesktopChat: React.FC = () => {
           ...pageChats,
           ...(goalCompletedUnreviewed
             ? chatsRef.current
-              .filter((contact) => contact.id === activeContactIdRef.current)
               .map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
             : [])
         ])
@@ -4509,9 +4499,12 @@ export const DesktopChat: React.FC = () => {
         setChats((current) => dedupeChatsById([
           ...freshPage,
           ...(goalCompletedUnreviewed
-            ? current
-              .filter((contact) => contact.id === activeContactIdRef.current)
-              .map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
+            ? current.map((contact) => ({
+              ...contact,
+              agentGoalCompletedUnreviewed: preserveDeepCursor
+                ? contact.agentGoalCompletedUnreviewed
+                : false
+            }))
             : []),
           ...(serverScopeChanged || goalCompletedUnreviewed
             ? []
@@ -4519,6 +4512,14 @@ export const DesktopChat: React.FC = () => {
         ]))
         const reconciledChats = dedupeChatsById([
           ...freshPage,
+          ...(goalCompletedUnreviewed
+            ? chatsRef.current.map((contact) => ({
+              ...contact,
+              agentGoalCompletedUnreviewed: preserveDeepCursor
+                ? contact.agentGoalCompletedUnreviewed
+                : false
+            }))
+            : []),
           ...(serverScopeChanged || goalCompletedUnreviewed
             ? []
             : reconcileLoadedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE))
@@ -4541,9 +4542,7 @@ export const DesktopChat: React.FC = () => {
         const merged = dedupeChatsById([
           ...freshPage,
           ...(goalCompletedUnreviewed
-            ? chatsRef.current
-              .filter((contact) => contact.id === activeContactIdRef.current)
-              .map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
+            ? chatsRef.current.map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
             : []),
           ...(replaceList ? [] : reconcileLoadedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE))
         ])
@@ -4567,9 +4566,7 @@ export const DesktopChat: React.FC = () => {
         setChats((current) => dedupeChatsById([
           ...freshPage,
           ...(goalCompletedUnreviewed
-            ? current
-              .filter((contact) => contact.id === activeContactIdRef.current)
-              .map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
+            ? current.map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
             : []),
           ...(replaceList ? [] : reconcileLoadedChatTail(freshPage, current, CHAT_LIST_PAGE_SIZE))
         ]))
@@ -4616,6 +4613,17 @@ export const DesktopChat: React.FC = () => {
       }
     }
   }, [chatQuery])
+
+  useEffect(() => {
+    const goalCompletedUnreviewed = chatFilter === 'agent'
+    if (chatGoalCompletedFilterRef.current === goalCompletedUnreviewed) return
+
+    chatGoalCompletedFilterRef.current = goalCompletedUnreviewed
+    chatListCursorRef.current = null
+    chatListHasAppendedRef.current = false
+    chatListHasMoreRef.current = true
+    void loadChats({ goalCompletedUnreviewed })
+  }, [chatFilter, loadChats])
 
   const loadMoreChatsIfNeeded = useCallback((event?: React.UIEvent<HTMLDivElement>) => {
     if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
@@ -9117,14 +9125,14 @@ export const DesktopChat: React.FC = () => {
 
   return (
     <div
-      className={`${styles.page} ${agentAssignedViewOpen ? styles.pageAgentInbox : ''}`}
+      className={styles.page}
       data-ristak-page
       data-fullbleed="true"
       data-desktop-chat-agent-view={agentAssignedViewOpen ? 'true' : undefined}
     >
       <section className={styles.chatShell} data-desktop-chat-page>
         <aside
-          className={`${styles.inboxPanel} ${agentAssignedViewOpen ? styles.inboxPanelAgent : ''} ${advancedFiltersOpen ? styles.inboxPanelFiltersOpen : ''}`}
+          className={`${styles.inboxPanel} ${advancedFiltersOpen ? styles.inboxPanelFiltersOpen : ''}`}
           aria-label={agentAssignedViewOpen ? 'Lista de chats del bot' : 'Lista de chats'}
         >
           <div className={styles.inboxHeader}>
@@ -9573,16 +9581,15 @@ export const DesktopChat: React.FC = () => {
                   const active = contact.id === activeContactId
                   const unread = Number(contact.unreadCount || 0)
                   const agentState = agentStates[contact.id]
-                  const isAgentHistoryChat = hasAgentInboxHistory(agentState)
                   const isAgentActionChat = Boolean(agentState?.signal && agentState?.signal !== 'discarded')
                   const assignmentStatus = getConversationAgentAssignmentStatus(agentState)
                   const agentBadgeState: AgentAvatarBadgeState | null = assignmentStatus || (isAgentActionChat ? 'attention' : null)
                   const agentStatusLabel = agentAssignedViewOpen
-                    ? isAgentHistoryChat
-                      ? getAgentInboxStatusLabel(agentState)
-                      : agentInboxStatusFilter === 'unassigned'
-                        ? 'No asignado'
-                        : ''
+                    ? getAgentInboxStatusLabel(
+                      contact,
+                      agentStateLists[contact.id]?.length ? agentStateLists[contact.id] : [agentState],
+                      agentInboxStatusFilter
+                    )
                     : ''
                   const agentBadgeLabel = assignmentStatus === 'paused'
                     ? 'Agente asignado y pausado'
@@ -9595,7 +9602,7 @@ export const DesktopChat: React.FC = () => {
                       role="button"
                       tabIndex={0}
                       data-chat-row={agentAssignedViewOpen ? 'agent-assigned' : unread > 0 ? 'unread' : 'chat'}
-                      className={`${styles.chatRow} ${agentAssignedViewOpen ? styles.chatRowAgentAssigned : ''} ${unread > 0 ? styles.chatRowUnread : ''} ${active ? styles.chatRowActive : ''} ${selectedChatIdSet.has(contact.id) ? styles.chatRowSelected : ''}`}
+                      className={`${styles.chatRow} ${unread > 0 ? styles.chatRowUnread : ''} ${active ? styles.chatRowActive : ''} ${selectedChatIdSet.has(contact.id) ? styles.chatRowSelected : ''}`}
                       onClick={() => handleSelectChat(contact)}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {

@@ -17,12 +17,6 @@
   color: var(--color-text-primary);
 }
 
-.pageAgentInbox {
-  --chat-agent-accent-border: color-mix(in srgb, var(--accent) 30%, var(--chat-border));
-  --chat-agent-row: color-mix(in srgb, var(--accent-soft) 46%, transparent);
-  --chat-agent-row-active: color-mix(in srgb, var(--accent-soft) 70%, var(--surface));
-}
-
 .chatShell {
   --chat-inbox-column: clamp(280px, 20vw, 340px);
   --chat-info-column: clamp(280px, 18vw, 340px);
@@ -67,16 +61,6 @@
   overflow: visible;
 }
 
-.inboxPanelAgent {
-  border-right-color: var(--chat-agent-accent-border);
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--accent-soft) 64%, var(--surface)) 0%,
-      var(--surface) 46%
-    );
-}
-
 .infoPanel {
   overflow: auto;
   border-left: 1px solid var(--chat-border);
@@ -115,13 +99,6 @@
   margin: 3px 0 0;
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
-}
-
-.inboxPanelAgent .inboxHeader,
-.inboxPanelAgent .chatFilterStack,
-.inboxPanelAgent .chatSelectionBar {
-  border-bottom-color: color-mix(in srgb, var(--accent) 24%, var(--chat-border));
-  background: color-mix(in srgb, var(--accent-soft) 38%, transparent);
 }
 
 .inboxHeaderCopy {
@@ -630,21 +607,6 @@
 .chatRowAgentAction.chatRowActive,
 .chatRowAgentAction.chatRowSelected {
   background: color-mix(in srgb, var(--neg-soft) 82%, var(--surface-hover) 18%);
-}
-
-.chatRowAgentAssigned {
-  border-bottom-color: color-mix(in srgb, var(--accent) 22%, var(--chat-border));
-  background: var(--chat-agent-row);
-}
-
-.chatRowAgentAssigned:hover,
-.chatRowAgentAssigned.chatRowActive {
-  background: var(--chat-agent-row-active);
-}
-
-.chatRowAgentAssigned .avatarAgentBadge {
-  color: var(--on-accent);
-  box-shadow: 0 0 0 2px var(--surface), var(--shadow-xs);
 }
 
 .archiveRowIcon {

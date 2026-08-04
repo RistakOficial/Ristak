@@ -2765,10 +2765,15 @@ En la bandeja desktop, el acceso al inventario de conversaciones del agente vive
 como el filtro principal **Chatbot** junto a `Todos`, `No leídos`, `Con cita` y
 `Clientes`; no usa un robot flotante en el encabezado ni duplica `Meta cumplida`
 como filtro principal. Al seleccionar **Chatbot**, el chip permanece activo y
-debajo aparece un segundo nivel separado para los estados `Activos`, `Meta
-cumplida`, `Pausados 24 horas`, `Omitidos` y `No asignados`, con sus conteos. Al
-elegir cualquier filtro normal se cierra ese segundo nivel y la bandeja vuelve al
-inventario general correspondiente.
+debajo aparece un segundo nivel separado con `Todos`, `Activos`, `Pausados 24
+horas` y `Meta cumplida`, cada uno con su conteo. `Todos` es una unión cerrada:
+sólo incluye chats con agente activo, agente pausado o una meta cumplida que una
+persona todavía no ha abierto; nunca incorpora omitidos, atención humana ni
+contactos sin asignar. Abrir una meta cumplida la retira de esa vista después de
+marcarla como revisada. La selección conserva la misma superficie visual de la
+bandeja normal, sin teñir el panel completo. Al elegir cualquier filtro normal
+se cierra el segundo nivel y la bandeja vuelve al inventario general
+correspondiente.
 
 El historial de `/chat` conserva una textura punteada ligera, con los puntos
 espaciados para que el fondo se sienta limpio y no compita con los mensajes.
