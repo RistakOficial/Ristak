@@ -563,7 +563,15 @@ class CampaignsService {
     if (params.cursor) query.cursor = params.cursor
     if (params.search?.trim()) query.search = params.search.trim()
 
-    const data = await apiClient.get<CampaignContactsPage>('/meta/contacts', { params: query, signal })
+    const data = await withRequestTimeout({
+      timeoutMs: CAMPAIGNS_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'Los contactos de Publicidad tardaron demasiado. Intenta de nuevo.',
+      signal,
+      request: requestSignal => apiClient.get<CampaignContactsPage>('/meta/contacts', {
+        params: query,
+        signal: requestSignal
+      })
+    })
     const contacts = Array.isArray(data?.contacts) ? data.contacts : []
     return {
       ...data,

@@ -481,9 +481,10 @@ test('transacciones recorre timestamps efectivos nulos con cursor total y DTO in
 })
 
 test('contrato estático evita descargas completas, fetch remoto y doble agregado de visitantes', async () => {
-    const [campaignBackend, transactionsBackend, campaigns, reports, modal, postgresMigration] = await Promise.all([
+    const [campaignBackend, transactionsBackend, campaignsService, campaigns, reports, modal, postgresMigration] = await Promise.all([
     readFile(new URL('../src/services/campaignContactsPaginationService.js', import.meta.url), 'utf8'),
     readFile(new URL('../src/services/reportTransactionsPaginationService.js', import.meta.url), 'utf8'),
+    readFile(new URL('../../frontend/src/services/campaignsService.ts', import.meta.url), 'utf8'),
     readFile(new URL('../../frontend/src/pages/Campaigns/Campaigns.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../../frontend/src/pages/Reports/Reports.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../../frontend/src/components/common/TransactionsModal/TransactionsModal.tsx', import.meta.url), 'utf8'),
@@ -496,6 +497,8 @@ test('contrato estático evita descargas completas, fetch remoto y doble agregad
   assert.match(transactionsBackend, /pageLimit \+ 1/)
   assert.match(transactionsBackend, /MAX_PAGE_LIMIT = 100/)
   assert.match(transactionsBackend, /nextCursor/)
+  assert.match(campaignsService, /getContactsPage[\s\S]*withRequestTimeout\(\{/)
+  assert.match(campaignsService, /Los contactos de Publicidad tardaron demasiado/)
 
   assert.match(campaigns, /getContactsPage\(params, controller\.signal\)/)
   assert.match(campaigns, /onPageChange=\{handleCampaignContactsPageChange\}/)

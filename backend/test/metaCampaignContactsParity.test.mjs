@@ -64,10 +64,19 @@ test('getContactsByType delega a una página local, estable y acotada', () => {
   const handler = controller.slice(handlerStart, handlerEnd)
 
   assert.match(handler, /listCampaignContactsPage/)
+  assert.match(handler, /signal: client\.signal/)
   assert.doesNotMatch(handler, /getContactsWithAppointmentsHybrid|getContactsWithShowedAppointmentsHybrid|api_token|fetch\(/)
   assert.doesNotMatch(service, /ROW_NUMBER\(\) OVER|MAX\([^)]*\) OVER/)
   assert.match(service, /contact_person_identity/)
-  assert.match(service, /NOT EXISTS \([\s\S]*newer_identity/)
+  assert.match(service, /campaign_attributed_contacts AS/)
+  assert.match(service, /campaign_candidates AS/)
+  assert.match(service, /NOT EXISTS \([\s\S]*FROM campaign_candidates newer_contact/)
+  assert.equal(
+    (service.match(/contact_effective_ad_attribution/g) || []).length,
+    1,
+    'el árbol de referidos debe materializarse una sola vez por página'
+  )
+  assert.match(service, /FROM contacts c\$\{isPostgres[\s\S]*INNER JOIN campaign_candidates campaign_candidate/)
   assert.match(service, /ORDER BY \$\{createdAtSort\} DESC, c\.id DESC[\s\S]*LIMIT \?/)
   assert.match(service, /MAX_PAGE_LIMIT = 100/)
 })

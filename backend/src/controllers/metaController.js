@@ -2684,6 +2684,7 @@ export const getSyncStatus = async (req, res) => {
  * Obtiene contactos por tipo (interesados o ventas) filtrados por campaign/adset/ad
  */
 export const getContactsByType = async (req, res) => {
+  const client = createClientAbortScope(res);
   try {
     const result = await listCampaignContactsPage({
       type: req.query.type,
@@ -2694,8 +2695,10 @@ export const getContactsByType = async (req, res) => {
       adId: req.query.ad_id,
       search: req.query.search,
       cursor: req.query.cursor,
-      limit: req.query.limit
+      limit: req.query.limit,
+      signal: client.signal
     });
+    if (client.signal.aborted) return;
     const range = {
       start: result.range.startUtc,
       end: result.range.endUtc,
@@ -2731,6 +2734,7 @@ export const getContactsByType = async (req, res) => {
     });
 
   } catch (error) {
+    if (isClientAbort(error, client.signal)) return;
     logger.error(`Error en getContactsByType: ${error.message}`);
     const status = Number(error?.status) || 500;
     if (status === 503 && error?.retryAfter) {
@@ -2748,6 +2752,8 @@ export const getContactsByType = async (req, res) => {
           }
         : {})
     });
+  } finally {
+    client.cleanup();
   }
 };
 

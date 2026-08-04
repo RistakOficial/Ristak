@@ -855,7 +855,14 @@ El orden por resultados/ROAS conserva exactitud global antes de paginar. El
 contrato legacy queda acotado y solo incluye la jerarquia completa con una
 solicitud explicita. Los indices de este contrato viven en las migraciones
 `054*`. El drill-down de contactos usa cursor estable, busqueda remota y DTOs
-ligeros; pagos, citas y perfil se hidratan solo al seleccionar una persona.
+ligeros; pagos, citas y perfil se hidratan solo al seleccionar una persona. Para
+conservar la atribucion heredada por recomendaciones sin multiplicar el costo,
+cada pagina materializa una sola vez los contactos atribuibles a la entidad y
+reutiliza ese conjunto para deduplicar personas, filtrar ventas/citas/asistencias
+y resolver metadata. El arbol de referidos nunca se recalcula dentro de cada
+subconsulta. La lectura se cancela cuando el consumidor cierra la peticion y el
+frontend aplica un deadline de 20 segundos, por lo que una falla de base de datos
+termina en un estado reintentable y no en un modal girando indefinidamente.
 
 La cabecera, KPIs y graficas de Publicidad usan un solo read-model:
 `GET /api/meta/overview`. Meta Ads y contactos se agregan una vez para periodo

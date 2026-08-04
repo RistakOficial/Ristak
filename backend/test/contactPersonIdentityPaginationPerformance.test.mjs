@@ -173,7 +173,7 @@ test('las páginas usan keyset/anti-join indexado y el total no se recalcula des
     const originalAll = db.all
     const originalGet = db.get
     db.all = async function observedAll(sql, params, options) {
-      if (/FROM contacts c[\s\S]*contact_person_identity/i.test(String(sql)) && /ORDER BY/i.test(String(sql))) {
+      if (/(?:FROM contacts c[\s\S]*contact_person_identity|campaign_candidates AS)/i.test(String(sql)) && /ORDER BY/i.test(String(sql))) {
         observedPageQueries.push({ sql: String(sql), params: [...(params || [])] })
       }
       return originalAll.call(this, sql, params, options)

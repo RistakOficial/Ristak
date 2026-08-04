@@ -133,10 +133,11 @@ function metaDateExpression(column) {
   return isPostgres ? `(${column})::date` : `DATE(${column})`
 }
 
-async function getAttributionCalendarIds() {
+async function getAttributionCalendarIds(signal) {
   const row = await db.get(
     'SELECT config_value FROM app_config WHERE config_key = ? LIMIT 1',
-    ['attribution_calendar_ids']
+    ['attribution_calendar_ids'],
+    { signal }
   )
   if (!row?.config_value) return []
 
@@ -182,27 +183,6 @@ function metaMatchCondition({ contactAlias, metaAlias, argsAlias, entityColumn, 
     )}`
 }
 
-function candidateContactCondition({ alias, argsAlias, entityColumn, range, hiddenFilters }) {
-  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, alias, false)
-  return `${hiddenCondition ? `${hiddenCondition} AND ` : ''}EXISTS (
-      SELECT 1
-      FROM contact_effective_ad_attribution candidate_attribution
-      INNER JOIN contacts attribution_contact
-        ON attribution_contact.id = candidate_attribution.attribution_contact_id
-      INNER JOIN meta_ads candidate_ad
-        ON ${metaMatchCondition({
-          contactAlias: 'attribution_contact',
-          metaAlias: 'candidate_ad',
-          argsAlias,
-          entityColumn,
-          range
-        })}
-      WHERE candidate_attribution.contact_id = ${alias}.id
-        AND attribution_contact.created_at >= ${argsAlias}.contact_start_at
-        AND attribution_contact.created_at <= ${argsAlias}.contact_end_at
-    )`
-}
-
 function mapContactRow(row) {
   return {
     id: row.id,
@@ -245,7 +225,8 @@ export async function listCampaignContactsPage({
   adId,
   search = '',
   cursor,
-  limit = DEFAULT_PAGE_LIMIT
+  limit = DEFAULT_PAGE_LIMIT,
+  signal
 } = {}) {
   const cleanType = String(type || '').trim().toLowerCase()
   if (!VALID_TYPES.has(cleanType)) throw requestError('Tipo de contacto inválido')
@@ -253,15 +234,15 @@ export async function listCampaignContactsPage({
 
   const entityFilter = resolveEntityFilter({ campaignId, adsetId, adId })
   const pageLimit = normalizeLimit(limit)
-  const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+  const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal })
   if (!range.startZoned || !range.endZoned || !range.startUtc || !range.endUtc) {
     throw requestError('Rango de fechas inválido')
   }
 
   const [hiddenFilters, calendarIds, identityProjectionStatus] = await Promise.all([
-    getHiddenContactFilters(),
-    getAttributionCalendarIds(),
-    getContactPersonIdentityProjectionStatus({ schedule: false })
+    getHiddenContactFilters({ signal }),
+    getAttributionCalendarIds(signal),
+    getContactPersonIdentityProjectionStatus({ schedule: false, signal })
   ])
   const normalizedSearch = escapeLikeSearch(search)
   const cursorScope = hashPaginationCursorScope('campaign-contacts', {
@@ -282,33 +263,10 @@ export async function listCampaignContactsPage({
 
   const createdAtSort = campaignContactCursorSortExpression('c.created_at')
   const searchPattern = normalizedSearch ? `%${normalizedSearch}%` : ''
-  const outerCandidate = candidateContactCondition({
-    alias: 'c',
-    argsAlias: 'query_args',
-    entityColumn: entityFilter.column,
-    range,
-    hiddenFilters
-  })
-  const newerCandidate = candidateContactCondition({
-    alias: 'newer_contact',
-    argsAlias: 'query_args',
-    entityColumn: entityFilter.column,
-    range,
-    hiddenFilters
-  })
-  const personCandidate = candidateContactCondition({
-    alias: 'person_contact',
-    argsAlias: 'query_args',
-    entityColumn: entityFilter.column,
-    range,
-    hiddenFilters
-  })
   const representativeCondition = `NOT EXISTS (
     SELECT 1
-    FROM contact_person_identity newer_identity
-    INNER JOIN contacts newer_contact ON newer_contact.id = newer_identity.contact_id
-    WHERE newer_identity.campaign_person_key = identity_projection.campaign_person_key
-      AND ${newerCandidate}
+    FROM campaign_candidates newer_contact
+    WHERE newer_contact.campaign_person_key = campaign_candidate.campaign_person_key
       AND (
         ${campaignContactCursorSortExpression('newer_contact.created_at')}, newer_contact.id
       ) > (
@@ -316,10 +274,8 @@ export async function listCampaignContactsPage({
       )
   )`
   const personProbePrefix = `
-    FROM contact_person_identity person_identity
-    INNER JOIN contacts person_contact ON person_contact.id = person_identity.contact_id
-    WHERE person_identity.campaign_person_key = identity_projection.campaign_person_key
-      AND ${personCandidate}`
+    FROM campaign_candidates person_contact
+    WHERE person_contact.campaign_person_key = campaign_candidate.campaign_person_key`
   const personIsSaleExpression = `EXISTS (
     SELECT 1 ${personProbePrefix}
       AND COALESCE(person_contact.purchases_count, 0) > 0
@@ -386,17 +342,6 @@ export async function listCampaignContactsPage({
       : cleanType === 'attendances'
         ? personHasAttendanceExpression
         : '1 = 1'
-  const metadataExpression = (column) => `(
-    SELECT MAX(metadata_ad.${column})
-    FROM meta_ads metadata_ad
-    WHERE ${metaMatchCondition({
-      contactAlias: 'attribution_contact',
-      metaAlias: 'metadata_ad',
-      argsAlias: 'query_args',
-      entityColumn: entityFilter.column,
-      range
-    })}
-  )`
   const cursorCondition = decodedCursor
     ? `AND (${createdAtSort}, c.id) < (${campaignContactCursorParameterExpression()}, ?)`
     : ''
@@ -404,8 +349,71 @@ export async function listCampaignContactsPage({
     ? [decodedCursor.createdAt, decodedCursor.id]
     : []
 
+  const candidateHiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'candidate_contact', false)
   const query = `
-    WITH ${queryArgumentsCte()}
+    WITH ${queryArgumentsCte()},
+    campaign_attributed_contacts AS (
+      SELECT
+        effective_attribution.contact_id,
+        effective_attribution.attribution_contact_id,
+        effective_attribution.inherited_from_referral,
+        attribution_contact.attribution_ad_id,
+        attribution_contact.attribution_ad_name,
+        MAX(target_ad.campaign_id) AS campaign_id,
+        MAX(target_ad.campaign_name) AS campaign_name,
+        MAX(target_ad.adset_id) AS adset_id,
+        MAX(target_ad.adset_name) AS adset_name,
+        MAX(target_ad.ad_name) AS ad_name
+      FROM meta_ads target_ad
+      CROSS JOIN query_args
+      INNER JOIN contacts attribution_contact
+        ON ${metaMatchCondition({
+          contactAlias: 'attribution_contact',
+          metaAlias: 'target_ad',
+          argsAlias: 'query_args',
+          entityColumn: entityFilter.column,
+          range
+        })}
+        AND attribution_contact.created_at >= query_args.contact_start_at
+        AND attribution_contact.created_at <= query_args.contact_end_at
+      INNER JOIN contact_effective_ad_attribution effective_attribution
+        ON effective_attribution.attribution_contact_id = attribution_contact.id
+      GROUP BY
+        effective_attribution.contact_id,
+        effective_attribution.attribution_contact_id,
+        effective_attribution.inherited_from_referral,
+        attribution_contact.attribution_ad_id,
+        attribution_contact.attribution_ad_name
+    ),
+    campaign_candidates AS (
+      SELECT
+        candidate_contact.id,
+        candidate_contact.full_name,
+        candidate_contact.email,
+        candidate_contact.phone,
+        candidate_contact.created_at,
+        candidate_contact.total_paid,
+        candidate_contact.purchases_count,
+        candidate_contact.appointment_date,
+        candidate_contact.referred_by_contact_id,
+        candidate_contact.source,
+        identity_projection.campaign_person_key,
+        campaign_attribution.attribution_contact_id,
+        campaign_attribution.inherited_from_referral,
+        campaign_attribution.attribution_ad_id,
+        campaign_attribution.attribution_ad_name,
+        campaign_attribution.campaign_id,
+        campaign_attribution.campaign_name,
+        campaign_attribution.adset_id,
+        campaign_attribution.adset_name,
+        campaign_attribution.ad_name
+      FROM campaign_attributed_contacts campaign_attribution
+      INNER JOIN contacts candidate_contact
+        ON candidate_contact.id = campaign_attribution.contact_id
+      INNER JOIN contact_person_identity identity_projection
+        ON identity_projection.contact_id = candidate_contact.id
+      ${candidateHiddenCondition ? `WHERE ${candidateHiddenCondition}` : ''}
+    )
     SELECT
       c.id,
       c.full_name,
@@ -420,28 +428,26 @@ export async function listCampaignContactsPage({
       referrer.email AS referred_by_contact_email,
       referrer.phone AS referred_by_contact_phone,
       visible_attribution_contact.id AS attribution_contact_id,
-      effective_attribution.inherited_from_referral,
+      campaign_candidate.inherited_from_referral,
       visible_attribution_contact.full_name AS attribution_contact_name,
-      attribution_contact.attribution_ad_id,
-      attribution_contact.attribution_ad_name,
+      campaign_candidate.attribution_ad_id,
+      campaign_candidate.attribution_ad_name,
       c.source,
-      ${metadataExpression('campaign_id')} AS campaign_id,
-      ${metadataExpression('campaign_name')} AS campaign_name,
-      ${metadataExpression('adset_id')} AS adset_id,
-      ${metadataExpression('adset_name')} AS adset_name,
-      ${metadataExpression('ad_name')} AS ad_name,
+      campaign_candidate.campaign_id,
+      campaign_candidate.campaign_name,
+      campaign_candidate.adset_id,
+      campaign_candidate.adset_name,
+      campaign_candidate.ad_name,
       ${personIsSaleExpression} AS person_is_sale,
       ${personHasAppointmentExpression} AS person_has_appointment,
       ${personHasAttendanceExpression} AS person_has_attendance,
       ${personLtvExpression} AS person_ltv,
       ${campaignContactCursorProjectionExpression('c.created_at')} AS cursor_created_at
     FROM contacts c${isPostgres ? '' : ' INDEXED BY idx_campaign_contacts_cursor_created_at_id'}
-    INNER JOIN contact_effective_ad_attribution effective_attribution
-      ON effective_attribution.contact_id = c.id
-    INNER JOIN contacts attribution_contact
-      ON attribution_contact.id = effective_attribution.attribution_contact_id
+    INNER JOIN campaign_candidates campaign_candidate
+      ON campaign_candidate.id = c.id
     LEFT JOIN contacts visible_attribution_contact
-      ON visible_attribution_contact.id = effective_attribution.attribution_contact_id
+      ON visible_attribution_contact.id = campaign_candidate.attribution_contact_id
       ${buildHiddenContactsCondition(hiddenFilters, 'visible_attribution_contact', false)
         ? `AND ${buildHiddenContactsCondition(hiddenFilters, 'visible_attribution_contact', false)}`
         : ''}
@@ -450,11 +456,8 @@ export async function listCampaignContactsPage({
       ${buildHiddenContactsCondition(hiddenFilters, 'referrer', false)
         ? `AND ${buildHiddenContactsCondition(hiddenFilters, 'referrer', false)}`
         : ''}
-    INNER JOIN contact_person_identity identity_projection
-      ON identity_projection.contact_id = c.id
     CROSS JOIN query_args
-    WHERE ${outerCandidate}
-      AND ${representativeCondition}
+    WHERE ${representativeCondition}
       AND ${personSearchExpression}
       AND ${typeCondition}
       ${cursorCondition}
@@ -472,7 +475,7 @@ export async function listCampaignContactsPage({
     pageLimit + 1
   ]
 
-  const rows = await db.all(query, params)
+  const rows = await db.all(query, params, { signal })
   const hasNext = rows.length > pageLimit
   const pageRows = hasNext ? rows.slice(0, pageLimit) : rows
   const contacts = pageRows.map(mapContactRow)
