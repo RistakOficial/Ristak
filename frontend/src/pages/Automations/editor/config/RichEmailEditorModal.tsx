@@ -8,7 +8,8 @@ import {
   emailHtmlToPlainText,
   plainTextToEmailHtml,
   sanitizeEmailRichHtmlForEditor,
-  type EmailRichTextVariable
+  type EmailRichTextVariable,
+  type EmailRichTextVariableCategory
 } from '@/components/common'
 import { VariableTextInput } from '../composer/MessageComposer'
 import styles from '../AutomationEditor.module.css'
@@ -20,6 +21,7 @@ interface RichEmailEditorModalProps {
   bodyHtml: string
   includeSignature: boolean
   variables: EmailRichTextVariable[]
+  variableCategories: EmailRichTextVariableCategory[]
   onClose: () => void
   onSave: (nextConfig: { subject: string; body: string; bodyHtml: string; includeSignature: boolean }) => void
 }
@@ -31,6 +33,7 @@ export const RichEmailEditorModal: React.FC<RichEmailEditorModalProps> = ({
   bodyHtml,
   includeSignature,
   variables,
+  variableCategories,
   onClose,
   onSave
 }) => {
@@ -90,6 +93,7 @@ export const RichEmailEditorModal: React.FC<RichEmailEditorModalProps> = ({
           onChange={setDraftHtml}
           density="modal"
           variables={variables}
+          variableCategories={variableCategories}
           placeholder="Escribe el correo..."
           codePlaceholder="<table><tr><td>Contenido del correo...</td></tr></table>"
         />

@@ -21,12 +21,24 @@ import {
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { Button } from '../Button'
+import { CategorizedVariablePicker } from '../CategorizedVariablePicker'
 import { CustomSelect } from '../CustomSelect'
 import styles from './EmailRichTextEditor.module.css'
 
 export interface EmailRichTextVariable {
   value: string
   label: string
+  category?: string
+  categoryLabel?: string
+  pathLabels?: string[]
+  path?: string
+  hiddenFromPicker?: boolean
+}
+
+export interface EmailRichTextVariableCategory {
+  id: string
+  label: string
+  unavailableReason?: string
 }
 
 interface EmailRichTextEditorProps {
@@ -38,6 +50,7 @@ interface EmailRichTextEditorProps {
   codePlaceholder?: string
   density?: 'regular' | 'modal'
   variables?: EmailRichTextVariable[]
+  variableCategories?: EmailRichTextVariableCategory[]
   onWarning?: (title: string, message: string) => void
   onHtmlApplied?: () => void
 }
@@ -412,6 +425,7 @@ export const EmailRichTextEditor: React.FC<EmailRichTextEditorProps> = ({
   codePlaceholder = '<table><tr><td>Contenido del correo...</td></tr></table>',
   density = 'regular',
   variables = [],
+  variableCategories = [],
   onWarning,
   onHtmlApplied
 }) => {
@@ -433,6 +447,20 @@ export const EmailRichTextEditor: React.FC<EmailRichTextEditorProps> = ({
       value: variable.value,
       label: variable.label
     })),
+    [variables]
+  )
+  const categorizedVariables = useMemo(
+    () => variables.flatMap(variable => variable.category
+      ? [{
+          value: variable.value,
+          label: variable.label,
+          category: variable.category,
+          categoryLabel: variable.categoryLabel,
+          pathLabels: variable.pathLabels,
+          path: variable.path,
+          hiddenFromPicker: variable.hiddenFromPicker
+        }]
+      : []),
     [variables]
   )
 
@@ -690,16 +718,27 @@ export const EmailRichTextEditor: React.FC<EmailRichTextEditorProps> = ({
         {variableOptions.length > 0 && (
           <>
             <span className={styles.toolbarDivider} />
-            <CustomSelect
-              value={selectedVariable}
-              options={variableOptions}
-              onValueChange={insertVariable}
-              className={styles.variableSelect}
-              placeholder="Variables"
-              portal
-              dropdownMinWidth={220}
-              aria-label="Insertar variable"
-            />
+            {categorizedVariables.length > 0 && variableCategories.length > 0 ? (
+              <CategorizedVariablePicker
+                variables={categorizedVariables}
+                categories={variableCategories}
+                onSelect={insertVariable}
+                className={styles.variableSelect}
+                placeholder="Variables"
+                aria-label="Insertar variable"
+              />
+            ) : (
+              <CustomSelect
+                value={selectedVariable}
+                options={variableOptions}
+                onValueChange={insertVariable}
+                className={styles.variableSelect}
+                placeholder="Variables"
+                portal
+                dropdownMinWidth={220}
+                aria-label="Insertar variable"
+              />
+            )}
           </>
         )}
         <span className={styles.toolbarDivider} />

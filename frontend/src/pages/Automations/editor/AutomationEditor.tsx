@@ -2023,6 +2023,7 @@ export const AutomationEditor: React.FC = () => {
         bodyHtml={emailEditor?.bodyHtml || ''}
         includeSignature={emailEditor?.includeSignature ?? true}
         variables={emailEditor?.variables || []}
+        variableCategories={emailEditor?.variableCategories || []}
         onClose={closeRichEmailEditor}
         onSave={handleSaveRichEmailEditor}
       />

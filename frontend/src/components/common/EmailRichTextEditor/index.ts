@@ -3,5 +3,6 @@ export {
   emailHtmlToPlainText,
   plainTextToEmailHtml,
   sanitizeEmailRichHtmlForEditor,
-  type EmailRichTextVariable
+  type EmailRichTextVariable,
+  type EmailRichTextVariableCategory
 } from './EmailRichTextEditor'

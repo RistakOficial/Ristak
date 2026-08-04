@@ -7492,6 +7492,14 @@ estatica: en pantallas muy amplias usa el ancho grande fijo, y en ventanas
 normales o chicas se compacta por breakpoint. No se expande ni se contrae al
 hover o al enfocar controles internos.
 
+Los campos que insertan variables dentro de Automatizaciones comparten un solo
+selector jerarquico. El editor de mensajes conversacionales y el editor rico de
+correo muestran las mismas categorias permitidas por los disparadores, las
+salidas de pasos anteriores y sus subrutas anidadas; ambos permiten buscar por
+nombre, token o ruta. El correo no debe aplanar el catalogo ni concatenar la
+categoria dentro de la etiqueta. Al elegir una variable, conserva el token
+estable `{{campo.ruta}}` dentro del HTML para resolverlo al momento del envio.
+
 Las herramientas flotantes del canvas (post-it, zoom, centrar y ordenar flujo),
 la barra de selección múltiple y el botón de agregar paso se muestran solo
 cuando el editor montó el frame estable de la automatización activa **y** el

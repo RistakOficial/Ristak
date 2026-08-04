@@ -147,6 +147,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Switch / toggle | `<Switch>` (recipe `[data-sw]`) | un checkbox estilizado a mano |
 | Select enriquecido | `<CustomSelect>` | — |
 | Select múltiple con checks | `<CheckboxMultiSelect>`; usa `disabled` en opciones obligatorias | un dropdown local con checkboxes propios |
+| Selector jerárquico de variables | `<CategorizedVariablePicker>`; conserva categorías, rutas anidadas, búsqueda y conteos | una lista plana de variables o copiar el picker dentro de cada editor |
 | Fecha individual en escritorio | `<DatePicker>`; recibe y devuelve `YYYY-MM-DD`, admite `min`/`max` y portalea el calendario sobre modales | un `<input type="date">` transparente o un calendario local de página |
 | Código telefónico internacional | `<PhoneCountryCodeSelect>`; muestra únicamente bandera + código (`🇲🇽 +52`) | un select local que agregue el nombre del país |
 | Campo numérico | `<NumberInput>`; en primitivas móviles, `type="text"` + `inputMode="numeric\|decimal"` | `<input type="number">` nativo o controles con flechas subir/bajar |

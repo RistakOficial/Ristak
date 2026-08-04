@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Braces, ChevronDown, ChevronRight, Search, Smile, X } from 'lucide-react'
+import { Braces, Smile } from 'lucide-react'
+import { CategorizedVariablePicker } from '@/components/common'
 import { cn } from '@/utils/cn'
 import {
   BASE_VARIABLES,
   FlowVariablesContext,
   TOKEN_PATTERN,
-  VARIABLE_CATEGORIES,
   fallbackLabelForFieldId,
+  getVariablePickerCategories,
   isDynamicToken,
   loadAllVariables,
   tokenFor,
@@ -47,46 +48,6 @@ const EMOJIS = [
   '⚠️', '❓', '❗', '💰', '💳', '🛒', '📦', '🚀', '🏆', '🎯'
 ]
 
-interface PickerTreeNode {
-  id: string
-  label: string
-  variable?: FlowVariable
-  children: PickerTreeNode[]
-}
-
-function buildVariableTree(items: FlowVariable[]): PickerTreeNode[] {
-  const root: PickerTreeNode[] = []
-  const findOrCreate = (siblings: PickerTreeNode[], id: string, label: string) => {
-    let node = siblings.find((candidate) => candidate.id === id)
-    if (!node) {
-      node = { id, label, children: [] }
-      siblings.push(node)
-    }
-    return node
-  }
-  const pathParts = (path: string) => path.match(/[^[.\]]+|\[\d+\]/g) || []
-
-  items.forEach((variable) => {
-    const labels = variable.pathLabels && variable.pathLabels.length > 0
-      ? variable.pathLabels
-      : [variable.label]
-    const segments = pathParts(variable.path || variable.fieldId)
-    let siblings = root
-    labels.forEach((label, index) => {
-      const id = segments.length === labels.length
-        ? segments.slice(0, index + 1).join('')
-        : labels.slice(0, index + 1).join('/')
-      const node = findOrCreate(siblings, id, label)
-      if (index === labels.length - 1) {
-        node.variable = variable
-      }
-      siblings = node.children
-    })
-  })
-
-  return root
-}
-
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -109,28 +70,24 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
 }) => {
   const editorRef = useRef<HTMLDivElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
-  const popoverRef = useRef<HTMLDivElement>(null)
+  const emojiPopoverRef = useRef<HTMLDivElement>(null)
   const lastEmittedRef = useRef<string>('')
   // Último rango del cursor dentro del editor (se pierde al hacer clic en
   // los pickers, así que lo recordamos para insertar donde estaba escribiendo)
   const savedRangeRef = useRef<Range | null>(null)
   const [variables, setVariables] = useState<FlowVariable[]>(BASE_VARIABLES)
   const [pickerOpen, setPickerOpen] = useState<'variables' | 'emoji' | null>(null)
-  const [query, setQuery] = useState('')
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(() => new Set())
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set())
-  const popoverWidth = pickerOpen === 'variables' ? 430 : 292
   const {
     style: popoverPosition,
     placement: popoverPlacement
-  } = useAnchoredPortal(wrapRef, Boolean(pickerOpen), {
+  } = useAnchoredPortal(wrapRef, pickerOpen === 'emoji', {
     align: 'end',
     gap: 8,
     matchWidth: false,
-    minWidth: popoverWidth,
-    maxWidth: popoverWidth,
-    maxHeight: pickerOpen === 'variables' ? 420 : 300,
-    panelRef: popoverRef
+    minWidth: 292,
+    maxWidth: 292,
+    maxHeight: 300,
+    panelRef: emojiPopoverRef
   })
   const flowVariables = React.useContext(FlowVariablesContext)
 
@@ -152,6 +109,22 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   const variablesById = useMemo(
     () => new Map(allVariables.map((variable) => [variable.fieldId, variable])),
     [allVariables]
+  )
+  const variablePickerOptions = useMemo(
+    () => allVariables.map(variable => ({
+      value: variable.fieldId,
+      label: variable.label,
+      category: variable.category,
+      categoryLabel: variable.categoryLabel,
+      pathLabels: variable.pathLabels,
+      path: variable.path,
+      hiddenFromPicker: variable.hiddenFromPicker
+    })),
+    [allVariables]
+  )
+  const variablePickerCategories = useMemo(
+    () => getVariablePickerCategories(allowedCategories, flowVariables.categories),
+    [allowedCategories, flowVariables.categories]
   )
 
   // ------------------------------------------------------------------
@@ -301,43 +274,8 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
     insertNodeAtCursor(document.createTextNode(emoji))
   }
 
-  // ------------------------------------------------------------------
-  // Picker de variables (búsqueda + categorías)
-  // ------------------------------------------------------------------
-  const filteredByCategory = useMemo(() => {
-    const normalized = query.trim().toLowerCase()
-    // Solo categorías congruentes con los disparadores, en su orden
-    const staticCategories = allowedCategories
-      ? allowedCategories
-          .map((id) => VARIABLE_CATEGORIES.find((category) => category.id === id))
-          .filter((category): category is (typeof VARIABLE_CATEGORIES)[number] => Boolean(category))
-      : VARIABLE_CATEGORIES
-    const categories = [...staticCategories, ...flowVariables.categories]
-    return categories
-      .map((category) => ({
-        category,
-        items: allVariables.filter(
-          (variable) =>
-            !variable.hiddenFromPicker &&
-            variable.category === category.id &&
-            (!normalized ||
-              variable.label.toLowerCase().includes(normalized) ||
-              (variable.pathLabels || []).join(' ').toLowerCase().includes(normalized) ||
-              variable.fieldId.toLowerCase().includes(normalized) ||
-              tokenFor(variable).toLowerCase().includes(normalized) ||
-              (variable.categoryLabel || category.label).toLowerCase().includes(normalized))
-        )
-      }))
-      .filter((group) => group.items.length > 0 || Boolean(group.category.unavailableReason))
-  }, [allVariables, flowVariables.categories, query, allowedCategories])
-
-  const isSearchingVariables = query.trim().length > 0
-
   const closePicker = useCallback(() => {
     setPickerOpen(null)
-    setQuery('')
-    setExpandedCategories(new Set())
-    setExpandedNodes(new Set())
   }, [])
 
   const togglePicker = (nextPicker: 'variables' | 'emoji') => {
@@ -346,70 +284,14 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
       return
     }
     setPickerOpen(nextPicker)
-    setQuery('')
-    setExpandedCategories(new Set())
-    setExpandedNodes(new Set())
   }
-
-  const toggleCategory = (categoryId: string) => {
-    setExpandedCategories((current) => {
-      const next = new Set(current)
-      if (next.has(categoryId)) next.delete(categoryId)
-      else next.add(categoryId)
-      return next
-    })
-  }
-
-  const toggleNode = (nodeId: string) => {
-    setExpandedNodes((current) => {
-      const next = new Set(current)
-      if (next.has(nodeId)) next.delete(nodeId)
-      else next.add(nodeId)
-      return next
-    })
-  }
-
-  const renderVariableTree = (nodes: PickerTreeNode[], depth = 0): React.ReactNode =>
-    nodes.map((node) => {
-      if (node.variable) {
-        return (
-          <button
-            key={node.id}
-            type="button"
-            className={styles.composerPopoverItem}
-            style={{ paddingLeft: 22 + depth * 14 }}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => node.variable && insertVariable(node.variable)}
-          >
-            <span className={styles.variableTokenChip}>{node.label}</span>
-          </button>
-        )
-      }
-      const expanded = isSearchingVariables || expandedNodes.has(node.id)
-      return (
-        <div key={node.id}>
-          <button
-            type="button"
-            className={styles.composerPopoverSubcategory}
-            style={{ paddingLeft: 6 + depth * 14 }}
-            aria-expanded={expanded}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => toggleNode(node.id)}
-          >
-            {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            <span>{node.label}</span>
-          </button>
-          {expanded && renderVariableTree(node.children, depth + 1)}
-        </div>
-      )
-    })
 
   useEffect(() => {
-    if (!pickerOpen) return
+    if (pickerOpen !== 'emoji') return
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node
       const wrap = wrapRef.current
-      const popover = popoverRef.current
+      const popover = emojiPopoverRef.current
       if (!wrap?.contains(target) && !popover?.contains(target)) {
         closePicker()
       }
@@ -420,73 +302,9 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
 
   const isEmpty = !value || !value.replace(new RegExp(escapeRegExp('​'), 'g'), '').trim()
 
-  const variablePopover = pickerOpen === 'variables' && (
-    <div
-      ref={popoverRef}
-      className={styles.composerPopover}
-      role="dialog"
-      aria-label="Insertar variable"
-      style={popoverPosition}
-      data-placement={popoverPlacement}
-      data-ristak-dropdown-panel
-    >
-      <div className={styles.composerPopoverSearch}>
-        <Search size={12} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
-        <input
-          data-ristak-unstyled
-          className={styles.cleanSearchInput}
-          autoFocus
-          value={query}
-          placeholder="Buscar variable o ruta…"
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              event.preventDefault()
-              event.stopPropagation()
-              closePicker()
-            }
-          }}
-        />
-        <button type="button" className={styles.composerToolButton} onClick={closePicker} title="Cerrar">
-          <X size={12} />
-        </button>
-      </div>
-      <div className={styles.composerPopoverBody}>
-        {filteredByCategory.length === 0 && (
-          <p className={styles.pickerEmpty}>Sin variables que coincidan</p>
-        )}
-        {filteredByCategory.map(({ category, items }) => {
-          const expanded = isSearchingVariables || expandedCategories.has(category.id)
-          return (
-            <div key={category.id}>
-              <button
-                type="button"
-                className={styles.composerPopoverCategory}
-                aria-expanded={expanded}
-                onPointerDown={(event) => event.preventDefault()}
-                onClick={() => toggleCategory(category.id)}
-              >
-                {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                <span>{category.label}</span>
-                {items.length > 0 && <span className={styles.composerPopoverCategoryCount}>{items.length}</span>}
-              </button>
-              {expanded && (
-                category.unavailableReason ? (
-                  <p className={styles.pickerWarning}>{category.unavailableReason}</p>
-                ) : (
-                  renderVariableTree(buildVariableTree(items))
-                )
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-
   const emojiPopover = pickerOpen === 'emoji' && (
     <div
-      ref={popoverRef}
+      ref={emojiPopoverRef}
       className={styles.composerPopover}
       role="dialog"
       aria-label="Insertar emoji"
@@ -564,16 +382,28 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
 
       <div className={styles.composerToolbar} data-composer-toolbar="">
         {showVariables && (
-          <button
-            type="button"
-            className={cn(styles.composerToolButton, pickerOpen === 'variables' && styles.composerToolButtonActive)}
-            data-composer-tool-button=""
-            title="Insertar variable"
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => togglePicker('variables')}
-          >
-            <Braces size={13} />
-          </button>
+          <CategorizedVariablePicker
+            variables={variablePickerOptions}
+            categories={variablePickerCategories}
+            anchorRef={wrapRef}
+            align="end"
+            open={pickerOpen === 'variables'}
+            onOpenChange={open => setPickerOpen(open ? 'variables' : null)}
+            onSelect={value => {
+              const variable = variablesById.get(value)
+              if (variable) insertVariable(variable)
+            }}
+            renderTrigger={({ open, triggerProps }) => (
+              <button
+                {...triggerProps}
+                className={cn(styles.composerToolButton, open && styles.composerToolButtonActive)}
+                data-composer-tool-button=""
+                title="Insertar variable"
+              >
+                <Braces size={13} />
+              </button>
+            )}
+          />
         )}
         {showEmoji && (
           <button
@@ -589,7 +419,6 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
         )}
       </div>
 
-      {typeof document !== 'undefined' && variablePopover ? createPortal(variablePopover, document.body) : null}
       {typeof document !== 'undefined' && emojiPopover ? createPortal(emojiPopover, document.body) : null}
     </div>
   )

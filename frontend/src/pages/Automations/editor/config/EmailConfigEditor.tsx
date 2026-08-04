@@ -1,9 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Edit3 } from 'lucide-react'
-import { emailHtmlToPlainText, plainTextToEmailHtml, type EmailRichTextVariable } from '@/components/common'
+import {
+  emailHtmlToPlainText,
+  plainTextToEmailHtml,
+  type EmailRichTextVariable,
+  type EmailRichTextVariableCategory
+} from '@/components/common'
 import { Field } from './configPrimitives'
-import { VariableTextInput } from '../composer/MessageComposer'
-import { BASE_VARIABLES, FlowVariablesContext, loadAllVariables } from '../variablesCatalog'
+import { VariableCategoriesContext, VariableTextInput } from '../composer/MessageComposer'
+import {
+  BASE_VARIABLES,
+  FlowVariablesContext,
+  getVariablePickerCategories,
+  loadAllVariables
+} from '../variablesCatalog'
 import styles from '../AutomationEditor.module.css'
 
 type ConfigValue = Record<string, unknown>
@@ -17,6 +27,7 @@ export interface EmailRichEditorRequest {
   bodyHtml: string
   includeSignature: boolean
   variables: EmailRichTextVariable[]
+  variableCategories: EmailRichTextVariableCategory[]
 }
 
 interface EmailConfigEditorProps {
@@ -27,6 +38,7 @@ interface EmailConfigEditorProps {
 
 export const EmailConfigEditor: React.FC<EmailConfigEditorProps> = ({ config, onChange, onOpenRichEditor }) => {
   const flowVariables = React.useContext(FlowVariablesContext)
+  const allowedCategories = React.useContext(VariableCategoriesContext)
   const [variables, setVariables] = useState(BASE_VARIABLES)
   const setValue = (key: string, value: unknown) => onChange({ ...config, [key]: value })
 
@@ -41,16 +53,25 @@ export const EmailConfigEditor: React.FC<EmailConfigEditorProps> = ({ config, on
   }, [])
 
   const richEditorVariables = useMemo<EmailRichTextVariable[]>(() => {
-    const byId = new Map<string, { value: string; label: string }>()
+    const byId = new Map<string, EmailRichTextVariable>()
     ;[...variables, ...flowVariables.variables].forEach((variable) => {
       if (!variable.fieldId) return
       byId.set(variable.fieldId, {
         value: variable.fieldId,
-        label: variable.categoryLabel ? `${variable.categoryLabel} · ${variable.label}` : variable.label
+        label: variable.label,
+        category: variable.category,
+        categoryLabel: variable.categoryLabel,
+        pathLabels: variable.pathLabels,
+        path: variable.path,
+        hiddenFromPicker: variable.hiddenFromPicker
       })
     })
     return Array.from(byId.values())
   }, [flowVariables.variables, variables])
+  const richEditorVariableCategories = useMemo<EmailRichTextVariableCategory[]>(
+    () => getVariablePickerCategories(allowedCategories, flowVariables.categories),
+    [allowedCategories, flowVariables.categories]
+  )
 
   const body = str(config.body)
   const bodyHtml = str(config.bodyHtml) || plainTextToEmailHtml(body)
@@ -91,7 +112,8 @@ export const EmailConfigEditor: React.FC<EmailConfigEditorProps> = ({ config, on
               body,
               bodyHtml,
               includeSignature,
-              variables: richEditorVariables
+              variables: richEditorVariables,
+              variableCategories: richEditorVariableCategories
             })
           }
         >

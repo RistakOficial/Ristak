@@ -90,6 +90,28 @@ export const VARIABLE_CATEGORIES: FlowVariableCategory[] = [
   { id: 'automation', label: 'Automatización' }
 ]
 
+/**
+ * Mantiene un solo orden de categorías para todos los selectores de variables.
+ * Las categorías contextuales del flujo (salidas de webhooks, IA, formularios,
+ * etc.) se agregan después de las categorías base permitidas por el disparador.
+ */
+export function getVariablePickerCategories(
+  allowedCategories: string[] | null,
+  contextualCategories: FlowVariableCategory[]
+): FlowVariableCategory[] {
+  const baseCategories = allowedCategories
+    ? allowedCategories
+        .map(id => VARIABLE_CATEGORIES.find(category => category.id === id))
+        .filter((category): category is FlowVariableCategory => Boolean(category))
+    : VARIABLE_CATEGORIES
+  const seen = new Set<string>()
+  return [...baseCategories, ...contextualCategories].filter(category => {
+    if (!category.id || seen.has(category.id)) return false
+    seen.add(category.id)
+    return true
+  })
+}
+
 export const BASE_VARIABLES: FlowVariable[] = [
   // Contacto (el correo es dato CRM, no canal)
   { fieldId: 'contact.first_name', label: 'Primer nombre', category: 'contact' },

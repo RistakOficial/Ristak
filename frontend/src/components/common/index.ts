@@ -140,8 +140,14 @@ export {
   emailHtmlToPlainText,
   plainTextToEmailHtml,
   sanitizeEmailRichHtmlForEditor,
-  type EmailRichTextVariable
+  type EmailRichTextVariable,
+  type EmailRichTextVariableCategory
 } from './EmailRichTextEditor'
+export {
+  CategorizedVariablePicker,
+  type CategorizedVariablePickerCategory,
+  type CategorizedVariablePickerOption
+} from './CategorizedVariablePicker'
 export {
   DropdownMenu,
   DropdownMenuTrigger,
