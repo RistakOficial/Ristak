@@ -124,10 +124,6 @@
   background: color-mix(in srgb, var(--accent-soft) 38%, transparent);
 }
 
-.inboxHeaderAgent {
-  justify-content: space-between;
-}
-
 .inboxHeaderCopy {
   flex: 1 1 auto;
   min-width: 0;
@@ -142,34 +138,6 @@
 
 .inboxTitleLine h2 {
   min-width: 0;
-}
-
-.inboxHeader .agentInboxButton[data-btn] {
-  width: 52px;
-  min-width: 52px;
-  height: 52px;
-  min-height: 52px;
-  aspect-ratio: 1 / 1;
-  flex: 0 0 52px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--shadow-xs);
-  overflow: hidden;
-}
-
-.inboxHeader .agentInboxButton[data-btn]:hover,
-.inboxHeader .agentInboxButton[data-btn]:focus-visible,
-.inboxHeader .agentInboxButtonActive[data-btn] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.inboxHeader .agentInboxButton[data-btn] > span {
-  pointer-events: none;
 }
 
 .chatSearchBar {
@@ -287,6 +255,31 @@
 
 .filterRow button.filterActive small {
   color: currentColor;
+}
+
+.agentStatusFilterSection {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.agentStatusFilterLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 11px;
+  text-transform: var(--label-transform);
+  letter-spacing: var(--label-spacing);
+}
+
+.agentStatusFilterRow,
+.chatFilterStackOpen .agentStatusFilterRow {
+  padding: 0;
 }
 
 /* Separador entre los filtros de mensajes y el botón de Comentarios. */

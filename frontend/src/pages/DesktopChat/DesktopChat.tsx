@@ -174,7 +174,7 @@ import {
 } from '@/utils/chatAudioPlayback'
 import styles from './DesktopChat.module.css'
 
-type ChatFilter = 'all' | 'goal_completed' | 'agent' | 'unread' | 'appointments' | 'customers'
+type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers'
 type AgentInboxStatusFilter = 'active' | 'completed' | 'paused' | 'skipped' | 'unassigned'
 type AdvancedChannelFilter = 'all' | 'whatsapp' | 'messenger' | 'instagram' | 'webchat' | 'sms' | 'email'
 type AdvancedSocialFilter = 'all' | 'facebook' | 'instagram' | 'messenger' | 'whatsapp' | 'google' | 'unknown'
@@ -426,7 +426,7 @@ interface ContactInfoAppointment {
   assignedUserId?: string | null
 }
 
-const BASE_CHAT_FILTERS: Array<{ id: Exclude<ChatFilter, 'customers' | 'goal_completed'>; label: string }> = [
+const BASE_CHAT_FILTERS: Array<{ id: Exclude<ChatFilter, 'customers' | 'agent'>; label: string }> = [
   { id: 'all', label: 'Todos' },
   { id: 'unread', label: 'No leídos' },
   { id: 'appointments', label: 'Con cita' }
@@ -3344,12 +3344,10 @@ export const DesktopChat: React.FC = () => {
   const conversationAgentEnabled = agentDefs.some((agent) => agent.enabled)
   const chatFilters = useMemo<Array<{ id: ChatFilter; label: string; agentIcon?: boolean }>>(() => ([
     BASE_CHAT_FILTERS[0],
-    ...(conversationAgentEnabled
-      ? [{ id: 'goal_completed' as const, label: 'Meta completada', agentIcon: true }]
-      : []),
+    { id: 'agent', label: 'Chatbot', agentIcon: true },
     ...BASE_CHAT_FILTERS.slice(1),
     { id: 'customers', label: customersLabel }
-  ]), [conversationAgentEnabled, customersLabel])
+  ]), [customersLabel])
   const [agentInboxStatusFilter, setAgentInboxStatusFilter] = useState<AgentInboxStatusFilter>(DEFAULT_AGENT_INBOX_STATUS_FILTER)
   const [agentComposerMenuOpen, setAgentComposerMenuOpen] = useState(false)
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
@@ -3743,7 +3741,6 @@ export const DesktopChat: React.FC = () => {
       }
       if (archivedViewOpen) return archivedChatIdSet.has(contact.id)
       if (archivedChatIdSet.has(contact.id)) return false
-      if (chatFilter === 'goal_completed') return true
       if (agentPriorityChatIdSet.has(contact.id)) return false
       return true
     }),
@@ -3774,7 +3771,6 @@ export const DesktopChat: React.FC = () => {
         // con sus comentarios fusionados dentro de su conversación.
         if (isComment) return false
         if (chatFilter === 'agent') return true
-        if (chatFilter === 'goal_completed') return contact.agentGoalCompletedUnreviewed === true
         if (chatFilter === 'unread') return Number(contact.unreadCount || 0) > 0
         if (chatFilter === 'appointments') return Boolean(contact.hasAppointments || contact.nextAppointmentDate)
         if (chatFilter === 'customers') return contact.status === 'customer'
@@ -3996,7 +3992,6 @@ export const DesktopChat: React.FC = () => {
     ? 'No hay chats archivados'
     : agentAssignedViewOpen
     ? hasAgentInboxListFilters && hasTextOrAdvancedChatFilters ? 'No encontré chats del bot' : agentInboxEmptyTitle
-    : chatFilter === 'goal_completed' ? 'No hay metas por revisar'
     : hasActiveChatFilters ? 'No encontré chats' : chats.length === 0 ? 'Todavía no hay conversaciones' : 'No hay chats en esta vista'
   const emptyChatDescription = archivedViewOpen
     ? 'Cuando archives una conversación, aparecerá en esta sección.'
@@ -4004,8 +3999,6 @@ export const DesktopChat: React.FC = () => {
     ? hasTextOrAdvancedChatFilters
       ? 'Prueba con menos filtros o busca otro contacto atendido por el bot.'
       : agentInboxEmptyDescription
-    : chatFilter === 'goal_completed'
-    ? 'Cuando un agente cumpla su objetivo, la conversación aparecerá aquí hasta que una persona la abra.'
     : hasActiveChatFilters
     ? 'Prueba con menos filtros o busca otro contacto.'
     : chats.length === 0
@@ -4614,27 +4607,6 @@ export const DesktopChat: React.FC = () => {
       }
     }
   }, [chatQuery])
-
-  useEffect(() => {
-    if (!conversationAgentEnabled && chatFilter === 'goal_completed') {
-      setChatFilter('all')
-    }
-  }, [chatFilter, conversationAgentEnabled])
-
-  useEffect(() => {
-    const goalCompletedUnreviewed =
-      conversationAgentEnabled && chatFilter === 'goal_completed'
-    if (chatGoalCompletedFilterRef.current === goalCompletedUnreviewed) return
-
-    chatGoalCompletedFilterRef.current = goalCompletedUnreviewed
-    chatListCursorRef.current = null
-    chatListHasAppendedRef.current = false
-    chatListHasMoreRef.current = true
-    if (goalCompletedUnreviewed) {
-      setActiveContactId('')
-    }
-    void loadChats({ goalCompletedUnreviewed })
-  }, [chatFilter, conversationAgentEnabled, loadChats])
 
   const loadMoreChatsIfNeeded = useCallback((event?: React.UIEvent<HTMLDivElement>) => {
     if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
@@ -6573,12 +6545,6 @@ export const DesktopChat: React.FC = () => {
     setChats((current) => dedupeChatsById([...current, injected]))
     handleSelectChat(injected)
   }, [handleSelectChat])
-
-  const handleToggleAgentAssignedView = useCallback(() => {
-    setArchivedViewOpen(false)
-    setAgentInboxStatusFilter(DEFAULT_AGENT_INBOX_STATUS_FILTER)
-    setChatFilter((current) => (current === 'agent' ? 'all' : 'agent'))
-  }, [])
 
   const handleToggleChatSelection = useCallback((contactId: string) => {
     setSelectedChatIds((current) => (
@@ -9152,25 +9118,13 @@ export const DesktopChat: React.FC = () => {
           className={`${styles.inboxPanel} ${agentAssignedViewOpen ? styles.inboxPanelAgent : ''} ${advancedFiltersOpen ? styles.inboxPanelFiltersOpen : ''}`}
           aria-label={agentAssignedViewOpen ? 'Lista de chats del bot' : 'Lista de chats'}
         >
-          <div className={`${styles.inboxHeader} ${agentAssignedViewOpen ? styles.inboxHeaderAgent : ''}`}>
+          <div className={styles.inboxHeader}>
             <div className={styles.inboxHeaderCopy}>
               <span className={styles.inboxTitleLine}>
                 <h2>{inboxTitle}</h2>
               </span>
               <p>{inboxSubtitle}</p>
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className={`${styles.agentInboxButton} ${agentAssignedViewOpen ? styles.agentInboxButtonActive : ''}`}
-              onClick={handleToggleAgentAssignedView}
-              aria-label={agentAssignedViewOpen ? 'Cerrar actividad del agente' : 'Ver actividad del agente'}
-              aria-pressed={agentAssignedViewOpen}
-              title={agentAssignedViewOpen ? 'Cerrar actividad del agente' : 'Actividad del agente'}
-            >
-              <AgentRobot size={42} active={conversationAgentEnabled} label="Chatbot" />
-            </Button>
           </div>
 
           <div className={styles.chatSearchBar}>
@@ -9238,18 +9192,6 @@ export const DesktopChat: React.FC = () => {
                     </button>
                   ) : null}
                 </>
-              ) : agentAssignedViewOpen ? (
-                AGENT_INBOX_STATUS_FILTERS.map((filter) => (
-                  <button
-                    key={filter.id}
-                    type="button"
-                    className={filter.id === agentInboxStatusFilter ? styles.filterActive : ''}
-                    onClick={() => setAgentInboxStatusFilter(filter.id)}
-                  >
-                    <span>{filter.label}</span>
-                    <small>{agentInboxStatusCounts[filter.id]}</small>
-                  </button>
-                ))
               ) : (
                 <>
                   {chatFilters.map((filter) => (
@@ -9259,8 +9201,12 @@ export const DesktopChat: React.FC = () => {
                       className={filter.id === chatFilter ? styles.filterActive : ''}
                       onClick={() => {
                         setArchivedViewOpen(false)
+                        if (filter.id === 'agent' && chatFilter !== 'agent') {
+                          setAgentInboxStatusFilter(DEFAULT_AGENT_INBOX_STATUS_FILTER)
+                        }
                         setChatFilter(filter.id)
                       }}
+                      aria-pressed={filter.id === chatFilter}
                     >
                       {filter.agentIcon ? <Bot size={14} aria-hidden="true" /> : null}
                       <span>{filter.label}</span>
@@ -9274,6 +9220,7 @@ export const DesktopChat: React.FC = () => {
                         className={styles.filterCommentsChip}
                         onClick={() => {
                           setArchivedViewOpen(false)
+                          setChatFilter('all')
                           setCommentsPlatform('all')
                           setCommentsView(true)
                         }}
@@ -9285,6 +9232,30 @@ export const DesktopChat: React.FC = () => {
                 </>
               )}
             </div>
+
+            {agentAssignedViewOpen && !commentsView ? (
+              <div className={styles.agentStatusFilterSection} aria-label="Estados del chatbot">
+                <span className={styles.agentStatusFilterLabel}>
+                  <Bot size={13} aria-hidden="true" />
+                  Estado del chatbot
+                </span>
+                <div className={`${styles.filterRow} ${styles.agentStatusFilterRow}`} role="tablist" aria-label="Filtrar chats por estado del chatbot">
+                  {AGENT_INBOX_STATUS_FILTERS.map((filter) => (
+                    <button
+                      key={filter.id}
+                      type="button"
+                      role="tab"
+                      className={filter.id === agentInboxStatusFilter ? styles.filterActive : ''}
+                      onClick={() => setAgentInboxStatusFilter(filter.id)}
+                      aria-selected={filter.id === agentInboxStatusFilter}
+                    >
+                      <span>{filter.label}</span>
+                      <small>{agentInboxStatusCounts[filter.id]}</small>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {advancedFiltersOpen ? (
               <div className={styles.filterPanel}>

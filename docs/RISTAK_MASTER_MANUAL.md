@@ -2740,6 +2740,15 @@ propia y no monta ningún asistente personal global. La pestaña principal
 `Chatbot` administra exclusivamente agentes conversacionales; la ruta legacy
 `/ai-agent` aterriza en esa misma configuración.
 
+En la bandeja desktop, el acceso al inventario de conversaciones del agente vive
+como el filtro principal **Chatbot** junto a `Todos`, `No leídos`, `Con cita` y
+`Clientes`; no usa un robot flotante en el encabezado ni duplica `Meta cumplida`
+como filtro principal. Al seleccionar **Chatbot**, el chip permanece activo y
+debajo aparece un segundo nivel separado para los estados `Activos`, `Meta
+cumplida`, `Pausados 24 horas`, `Omitidos` y `No asignados`, con sus conteos. Al
+elegir cualquier filtro normal se cierra ese segundo nivel y la bandeja vuelve al
+inventario general correspondiente.
+
 El historial de `/chat` conserva una textura punteada ligera, con los puntos
 espaciados para que el fondo se sienta limpio y no compita con los mensajes.
 
