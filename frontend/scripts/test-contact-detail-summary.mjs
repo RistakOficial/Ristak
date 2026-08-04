@@ -78,18 +78,49 @@ test('la página de Contactos aplica el resumen canónico al abrir la ficha', as
   )
 })
 
-test('la ficha conserva espacio antes de los resúmenes de citas y pagos', async () => {
-  const modalStyles = await readFile(
-    new URL('../src/components/common/ContactDetailsModal/ContactDetailsModal.module.css', import.meta.url),
-    'utf8'
-  )
+test('la ficha aplica un ritmo visual consistente a su panel de información', async () => {
+  const [modalSource, modalStyles] = await Promise.all([
+    readFile(
+      new URL('../src/components/common/ContactDetailsModal/ContactDetailsModal.tsx', import.meta.url),
+      'utf8'
+    ),
+    readFile(
+      new URL('../src/components/common/ContactDetailsModal/ContactDetailsModal.module.css', import.meta.url),
+      'utf8'
+    )
+  ])
 
   assert.match(
     modalStyles,
-    /\.singleContactInfoPanel \.contactDetails > \.detailSection:first-child\s*{\s*padding-top: 0;/
+    /\.singleContactInfoPanel \.contactDetails > \.detailSection:first-child\s*{\s*padding-top: 18px;/
   )
   assert.doesNotMatch(
     modalStyles,
     /\.singleContactInfoPanel \.detailSection:first-child\s*{/
+  )
+  assert.match(
+    modalStyles,
+    /\.singleContactInfoPanel \.contactDetails > \.detailSection\s*{[\s\S]*?padding: 18px 0;[\s\S]*?border-bottom: 1px solid var\(--contact-details-border\);/,
+    'las secciones principales deben compartir el ritmo y divisor de la ficha'
+  )
+  assert.match(
+    modalSource,
+    /className=\{styles\.contactReferrerField\}[\s\S]*?label="Recomendado por"[\s\S]*?density="compact"/,
+    'el recomendador debe quedar separado y usar la densidad compacta global'
+  )
+  assert.match(
+    modalSource,
+    /className=\{styles\.whatsappPreferenceSelect\}[\s\S]*?aria-label="WhatsApp de respuesta del contacto"/,
+    'el selector de WhatsApp debe activar la altura uniforme de la ficha'
+  )
+  assert.match(
+    modalStyles,
+    /\.whatsappPreferenceSelect \[data-ristak-dropdown-trigger\]\s*{[\s\S]*?min-height: var\(--app-control-height, 40px\);/,
+    'el selector de WhatsApp debe conservar la altura global de los controles'
+  )
+  assert.match(
+    modalSource,
+    /<ContactCustomFieldsPanel[\s\S]*?className=\{styles\.contactCustomFieldsPanel\}/,
+    'los campos personalizados deben heredar la misma escala de títulos del panel'
   )
 })

@@ -2751,21 +2751,27 @@ export function ContactDetailsModal({
                         <Icon name="calendar" size={16} />
                         <span>{formatLocalDateShort(selectedContact.created_at)}</span>
                       </div>
-                      {(onUpdateContact || selectedContact.referredByContact) && (
-                        <ContactSearchInput
-                          value={selectedContact.referredByContact || null}
-                          onChange={saveContactReferrer}
-                          label="Recomendado por"
-                          placeholder="Buscar contacto que lo recomendó..."
-                          allowCreate={false}
-                          disabled={!onUpdateContact}
-                          excludeContactIds={[selectedContact.id]}
-                        />
-                      )}
-                      {selectedContact.attributionInheritedFromReferral && selectedContact.attributionContactName && (
-                        <div className={styles.detailItem}>
-                          <Icon name="user" size={16} />
-                          <span>Atribución heredada de {selectedContact.attributionContactName}</span>
+                      {((onUpdateContact || selectedContact.referredByContact) ||
+                        (selectedContact.attributionInheritedFromReferral && selectedContact.attributionContactName)) && (
+                        <div className={styles.contactReferrerField}>
+                          {(onUpdateContact || selectedContact.referredByContact) && (
+                            <ContactSearchInput
+                              value={selectedContact.referredByContact || null}
+                              onChange={saveContactReferrer}
+                              label="Recomendado por"
+                              placeholder="Buscar contacto que lo recomendó..."
+                              density="compact"
+                              allowCreate={false}
+                              disabled={!onUpdateContact}
+                              excludeContactIds={[selectedContact.id]}
+                            />
+                          )}
+                          {selectedContact.attributionInheritedFromReferral && selectedContact.attributionContactName && (
+                            <div className={styles.detailItem}>
+                              <Icon name="user" size={16} />
+                              <span>Atribución heredada de {selectedContact.attributionContactName}</span>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -2779,9 +2785,11 @@ export function ContactDetailsModal({
                           {whatsappPreferenceModeLabel} · {whatsappPreferenceDescription}
                         </p>
                         <CustomSelect
+                          className={styles.whatsappPreferenceSelect}
                           value={preferredWhatsAppPhoneNumberId}
                           onChange={(event) => updatePreferredWhatsAppPhoneNumber(event.target.value)}
                           disabled={savingWhatsAppPreference || !onUpdatePreferredWhatsAppPhoneNumber}
+                          aria-label="WhatsApp de respuesta del contacto"
                         >
                           <option value="">{automaticWhatsAppPreferenceOptionLabel}</option>
                           {whatsappPreferenceOptions.map((phone) => (
@@ -2833,6 +2841,7 @@ export function ContactDetailsModal({
 
                 <div className={styles.detailSection}>
                   <ContactCustomFieldsPanel
+                    className={styles.contactCustomFieldsPanel}
                     contactId={selectedContact.id}
                     customFields={selectedContact.customFields || []}
                     onUpdateCustomFields={onUpdateCustomFields}

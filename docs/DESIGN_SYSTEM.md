@@ -401,12 +401,14 @@ la vez.
   su forma.
 - **Gráficas**: series desde `--accent` / `--accent-2` / `--pos` / `--neg` /
   `--design-chart-*` (mapeados). Grid `--chart-grid`.
-- **Panel derecho de Chat en escritorio**: conserva el orden funcional actual,
-  pero usa un solo ritmo por sección (18px), etiquetas y ayudas en la escala
-  `--font-size-xs`, valores y controles en `--font-size-sm`, controles globales
-  con la altura del sistema y divisores `--border`. Los datos compuestos, como
-  el contacto recomendador, pueden ser más altos por tener dos líneas, pero no
-  deben introducir otra escala tipográfica ni quedar pegados al bloque anterior.
+- **Paneles de contacto en Chat y Contactos de escritorio**: tanto el panel
+  derecho de Chat como la columna de información de la Ficha de Contacto
+  conservan su orden funcional, pero usan un solo ritmo por sección (18px),
+  etiquetas y ayudas en la escala `--font-size-xs`, valores y controles en
+  `--font-size-sm`, controles globales con la altura del sistema y divisores
+  `--border`. Los datos compuestos, como el contacto recomendador, pueden ser
+  más altos por tener dos líneas, pero no deben introducir otra escala
+  tipográfica ni quedar pegados al bloque anterior.
 - **Marcas de terceros** (Meta/Google/WhatsApp/etc.): su color de marca solo en
   su contexto inmediato.
 - **App móvil integrada**: sistema aparte, **prohibido** tocarla.

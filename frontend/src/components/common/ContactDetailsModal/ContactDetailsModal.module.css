@@ -439,10 +439,13 @@
 }
 
 .singleContactInfoPanel {
+  --contact-details-border: var(--border);
+
   flex: 0 0 min(42%, 470px);
   min-width: 330px;
   max-width: 500px;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--contact-details-border);
+  background: var(--bg-soft);
 }
 
 .contactHeader {
@@ -529,24 +532,58 @@
   padding: 1rem 1.25rem;
 }
 
+.singleContactInfoPanel .contactHeader {
+  padding: 18px;
+  background: var(--surface);
+}
+
+.singleContactInfoPanel .contactHeaderName {
+  color: var(--text);
+  font-size: var(--font-size-base);
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.singleContactInfoPanel .contactHeaderMeta {
+  color: var(--text-mute);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
 .singleContactInfoPanel .contactDetails {
   display: flex;
   flex-direction: column;
+  padding: 0 18px;
+  background: var(--bg-soft);
 }
 
-.singleContactInfoPanel .detailSection {
+.singleContactInfoPanel .contactDetails > .detailSection {
   margin-bottom: 0;
-  padding: 0.875rem 0;
-  border-bottom: 1px solid var(--border);
+  padding: 18px 0;
+  border-bottom: 1px solid var(--contact-details-border);
 }
 
 .singleContactInfoPanel .contactDetails > .detailSection:first-child {
-  padding-top: 0;
+  padding-top: 18px;
 }
 
-.singleContactInfoPanel .detailSection:last-child {
-  padding-bottom: 0;
+.singleContactInfoPanel .contactDetails > .detailSection:last-child {
   border-bottom: 0;
+}
+
+.singleContactInfoPanel .contactDetails > .twoColumnGrid {
+  gap: 12px;
+  margin: 0;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--contact-details-border);
+}
+
+.singleContactInfoPanel .contactDetails > .twoColumnGrid:empty {
+  display: none;
+}
+
+.singleContactInfoPanel .twoColumnGrid > .detailSection {
+  margin: 0;
 }
 
 .contactChatPanel {
@@ -1126,6 +1163,58 @@
   gap: 0.375rem;
 }
 
+.singleContactInfoPanel .detailSectionTitle,
+.singleContactInfoPanel .contactTagHeader .contactTagTitle {
+  margin-bottom: 12px;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.singleContactInfoPanel .contactTagHeader .contactTagTitle {
+  margin-bottom: 0;
+}
+
+.singleContactInfoPanel .contactTagHeader {
+  margin-bottom: 12px;
+}
+
+.singleContactInfoPanel .detailSectionContent {
+  gap: 10px;
+}
+
+.singleContactInfoPanel .detailItem {
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+.singleContactInfoPanel .detailItem svg {
+  color: var(--text-mute);
+}
+
+.contactReferrerField {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 18px;
+  border-top: 1px solid var(--contact-details-border, var(--border));
+}
+
+.contactCustomFieldsPanel {
+  --contact-custom-fields-title-size: var(--font-size-sm);
+  --contact-custom-fields-title-weight: 650;
+}
+
+.singleContactInfoPanel .customFieldsToggleLabel {
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+  line-height: 1.35;
+}
+
 .detailItem {
   display: flex;
   align-items: flex-start;
@@ -1206,6 +1295,11 @@
   color: var(--text-dim);
   font-weight: 400;
   overflow-wrap: anywhere;
+}
+
+.whatsappPreferenceSelect [data-ristak-dropdown-trigger] {
+  min-height: var(--app-control-height, 40px);
+  padding-block: 6px;
 }
 
 .contactTagPicker {
