@@ -1,7 +1,14 @@
 import React, { useEffect, useState } from 'react'
 import { ExternalLink, Image, Loader2, Phone, Reply, Video, FileText } from 'lucide-react'
 import { getWhatsAppTemplate } from '@/services/automationCatalogsService'
-import type { WhatsAppApiTemplate } from '@/services/whatsappApiService'
+import type {
+  WhatsAppApiTemplate,
+  WhatsAppApiTemplateVariableBindings
+} from '@/services/whatsappApiService'
+import {
+  getWhatsAppTemplateVariableLabel,
+  type WhatsAppTemplateVariableTarget
+} from '@/utils/whatsappTemplateVariableLabels'
 import styles from '../AutomationEditor.module.css'
 
 /**
@@ -17,20 +24,25 @@ interface Component {
   buttons?: Array<{ type?: string; text?: string; url?: string; phone_number?: string }>
 }
 
-/** Resalta las variables {{1}} de la plantilla como chips */
-const TemplateText: React.FC<{ text: string }> = ({ text }) => {
+/** Resalta las variables {{1}} con el nombre configurado para esa sección. */
+const TemplateText: React.FC<{
+  text: string
+  target: WhatsAppTemplateVariableTarget
+  variableBindings?: WhatsAppApiTemplateVariableBindings
+}> = ({ text, target, variableBindings }) => {
   const parts = text.split(/(\{\{\s*\d+\s*\}\})/g)
   return (
     <>
-      {parts.map((part, index) =>
-        /^\{\{\s*\d+\s*\}\}$/.test(part) ? (
+      {parts.map((part, index) => {
+        const variableIndex = part.replace(/[{}\s]/g, '')
+        return /^\{\{\s*\d+\s*\}\}$/.test(part) ? (
           <span key={index} className={styles.templateVarChip}>
-            {part.replace(/[{}\s]/g, '') ? `Variable ${part.replace(/[{}\s]/g, '')}` : part}
+            {getWhatsAppTemplateVariableLabel(variableBindings, target, variableIndex)}
           </span>
         ) : (
           <React.Fragment key={index}>{part}</React.Fragment>
         )
-      )}
+      })}
     </>
   )
 }
@@ -106,12 +118,20 @@ export const WhatsAppTemplatePreview: React.FC<{ templateId: string }> = ({ temp
         )}
         {header?.text && headerFormat === 'TEXT' && (
           <div className={styles.templatePreviewHeader}>
-            <TemplateText text={header.text} />
+            <TemplateText
+              text={header.text}
+              target="headerText"
+              variableBindings={template.variableBindings}
+            />
           </div>
         )}
         {body?.text && (
           <div className={styles.templatePreviewBody}>
-            <TemplateText text={body.text} />
+            <TemplateText
+              text={body.text}
+              target="bodyText"
+              variableBindings={template.variableBindings}
+            />
           </div>
         )}
         {footer?.text && <div className={styles.templatePreviewFooter}>{footer.text}</div>}

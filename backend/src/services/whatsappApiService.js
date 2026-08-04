@@ -11887,7 +11887,7 @@ function decodeWhatsAppTemplateCatalogCursor(value, expectedScope) {
   }
 }
 
-function mapTemplateCatalogRow(row = {}) {
+function getTemplateCatalogLocalSnapshot(row = {}) {
   const raw = parseJsonValue(row.raw_payload_json, {}) || {}
   let localSnapshot = raw
   for (let depth = 0; depth < 4; depth += 1) {
@@ -11895,16 +11895,78 @@ function mapTemplateCatalogRow(row = {}) {
     if (!localSnapshot?.raw || typeof localSnapshot.raw !== 'object') break
     localSnapshot = localSnapshot.raw
   }
+  return localSnapshot || {}
+}
+
+function normalizeTemplateCatalogVariableBindings(value) {
+  const rawBindings = parseJsonValue(value, {}) || {}
+  if (!rawBindings || typeof rawBindings !== 'object' || Array.isArray(rawBindings)) return {}
+
+  const normalized = {}
+  for (const [target, bindings] of Object.entries(rawBindings)) {
+    if (!/^(?:headerText|bodyText|buttons\.\d+\.value)$/.test(target)) continue
+    if (!bindings || typeof bindings !== 'object' || Array.isArray(bindings)) continue
+
+    const targetBindings = {}
+    for (const [index, binding] of Object.entries(bindings)) {
+      if (!/^\d+$/.test(index)) continue
+      if (!binding || typeof binding !== 'object' || Array.isArray(binding)) continue
+
+      const label = cleanString(binding.label)
+      const variableKey = cleanString(binding.variableKey)
+      const mergeField = cleanString(binding.mergeField)
+      if (!label && !variableKey && !mergeField) continue
+
+      targetBindings[index] = {
+        ...(label ? { label } : {}),
+        ...(variableKey ? { variableKey } : {}),
+        ...(mergeField ? { mergeField } : {})
+      }
+    }
+
+    if (Object.keys(targetBindings).length) normalized[target] = targetBindings
+  }
+  return normalized
+}
+
+async function getTemplateCatalogVariableBindings(rows = []) {
+  const localTemplateIds = [...new Set(rows
+    .map((row) => {
+      const localSnapshot = getTemplateCatalogLocalSnapshot(row)
+      return cleanString(localSnapshot.localTemplateId || localSnapshot.local_template_id)
+    })
+    .filter(Boolean))]
+
+  if (!localTemplateIds.length) return new Map()
+
+  const localRows = await db.all(`
+    SELECT id, variable_bindings_json
+    FROM whatsapp_message_templates
+    WHERE id IN (${localTemplateIds.map(() => '?').join(', ')})
+  `, localTemplateIds)
+
+  return new Map(localRows.map((row) => [
+    cleanString(row.id),
+    normalizeTemplateCatalogVariableBindings(row.variable_bindings_json)
+  ]))
+}
+
+function mapTemplateCatalogRow(row = {}, variableBindingsByLocalTemplateId = new Map()) {
+  const localSnapshot = getTemplateCatalogLocalSnapshot(row)
+  const localTemplateId = cleanString(
+    localSnapshot.localTemplateId || localSnapshot.local_template_id
+  )
   const displayName = cleanString(
     localSnapshot.localTemplateName || localSnapshot.local_template_name || row.name
   )
-  return mapTemplateRow({
-    ...row,
-    display_name: displayName || row.name,
-    local_template_id: cleanString(
-      localSnapshot.localTemplateId || localSnapshot.local_template_id
-    ) || null
-  })
+  return {
+    ...mapTemplateRow({
+      ...row,
+      display_name: displayName || row.name,
+      local_template_id: localTemplateId || null
+    }),
+    variableBindings: variableBindingsByLocalTemplateId.get(localTemplateId) || {}
+  }
 }
 
 /**
@@ -11970,10 +12032,11 @@ export async function getWhatsAppApiTemplatesCatalogPage({
 
   const hasMore = rows.length > pageLimit
   const pageRows = hasMore ? rows.slice(0, pageLimit) : rows
+  const variableBindingsByLocalTemplateId = await getTemplateCatalogVariableBindings(pageRows)
   const seen = new Set()
   const items = []
   for (const row of pageRows) {
-    const item = mapTemplateCatalogRow(row)
+    const item = mapTemplateCatalogRow(row, variableBindingsByLocalTemplateId)
     const canonicalKey = `${cleanString(item.waba_id)}|${cleanString(item.name).toLowerCase()}|${cleanString(item.language).toLowerCase()}`
     if (seen.has(canonicalKey)) continue
     seen.add(canonicalKey)

@@ -233,6 +233,68 @@ test('catálogo WhatsApp de automatizaciones es local, buscable y usa cursor con
   }
 })
 
+test('catálogo WhatsApp de automatizaciones conserva los nombres configurados de sus variables', async () => {
+  const suffix = randomUUID().replaceAll('-', '')
+  const localTemplateId = `wa_local_binding_${suffix}`
+  const apiTemplateId = `wa_api_binding_${suffix}`
+  const templateName = `variable_binding_${suffix}`
+  const variableBindings = {
+    headerText: {},
+    bodyText: {
+      1: {
+        label: 'Nombre del contacto',
+        variableKey: 'contact.first_name',
+        mergeField: '{{contact.first_name}}',
+        example: 'Raúl'
+      }
+    }
+  }
+
+  try {
+    await db.run(`
+      INSERT INTO whatsapp_message_templates (
+        id, name, language, status, body_text, variable_bindings_json,
+        provider_template_id, provider_template_name, provider_status
+      ) VALUES (?, ?, 'es_MX', 'active', 'Hola {{1}}', ?, ?, ?, 'APPROVED')
+    `, [localTemplateId, templateName, JSON.stringify(variableBindings), apiTemplateId, templateName])
+    await db.run(`
+      INSERT INTO whatsapp_api_templates (
+        id, official_template_id, waba_id, name, language, status,
+        components_json, raw_payload_json
+      ) VALUES (?, ?, 'waba_binding_projection', ?, 'es_MX', 'APPROVED', ?, ?)
+    `, [
+      apiTemplateId,
+      apiTemplateId,
+      templateName,
+      JSON.stringify([{ type: 'BODY', text: 'Hola {{1}}' }]),
+      JSON.stringify({ raw: { localTemplateId, localTemplateName: templateName } })
+    ])
+
+    const catalog = await getWhatsAppApiTemplatesCatalogPage({
+      status: 'APPROVED',
+      search: apiTemplateId,
+      limit: 10
+    })
+
+    assert.equal(catalog.items.length, 1)
+    assert.equal(catalog.items[0].local_template_id, localTemplateId)
+    assert.deepEqual(catalog.items[0].variableBindings, {
+      bodyText: {
+        1: {
+          label: 'Nombre del contacto',
+          variableKey: 'contact.first_name',
+          mergeField: '{{contact.first_name}}'
+        }
+      }
+    })
+    assert.equal(catalog.items[0].variableBindings.bodyText['1'].label, 'Nombre del contacto')
+    assert.equal('example' in catalog.items[0].variableBindings.bodyText['1'], false)
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_templates WHERE id = ?', [apiTemplateId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [localTemplateId]).catch(() => undefined)
+  }
+})
+
 test('los GET de plantillas no reparan, sincronizan ni refrescan implícitamente', async () => {
   const [settingsController, whatsappController, automationsService, frontendCatalog] = await Promise.all([
     readFile(new URL('../src/controllers/messageTemplatesController.js', import.meta.url), 'utf8'),

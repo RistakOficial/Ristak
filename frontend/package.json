@@ -19,6 +19,7 @@
     "test:chat-audio-playback": "node scripts/test-chat-audio-playback.mjs",
     "test:whatsapp-message-presentation": "node scripts/test-whatsapp-message-presentation.mjs",
     "test:whatsapp-connection-status": "node scripts/test-whatsapp-connection-status.mjs",
+    "test:whatsapp-template-variable-labels": "node --experimental-strip-types --test scripts/test-whatsapp-template-variable-labels.mjs",
     "test:whatsapp-phone-metrics": "node scripts/test-whatsapp-phone-metrics.mjs",
     "test:sites-video-rule-contract": "node scripts/test-sites-video-rule-contract.mjs",
     "test:sites-video-resolution-contract": "node scripts/test-sites-video-resolution-contract.mjs",

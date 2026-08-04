@@ -47,9 +47,21 @@ export interface WhatsAppApiBalance {
   updated_at?: string | null
 }
 
+export interface WhatsAppApiTemplateVariableBinding {
+  variableKey?: string
+  mergeField?: string
+  label?: string
+}
+
+export type WhatsAppApiTemplateVariableBindings = Record<
+  string,
+  Record<string, WhatsAppApiTemplateVariableBinding>
+>
+
 export interface WhatsAppApiTemplate {
   id: string
   official_template_id?: string | null
+  local_template_id?: string | null
   waba_id?: string | null
   provider?: 'ycloud' | 'meta_direct' | string
   source_adapter?: 'ycloud' | 'meta_direct' | string
@@ -65,6 +77,7 @@ export interface WhatsAppApiTemplate {
   status_update_event?: string | null
   disable_date?: string | null
   components?: Array<Record<string, any>>
+  variableBindings?: WhatsAppApiTemplateVariableBindings
   ycloud_create_time?: string | null
   ycloud_update_time?: string | null
   created_at?: string | null

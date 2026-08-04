@@ -453,7 +453,12 @@ plantillas locales ni llama a Meta/YCloud. Una seleccion guardada fuera de la
 primera pagina se resuelve con una busqueda local por ID. Si no hay snapshots,
 la UI conserva la lista vacia hasta que el usuario conecta/refresca o ejecuta el
 POST de sincronizacion; nunca dispara `refresh` por el simple hecho de abrir el
-editor.
+editor. Cuando el snapshot proviene de una plantilla configurada en Ristak, el
+catalogo tambien adjunta las etiquetas y referencias no sensibles derivadas de
+`variable_bindings_json`, nunca los ejemplos de aprobacion: la vista previa de
+Automatizaciones muestra el nombre exacto elegido para cada placeholder numerico
+en encabezado y cuerpo. Plantillas importadas o historicas sin ese vinculo
+mantienen un fallback informativo y no inventan una configuracion inexistente.
 
 Analytics separa sus contratos por población. Los contratos de tráfico web están
 protegidos por `analytics` + `web_analytics`; mensajería y adquisición de
