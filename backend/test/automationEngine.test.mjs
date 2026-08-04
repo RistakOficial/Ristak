@@ -2804,28 +2804,24 @@ test('esperar una cita conserva la identidad de la cita que disparó la ejecuci�
       startTime: otherStart
     })
 
-    const previousEnrollmentId = enrollment.id
-    const previousEnrollment = await db.get(
-      'SELECT * FROM automation_enrollments WHERE id = ?',
-      [previousEnrollmentId]
-    )
-    assert.equal(previousEnrollment.status, 'exited')
-    assert.ok(JSON.parse(previousEnrollment.log).some(entry => (
-      entry.detail.includes('reiniciar desde el principio')
-    )))
-
+    const preservedEnrollmentId = enrollment.id
     enrollment = await db.get(
-      `SELECT * FROM automation_enrollments
-       WHERE automation_id = ? AND contact_id = ? AND status = 'waiting'
-       ORDER BY entered_at DESC, id DESC
-       LIMIT 1`,
-      [automationId, contactId]
+      'SELECT * FROM automation_enrollments WHERE id = ?',
+      [preservedEnrollmentId]
     )
-    assert.notEqual(enrollment.id, previousEnrollmentId)
+    assert.equal(enrollment.status, 'waiting')
     assert.equal(enrollment.resume_at, waitTarget(otherStart))
     storedContext = JSON.parse(enrollment.context)
     assert.equal(storedContext.waitAppointmentId, otherAppointmentId)
     assert.equal(storedContext.appointmentId, otherAppointmentId)
+    assert.equal(storedContext.appointmentLifecycleAppointmentId, otherAppointmentId)
+    const rescheduledLog = JSON.parse(enrollment.log)
+    assert.ok(rescheduledLog.some(entry => entry.detail.includes('conservó su progreso')))
+    const enrollmentCount = await db.get(
+      'SELECT COUNT(*) AS total FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.equal(Number(enrollmentCount.total), 1)
 
     await db.run(
       `UPDATE appointments
@@ -3067,7 +3063,7 @@ test('una automatización disparada por cancelación sí puede ejecutar sus prop
   }
 })
 
-test('reprogramar durante una espera anterior reinicia el flujo con la hora nueva', async () => {
+test('reprogramar durante una espera anterior conserva el progreso y usa la hora nueva', async () => {
   const suffix = randomUUID()
   const automationId = `automation_reschedule_before_appointment_wait_${suffix}`
   const contactId = `contact_reschedule_before_appointment_wait_${suffix}`
@@ -3150,7 +3146,8 @@ test('reprogramar durante una espera anterior reinicia el flujo con la hora nuev
       'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
       [automationId, contactId]
     )
-    const previousEnrollmentId = enrollment.id
+    const preservedEnrollmentId = enrollment.id
+    const preservedDurationResumeAt = enrollment.resume_at
 
     await db.run(
       `UPDATE appointments
@@ -3171,30 +3168,24 @@ test('reprogramar durante una espera anterior reinicia el flujo con la hora nuev
       startTime: rescheduledStart
     })
 
-    const previousEnrollment = await db.get(
-      'SELECT * FROM automation_enrollments WHERE id = ?',
-      [previousEnrollmentId]
-    )
-    assert.equal(previousEnrollment.status, 'exited')
-    assert.ok(JSON.parse(previousEnrollment.log).some(entry => (
-      entry.detail.includes('reiniciar desde el principio')
-    )))
-
     enrollment = await db.get(
-      `SELECT * FROM automation_enrollments
-       WHERE automation_id = ? AND contact_id = ? AND status = 'waiting'
-       ORDER BY entered_at DESC, id DESC
-       LIMIT 1`,
-      [automationId, contactId]
+      'SELECT * FROM automation_enrollments WHERE id = ?',
+      [preservedEnrollmentId]
     )
-    assert.notEqual(enrollment.id, previousEnrollmentId)
+    assert.equal(enrollment.status, 'waiting')
     assert.equal(enrollment.current_node_id, 'pre-wait')
+    assert.equal(enrollment.resume_at, preservedDurationResumeAt)
     let context = JSON.parse(enrollment.context)
     assert.equal(context.startTime, rescheduledStart)
     assert.equal(context.appointmentLifecycleAppointmentId, appointmentId)
-    const restartedLog = JSON.parse(enrollment.log)
-    assert.equal(restartedLog.filter(entry => entry.nodeId === 'start').length, 1)
-    assert.ok(restartedLog.some(entry => entry.detail.includes('reinició el flujo')))
+    const preservedLog = JSON.parse(enrollment.log)
+    assert.equal(preservedLog.filter(entry => entry.nodeId === 'start').length, 1)
+    assert.ok(preservedLog.some(entry => entry.detail.includes('conservó su progreso')))
+    const enrollmentCount = await db.get(
+      'SELECT COUNT(*) AS total FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.equal(Number(enrollmentCount.total), 1)
 
     await db.run(
       `UPDATE automation_enrollments
@@ -3216,6 +3207,250 @@ test('reprogramar durante una espera anterior reinicia el flujo con la hora nuev
     assert.equal(context.waitAppointmentId, appointmentId)
     const log = JSON.parse(enrollment.log)
     assert.equal(log.filter(entry => entry.nodeId === 'start').length, 1)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('reprogramar una cita recalcula la espera aunque la ejecución esté pausada', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_reschedule_paused_${suffix}`
+  const contactId = `contact_reschedule_paused_${suffix}`
+  const appointmentId = `appointment_reschedule_paused_${suffix}`
+  const originalStart = new Date(Date.now() + (5 * 60 * 60 * 1000)).toISOString()
+  const rescheduledStart = new Date(Date.now() + (9 * 60 * 60 * 1000)).toISOString()
+  const oneHour = 60 * 60 * 1000
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        config: {
+          triggers: [{ id: 'trigger-booked', type: 'trigger-appointment-booked', config: {} }]
+        }
+      },
+      {
+        id: 'appointment-wait',
+        type: 'logic-wait',
+        label: 'Esperar cita pausada',
+        config: {
+          mode: 'appointment',
+          appointmentOffset: 'before',
+          offsetAmount: 1,
+          offsetUnit: 'hours'
+        }
+      }
+    ],
+    edges: [
+      { id: 'edge-start-wait', sourceNodeId: 'start', targetNodeId: 'appointment-wait' }
+    ],
+    settings: {}
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, full_name, first_name, custom_fields)
+       VALUES (?, ?, 'Contacto Reprogramado Pausado', 'Contacto', '{}')`,
+      [contactId, `+1560${Date.now().toString().slice(-8)}`]
+    )
+    await db.run(
+      `INSERT INTO appointments
+         (id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time)
+       VALUES (?, 'calendar-reschedule-paused', ?, 'Cita pausada', 'confirmed', 'confirmed', ?, ?)`,
+      [
+        appointmentId,
+        contactId,
+        originalStart,
+        new Date(new Date(originalStart).getTime() + oneHour).toISOString()
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, 'Reprogramación de espera pausada', 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('appointment-booked', {
+      contactId,
+      appointmentId,
+      calendarId: 'calendar-reschedule-paused',
+      status: 'confirmed',
+      startTime: originalStart
+    })
+    let enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    const enrollmentId = enrollment.id
+
+    await controlAutomationEnrollment({
+      automationId,
+      enrollmentId,
+      action: 'pause'
+    })
+    await db.run(
+      `UPDATE appointments
+       SET start_time = ?, end_time = ?
+       WHERE id = ?`,
+      [
+        rescheduledStart,
+        new Date(new Date(rescheduledStart).getTime() + oneHour).toISOString(),
+        appointmentId
+      ]
+    )
+    await handleAutomationEvent('appointment-status', {
+      contactId,
+      appointmentId,
+      calendarId: 'calendar-reschedule-paused',
+      status: 'confirmed',
+      appointmentChange: 'rescheduled',
+      startTime: rescheduledStart
+    })
+
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollmentId])
+    const expectedResumeAt = new Date(new Date(rescheduledStart).getTime() - oneHour).toISOString()
+    assert.equal(enrollment.status, 'paused')
+    assert.equal(enrollment.current_node_id, 'appointment-wait')
+    assert.equal(enrollment.resume_at, expectedResumeAt)
+    const pausedContext = JSON.parse(enrollment.context)
+    assert.equal(pausedContext.startTime, rescheduledStart)
+    assert.equal(pausedContext.__pausedResumeAt, expectedResumeAt)
+    assert.equal(pausedContext.__pausedWaitKind, 'appointment')
+    assert.ok(JSON.parse(enrollment.log).some(entry => (
+      entry.detail.includes('conserva su pausa manual')
+    )))
+
+    await controlAutomationEnrollment({
+      automationId,
+      enrollmentId,
+      action: 'resume'
+    })
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollmentId])
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(enrollment.resume_at, expectedResumeAt)
+    const enrollmentCount = await db.get(
+      'SELECT COUNT(*) AS total FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.equal(Number(enrollmentCount.total), 1)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('reprogramar una cita crea una vuelta nueva sólo cuando la anterior ya terminó', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_reschedule_after_completion_${suffix}`
+  const contactId = `contact_reschedule_after_completion_${suffix}`
+  const appointmentId = `appointment_reschedule_after_completion_${suffix}`
+  const originalStart = new Date(Date.now() + (8 * 60 * 60 * 1000)).toISOString()
+  const rescheduledStart = new Date(Date.now() + (12 * 60 * 60 * 1000)).toISOString()
+  const oneHour = 60 * 60 * 1000
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        config: {
+          triggers: [{ id: 'trigger-booked', type: 'trigger-appointment-booked', config: {} }]
+        }
+      },
+      {
+        id: 'finish',
+        type: 'logic-condition',
+        label: 'Finalizar vuelta',
+        config: { conditions: [] }
+      }
+    ],
+    edges: [
+      { id: 'edge-start-finish', sourceNodeId: 'start', targetNodeId: 'finish' }
+    ],
+    settings: { allowReentry: false }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, full_name, first_name, custom_fields)
+       VALUES (?, ?, 'Contacto Reprogramado Terminado', 'Contacto', '{}')`,
+      [contactId, `+1559${Date.now().toString().slice(-8)}`]
+    )
+    await db.run(
+      `INSERT INTO appointments
+         (id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time)
+       VALUES (?, 'calendar-reschedule-completed', ?, 'Cita con vuelta terminada', 'confirmed', 'confirmed', ?, ?)`,
+      [
+        appointmentId,
+        contactId,
+        originalStart,
+        new Date(new Date(originalStart).getTime() + oneHour).toISOString()
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, 'Reprogramación después de terminar', 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('appointment-booked', {
+      contactId,
+      appointmentId,
+      calendarId: 'calendar-reschedule-completed',
+      status: 'confirmed',
+      startTime: originalStart
+    })
+
+    let enrollments = await db.all(
+      `SELECT * FROM automation_enrollments
+       WHERE automation_id = ? AND contact_id = ?
+       ORDER BY entered_at ASC, id ASC`,
+      [automationId, contactId]
+    )
+    assert.equal(enrollments.length, 1)
+    assert.equal(enrollments[0].status, 'completed')
+    const originalEnrollmentId = enrollments[0].id
+
+    await db.run(
+      `UPDATE appointments
+       SET start_time = ?, end_time = ?
+       WHERE id = ?`,
+      [
+        rescheduledStart,
+        new Date(new Date(rescheduledStart).getTime() + oneHour).toISOString(),
+        appointmentId
+      ]
+    )
+    await handleAutomationEvent('appointment-status', {
+      contactId,
+      appointmentId,
+      calendarId: 'calendar-reschedule-completed',
+      status: 'confirmed',
+      appointmentChange: 'rescheduled',
+      startTime: rescheduledStart
+    })
+
+    enrollments = await db.all(
+      `SELECT * FROM automation_enrollments
+       WHERE automation_id = ? AND contact_id = ?
+       ORDER BY entered_at ASC, id ASC`,
+      [automationId, contactId]
+    )
+    assert.equal(enrollments.length, 2)
+    assert.equal(enrollments.filter(row => row.id === originalEnrollmentId).length, 1)
+    const newEnrollment = enrollments.find(row => row.id !== originalEnrollmentId)
+    assert.equal(newEnrollment.status, 'completed')
+    const context = JSON.parse(newEnrollment.context)
+    assert.equal(context.startTime, rescheduledStart)
+    assert.equal(context.appointmentLifecycleAppointmentId, appointmentId)
+    const log = JSON.parse(newEnrollment.log)
+    assert.equal(log.filter(entry => entry.nodeId === 'start').length, 1)
+    assert.ok(log.some(entry => entry.detail.includes('reprogramó una cita')))
+    assert.equal(log.some(entry => entry.detail.includes('reinició')), false)
   } finally {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])

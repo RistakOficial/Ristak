@@ -2656,10 +2656,10 @@ const EVENT_DESCRIPTIONS = {
   'tag-changed': (ctx) => `etiqueta "${ctx.tag}" ${ctx.tagAction === 'removed' ? 'eliminada' : 'añadida'}`,
   'form-submitted': (ctx) => `envió el formulario${ctx.formName ? ` "${ctx.formName}"` : ''}`,
   'appointment-booked': (ctx) => appointmentChangeFromContext(ctx) === 'rescheduled'
-    ? 'reprogramó una cita y reinició el flujo'
+    ? 'reprogramó una cita'
     : 'agendó una cita',
   'appointment-status': (ctx) => appointmentChangeFromContext(ctx) === 'rescheduled'
-    ? 'reprogramó una cita y reinició el flujo'
+    ? 'reprogramó una cita'
     : `la cita cambió a ${ctx.status}`,
   'payment-received': (ctx) => {
     const labels = {
@@ -7345,7 +7345,7 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
         ...storedContext,
         ...eventContextForEnrollment(eventType, ctx)
       }
-      if (lifecycleMatch.cancelled || lifecycleMatch.rescheduled) {
+      if (lifecycleMatch.cancelled) {
         enrollment.status = 'exited'
         enrollment.resumeAt = null
         enrollment.waitKind = null
@@ -7353,13 +7353,19 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
           nodeId: enrollment.currentNodeId || 'flow',
           label: nodeLabel(getNode(automation.flow, enrollment.currentNodeId)) || 'Flujo',
           status: 'info',
-          detail: lifecycleMatch.cancelled
-            ? 'La cita ligada fue cancelada; la ejecución salió automáticamente del flujo'
-            : 'La cita ligada fue reprogramada; la ejecución anterior cerró para reiniciar desde el principio'
+          detail: 'La cita ligada fue cancelada; la ejecución salió automáticamente del flujo'
         })
         await saveEnrollment(enrollment)
-        if (lifecycleMatch.cancelled) consumedAutomationIds.add(automation.id)
+        consumedAutomationIds.add(automation.id)
         continue
+      }
+      if (lifecycleMatch.rescheduled) {
+        addLog(enrollment, {
+          nodeId: enrollment.currentNodeId || 'flow',
+          label: nodeLabel(getNode(automation.flow, enrollment.currentNodeId)) || 'Flujo',
+          status: 'info',
+          detail: 'La cita ligada fue reprogramada; la ejecución conservó su progreso y actualizó el horario canónico'
+        })
       }
       consumedAutomationIds.add(automation.id)
     }
@@ -7431,6 +7437,46 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
       )
       if (pendingMatch) {
         consumedAutomationIds.add(automation.id)
+        if (pendingMatch.appointmentRecheck && currentNode) {
+          const result = await executeNode(currentNode, ctx, enrollment)
+          if (result.stop) {
+            enrollment.status = 'exited'
+            enrollment.resumeAt = null
+            enrollment.waitKind = null
+            addLog(enrollment, {
+              nodeId: enrollment.currentNodeId,
+              label: nodeLabel(currentNode) || 'Esperar',
+              status: 'info',
+              detail: result.detail || 'La cita ligada fue cancelada; la ejecución salió automáticamente del flujo'
+            })
+            await saveEnrollment(enrollment)
+            continue
+          }
+          if (result.wait) {
+            const {
+              __pendingWaitCompletion,
+              ...contextWithoutPendingCompletion
+            } = enrollment.context || {}
+            enrollment.resumeAt = result.wait.resumeAt
+            enrollment.waitKind = result.wait.kind
+            enrollment.context = {
+              ...contextWithoutPendingCompletion,
+              ...(result.wait.context || {}),
+              __pausedResumeAt: result.wait.resumeAt,
+              __pausedWaitKind: result.wait.kind
+            }
+            addLog(enrollment, {
+              nodeId: currentNode.id,
+              label: nodeLabel(currentNode),
+              status: 'waiting',
+              detail: `${result.detail || 'La espera de la cita se recalculó'}; la ejecución conserva su pausa manual`
+            })
+            await saveEnrollment(enrollment)
+            continue
+          }
+          pendingMatch.handle = result.handle || 'out'
+          pendingMatch.detail = result.detail || eventCompletionDetail(eventType, ctx)
+        }
         enrollment.context = {
           ...(enrollment.context || {}),
           __pendingWaitCompletion: {
@@ -7470,6 +7516,19 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
 
     if (match.appointmentRecheck) {
       const result = await executeNode(currentNode, ctx, enrollment)
+      if (result.stop) {
+        enrollment.status = 'exited'
+        enrollment.resumeAt = null
+        enrollment.waitKind = null
+        addLog(enrollment, {
+          nodeId: currentNode.id,
+          label: nodeLabel(currentNode) || 'Esperar',
+          status: 'info',
+          detail: result.detail || 'La cita ligada fue cancelada; la ejecución salió automáticamente del flujo'
+        })
+        await saveEnrollment(enrollment)
+        continue
+      }
       if (result.wait) {
         enrollment.status = 'waiting'
         enrollment.waitKind = result.wait.kind

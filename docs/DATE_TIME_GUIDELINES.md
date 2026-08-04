@@ -114,18 +114,22 @@ Usa estos formatos de forma intencional:
   cobros vencidos "hoy", espera la recarga canónica antes de cerrar el flujo o
   enseñar la tabla. El usuario debe ver la fecha final del negocio, no el estado
   parcial previo al refresh.
-- Una espera de automatización ligada a una cita conserva su ID canónico. Al
-  reprogramar esa misma cita debe cerrar la ejecución anterior y comenzar una
-  nueva vuelta desde el inicio con la fecha, hora y recordatorios recalculados;
-  al cancelarla debe salir del flujo y no revivir la hora anterior. Si una
-  integración sustituye el ID, exige una relación
-  explícita con la cita reemplazada y nunca la infieras sólo por contacto,
-  calendario o cercanía de horarios. Una ejecución iniciada por una cita mantiene
-  ese vínculo aunque todavía esté en otro tipo de espera: la reprogramación
-  reinicia la automatización y la cancelación la saca siempre del flujo. Antes de
-  liberar cualquier temporizador ligado a esa ejecución, el scheduler relee la
-  cita canónica; si cambió la hora, reprograma la espera, y si fue cancelada o
-  eliminada, nunca continúa por la hora histórica.
+- Una ejecución de automatización ligada a una cita conserva su ID canónico. Al
+  reprogramar esa misma cita, una ejecución todavía activa mantiene su nodo y
+  todo el progreso ya realizado: actualiza el contexto canónico y, si está en una
+  espera relativa a la cita, recalcula `resume_at` con el horario nuevo. Una
+  espera genérica conserva su propio plazo; los nodos posteriores relacionados
+  con la cita usan la hora actualizada. Si el nuevo momento relativo ya pasó, la
+  ejecución continúa inmediatamente. Sólo cuando ya no existe una ejecución
+  activa correspondiente, la reprogramación puede iniciar una vuelta nueva según
+  los disparadores de la automatización, incluso si el reingreso histórico está
+  desactivado. Al cancelar la cita, cualquier ejecución activa ligada sale del
+  flujo y no revive la hora anterior. Si una integración sustituye el ID, exige
+  una relación explícita con la cita reemplazada y nunca la infieras sólo por
+  contacto, calendario o cercanía de horarios. Antes de liberar cualquier
+  temporizador ligado a esa ejecución, el scheduler relee la cita canónica; si
+  cambió la hora, reprograma la espera, y si fue cancelada o eliminada, nunca
+  continúa por la hora histórica.
 
 ## Frontend: Prohibido
 

@@ -1497,12 +1497,15 @@ explica que usará la cita que activó esa ejecución. El runtime liga la espera
 `appointmentId` exacto: otra cita del mismo contacto no puede mover, completar
 ni reprogramar esa espera. La ejecución conserva además ese vínculo desde que
 entra por un disparador de cita, aunque todavía esté detenida en otra espera. Un
-cambio de hora de la misma cita cierra la ejecución anterior y crea una vuelta
-nueva desde el inicio con el horario canónico actualizado, incluso si el flujo
-tiene desactivado el reingreso histórico: es el mismo ciclo de cita, no un evento
-ajeno. Esto permite que confirmaciones, esperas y recordatorios se reconstruyan
-desde cero sin que la vuelta anterior siga viva. Una cancelación saca
-inmediatamente la ejecución del flujo sin ejecutar más pasos. **Esperar** ya no
+cambio de hora de la misma cita conserva la ejecución activa en su nodo actual,
+actualiza el contexto canónico y recalcula sólo una espera relativa a la cita;
+una espera genérica mantiene su plazo y los pasos posteriores reciben el horario
+nuevo. Las acciones ya ejecutadas no se repiten. Si el nuevo momento relativo ya
+pasó, el flujo continúa de inmediato. Sólo cuando no existe una ejecución activa
+correspondiente, la reprogramación abre una vuelta nueva según los disparadores,
+incluso si el flujo tiene desactivado el reingreso histórico: se atiende el nuevo
+ciclo sin duplicar una vuelta todavía viva. Una cancelación saca inmediatamente
+la ejecución del flujo sin ejecutar más pasos. **Esperar** ya no
 muestra una salida **Cita cancelada**; los flujos legacy que todavía conserven
 una conexión `cancelled` tampoco la recorren. Esto no desactiva las
 automatizaciones independientes cuyo disparador es **Cita cancelada**: esas
