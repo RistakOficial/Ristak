@@ -213,6 +213,18 @@ function modulePoliciesFor(spec) {
   ]
 }
 
+function enforcedModulePolicies(context, spec) {
+  const policies = modulePoliciesFor(spec)
+  // El Installer puede operar módulos que el plan del cliente sí incluye aunque
+  // ese cliente no haya comprado Developers. Sólo se exenta el módulo técnico
+  // de los controles MCP (búsqueda/eventos); cada tool de negocio conserva sus
+  // permisos y features normales.
+  if (context.supportDelegation && controlToolNames.has(spec.name)) {
+    return policies.filter(policy => policy.module !== 'settings_api_access')
+  }
+  return policies
+}
+
 function toolDefinition(spec) {
   const securitySchemes = (spec.scopesAny?.length ? spec.scopesAny : [spec.scope])
     .map(scope => ({ type: 'oauth2', scopes: [scope] }))
@@ -386,7 +398,8 @@ async function hasToolPolicy(context, spec) {
   const user = context.user || {}
   if (!hasRequiredToolScope(context, spec)) return false
   if (spec.adminOnly && user.role !== 'admin') return false
-  if (modulePoliciesFor(spec).some(policy => !hasUserAccess(user, policy.module, policy.access))) return false
+  const modulePolicies = enforcedModulePolicies(context, spec)
+  if (modulePolicies.some(policy => !hasUserAccess(user, policy.module, policy.access))) return false
   if ((await missingConnectionPrerequisites(context, spec.connectionPrerequisites)).length) return false
   if (!isLicenseEnforced()) return true
 
@@ -394,7 +407,7 @@ async function hasToolPolicy(context, spec) {
     state: context.license || null,
     email: user.email || user.username || null
   }
-  for (const policy of modulePoliciesFor(spec)) {
+  for (const policy of modulePolicies) {
     if (!(await hasModuleFeature(policy.module, licenseOptions))) return false
   }
   for (const featureKey of spec.featureKeys || []) {
@@ -421,7 +434,8 @@ async function assertToolAuthorization(context, spec) {
   if (spec.adminOnly && context.user?.role !== 'admin') {
     throw makeError('Esta acción requiere un administrador.', 'admin_required', 403)
   }
-  const deniedPolicy = modulePoliciesFor(spec).find(policy => (
+  const modulePolicies = enforcedModulePolicies(context, spec)
+  const deniedPolicy = modulePolicies.find(policy => (
     !hasUserAccess(context.user || {}, policy.module, policy.access)
   ))
   if (deniedPolicy) {
@@ -451,7 +465,7 @@ async function assertToolAuthorization(context, spec) {
       state: context.license || null,
       email: context.user?.email || context.user?.username || null
     }
-    for (const policy of modulePoliciesFor(spec)) {
+    for (const policy of modulePolicies) {
       if (!(await hasModuleFeature(policy.module, licenseOptions))) {
         throw makeError('Este módulo no está incluido en el plan actual.', 'feature_not_available', 403, {
           module: policy.module
@@ -733,6 +747,7 @@ export const __mcpRegistryTestHooks = {
   allSpecs,
   MCP_DISABLED_TOOL_NAMES,
   riskLevelFor,
+  enforcedModulePolicies,
   searchMcpCapabilities,
   stableValue,
   sanitizeAuditInput,

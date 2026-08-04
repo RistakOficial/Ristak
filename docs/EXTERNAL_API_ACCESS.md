@@ -106,6 +106,14 @@ catalog cannot bypass it. The registry covers these operational domains:
   status;
 - Sites lifecycle, imported HTML files, preview and controlled publication.
 
+Ristak Installer also has a private support delegation endpoint at
+`POST /api/internal/customer-operations/mcp`. It is not a customer-facing MCP
+URL and does not accept OAuth or normal user sessions. It only accepts a short
+HMAC request signed with the installation identity, timestamp, one-time nonce
+and installation ID. Installer uses it to run the same typed registry when an
+authorized Ristak operator must help a named managed customer without installing
+an MCP client inside that account.
+
 The expanded operational set includes contact journeys and bulk field updates,
 persistent WhatsApp/template and automation batches with list/get/pause/resume/
 reschedule/cancel/delete lifecycle, multimedia WhatsApp sends,
@@ -330,6 +338,12 @@ security boundary.
   by plan, current user permissions and granted scopes; execution re-checks the
   same gates. MCP does not expose generic table writes; `/api/external/data`
   remains a separate REST surface with its own allowlists and feature checks.
+- `/api/internal/customer-operations/mcp` is the narrow support exception to the
+  `developers` surface gate. It does not unlock Developers for the customer and
+  does not bypass the feature or user permission of any business tool. It only
+  removes `settings_api_access` from MCP control tools so Installer can discover
+  the valid catalog; contacts still require `contacts`, appointments require
+  `appointments`, Sites require `sites`, and so on.
 - A token minted before a downgrade does not bypass the current plan; feature
   checks run on every request.
 
@@ -355,6 +369,10 @@ security boundary.
 - `GET /api/oauth/authorize`
 - `POST /api/oauth/authorize`
 - `POST /api/oauth/token`
+
+### Installer support delegation
+
+- `POST /api/internal/customer-operations/mcp` — HMAC only; not public OAuth.
 
 ### External data API
 

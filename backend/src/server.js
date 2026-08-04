@@ -105,6 +105,7 @@ import searchRoutes from './routes/search.routes.js'
 import externalRoutes from './routes/external.routes.js'
 import mcpRoutes from './routes/mcp.routes.js'
 import mcpActionConfirmationsRoutes from './routes/mcpActionConfirmations.routes.js'
+import installerCustomerOperationsRoutes from './routes/installerCustomerOperations.routes.js'
 import whatsappApiRoutes from './routes/whatsappApi.routes.js'
 import emailRoutes from './routes/email.routes.js'
 import productsRoutes from './routes/products.routes.js'
@@ -414,6 +415,15 @@ app.use('/api/mcp', express.json({
   }
 }))
 
+// Delegación Installer -> instalación: usa HMAC sobre el body crudo y el mismo
+// límite acotado del MCP funcional. Debe parsearse antes del JSON global.
+app.use('/api/internal/customer-operations', express.json({
+  limit: '3mb',
+  verify: (req, _res, buf) => {
+    req.rawBody = buf.toString('utf8')
+  }
+}))
+
 app.use(express.json({
   limit: '35mb',
   verify: (req, _res, buf) => {
@@ -587,6 +597,7 @@ app.use(async (req, res, next) => {
 // Deben existir antes del host router de Sites para no capturar estas rutas como dominios públicos.
 app.use('/media', mediaRoutes)
 app.use('/internal', internalStorageRoutes)
+app.use('/api/internal/customer-operations', installerCustomerOperationsRoutes)
 app.use('/trigger-links', triggerLinksRoutes)
 // URL corta y opaca por contacto. El router sólo consume tokens pce1_*; cualquier
 // slug normal continúa hacia Sites o hacia la app sin colisiones.

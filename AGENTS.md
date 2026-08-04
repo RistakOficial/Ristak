@@ -130,7 +130,8 @@
 
   | Intencion de Raul | Punto de entrada |
   | --- | --- |
-  | Operar una funcion de Ristak como usuario: crear/buscar contactos, leer o mandar mensajes, agendar citas, ejecutar automatizaciones, gestionar pagos, crear/publicar Sites y acciones equivalentes | MCP funcional de Ristak: servidor `ristak`, `/api/mcp`, herramientas `mcp__ristak__*` |
+  | Operar la cuenta Ristak ya autenticada del usuario: crear/buscar contactos, leer o mandar mensajes, agendar citas y acciones equivalentes | MCP funcional de esa cuenta: servidor `ristak`, `/api/mcp`, herramientas `mcp__ristak__*` |
+  | Operar desde soporte la cuenta de un cliente administrado identificado por nombre/correo: agregar calendarios, plantillas, contactos, citas u otros datos del CRM | Puente operativo del Installer: servidor `ristak-customer-operations`, herramientas `ristak_customer_*` o `npm run customer:ops` |
   | Investigar un cliente instalado, una falla real, backend en produccion, chats/IA que no funcionaron, logs, deploy, health, esquema o datos del cliente | MCP de soporte del Installer: servidor `ristak-render-support`, herramientas `mcp__ristak_render_support__*` o `npm run render:support` |
   | Implementar una funcion, refactor o cambio de codigo sin incidente en una instalacion real | Repo local en rama/worktree limpio; no invoques soporte por reflejo |
 
@@ -140,6 +141,9 @@
   las herramientas realmente disponibles, la cuenta autenticada, scopes,
   permisos, licencia y confirmaciones; no prometas una capacidad que no aparezca
   en el MCP actual.
+- Cuando la orden menciona un cliente administrado distinto de la cuenta MCP ya
+  autenticada, usa `ristak-customer-operations`: resuelve la instalacion en el
+  Installer y delega al catalogo MCP real de esa app sin instalar Codex ahi.
 - El MCP de soporte es para evidencia operativa y diagnostico, no para operar el
   CRM ni como atajo para escribir directamente en la DB de un cliente. Sus
   consultas son read-only.
@@ -151,8 +155,9 @@
   conserva la evidencia de esa llamada y cambia al MCP de soporte para investigar;
   no sigas repitiendo escrituras a ciegas.
 - En una solicitud mixta, separa las fases y dilo explicitamente: operacion con
-  `ristak`; diagnostico con `ristak-render-support`; correccion en el repo
-  correspondiente. Nunca uses ambos para ejecutar la misma escritura.
+  `ristak` o `ristak-customer-operations` segun la cuenta; diagnostico con
+  `ristak-render-support`; correccion en el repo correspondiente. Nunca uses dos
+  carriles para ejecutar la misma escritura.
 - No metas secrets de soporte en este repo. Si falta el entorno local del
   Installer, pide acceso; no inventes valores.
 

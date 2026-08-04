@@ -9847,6 +9847,18 @@ agentes deben entrar por el MCP/CLI de soporte de Ristak Installer, documentado
 en `docs/support-mcp-operations.md`, para resolver la instalacion, leer logs,
 inspeccionar schema y consultar filas read-only de la DB del cliente.
 
+Cuando soporte necesita **operar** la cuenta de un cliente administrado —por
+ejemplo crear un calendario, plantilla, contacto o cita— usa el puente separado
+`ristak-customer-operations` / `customer:ops` del Installer. La instalacion
+expone `POST /api/internal/customer-operations/mcp`: verifica HMAC SHA-256 con la
+identidad local de licencia, timestamp, nonce de un solo uso e installation ID;
+despues ejecuta el mismo registro MCP y los mismos controllers. La delegacion se
+audita con el admin local y el operador central, conserva idempotencia y exige
+scope destructivo explicito. No requiere que el plan compre Developers solo
+para recibir soporte, pero no salta las features, permisos, licencia ni
+prerrequisitos de la tool de negocio. Installer conserva OAuth cifrado solo como
+fallback para versiones anteriores que ya tengan Developers.
+
 La API externa y MCP no son bypass de plan. Generar, rotar y revocar tokens de
 REST/OpenAPI requiere `developers`; conectar MCP usa la sesion web normal y
 consentimiento OAuth, sin ese token. Usar `/api/external` o `/api/mcp` requiere

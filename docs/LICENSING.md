@@ -175,6 +175,12 @@ ninguna superficie. El límite se valida en backend en
 - `/api/mcp` requiere `developers`; las tools se listan/ejecutan solo si las
   features necesarias están activas. Las tools genéricas de tablas aplican el
   mismo mapeo por recurso.
+- La ruta interna firmada `/api/internal/customer-operations/mcp` permite que
+  Ristak Installer ayude a una instalacion administrada aunque ese cliente no
+  tenga `developers`. No activa Developers ni salta el plan: solo exenta
+  `settings_api_access` para descubrir/usar los controles MCP; cada tool de
+  negocio conserva su feature (`contacts`, `appointments`, `sites`, etc.), el
+  permiso del admin local, scope, idempotencia y auditoria.
 - `/api/sites` requiere `sites`; el checkout público y cualquier bloque/gate de
   cobro en Sites requiere `payment_checkout`, y la preparación de parcialidades requiere
   `payment_plans`.

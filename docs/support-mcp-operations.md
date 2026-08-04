@@ -5,8 +5,9 @@ operar Ristak y dar soporte interno. Aplica aunque el agente este parado en este
 repo (`Ristak`) o en `Ristak - Installer`.
 
 El usuario puede decir "MSP" cuando se refiere a "MCP". Ese error de nombre no
-elige el servidor: la intencion de la solicitud decide si corresponde el MCP
-funcional de Ristak o el MCP de soporte del Installer.
+elige el servidor: la intencion y la cuenta destino deciden si corresponde el
+MCP funcional de Ristak, el puente operativo del Installer o su MCP de
+diagnostico.
 
 Si la solicitud es **subir la app a App Store o Play Store**, no uses este flujo
 de soporte. Lee [`MOBILE_STORE_RELEASES.md`](./MOBILE_STORE_RELEASES.md) y usa el
@@ -16,7 +17,8 @@ MCP `ristak-mobile-stores` del Installer.
 
 | Si Raul pide... | Usa primero... | Para que |
 | --- | --- | --- |
-| "Crea un contacto", "manda este mensaje", "agenda una cita", "crea/publica una pagina" o cualquier accion normal de producto | MCP funcional `ristak` (`/api/mcp`, herramientas `mcp__ristak__*`) | Ejecutar directamente con la cuenta, permisos, licencia y scopes OAuth ya autorizados por el usuario |
+| "Crea un contacto", "manda este mensaje" o cualquier accion normal dentro de la cuenta Ristak ya autenticada | MCP funcional `ristak` (`/api/mcp`, herramientas `mcp__ristak__*`) | Ejecutar directamente con la cuenta, permisos, licencia y scopes OAuth ya autorizados por el usuario |
+| "Metete a soporte del cliente X y agregale un calendario/plantilla/contacto/cita" o cualquier escritura en una instalacion administrada especifica | Puente `ristak-customer-operations` (`ristak_customer_*`) o CLI `customer:ops` del Installer | Resolver al cliente y ejecutar el catalogo MCP real de su instalacion mediante delegacion firmada; fallback OAuth en versiones anteriores |
 | "Investiga este cliente", "por que fallo el backend", "revisa el chat o la IA", "mira logs/health/deploy/DB" sobre una instalacion real | MCP de soporte `ristak-render-support` (`mcp__ristak_render_support__*`) | Encontrar la instalacion correcta y reunir evidencia real, read-only, antes de diagnosticar |
 | "Implementa/cambia/refactoriza esta funcion" sin reportar un incidente real | Repo correspondiente en rama o worktree limpio | Cambiar y validar codigo; soporte no es un navegador de codigo |
 
@@ -26,14 +28,18 @@ No intercambies los carriles:
   secretos, infraestructura o la base del cliente como soporte.
 - El MCP de soporte **investiga instalaciones**. No debe crear contactos, mandar
   mensajes, agendar citas, publicar Sites ni mutar datos de negocio.
+- El puente operativo **actua en una instalacion administrada**. No instala
+  Codex en el cliente, no escribe SQL y no convierte el soporte Render en mutable.
 - El repo **contiene la implementacion**. Cuando soporte confirma un bug de
   producto, el arreglo se hace aqui; cuando confirma un problema de provisioning,
   licencias, Render o soporte, el arreglo se hace en `Ristak - Installer`.
 
 Si una solicitud mezcla operacion y diagnostico, separa y anuncia las fases. Por
-ejemplo: intenta la accion con `ristak`; si falla inesperadamente, conserva el
-error y usa `ristak-render-support` para investigar sin repetir escrituras. Si
-despues hace falta corregir codigo, cambia el repo correcto en un espacio limpio.
+ejemplo: intenta la accion con `ristak` para la cuenta autenticada o con
+`ristak-customer-operations` para un cliente administrado; si falla
+inesperadamente, conserva el error y usa `ristak-render-support` para investigar
+sin repetir escrituras. Si despues hace falta corregir codigo, cambia el repo
+correcto en un espacio limpio.
 
 Si el MCP esperado no esta conectado, autorizado o no expone la herramienta
 necesaria, dilo claramente. No sustituyas en silencio el MCP funcional por SQL de
@@ -53,6 +59,11 @@ soporte ni el soporte por una suposicion basada solo en el checkout local.
   - Render API para leer servicio, logs, deploys, env vars redactadas y conexion
     externa de Postgres;
   - consultas read-only a la base del cliente.
+- El puente operativo vive en Installer y llama la ruta HMAC interna
+  `/api/internal/customer-operations/mcp` de la instalacion. Esa ruta reutiliza
+  el registro MCP, controllers, permisos, features, idempotencia y auditoria de
+  Ristak. No exige `developers` al cliente solo para recibir soporte, pero cada
+  tool de negocio sigue exigiendo que su modulo exista en el plan.
 
 ## Regla cuando Raul reporta un problema de un cliente
 
@@ -79,6 +90,8 @@ Llama el CLI del Installer con ruta absoluta:
 ```bash
 npm --prefix "/Users/raulgomez/Desktop/Ristak - Installer/backend" run render:support -- check
 npm --prefix "/Users/raulgomez/Desktop/Ristak - Installer/backend" run render:support -- find "cliente o correo"
+npm --prefix "/Users/raulgomez/Desktop/Ristak - Installer/backend" run customer:ops -- find "cliente o correo"
+npm --prefix "/Users/raulgomez/Desktop/Ristak - Installer/backend" run customer:ops -- search "cliente" -- "crear un calendario"
 ```
 
 En esta Mac puede existir un archivo local de entorno para soporte:
@@ -115,6 +128,17 @@ npm --prefix "/Users/raulgomez/Desktop/Ristak - Installer/backend" run render:su
 npm --prefix "/Users/raulgomez/Desktop/Ristak - Installer/backend" run render:support -- schema "cliente" --table=messages
 npm --prefix "/Users/raulgomez/Desktop/Ristak - Installer/backend" run render:support -- query "cliente" -- "SELECT id FROM users LIMIT 10"
 ```
+
+Para acciones de negocio usa el MCP separado `ristak-customer-operations`:
+
+- `ristak_customer_find`
+- `ristak_customer_connection_status`
+- `ristak_customer_list_tools`
+- `ristak_customer_search_capabilities`
+- `ristak_customer_call_tool`
+
+Consulta la documentacion operativa `docs/customer-operations-mcp.md` del repo
+Installer.
 
 ## Consultas frecuentes de soporte
 
@@ -174,6 +198,8 @@ LIMIT 50;
   `ALTER`, `DROP` ni multiples statements.
 - No edites datos vivos de un cliente desde soporte salvo que exista una
   herramienta auditada para esa accion y Raul la autorice.
+- Para una escritura auditada usa `ristak-customer-operations`; una accion
+  destructiva exige confirmar `CONFIRMAR nombre_exacto_de_tool`.
 - Si hay varias coincidencias de cliente, pide o usa un dato mas preciso. No
   asumas por nombre cuando hay varios Marcos, clinicas o negocios parecidos.
 - Si encuentras un bug de codigo en este repo, arreglalo aqui; si encuentras un
