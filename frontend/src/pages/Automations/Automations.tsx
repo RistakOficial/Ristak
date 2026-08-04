@@ -1,6 +1,6 @@
 import React, { Suspense } from 'react'
-import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Loader2 } from 'lucide-react'
+import { Navigate, Route, Routes, useParams } from 'react-router-dom'
+import { Loader2 } from 'lucide-react'
 import { LazyLoadErrorBoundary } from '@/components/common'
 import { AutomationLibrary } from './AutomationLibrary'
 import { AutomationsHome } from './AutomationsHome'
@@ -15,18 +15,9 @@ const LazyAutomationEditor = React.lazy(() =>
 
 const AutomationEditorLoading: React.FC<{
   currentAutomationId?: string
-  onBack: () => void
-}> = ({ currentAutomationId, onBack }) => (
+}> = ({ currentAutomationId }) => (
   <div className={editorStyles.editorShell}>
     <header className={editorStyles.toolbar}>
-      <button
-        type="button"
-        className={editorStyles.toolbarBack}
-        title="Volver a Automatizaciones"
-        onClick={onBack}
-      >
-        <ArrowLeft size={15} />
-      </button>
       <span className={editorStyles.saveIndicator} role="status" aria-live="polite">
         <Loader2 size={12} className="animate-spin" />
         Cargando automatización...
@@ -43,8 +34,6 @@ const AutomationEditorLoading: React.FC<{
 
 const AutomationEditorRoute: React.FC = () => {
   const { automationId = '' } = useParams()
-  const navigate = useNavigate()
-  const goBack = () => navigate('/automations')
 
   return (
     <LazyLoadErrorBoundary
@@ -53,7 +42,7 @@ const AutomationEditorRoute: React.FC = () => {
     >
       <Suspense
         key={automationId}
-        fallback={<AutomationEditorLoading currentAutomationId={automationId} onBack={goBack} />}
+        fallback={<AutomationEditorLoading currentAutomationId={automationId} />}
       >
         <LazyAutomationEditor key={automationId || 'empty'} />
       </Suspense>

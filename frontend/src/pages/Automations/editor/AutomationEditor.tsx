@@ -3,7 +3,6 @@ import { useNavigate, useParams } from 'react-router-dom'
 import {
   Archive,
   AlertTriangle,
-  ArrowLeft,
   Check,
   CloudOff,
   Copy,
@@ -1769,15 +1768,6 @@ export const AutomationEditor: React.FC = () => {
     <div className={styles.editorShell}>
       {/* ----------------------------- Toolbar ---------------------------- */}
       <header className={styles.toolbar}>
-        <button
-          type="button"
-          className={styles.toolbarBack}
-          title="Volver a Automatizaciones"
-          onClick={() => navigateFromEditor('/automations')}
-        >
-          <ArrowLeft size={15} />
-        </button>
-
         <input
           className={styles.toolbarName}
           value={name}

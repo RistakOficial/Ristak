@@ -1376,6 +1376,9 @@ borra paginas append ni inserta filas de otro filtro. Cambiar de cuenta descarta
 respuestas tardias en vez de devolverlas al caller. Los eventos del CRM
 consultan `automation_trigger_index` por tipo y endpoint en vez de descargar y
 parsear todos los grafos publicados; ese contrato durable se instala con `090*`.
+En el editor, el nombre editable inicia directamente la barra superior: no lleva
+una flecha de regreso duplicada a su izquierda. La navegacion de la biblioteca y
+el acceso principal a Automatizaciones conservan sus propios controles.
 El selector de formularios del editor usa
 `GET /api/automations/catalogs/forms?limit=30&search=...&cursor=...`: cada fuente
 (formularios nativos, campos en landings, embeds e imports) ejecuta una consulta
