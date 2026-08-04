@@ -2258,12 +2258,14 @@ la facultad de cambiar JavaScript publicado.
 - La sección de automatizaciones en la ficha de contacto, el modal del chat y
   las acciones masivas solo aparece con `automations`; el backend rechaza también
   las inscripciones o filtros avanzados de automatizaciones sin esa feature.
-- La ficha de contacto incluye en su compositor el reloj para programar mensajes
-  de texto desde el canal seleccionado. Abre el mismo `ChatScheduleModal` que
-  `/chat`, conserva el remitente de WhatsApp elegido, convierte la fecha y hora
-  desde la zona de la cuenta a UTC y refresca el historial canónico después de
-  guardar. Correo sigue enviándose al momento; Messenger e Instagram sólo se
-  programan cuando la conversación sale por HighLevel.
+- Cuando la ficha se abre para un solo contacto, su panel de conversación monta
+  `DesktopChat` en modo embebido. Oculta únicamente la bandeja y la ficha lateral
+  que ya existen alrededor del modal; historial, compositor, selector de canal,
+  menú `+`, plantillas, adjuntos, ubicación, CLABE, voz, reacciones y mensajes
+  programados son el mismo runtime de `/chat`. La ficha no mantiene otra
+  suscripción live, otro compositor ni otro `ChatScheduleModal` en paralelo.
+  Programar conserva por tanto el remitente y las reglas de zona horaria de
+  `/chat`, incluido el refresco canónico, la edición y la cancelación.
 - Los nombres configurables de la cuenta para contacto convertido y oportunidad
   (`labels.customer`, `labels.customers`, `labels.lead`, `labels.leads`) son la
   fuente visible para CRM, chat desktop, chat movil web, app nativa,
@@ -2483,13 +2485,14 @@ la facultad de cambiar JavaScript publicado.
   generico para todo. Un comentario usa como icono principal una publicacion y
   muestra abajo el badge del canal real: Facebook para publicaciones de pagina e
   Instagram para publicaciones de Instagram; nunca el badge de Messenger.
-- El historial conversacional del modal de contacto no debe tratar el Viaje del
-  Cliente como si fuera chat completo. Para pintar burbujas usa
-  `/contacts/:id/conversation`, de modo que reciba solo mensajes reales de
-  WhatsApp, Meta social, email y tarjetas conversacionales como confirmaciones de
-  cita por IA. El journey completo vive en `/contacts/:id/journey`, sigue siendo
-  la linea de actividad/atribucion del CRM y puede incluir visitas, contacto
-  creado, citas, pagos y compras.
+- El historial conversacional del modal de contacto usa el mismo runtime
+  embebido de `/chat`; no debe reconstruirse desde el Viaje del Cliente ni volver
+  a implementar burbujas o envíos dentro de `ContactDetailsModal`. La apertura
+  prioriza `/contacts/:id/conversation` y recibe mensajes reales de WhatsApp,
+  Meta social, email y tarjetas conversacionales como confirmaciones de cita por
+  IA. El journey completo vive en `/contacts/:id/journey`, sigue siendo la línea
+  de actividad/atribución del CRM y puede incluir visitas, contacto creado,
+  citas, pagos y compras.
 
 Los contactos alimentan reportes, automations, chat, pagos, citas y conversiones.
 

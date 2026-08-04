@@ -17,6 +17,11 @@
   color: var(--color-text-primary);
 }
 
+.page.embeddedPage {
+  height: 100%;
+  min-height: 0;
+}
+
 .chatShell {
   --chat-inbox-column: clamp(280px, 20vw, 340px);
   --chat-info-column: clamp(280px, 18vw, 340px);
@@ -30,6 +35,16 @@
   border: 0;
   border-radius: 0;
   background: var(--color-background-secondary);
+}
+
+.chatShell.embeddedChatShell {
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.embeddedChatShell .conversationPanel {
+  min-height: 0;
 }
 
 .inboxPanel,

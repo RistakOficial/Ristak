@@ -12,6 +12,7 @@
     "test:chat-delivery-state": "node scripts/test-chat-message-delivery-state.mjs",
     "test:chat-error-popover": "node scripts/test-chat-error-popover.mjs",
     "test:chat-contact-panel-layout": "node scripts/test-chat-contact-panel-layout.mjs",
+    "test:contact-modal-chat-parity": "node scripts/test-contact-modal-chat-parity.mjs",
     "test:desktop-chat-live-first-paint": "node scripts/test-desktop-chat-live-first-paint.mjs",
     "test:mobile-chat-live-first-paint": "node scripts/test-mobile-chat-live-first-paint.mjs",
     "test:chatbot-filter-hierarchy": "node scripts/test-chatbot-filter-hierarchy.mjs",

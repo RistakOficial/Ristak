@@ -1,10 +1,9 @@
-import { useCallback, useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
+import { lazy, Suspense, useCallback, useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { CheckCheck, CircleAlert, Clock, Loader2, Mail, MessageCircle, Send } from 'lucide-react'
 import { FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
 import { Badge, type BadgeVariant } from '../Badge/Badge'
 import { Button } from '../Button/Button'
 import { ChatMessageSurface } from '../ChatMessageSurface/ChatMessageSurface'
-import { ChatScheduleModal } from '../ChatScheduleModal/ChatScheduleModal'
 import { ContactAvatar } from '../ContactAvatar/ContactAvatar'
 import { ContactCustomFieldsPanel } from '../ContactCustomFieldsPanel/ContactCustomFieldsPanel'
 import { ContactJourney } from '../ContactJourney/ContactJourney'
@@ -52,7 +51,6 @@ import {
   type WhatsAppApiPhoneNumber,
   type WhatsAppApiStatus
 } from '@/services/whatsappApiService'
-import { subscribeToChatLiveEvents } from '@/services/chatLiveEventsService'
 import { getContactDetailLabel, getContactDisplayName } from '@/utils/contactAvatar'
 import { isChatMessageSendInFlight } from '@/utils/chatMessageDeliveryState'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
@@ -69,8 +67,13 @@ import { useNotification } from '@/contexts/NotificationContext'
 import { useAccountCurrency } from '@/hooks'
 import { hasLicenseFeature } from '@/utils/accessControl'
 import { formatCurrency as formatAccountCurrency } from '@/utils/format'
-import type { ContactCustomField, ContactMetaAttribution, ContactPhoneNumber } from '@/types'
+import type { Contact, ContactCustomField, ContactMetaAttribution, ContactPhoneNumber } from '@/types'
 import styles from './ContactDetailsModal.module.css'
+
+const LazyEmbeddedDesktopChat = lazy(async () => {
+  const module = await import('@/pages/DesktopChat/DesktopChat')
+  return { default: module.DesktopChat }
+})
 
 interface ContactPaymentDetail {
   id: string
@@ -836,6 +839,30 @@ export function ContactDetailsModal({
   const { showToast } = useNotification()
   const { formatLocalDateShort, formatLocalDateTime, timezone } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
+  const embeddedChatContact = useMemo<Contact | null>(() => {
+    if (!selectedContact) return null
+
+    const createdAt = selectedContact.created_at instanceof Date
+      ? selectedContact.created_at.toISOString()
+      : String(selectedContact.created_at)
+    const status: Contact['status'] = selectedContact.isCustomer || selectedContact.is_sale
+      ? 'customer'
+      : selectedContact.hasAppointments || Boolean(selectedContact.appointments?.length)
+      ? 'appointment'
+      : 'lead'
+
+    return {
+      ...(selectedContact as unknown as Partial<Contact>),
+      id: selectedContact.id,
+      createdAt,
+      name: selectedContact.name || '',
+      email: selectedContact.email || undefined,
+      phone: selectedContact.phone || undefined,
+      ltv: Number(selectedContact.ltv || 0),
+      status,
+      purchases: Number(selectedContact.purchases || selectedContact.successfulPaymentsCount || 0)
+    }
+  }, [selectedContact])
 
   // Seleccionar automáticamente el primer contacto cuando se abre el modal
   useEffect(() => {
@@ -1208,42 +1235,6 @@ export function ContactDetailsModal({
       cancelled = true
     }
   }, [isOpen])
-
-  useEffect(() => {
-    const contactId = selectedContact?.id
-    if (!isOpen || !contactId) {
-      setChatMessages([])
-      setAgentCompletionEvents([])
-      return
-    }
-
-    void loadContactChat(contactId)
-  }, [isOpen, loadContactChat, selectedContact?.id])
-
-  useEffect(() => {
-    const contactId = selectedContact?.id
-    if (!isOpen || !contactId) return
-
-    return subscribeToChatLiveEvents({
-      onMessage: (event) => {
-        if (!event?.contactId || event.contactId === contactId) {
-          void loadContactChat(contactId, { silent: true })
-        }
-      },
-      onDataChanged: (event) => {
-        if (!event?.contactId || event.contactId === contactId) {
-          void loadContactChat(contactId, { silent: true })
-        }
-      }
-    })
-  }, [isOpen, loadContactChat, selectedContact?.id])
-
-  useEffect(() => {
-    const messagesSurface = chatMessagesRef.current
-    if (!messagesSurface || preserveChatScrollRef.current) return
-
-    messagesSurface.scrollTop = messagesSurface.scrollHeight
-  }, [agentCompletionEvents, chatLoading, chatMessages])
 
   const preparedContactSearch = useMemo(() => prepareSearchQuery(searchQuery), [searchQuery])
   const contactSearchIndexes = useMemo(() => {
@@ -3355,22 +3346,26 @@ export function ContactDetailsModal({
                 </div>
               </div>
               </div>
-              {hasSingleResult ? renderContactChatPanel() : null}
+              {hasSingleResult && embeddedChatContact ? (
+                <section
+                  className={styles.contactChatPanel}
+                  data-contact-chat-shared-runtime="desktop-chat"
+                  aria-label="Conversación del contacto"
+                >
+                  <Suspense
+                    fallback={(
+                      <div className={styles.contactChatState} role="status" aria-live="polite">
+                        <Loader2 size={18} className={styles.spinIcon} aria-hidden="true" />
+                      </div>
+                    )}
+                  >
+                    <LazyEmbeddedDesktopChat embeddedContact={embeddedChatContact} />
+                  </Suspense>
+                </section>
+              ) : null}
             </>
           )}
         </div>
-
-        <ChatScheduleModal
-          isOpen={chatScheduleOpen}
-          onClose={closeContactChatSchedule}
-          message={chatDraft}
-          onMessageChange={setChatDraft}
-          onSubmit={scheduleContactChatMessage}
-          timezone={timezone}
-          submitting={chatScheduleSubmitting}
-          error={chatScheduleError}
-          onClearError={() => setChatScheduleError('')}
-        />
 
         {hasAutomationsAccess && selectedAutomationForEnrollment && (
           <Modal

@@ -3178,12 +3178,21 @@ function toChatContact(contact: Contact): DesktopChatContact {
   return { ...contact, messageCount: 0, unreadCount: 0 }
 }
 
-export const DesktopChat: React.FC = () => {
+export interface DesktopChatProps {
+  /**
+   * Reutiliza la conversación completa dentro de otra superficie (por ejemplo,
+   * la ficha de Contactos) sin montar la bandeja ni duplicar su lógica.
+   */
+  embeddedContact?: Contact | null
+}
+
+export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null }) => {
   const { accessToken, locationId, user } = useAuth()
   const { labels } = useLabels()
   const { showToast } = useNotification()
   const { timezone, formatLocalDateTime } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
+  const embeddedMode = Boolean(embeddedContact?.id)
 
   const customerLowerLabel = formatCrmLabelLower(labels.customer, DEFAULT_CRM_LABELS.customer)
   const customersLabel = labels.customers?.trim() || DEFAULT_CRM_LABELS.customers
@@ -3417,6 +3426,18 @@ export const DesktopChat: React.FC = () => {
     () => chats.find((contact) => contact.id === activeContactId) || null,
     [activeContactId, chats]
   )
+  useEffect(() => {
+    if (!embeddedContact) return
+
+    const nextContact = toChatContact(embeddedContact)
+    setChats((current) => {
+      const previous = current.find((contact) => contact.id === nextContact.id)
+      return [{ ...(previous || {}), ...nextContact }]
+    })
+    setActiveContactId(nextContact.id)
+    setChatsLoading(false)
+    setChatsError('')
+  }, [embeddedContact])
   const activeInfoContact = useMemo<Contact | DesktopChatContact | null>(() => {
     if (!activeContact && !contactInfoData) return null
     return {
@@ -4363,6 +4384,14 @@ export const DesktopChat: React.FC = () => {
     search?: string
     goalCompletedUnreviewed?: boolean
   } = {}) => {
+    // En modo embebido la ficha ya entregó el contacto autoritativo. La bandeja
+    // no existe en esta superficie, así que cargar `/contacts/chats` sólo
+    // duplicaría trabajo y podría cambiar la conversación seleccionada.
+    if (embeddedMode) {
+      setChatsLoading(false)
+      return
+    }
+
     const silent = options.silent === true
     const append = options.append === true
     const normalizedSearch = String(options.search ?? chatQuery).trim()
@@ -4612,7 +4641,7 @@ export const DesktopChat: React.FC = () => {
         setChatsLoading(false)
       }
     }
-  }, [chatQuery])
+  }, [chatQuery, embeddedMode])
 
   useEffect(() => {
     const goalCompletedUnreviewed = chatFilter === 'agent'
@@ -9125,16 +9154,21 @@ export const DesktopChat: React.FC = () => {
 
   return (
     <div
-      className={styles.page}
+      className={`${styles.page} ${embeddedMode ? styles.embeddedPage : ''}`}
       data-ristak-page
       data-fullbleed="true"
       data-desktop-chat-agent-view={agentAssignedViewOpen ? 'true' : undefined}
+      data-desktop-chat-embedded={embeddedMode ? 'true' : undefined}
     >
-      <section className={styles.chatShell} data-desktop-chat-page>
-        <aside
+      <section
+        className={`${styles.chatShell} ${embeddedMode ? styles.embeddedChatShell : ''}`}
+        data-desktop-chat-page
+      >
+        {!embeddedMode ? (
+          <aside
           className={`${styles.inboxPanel} ${advancedFiltersOpen ? styles.inboxPanelFiltersOpen : ''}`}
           aria-label={agentAssignedViewOpen ? 'Lista de chats del bot' : 'Lista de chats'}
-        >
+          >
           <div className={styles.inboxHeader}>
             <div className={styles.inboxHeaderCopy}>
               <span className={styles.inboxTitleLine}>
@@ -9653,7 +9687,8 @@ export const DesktopChat: React.FC = () => {
               </>
             )}
           </div>
-        </aside>
+          </aside>
+        ) : null}
 
         <main
           className={styles.conversationPanel}
@@ -10182,7 +10217,8 @@ export const DesktopChat: React.FC = () => {
           )}
         </main>
 
-        <aside className={styles.infoPanel} aria-label="Información del contacto">
+        {!embeddedMode ? (
+          <aside className={styles.infoPanel} aria-label="Información del contacto">
           {activeContact ? (
             <>
               <div className={styles.infoHeader}>
@@ -10540,7 +10576,8 @@ export const DesktopChat: React.FC = () => {
               </div>
             </div>
           )}
-        </aside>
+          </aside>
+        ) : null}
       </section>
 
       <ContentFocusModal item={contentFocusItem} onClose={() => setContentFocusItem(null)} />
