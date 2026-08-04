@@ -4485,6 +4485,8 @@
 
 .messageBubble {
   --phone-chat-text: var(--chat-bubble-text);
+  --whatsapp-message-inline-bleed: -9px;
+  --whatsapp-message-bottom-bleed: -5px;
   --phone-chat-muted: var(--chat-bubble-meta);
   --phone-chat-border: color-mix(in srgb, var(--chat-bubble-meta) 24%, transparent);
   position: relative;

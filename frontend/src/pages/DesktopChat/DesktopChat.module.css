@@ -1293,6 +1293,8 @@
 
 .messageBubble {
   --desktop-chat-message-text-size: var(--font-size-base);
+  --whatsapp-message-inline-bleed: -10px;
+  --whatsapp-message-bottom-bleed: -5px;
   --text: var(--chat-bubble-text);
   --text-dim: var(--chat-bubble-meta);
   --text-mute: var(--chat-bubble-meta);

@@ -107,6 +107,52 @@ final class ChatEmojiRenderingTests: XCTestCase {
         XCTAssertEqual(MessagePreviewText.preview(for: message), "Sticker")
     }
 
+    func testWhatsAppTemplateKeepsVisibleStructureWithoutActionPayloads() throws {
+        let events = try decodeEvents(
+            """
+            [
+              {
+                "type": "whatsapp_message",
+                "date": "2026-08-04T04:00:00Z",
+                "data": {
+                  "whatsapp_api_message_id": "template-1",
+                  "message_type": "template",
+                  "message_text": "Aquí está el enlace.\\n\\n- Google Meet",
+                  "direction": "outbound",
+                  "transport": "api",
+                  "message_presentation": {
+                    "kind": "template",
+                    "header": { "kind": "text", "text": "Tu cita está por comenzar" },
+                    "body": "Aquí está el enlace.",
+                    "footer": "Puedes ir ingresando.",
+                    "buttons": [
+                      {
+                        "type": "url",
+                        "label": "Google Meet",
+                        "url": "https://example.test/tracked",
+                        "payload": "private-action"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+            """
+        )
+
+        let message = try XCTUnwrap(
+            ChatJourneyParser.buildMessages(contactId: "contact-1", events: events).first
+        )
+        let presentation = try XCTUnwrap(message.presentation)
+        XCTAssertEqual(presentation.kind, .template)
+        XCTAssertEqual(presentation.header?.text, "Tu cita está por comenzar")
+        XCTAssertEqual(presentation.body, "Aquí está el enlace.")
+        XCTAssertEqual(presentation.footer, "Puedes ir ingresando.")
+        XCTAssertEqual(presentation.buttons, [
+            WhatsAppMessagePresentation.Action(type: .url, label: "Google Meet")
+        ])
+    }
+
     private func decodeEvents(_ json: String) throws -> [JourneyEvent] {
         try JSONDecoder().decode([JourneyEvent].self, from: Data(json.utf8))
     }

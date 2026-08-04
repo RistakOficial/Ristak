@@ -319,6 +319,7 @@ struct MessageRowView: View, Equatable {
             locationBlock
             commentContextBlock
             emailBlock
+            presentationBlock
             textBlock
             routingReasonBlock
             metaRow.hidden()
@@ -361,6 +362,7 @@ struct MessageRowView: View, Equatable {
                     locationBlock
                     commentContextBlock
                     emailBlock
+                    presentationBlock
                     visualMediaTextBlock
                     routingReasonBlock
                 }
@@ -379,6 +381,7 @@ struct MessageRowView: View, Equatable {
         message.location != nil
             || message.isComment
             || message.emailDetails != nil
+            || message.presentation != nil
             || !visualMediaCaption.isEmpty
             || !(message.routingReason ?? "").isEmpty
     }
@@ -560,9 +563,114 @@ struct MessageRowView: View, Equatable {
     }
 
     @ViewBuilder
+    private var presentationBlock: some View {
+        if let presentation = message.presentation {
+            VStack(alignment: .leading, spacing: RistakTheme.Spacing.xs) {
+                if let header = presentation.header {
+                    if header.kind == .text, let text = header.text, !text.isEmpty {
+                        WhatsAppFormattedMessageText(text: text)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(message.failed ? RistakTheme.neg : bubbleTextColor)
+                    } else if header.mediaURL == nil {
+                        HStack(spacing: RistakTheme.Spacing.xs) {
+                            presentationHeaderIcon(header.kind)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(RistakTheme.bubbleMeta)
+                            Text(presentationHeaderLabel(header))
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(bubbleTextColor)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(RistakTheme.bubbleMeta.opacity(0.34), lineWidth: 0.5)
+                        }
+                    }
+                }
+
+                let visibleBody = presentation.body.isEmpty ? message.displayText : presentation.body
+                if !visibleBody.isEmpty {
+                    WhatsAppFormattedMessageText(text: visibleBody)
+                        .foregroundStyle(message.failed ? RistakTheme.neg : bubbleTextColor)
+                }
+                if let footer = presentation.footer, !footer.isEmpty {
+                    WhatsAppFormattedMessageText(text: footer, baseFont: .caption)
+                        .font(.caption)
+                        .foregroundStyle(RistakTheme.bubbleMeta)
+                }
+                if !presentation.buttons.isEmpty {
+                    VStack(spacing: 0) {
+                        Divider().overlay(RistakTheme.bubbleMeta.opacity(0.34))
+                        ForEach(Array(presentation.buttons.enumerated()), id: \.offset) { index, action in
+                            HStack(spacing: RistakTheme.Spacing.xs) {
+                                presentationActionIcon(action.type)
+                                    .font(.system(size: 14, weight: .semibold))
+                                Text(action.label)
+                                    .font(.caption.weight(.semibold))
+                                    .multilineTextAlignment(.center)
+                            }
+                            .foregroundStyle(RistakTheme.bubbleAction)
+                            .frame(maxWidth: .infinity, minHeight: 38)
+                            .padding(.horizontal, 10)
+                            if index < presentation.buttons.count - 1 {
+                                Divider().overlay(RistakTheme.bubbleMeta.opacity(0.28))
+                            }
+                        }
+                    }
+                    .padding(.horizontal, -9)
+                    .allowsHitTesting(false)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Opciones mostradas en WhatsApp")
+                }
+            }
+        }
+    }
+
+    private var bubbleTextColor: Color {
+        isOutbound ? RistakTheme.bubbleTextOutbound : RistakTheme.bubbleTextInbound
+    }
+
+    private func presentationHeaderLabel(_ header: WhatsAppMessagePresentation.Header) -> String {
+        if let text = header.text, !text.isEmpty { return text }
+        if let fileName = header.fileName, !fileName.isEmpty { return fileName }
+        switch header.kind {
+        case .image: return "Imagen de la plantilla"
+        case .video: return "Video de la plantilla"
+        case .document: return "Documento adjunto"
+        case .location: return "Ubicación compartida"
+        case .text: return "Encabezado de la plantilla"
+        }
+    }
+
+    @ViewBuilder
+    private func presentationHeaderIcon(_ kind: WhatsAppMessagePresentation.Header.Kind) -> some View {
+        switch kind {
+        case .location: Image(systemName: "mappin.and.ellipse")
+        case .image: Image(systemName: "photo")
+        case .video: Image(systemName: "video")
+        case .document: Image(systemName: "doc")
+        case .text: Image(systemName: "textformat")
+        }
+    }
+
+    @ViewBuilder
+    private func presentationActionIcon(_ type: WhatsAppMessageButtonType) -> some View {
+        switch type {
+        case .url: Image(systemName: "arrow.up.right")
+        case .phone, .voiceCall: Image(systemName: "phone")
+        case .copyCode: Image(systemName: "doc.on.doc")
+        case .quickReply, .unknown: Image(systemName: "arrowshape.turn.up.left")
+        }
+    }
+
+    @ViewBuilder
     private var textBlock: some View {
         // El globo NO repite el texto plano cuando hay emailDetails (doc 04 §7.6).
-        if message.emailDetails == nil, !message.displayText.isEmpty {
+        if message.emailDetails == nil, message.presentation == nil, !message.displayText.isEmpty {
             WhatsAppFormattedMessageText(text: message.displayText)
                 .foregroundStyle(
                     message.failed
@@ -574,7 +682,7 @@ struct MessageRowView: View, Equatable {
 
     @ViewBuilder
     private var visualMediaTextBlock: some View {
-        if message.emailDetails == nil, !visualMediaCaption.isEmpty {
+        if message.emailDetails == nil, message.presentation == nil, !visualMediaCaption.isEmpty {
             WhatsAppFormattedMessageText(text: visualMediaCaption)
                 .foregroundStyle(
                     message.failed

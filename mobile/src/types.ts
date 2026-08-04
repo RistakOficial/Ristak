@@ -280,6 +280,24 @@ export type ChatReaction = {
   direction?: 'inbound' | 'outbound' | 'system';
 };
 
+export type WhatsAppMessageButtonType = 'quick_reply' | 'url' | 'phone' | 'copy_code' | 'voice_call' | 'unknown';
+
+export type WhatsAppMessagePresentation = {
+  kind: 'template' | 'interactive';
+  header?: {
+    kind: 'text' | 'image' | 'video' | 'document' | 'location';
+    text?: string;
+    mediaUrl?: string;
+    fileName?: string;
+  };
+  body: string;
+  footer?: string;
+  buttons: Array<{
+    type: WhatsAppMessageButtonType;
+    label: string;
+  }>;
+};
+
 export type ChatMessage = {
   id: string;
   /** Identidad estable del globo creado antes de que termine el POST. */
@@ -314,6 +332,7 @@ export type ChatMessage = {
   reactions?: ChatReaction[];
   attachment?: ChatAttachment;
   location?: ChatLocation;
+  presentation?: WhatsAppMessagePresentation;
   isComment?: boolean;
   commentReplyMode?: 'public' | 'private';
   commentId?: string;

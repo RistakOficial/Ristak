@@ -16,6 +16,7 @@
     "test:chatbot-filter-hierarchy": "node scripts/test-chatbot-filter-hierarchy.mjs",
     "test:chat-channel": "node scripts/test-chat-message-channel.mjs",
     "test:chat-audio-playback": "node scripts/test-chat-audio-playback.mjs",
+    "test:whatsapp-message-presentation": "node scripts/test-whatsapp-message-presentation.mjs",
     "test:whatsapp-connection-status": "node scripts/test-whatsapp-connection-status.mjs",
     "test:whatsapp-phone-metrics": "node scripts/test-whatsapp-phone-metrics.mjs",
     "test:sites-video-rule-contract": "node scripts/test-sites-video-rule-contract.mjs",

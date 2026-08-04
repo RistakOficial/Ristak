@@ -2717,6 +2717,18 @@ a otro canal, desktop y móvil piden escoger el canal correcto; no presentan una
 desconexión global ficticia. El backend repite la misma validación antes de tocar
 Graph o YCloud.
 
+El historial conserva la estructura visible de las plantillas y mensajes
+interactivos de WhatsApp. El journey reconstruye `message_presentation` desde el
+snapshot durable del envío y expone encabezado, cuerpo, pie y únicamente el tipo
+y la etiqueta de cada botón. `/chat` y `/movil` usan el mismo componente web;
+los clientes nativos `mobile/` (Android) e `ios/app` consumen el mismo contrato y
+lo representan con sus controles visuales propios. La estructura aparece dentro
+del globo, incluida la vista previa y el detalle del mensaje móvil web. Los
+controles históricos son deliberadamente visuales: no
+exponen ni ejecutan URLs, teléfonos, códigos o payloads desde el CRM. Así, tocar
+la copia de un botón de videollamada en Ristak no dispara tracking ni registra
+una asistencia falsa; el botón real sigue funcionando solamente en WhatsApp.
+
 El selector de canal del composer desktop muestra cada WhatsApp con su número
 exacto además de la etiqueta o nombre verificado. Dos filas del mismo negocio no
 pueden verse idénticas; la opción elegida conserva su `phoneNumberId`, lo guarda

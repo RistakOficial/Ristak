@@ -103,6 +103,15 @@ export type {
   WhatsAppFormattedInlineTextProps,
   WhatsAppFormattedTextProps
 } from './WhatsAppFormattedText'
+export {
+  WhatsAppMessageContent,
+  normalizeWhatsAppMessagePresentation
+} from './WhatsAppMessageContent'
+export type {
+  WhatsAppMessageButtonType,
+  WhatsAppMessageContentProps,
+  WhatsAppMessagePresentation
+} from './WhatsAppMessageContent'
 export { CustomSelect } from './CustomSelect'
 export { TimePickerSelect } from './TimePickerSelect'
 export type { TimePickerSelectProps } from './TimePickerSelect'

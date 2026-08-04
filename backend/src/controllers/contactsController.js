@@ -132,6 +132,7 @@ import {
 } from '../services/contactReplyChannelPreferenceService.js'
 import { confirmationSuccessActionSqlContains } from '../services/appointmentConfirmationActions.js'
 import { CONVERSATIONAL_AGENT_COMPLETION_SIGNAL_VALUES } from '../utils/conversationalAgentCompletion.js'
+import { buildWhatsAppMessagePresentation } from '../services/chatMessagePresentationService.js'
 
 const CHAT_SEND_READ_RECEIPTS_CONFIG_KEY = 'chat_send_read_receipts_enabled'
 const DISABLED_CONFIG_VALUES = new Set(['0', 'false', 'no', 'off', 'disabled'])
@@ -7062,6 +7063,7 @@ export const getContactJourney = async (req, res) => {
           msg.media_duration_ms,
           msg.raw_payload_json,
           msg.context_json,
+          template_send.raw_payload_json AS template_send_raw_payload_json,
           COALESCE(NULLIF(attr.referral_json, 'null'), msg.referral_json) as referral_json,
           ${whatsappApiMessageTimestamp} as journey_message_date,
           ${losslessTimestampCursorProjection(whatsappApiMessageTimestamp)} AS journey_message_cursor_date,
@@ -7079,6 +7081,12 @@ export const getContactJourney = async (req, res) => {
        FROM whatsapp_api_messages msg
        LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
        LEFT JOIN whatsapp_api_attribution attr ON attr.whatsapp_api_message_id = msg.id
+       LEFT JOIN whatsapp_api_template_sends template_send
+         ON template_send.id = CASE
+           WHEN msg.id LIKE 'waapi_msg_%'
+             THEN 'waapi_tpl_send_' || SUBSTR(msg.id, 11)
+           ELSE ''
+         END
        WHERE ${whatsappApiMessageContactMatch.condition}
          AND LOWER(COALESCE(msg.message_type, '')) <> 'status'
          AND (
@@ -7119,6 +7127,12 @@ export const getContactJourney = async (req, res) => {
       const context = parseJsonObject(msg.context_json)
       const detectedAttribution = detectWhatsAppAttributionFields({ row: msg, rawPayload, context }, [msg.message_text])
       const referralPreview = buildWhatsAppReferralPreviewData(msg)
+      const messagePresentation = buildWhatsAppMessagePresentation({
+        messageRawPayload: rawPayload,
+        templateSendRawPayload: msg.template_send_raw_payload_json,
+        messageText: msg.message_text,
+        messageType: msg.message_type
+      })
       const detectedSourceId = cleanString(msg.detected_source_id || detectedAttribution.sourceId)
       const detectedSourceType = cleanString(msg.detected_source_type || detectedAttribution.sourceType)
       const replyContextId = getWhatsAppReplyContextId(context, rawPayload)
@@ -7145,6 +7159,7 @@ export const getContactJourney = async (req, res) => {
         routing_reason: msg.routing_reason || null,
         message_text: stripRistakAdIdMarkersFromText(msg.message_text),
         message_type: msg.message_type,
+        message_presentation: messagePresentation,
         ...media,
         ...payloadLocation,
         referral_source_url: msg.detected_source_url || detectedAttribution.sourceUrl,

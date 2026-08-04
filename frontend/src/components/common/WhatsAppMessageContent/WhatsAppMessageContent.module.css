@@ -1,0 +1,96 @@
+.content {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.headerText {
+  font-weight: 600;
+}
+
+.headerImage,
+.headerVideo {
+  display: block;
+  width: 100%;
+  max-height: 260px;
+  border-radius: var(--radius-ctl);
+  object-fit: cover;
+  background: color-mix(in srgb, var(--surface) 32%, transparent);
+}
+
+.headerAsset {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: var(--radius-ctl);
+  background: color-mix(in srgb, var(--surface) 24%, transparent);
+}
+
+.headerAsset span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.body,
+.footer {
+  min-width: 0;
+}
+
+.footer {
+  padding-top: 2px;
+  color: var(--chat-bubble-meta);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.actions {
+  display: grid;
+  margin: 2px var(--whatsapp-message-inline-bleed, 0) var(--whatsapp-message-bottom-bleed, 0);
+  border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px 12px;
+  color: color-mix(in srgb, var(--brand-ristak-blue) 54%, var(--chat-bubble-text));
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  cursor: default;
+  user-select: text;
+}
+
+.action + .action {
+  border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.action span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .headerImage,
+  .headerVideo {
+    max-height: 220px;
+  }
+
+  .actions {
+    margin-inline: var(--whatsapp-message-inline-bleed, 0);
+  }
+
+  .action {
+    min-height: 38px;
+    font-size: 13px;
+  }
+}

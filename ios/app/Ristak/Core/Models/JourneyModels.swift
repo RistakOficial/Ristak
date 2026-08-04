@@ -143,6 +143,43 @@ struct ChatLinkPreview: Sendable, Equatable {
     }
 }
 
+enum WhatsAppMessageButtonType: String, Sendable, Equatable {
+    case quickReply = "quick_reply"
+    case url
+    case phone
+    case copyCode = "copy_code"
+    case voiceCall = "voice_call"
+    case unknown
+}
+
+struct WhatsAppMessagePresentation: Sendable, Equatable {
+    struct Header: Sendable, Equatable {
+        enum Kind: String, Sendable, Equatable {
+            case text, image, video, document, location
+        }
+
+        var kind: Kind
+        var text: String?
+        var mediaURL: String?
+        var fileName: String?
+    }
+
+    struct Action: Sendable, Equatable {
+        var type: WhatsAppMessageButtonType
+        var label: String
+    }
+
+    enum Kind: String, Sendable, Equatable {
+        case template, interactive
+    }
+
+    var kind: Kind
+    var header: Header?
+    var body: String
+    var footer: String?
+    var buttons: [Action]
+}
+
 /// Estado de palomitas de un mensaje saliente. Sets normalizados de `/movil`
 /// (superset — audit doc 04 §7.2): las palomitas se derivan SOLO de `status`
 /// (el journey NO trae `deliveredAt`/`readAt`).
@@ -254,6 +291,7 @@ struct ChatMessage: Sendable, Equatable, Identifiable {
     var reactions: [ChatMessageReaction]
     var attachment: ChatAttachment?
     var location: ChatLocation?
+    var presentation: WhatsAppMessagePresentation?
     var isComment: Bool
     /// `'public' | 'private'` para respuestas a comentarios.
     var commentReplyMode: String?
@@ -294,6 +332,7 @@ struct ChatMessage: Sendable, Equatable, Identifiable {
         reactions: [ChatMessageReaction] = [],
         attachment: ChatAttachment? = nil,
         location: ChatLocation? = nil,
+        presentation: WhatsAppMessagePresentation? = nil,
         isComment: Bool = false,
         commentReplyMode: String? = nil,
         linkPreview: ChatLinkPreview? = nil,
@@ -331,6 +370,7 @@ struct ChatMessage: Sendable, Equatable, Identifiable {
         self.reactions = reactions
         self.attachment = attachment
         self.location = location
+        self.presentation = presentation
         self.isComment = isComment
         self.commentReplyMode = commentReplyMode
         self.linkPreview = linkPreview
@@ -446,7 +486,9 @@ enum ChatJourneyParser {
         let normalizedType = messageType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let status = readString(data, ["status"])
         let emailDetails = event.type == "email_message" ? buildEmailDetails(data, status: status) : nil
+        let presentation = event.type == "whatsapp_message" ? messagePresentation(from: data) : nil
         let attachment = mediaAttachment(from: data, appBaseURL: appBaseURL)
+            ?? presentationHeaderAttachment(presentation, appBaseURL: appBaseURL)
         let location = journeyLocation(from: data)
         let rawText: String
         if let emailDetails {
@@ -478,7 +520,8 @@ enum ChatJourneyParser {
             text = mediaFallback(from: data)
         }
 
-        if text.isEmpty, messageType.isEmpty, attachment == nil, location == nil, emailDetails == nil {
+        if text.isEmpty, messageType.isEmpty, attachment == nil, location == nil, emailDetails == nil,
+           presentation == nil {
             return nil
         }
 
@@ -536,6 +579,7 @@ enum ChatJourneyParser {
             reactionTargetProviderMessageId: nonEmpty(readString(data, ["reaction_target_provider_message_id", "reactionTargetProviderMessageId"])),
             attachment: attachment,
             location: location,
+            presentation: presentation,
             isComment: isCommentMessageType(messageType),
             commentReplyMode: normalizedType == "comment_reply_public"
                 ? "public"
@@ -749,6 +793,86 @@ enum ChatJourneyParser {
             readBool(data["answeredByAgent"]) ||
             agentId != nil
         return (sentByAgent, agentId)
+    }
+
+    static func messagePresentation(from data: [String: RistakJSONValue]) -> WhatsAppMessagePresentation? {
+        let rawValue = data["message_presentation"] ?? data["messagePresentation"]
+        guard case .object(let source)? = rawValue,
+              let kind = WhatsAppMessagePresentation.Kind(rawValue: cleanPresentationText(readString(source, ["kind"]), maxLength: 40)) else {
+            return nil
+        }
+
+        var header: WhatsAppMessagePresentation.Header?
+        if case .object(let rawHeader)? = source["header"],
+           let headerKind = WhatsAppMessagePresentation.Header.Kind(
+               rawValue: cleanPresentationText(readString(rawHeader, ["kind"]), maxLength: 40)
+           ) {
+            let text = nonEmpty(cleanPresentationText(readString(rawHeader, ["text"])))
+            let rawMediaURL = cleanPresentationText(readString(rawHeader, ["mediaUrl"]), maxLength: 4_096)
+            let mediaURL: String?
+            if let url = URL(string: rawMediaURL), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+                mediaURL = rawMediaURL
+            } else {
+                mediaURL = nil
+            }
+            header = WhatsAppMessagePresentation.Header(
+                kind: headerKind,
+                text: text,
+                mediaURL: mediaURL,
+                fileName: nonEmpty(cleanPresentationText(readString(rawHeader, ["fileName"]), maxLength: 500))
+            )
+        }
+
+        var buttons: [WhatsAppMessagePresentation.Action] = []
+        if case .array(let rawButtons)? = source["buttons"] {
+            for rawButton in rawButtons.prefix(10) {
+                guard case .object(let button) = rawButton else { continue }
+                let label = cleanPresentationText(readString(button, ["label"]), maxLength: 120)
+                guard !label.isEmpty else { continue }
+                let rawType = cleanPresentationText(readString(button, ["type"]), maxLength: 40)
+                buttons.append(WhatsAppMessagePresentation.Action(
+                    type: WhatsAppMessageButtonType(rawValue: rawType) ?? .unknown,
+                    label: label
+                ))
+            }
+        }
+
+        let body = cleanPresentationText(readString(source, ["body"]))
+        let footer = nonEmpty(cleanPresentationText(readString(source, ["footer"]), maxLength: 500))
+        guard !body.isEmpty || footer != nil || header != nil || !buttons.isEmpty else { return nil }
+        return WhatsAppMessagePresentation(
+            kind: kind,
+            header: header,
+            body: body,
+            footer: footer,
+            buttons: buttons
+        )
+    }
+
+    static func presentationHeaderAttachment(
+        _ presentation: WhatsAppMessagePresentation?,
+        appBaseURL: URL?
+    ) -> ChatAttachment? {
+        guard let header = presentation?.header,
+              let mediaURL = header.mediaURL,
+              !mediaURL.isEmpty else { return nil }
+        let type: ChatAttachment.Kind
+        switch header.kind {
+        case .image: type = .image
+        case .video: type = .video
+        case .document: type = .document
+        case .text, .location: return nil
+        }
+        return ChatAttachment(
+            type: type,
+            url: resolveMediaUrl(mediaURL, appBaseURL: appBaseURL),
+            name: header.fileName ?? attachmentFallbackName(type: type, name: "")
+        )
+    }
+
+    static func cleanPresentationText(_ value: String, maxLength: Int = 50_000) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(trimmed.prefix(max(0, maxLength)))
     }
 
     static func pickNestedRecord(_ data: [String: RistakJSONValue], _ keys: [String]) -> [String: RistakJSONValue]? {

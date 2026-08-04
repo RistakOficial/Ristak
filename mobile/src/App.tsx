@@ -338,6 +338,8 @@ import type {
   WhatsAppApiTemplate,
   WhatsAppApiPhoneNumber,
   WhatsAppApiStatus,
+  WhatsAppMessageButtonType,
+  WhatsAppMessagePresentation,
   WhatsAppNumberOriginDatum,
 } from './types';
 import { buildUserCustomFieldRows, isUserCustomFieldDefinition } from './contactCustomFields';
@@ -24785,7 +24787,10 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
     () => getNativeMessageChannelBubbleStyle(message, outbound, scheduled, themeTone),
     [message.channel, message.commentPlatform, message.emailDetails, message.messageType, message.transport, outbound, scheduled, themeTone],
   );
-  const linkPreview = useMemo(() => getNativeMessageLinkPreview(message), [message]);
+  const linkPreview = useMemo(
+    () => message.presentation ? null : getNativeMessageLinkPreview(message),
+    [message],
+  );
   const visibleMessageText = linkPreview?.displayText ?? message.text;
   const scheduledCountdown = scheduled ? formatNativeScheduledCountdown(message.scheduledAt || message.date, scheduledCountdownNow) : '';
   const metaLabel = scheduled
@@ -24954,7 +24959,16 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
             outbound={outbound && !scheduled}
           />
         ) : null}
-        {visibleMessageText && !message.location && !message.emailDetails ? <NativeFormattedMessageText failed={Boolean(message.failed)} outbound={outbound && !scheduled} text={visibleMessageText} /> : null}
+        {message.presentation && !message.location && !message.emailDetails ? (
+          <NativeWhatsAppMessagePresentation
+            failed={Boolean(message.failed)}
+            fallbackText={visibleMessageText}
+            outbound={outbound && !scheduled}
+            presentation={message.presentation}
+          />
+        ) : visibleMessageText && !message.location && !message.emailDetails ? (
+          <NativeFormattedMessageText failed={Boolean(message.failed)} outbound={outbound && !scheduled} text={visibleMessageText} />
+        ) : null}
         {linkPreview && !message.location ? (
           <NativeMessageLinkPreviewCard
             failed={Boolean(message.failed)}
@@ -24997,10 +25011,104 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
   );
 });
 
-function NativeFormattedMessageText({ failed, outbound, text }: { failed?: boolean; outbound?: boolean; text: string }) {
+function NativeTemplateActionIcon({ color, type }: { color: string; type: WhatsAppMessageButtonType }) {
+  if (type === 'url') return <ExternalLink size={15} color={color} strokeWidth={2.35} />;
+  if (type === 'phone' || type === 'voice_call') return <Phone size={15} color={color} strokeWidth={2.35} />;
+  if (type === 'copy_code') return <Copy size={15} color={color} strokeWidth={2.35} />;
+  return <Reply size={15} color={color} strokeWidth={2.35} />;
+}
+
+function NativeWhatsAppMessagePresentation({
+  failed,
+  fallbackText,
+  outbound,
+  presentation,
+}: {
+  failed?: boolean;
+  fallbackText: string;
+  outbound?: boolean;
+  presentation: WhatsAppMessagePresentation;
+}) {
+  const body = presentation.body || fallbackText;
+  const header = presentation.header;
+  const actionColor = activeNativeThemeTone === 'light' ? '#0D4E8F' : '#71B2F8';
+  const headerAssetLabel = header && header.kind !== 'text' && !header.mediaUrl
+    ? header.text || header.fileName || (
+        header.kind === 'image'
+          ? 'Imagen de la plantilla'
+          : header.kind === 'video'
+            ? 'Video de la plantilla'
+            : header.kind === 'location'
+              ? 'Ubicación compartida'
+              : 'Documento adjunto'
+      )
+    : '';
+
+  return (
+    <View style={styles.messageTemplateContent}>
+      {header?.kind === 'text' && header.text ? (
+        <NativeFormattedMessageText
+          failed={failed}
+          outbound={outbound}
+          style={styles.messageTemplateHeaderText}
+          text={header.text}
+        />
+      ) : null}
+      {headerAssetLabel ? (
+        <View style={styles.messageTemplateHeaderAsset}>
+          {header?.kind === 'location' ? (
+            <MapPin size={17} color={COLORS.meta} strokeWidth={2.3} />
+          ) : (
+            <FileText size={17} color={COLORS.meta} strokeWidth={2.3} />
+          )}
+          <Text numberOfLines={2} style={styles.messageTemplateHeaderAssetText}>{headerAssetLabel}</Text>
+        </View>
+      ) : null}
+      {body ? <NativeFormattedMessageText failed={failed} outbound={outbound} text={body} /> : null}
+      {presentation.footer ? (
+        <NativeFormattedMessageText
+          failed={failed}
+          outbound={outbound}
+          style={styles.messageTemplateFooter}
+          text={presentation.footer}
+        />
+      ) : null}
+      {presentation.buttons.length ? (
+        <View
+          accessible
+          accessibilityLabel="Opciones mostradas en WhatsApp"
+          pointerEvents="none"
+          style={styles.messageTemplateActions}
+        >
+          {presentation.buttons.map((button, index) => (
+            <View
+              key={`${button.type}-${button.label}-${index}`}
+              style={[styles.messageTemplateAction, index > 0 && styles.messageTemplateActionDivider]}
+            >
+              <NativeTemplateActionIcon color={actionColor} type={button.type} />
+              <Text style={[styles.messageTemplateActionText, { color: actionColor }]}>{button.label}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function NativeFormattedMessageText({
+  failed,
+  outbound,
+  style,
+  text,
+}: {
+  failed?: boolean;
+  outbound?: boolean;
+  style?: StyleProp<TextStyle>;
+  text: string;
+}) {
   const segments = useMemo(() => parseWhatsAppFormattedText(text), [text]);
   return (
-    <Text style={[styles.messageText, outbound && !failed && styles.messageTextOnAccent, failed && styles.failedMessageText]}>
+    <Text style={[styles.messageText, outbound && !failed && styles.messageTextOnAccent, failed && styles.failedMessageText, style]}>
       {segments.map((segment, index) => (
         <Text
           key={`${segment.text}-${index}`}
@@ -25011,6 +25119,7 @@ function NativeFormattedMessageText({ failed, outbound, text }: { failed?: boole
             segment.italic && styles.messageTextItalic,
             segment.strike && styles.messageTextStrike,
             segment.mono && styles.messageTextMono,
+            style,
           ]}
         >
           {segment.text}
@@ -33197,6 +33306,65 @@ function createAppStyles() {
   messageTextMono: {
     fontFamily: 'monospace',
     fontWeight: '600',
+  },
+  messageTemplateContent: {
+    minWidth: 0,
+    gap: 8,
+  },
+  messageTemplateHeaderText: {
+    fontWeight: '900',
+  },
+  messageTemplateHeaderAsset: {
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: messageBubbleMetaColor,
+    borderRadius: 8,
+  },
+  messageTemplateHeaderAssetText: {
+    flex: 1,
+    minWidth: 0,
+    color: messageBubbleTextColor,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  messageTemplateFooter: {
+    color: messageBubbleMetaColor,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+  },
+  messageTemplateActions: {
+    marginHorizontal: -9,
+    marginTop: 2,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: messageBubbleMetaColor,
+  },
+  messageTemplateAction: {
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  messageTemplateActionDivider: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: messageBubbleMetaColor,
+  },
+  messageTemplateActionText: {
+    minWidth: 0,
+    flexShrink: 1,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '800',
+    textAlign: 'center',
   },
   messageEmailCard: {
     minWidth: 0,

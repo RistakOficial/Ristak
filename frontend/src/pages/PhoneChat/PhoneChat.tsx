@@ -74,6 +74,9 @@ import {
   Modal,
   RecordPaymentModal,
   WhatsAppFormattedText,
+  WhatsAppMessageContent,
+  normalizeWhatsAppMessagePresentation,
+  type WhatsAppMessagePresentation,
   type ContentFocusItem
 } from '@/components/common'
 import { AgentRobot } from '@/components/ai'
@@ -1367,6 +1370,7 @@ interface ChatMessage {
     isGif?: boolean
   }
   location?: ChatLocation
+  presentation?: WhatsAppMessagePresentation
 }
 
 type PhoneConversationTimelineItem =
@@ -3600,6 +3604,9 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     platform,
     messageType
   })
+  const presentation = !isMetaMessage
+    ? normalizeWhatsAppMessagePresentation(eventData.message_presentation || eventData.messagePresentation)
+    : undefined
 
   return {
     id: String(
@@ -3668,7 +3675,8 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
         }
       : undefined,
     attachment,
-    location
+    location,
+    presentation
   }
 }
 
@@ -16075,7 +16083,15 @@ export const PhoneChat: React.FC = () => {
                     {previewAttachmentLabel}
                   </span>
                 )}
-                <WhatsAppFormattedText text={previewText} className={styles.messageText} />
+                {message.presentation ? (
+                  <WhatsAppMessageContent
+                    presentation={message.presentation}
+                    fallbackText={previewText}
+                    className={styles.messageText}
+                  />
+                ) : (
+                  <WhatsAppFormattedText text={previewText} className={styles.messageText} />
+                )}
                 {renderMessageMeta(message)}
               </div>
             </div>
@@ -16136,7 +16152,6 @@ export const PhoneChat: React.FC = () => {
     const isVideoMessage = message.attachment?.type === 'video' && Boolean(message.attachment.dataUrl || message.attachment.url)
     const isFileMessage = Boolean(message.attachment && ['document', 'file'].includes(message.attachment.type))
     const isLocationMessage = Boolean(message.location)
-    const hasRichAttachment = isAudioAttachment || isVideoMessage || isFileMessage || message.attachment?.type === 'image' || isLocationMessage
     const starred = starredMessageIdSet.has(message.id)
 
     return (
@@ -16164,8 +16179,15 @@ export const PhoneChat: React.FC = () => {
           </span>
         )}
         {isLocationMessage && renderLocationMessage(message)}
-        {!hasRichAttachment && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
-        {hasRichAttachment && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
+        {message.presentation ? (
+          <WhatsAppMessageContent
+            presentation={message.presentation}
+            fallbackText={message.text}
+            className={styles.messageText}
+          />
+        ) : (
+          message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />
+        )}
         <span className={styles.messageActionPreviewMeta}>
           {starred && (
             <span className={styles.messageStarBadge} aria-label="Mensaje destacado">
@@ -16661,8 +16683,18 @@ export const PhoneChat: React.FC = () => {
                     {isAudioAttachment && !isAudioMessage && renderAudioUnavailableMessage(message)}
                     {isLocationMessage && renderLocationMessage(message)}
                     {isEmailMessage && renderEmailMessage(message)}
-                    {!isEmailMessage && !hasRichAttachment && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
-                    {!isEmailMessage && hasRichAttachment && !isAudioMessage && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
+                    {!isEmailMessage && !isAudioMessage && message.presentation ? (
+                      <WhatsAppMessageContent
+                        presentation={message.presentation}
+                        fallbackText={message.text}
+                        className={styles.messageText}
+                      />
+                    ) : (
+                      <>
+                        {!isEmailMessage && !hasRichAttachment && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
+                        {!isEmailMessage && hasRichAttachment && !isAudioMessage && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
+                      </>
+                    )}
                     {starredMessageIdSet.has(message.id) && (
                       <span className={styles.messageStarBadge} aria-label="Mensaje destacado">
                         <Star size={12} fill="currentColor" />

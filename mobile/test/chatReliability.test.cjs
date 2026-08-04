@@ -23,7 +23,12 @@ const {
   mergeFreshChatPage,
   sortChatContactsByRecency,
 } = require('../src/chatListState.ts');
-const { parseSortableDateValue, resolveChatMessageReactions } = require('../src/format.ts');
+const {
+  buildMessagesFromJourney,
+  normalizeWhatsAppMessagePresentation,
+  parseSortableDateValue,
+  resolveChatMessageReactions,
+} = require('../src/format.ts');
 const { buildUserCustomFieldRows } = require('../src/contactCustomFields.ts');
 const {
   normalizeChatSelectionIds,
@@ -57,6 +62,50 @@ function contact(id, lastMessageDate, overrides = {}) {
     ...overrides,
   };
 }
+
+test('Android conserva la estructura visual de plantillas sin ejecutar sus botones', () => {
+  const presentation = normalizeWhatsAppMessagePresentation({
+    kind: 'template',
+    header: { kind: 'text', text: 'Tu cita está por comenzar' },
+    body: 'Aquí está el enlace.',
+    footer: 'Puedes ir ingresando.',
+    buttons: [{
+      type: 'url',
+      label: 'Google Meet',
+      url: 'https://example.test/tracked',
+      payload: 'private-action',
+    }],
+  });
+  assert.deepEqual(presentation, {
+    kind: 'template',
+    header: { kind: 'text', text: 'Tu cita está por comenzar' },
+    body: 'Aquí está el enlace.',
+    footer: 'Puedes ir ingresando.',
+    buttons: [{ type: 'url', label: 'Google Meet' }],
+  });
+
+  const [message] = buildMessagesFromJourney('contact-1', [{
+    type: 'whatsapp_message',
+    date: '2026-08-04T04:00:00.000Z',
+    data: {
+      whatsapp_api_message_id: 'message-1',
+      message_type: 'template',
+      message_text: 'Aquí está el enlace.\n\n- Google Meet',
+      direction: 'outbound',
+      transport: 'api',
+      message_presentation: presentation,
+    },
+  }]);
+  assert.deepEqual(message.presentation, presentation);
+
+  const appSource = fs.readFileSync(require.resolve('../src/App.tsx'), 'utf8');
+  assert.match(appSource, /function NativeWhatsAppMessagePresentation/);
+  assert.match(appSource, /pointerEvents="none"/);
+  assert.doesNotMatch(
+    appSource.match(/function NativeWhatsAppMessagePresentation[\s\S]*?function NativeFormattedMessageText/)?.[0] || '',
+    /Linking\.openURL|onPress=/,
+  );
+});
 
 test('seleccionar todos conserva ids que no estan en la pagina visible', () => {
   const allIds = normalizeChatSelectionIds([

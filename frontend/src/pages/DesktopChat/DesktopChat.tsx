@@ -66,13 +66,16 @@ import {
   Switch,
   TagPicker,
   WhatsAppFormattedText,
+  WhatsAppMessageContent,
   buildEmailChatMessageData,
   emailHtmlToPlainText,
   hasEmailChatMessageContent,
   plainTextToEmailHtml,
   sanitizeEmailRichHtmlForEditor,
+  normalizeWhatsAppMessagePresentation,
   type EmailChatMessageData,
   type EmailRichTextVariable,
+  type WhatsAppMessagePresentation,
   type ContentFocusItem
 } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney/ContactJourney'
@@ -350,6 +353,7 @@ interface DesktopChatMessage {
   }
   location?: ChatLocation
   adPreview?: MessageAdPreview
+  presentation?: WhatsAppMessagePresentation
 }
 
 // Perfil social del contacto + contacto ENLAZADO (misma persona en el mismo
@@ -2500,6 +2504,9 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
   const adPreview = event.type === 'whatsapp_message' || event.type === 'meta_message'
     ? buildMessageAdPreview(data, direction)
     : undefined
+  const presentation = event.type === 'whatsapp_message'
+    ? normalizeWhatsAppMessagePresentation(data.message_presentation || data.messagePresentation)
+    : undefined
   const email = event.type === 'email_message'
     ? buildEmailChatMessageData(data, {
         bodyText: effectiveText,
@@ -2567,7 +2574,8 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
     email,
     attachment,
     location,
-    adPreview
+    adPreview,
+    presentation
   }
 }
 
@@ -9836,7 +9844,15 @@ export const DesktopChat: React.FC = () => {
                                           {renderAdPreview(message)}
                                           {renderAttachment(message)}
                                           {message.subject ? <strong className={styles.emailMessageSubject}>{message.subject}</strong> : null}
-                                          {message.text ? <WhatsAppFormattedText text={message.text} className={styles.messageText} /> : null}
+                                          {message.presentation ? (
+                                            <WhatsAppMessageContent
+                                              presentation={message.presentation}
+                                              fallbackText={message.text}
+                                              className={styles.messageText}
+                                            />
+                                          ) : message.text ? (
+                                            <WhatsAppFormattedText text={message.text} className={styles.messageText} />
+                                          ) : null}
                                         </>
                                       )}
                                     </>

@@ -3747,3 +3747,95 @@ test('chat contacts phone filter includes API and QR records for the same busine
     await cleanup(contactId, phone)
   }
 })
+
+test('contact journey preserves the visual structure of sent WhatsApp templates', async () => {
+  const id = randomUUID()
+  const hash = id.replaceAll('-', '').slice(0, 24)
+  const contactId = `template_presentation_${id}`
+  const phone = `+52994${Date.now().toString().slice(-7)}`
+  const messageId = `waapi_msg_${hash}`
+  const templateSendId = `waapi_tpl_send_${hash}`
+  const timestamp = '2098-08-04T12:00:00.000Z'
+
+  await cleanup(contactId, phone)
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente plantilla visual',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: timestamp,
+      updated_at: timestamp
+    })
+    await insertRow('whatsapp_api_template_sends', {
+      id: templateSendId,
+      provider: 'meta_direct',
+      source_adapter: 'meta_direct',
+      provider_message_id: `wamid.${hash}`,
+      template_name: 'enlace_videollamada_google_meet_seguro',
+      language: 'es_MX',
+      to_phone: phone,
+      from_phone: '+526561000000',
+      wamid: `wamid.${hash}`,
+      status: 'accepted',
+      raw_payload_json: JSON.stringify({
+        request: {
+          template: {
+            name: 'enlace_videollamada_google_meet_seguro',
+            language: { code: 'es_MX' },
+            components: [{
+              type: 'button',
+              sub_type: 'url',
+              index: '0',
+              parameters: [{ type: 'text', text: 'pce1_tracking_token' }]
+            }]
+          }
+        },
+        template: {
+          components: [
+            { type: 'BODY', text: 'Aquí está el enlace para ingresar.' },
+            { type: 'FOOTER', text: 'Mensaje automático' },
+            { type: 'BUTTONS', buttons: [{ type: 'URL', text: 'Google Meet', url: 'https://example.test/{{1}}' }] }
+          ]
+        }
+      }),
+      created_at: timestamp,
+      updated_at: timestamp
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: messageId,
+      provider: 'meta_direct',
+      source_adapter: 'meta_direct',
+      provider_message_id: `wamid.${hash}`,
+      wamid: `wamid.${hash}`,
+      contact_id: contactId,
+      phone,
+      from_phone: '+526561000000',
+      to_phone: phone,
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'outbound',
+      message_type: 'template',
+      message_text: 'Aquí está el enlace para ingresar.\n\nMensaje automático\n\n- Google Meet',
+      raw_payload_json: '{}',
+      message_timestamp: timestamp,
+      created_at: timestamp
+    })
+
+    const journey = await readJourney(contactId, { includeBusinessMessages: 'true' })
+    const message = journey.find(event => event.data?.whatsapp_api_message_id === messageId)
+
+    assert.ok(message)
+    assert.deepEqual(message.data.message_presentation, {
+      kind: 'template',
+      body: 'Aquí está el enlace para ingresar.',
+      footer: 'Mensaje automático',
+      buttons: [{ type: 'url', label: 'Google Meet' }]
+    })
+    assert.doesNotMatch(JSON.stringify(message.data.message_presentation), /pce1_|example\.test/)
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_template_sends WHERE id = ?', [templateSendId]).catch(() => undefined)
+    await cleanup(contactId, phone)
+  }
+})

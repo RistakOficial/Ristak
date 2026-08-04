@@ -362,6 +362,7 @@ private struct ThreadMessageDTO: Codable, Sendable {
     var reactions: [ReactionDTO]
     var attachment: AttachmentDTO?
     var location: LocationDTO?
+    var presentation: MessagePresentationDTO?
     var isComment: Bool
     var commentReplyMode: String?
     var linkPreview: LinkPreviewDTO?
@@ -398,6 +399,7 @@ private struct ThreadMessageDTO: Codable, Sendable {
         reactions = message.reactions.map(ReactionDTO.init)
         attachment = message.attachment.map(AttachmentDTO.init)
         location = message.location.map(LocationDTO.init)
+        presentation = message.presentation.map(MessagePresentationDTO.init)
         isComment = message.isComment
         commentReplyMode = message.commentReplyMode
         linkPreview = message.linkPreview.map(LinkPreviewDTO.init)
@@ -438,6 +440,7 @@ private struct ThreadMessageDTO: Codable, Sendable {
             reactions: reactions.map(\.reaction),
             attachment: attachment?.attachment,
             location: location?.location,
+            presentation: presentation?.presentation,
             isComment: isComment,
             commentReplyMode: commentReplyMode,
             linkPreview: linkPreview?.linkPreview,
@@ -445,6 +448,74 @@ private struct ThreadMessageDTO: Codable, Sendable {
             emailDetails: emailDetails?.details,
             pending: false,
             failed: false
+        )
+    }
+}
+
+private struct MessagePresentationDTO: Codable, Sendable {
+    struct HeaderDTO: Codable, Sendable {
+        var kind: String
+        var text: String?
+        var mediaURL: String?
+        var fileName: String?
+
+        init(_ header: WhatsAppMessagePresentation.Header) {
+            kind = header.kind.rawValue
+            text = header.text
+            mediaURL = header.mediaURL
+            fileName = header.fileName
+        }
+
+        var header: WhatsAppMessagePresentation.Header? {
+            guard let kind = WhatsAppMessagePresentation.Header.Kind(rawValue: kind) else { return nil }
+            return WhatsAppMessagePresentation.Header(
+                kind: kind,
+                text: text,
+                mediaURL: mediaURL,
+                fileName: fileName
+            )
+        }
+    }
+
+    struct ActionDTO: Codable, Sendable {
+        var type: String
+        var label: String
+
+        init(_ action: WhatsAppMessagePresentation.Action) {
+            type = action.type.rawValue
+            label = action.label
+        }
+
+        var action: WhatsAppMessagePresentation.Action {
+            WhatsAppMessagePresentation.Action(
+                type: WhatsAppMessageButtonType(rawValue: type) ?? .unknown,
+                label: label
+            )
+        }
+    }
+
+    var kind: String
+    var header: HeaderDTO?
+    var body: String
+    var footer: String?
+    var buttons: [ActionDTO]
+
+    init(_ presentation: WhatsAppMessagePresentation) {
+        kind = presentation.kind.rawValue
+        header = presentation.header.map(HeaderDTO.init)
+        body = presentation.body
+        footer = presentation.footer
+        buttons = presentation.buttons.map(ActionDTO.init)
+    }
+
+    var presentation: WhatsAppMessagePresentation? {
+        guard let kind = WhatsAppMessagePresentation.Kind(rawValue: kind) else { return nil }
+        return WhatsAppMessagePresentation(
+            kind: kind,
+            header: header?.header,
+            body: body,
+            footer: footer,
+            buttons: buttons.map(\.action)
         )
     }
 }

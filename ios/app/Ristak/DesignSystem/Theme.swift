@@ -153,6 +153,13 @@ enum RistakTheme {
         dark: rgb(0xB7, 0xB7, 0xBD)
     )
 
+    /// Acciones históricas de plantillas WhatsApp. Mantiene el azul de enlace
+    /// con contraste AA sobre los globos verdes en claro y oscuro.
+    static let bubbleAction = dynamic(
+        light: rgb(0x0D, 0x4E, 0x8F),
+        dark: rgb(0x71, 0xB2, 0xF8)
+    )
+
     /// Meta superpuesta sobre foto/video; siempre clara y respaldada por el
     /// degradado del media para conservar contraste con cualquier contenido.
     static let bubbleMediaMeta = Color.white.opacity(0.94)

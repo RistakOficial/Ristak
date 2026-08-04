@@ -1,4 +1,12 @@
-import type { ChatAttachment, ChatContact, ChatLocation, JourneyEvent, ChatMessage } from './types';
+import type {
+  ChatAttachment,
+  ChatContact,
+  ChatLocation,
+  JourneyEvent,
+  ChatMessage,
+  WhatsAppMessageButtonType,
+  WhatsAppMessagePresentation,
+} from './types';
 import { resolveChatMessageChannel } from './chatMessageChannel';
 
 const DEFAULT_BUSINESS_TIMEZONE = 'America/Mexico_City';
@@ -688,6 +696,89 @@ function getJourneyAgentMessageMetadata(data: Record<string, unknown>) {
   };
 }
 
+const WHATSAPP_PRESENTATION_KINDS = new Set<WhatsAppMessagePresentation['kind']>(['template', 'interactive']);
+const WHATSAPP_HEADER_KINDS = new Set<NonNullable<WhatsAppMessagePresentation['header']>['kind']>([
+  'text',
+  'image',
+  'video',
+  'document',
+  'location',
+]);
+const WHATSAPP_BUTTON_TYPES = new Set<WhatsAppMessageButtonType>([
+  'quick_reply',
+  'url',
+  'phone',
+  'copy_code',
+  'voice_call',
+  'unknown',
+]);
+
+function cleanPresentationText(value: unknown, maxLength = 50_000) {
+  return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
+}
+
+export function normalizeWhatsAppMessagePresentation(value: unknown): WhatsAppMessagePresentation | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  const kind = cleanPresentationText(source.kind, 40) as WhatsAppMessagePresentation['kind'];
+  if (!WHATSAPP_PRESENTATION_KINDS.has(kind)) return undefined;
+
+  const rawHeader = source.header && typeof source.header === 'object' && !Array.isArray(source.header)
+    ? source.header as Record<string, unknown>
+    : null;
+  const headerKind = cleanPresentationText(rawHeader?.kind, 40) as NonNullable<WhatsAppMessagePresentation['header']>['kind'];
+  const headerText = cleanPresentationText(rawHeader?.text);
+  const headerMediaUrl = cleanPresentationText(rawHeader?.mediaUrl, 4096);
+  const headerFileName = cleanPresentationText(rawHeader?.fileName, 500);
+  const header = rawHeader && WHATSAPP_HEADER_KINDS.has(headerKind)
+    ? {
+        kind: headerKind,
+        ...(headerText ? { text: headerText } : {}),
+        ...(/^https?:\/\//i.test(headerMediaUrl) ? { mediaUrl: headerMediaUrl } : {}),
+        ...(headerFileName ? { fileName: headerFileName } : {}),
+      }
+    : undefined;
+  const buttons = Array.isArray(source.buttons)
+    ? source.buttons.flatMap((entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+        const button = entry as Record<string, unknown>;
+        const label = cleanPresentationText(button.label, 120);
+        const type = cleanPresentationText(button.type, 40) as WhatsAppMessageButtonType;
+        if (!label) return [];
+        return [{ type: WHATSAPP_BUTTON_TYPES.has(type) ? type : 'unknown', label }];
+      }).slice(0, 10)
+    : [];
+  const body = cleanPresentationText(source.body);
+  const footer = cleanPresentationText(source.footer, 500);
+  if (!body && !footer && !header && !buttons.length) return undefined;
+
+  return {
+    kind,
+    ...(header ? { header } : {}),
+    body,
+    ...(footer ? { footer } : {}),
+    buttons,
+  };
+}
+
+function getPresentationHeaderAttachment(
+  presentation: WhatsAppMessagePresentation | undefined,
+  appBaseUrl = '',
+): ChatAttachment | undefined {
+  const header = presentation?.header;
+  if (!header?.mediaUrl) return undefined;
+  let type: ChatAttachment['type'];
+  if (header.kind === 'image') type = 'image';
+  else if (header.kind === 'video') type = 'video';
+  else if (header.kind === 'document') type = 'document';
+  else return undefined;
+  return {
+    type,
+    url: resolveAppMediaUrl(header.mediaUrl, appBaseUrl),
+    name: header.fileName || (type === 'image' ? 'Imagen de la plantilla' : type === 'video' ? 'Video de la plantilla' : 'Documento de la plantilla'),
+  };
+}
+
 function pickNestedRecord(data: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = data[key];
@@ -1043,7 +1134,11 @@ export function buildMessagesFromJourney(contactId: string, events: JourneyEvent
       const messageType = readString(data, ['message_type', 'messageType', 'type']);
       const status = readString(data, ['status']);
       const emailDetails = event.type === 'email_message' ? buildJourneyEmailDetails(data, status) : undefined;
-      const attachment = getJourneyMediaAttachment(data, appBaseUrl);
+      const presentation = event.type === 'whatsapp_message'
+        ? normalizeWhatsAppMessagePresentation(data.message_presentation || data.messagePresentation)
+        : undefined;
+      const attachment = getJourneyMediaAttachment(data, appBaseUrl)
+        || getPresentationHeaderAttachment(presentation, appBaseUrl);
       const location = getJourneyLocation(data);
       const rawText = emailDetails
         ? buildEmailMessageText(emailDetails.subject, emailDetails.body)
@@ -1062,7 +1157,7 @@ export function buildMessagesFromJourney(contactId: string, events: JourneyEvent
           location,
         ),
       ) || getCommentFallbackText(messageType, status, postDeleted) || (attachment || location ? '' : getMediaFallback(data));
-      if (!text && !messageType && !attachment && !location && !emailDetails) return null;
+      if (!text && !messageType && !attachment && !location && !emailDetails && !presentation) return null;
 
       const direction = normalizeDirection(readString(data, ['direction']));
       const attributionRecordId = readIdString(data, ['attribution_record_id']);
@@ -1117,6 +1212,7 @@ export function buildMessagesFromJourney(contactId: string, events: JourneyEvent
         emailDetails,
         attachment,
         location,
+        presentation,
         isComment: isCommentMessageType(messageType),
         commentReplyMode: normalizedMessageType === 'comment_reply_public'
           ? 'public'
