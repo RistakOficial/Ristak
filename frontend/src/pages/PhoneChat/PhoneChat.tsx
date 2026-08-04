@@ -19844,7 +19844,7 @@ export const PhoneChat: React.FC = () => {
     ready_to_buy: 'Link de pago enviado',
     appointment_booked: 'Cita agendada',
     purchase_completed: 'Compra confirmada',
-    link_sent: 'Enlace enviado',
+    link_sent: 'Meta cumplida',
     discarded: 'Descartada'
   }
 

@@ -9494,7 +9494,9 @@ nunca un booleano escrito por el modelo.
   sellado dentro del mismo plan para que un retry no dependa de que el modelo
   vuelva a elegir la tool. El cierre usa la señal `link_sent`, queda ligado al
   agente, canal, inbound, estado y ciclo de activación originales, y nunca pisa
-  una pausa o toma humana concurrente.
+  una pausa o toma humana concurrente. La señal específica se conserva para
+  auditoría, pero las bandejas y el detalle visible la presentan como **Meta
+  cumplida**; "enlace enviado" describe la acción, no el resultado del objetivo.
   Para listas y ofertas de horario, el tester tampoco agrega el globo generico
   "Prueba interna": simula el efecto por estado y deja visible solamente el
   horario que recibiria el contacto. Esas listas y ofertas estructuradas siempre

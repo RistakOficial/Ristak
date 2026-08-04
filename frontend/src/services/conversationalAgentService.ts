@@ -738,7 +738,7 @@ const COMPLETION_SIGNAL_META: Record<Exclude<ConversationSignal, 'discarded'>, {
   ready_to_buy: { label: 'Listo para cobrar', icon: '💳' },
   appointment_booked: { label: 'Cita agendada', icon: '📅' },
   purchase_completed: { label: 'Pago completado', icon: '💰' },
-  link_sent: { label: 'Enlace enviado', icon: '🔗' }
+  link_sent: { label: 'Meta cumplida', icon: '🔗' }
 }
 const COMPLETION_SIGNAL_SET = new Set<Exclude<ConversationSignal, 'discarded'>>(Object.keys(COMPLETION_SIGNAL_META) as Array<Exclude<ConversationSignal, 'discarded'>>)
 
