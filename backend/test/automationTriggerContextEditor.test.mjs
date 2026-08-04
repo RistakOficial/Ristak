@@ -54,6 +54,20 @@ test('Esperar usa la cita del disparador solo cuando todas las entradas entregan
   assert.match(registry, /\{ id: 'cancelled', label: 'Cita cancelada' \}/)
 })
 
+test('el catálogo global ofrece el enlace seguro de la cita en correos y mensajes', () => {
+  const catalog = readRepoFile('frontend/src/pages/Automations/editor/variablesCatalog.ts')
+  const emailEditor = readRepoFile(
+    'frontend/src/pages/Automations/editor/config/EmailConfigEditor.tsx'
+  )
+
+  assert.match(
+    catalog,
+    /fieldId: 'cita\.enlace_ingreso', label: 'Enlace de ingreso a la cita', category: 'appointment'/
+  )
+  assert.match(emailEditor, /loadAllVariables\(\)/)
+  assert.match(emailEditor, /variables: richEditorVariables/)
+})
+
 test('Formulario enviado elige el formulario dentro de filtros y no en un campo separado', () => {
   const registry = readRepoFile('frontend/src/pages/Automations/editor/nodeRegistry.tsx')
   const fields = readRepoFile('frontend/src/pages/Automations/editor/crmFields.ts')

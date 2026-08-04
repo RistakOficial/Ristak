@@ -109,16 +109,26 @@ const AUTOMATION_OUTPUT_NODE_TYPES = new Set([
   'channel-whatsapp'
 ])
 
-async function resolveAutomationTemplateValue(value, ctx = {}) {
+export async function resolveAutomationTemplateValue(value, ctx = {}) {
   const eventVariables = buildVariableMap(ctx)
+  const appointmentId = ctx.appointmentId || ctx.appointment_id || ''
+  const calendarId = ctx.calendarId || ctx.calendar_id || ''
+  const contactId = ctx.contact?.id || ctx.contactId || ctx.contact_id || ''
   return renderTemplateVariablesInValue(
     value,
     {
       contact: ctx.contact,
-      contactId: ctx.contact?.id || ctx.contactId || ctx.contact_id,
+      contactId,
       phone: ctx.contact?.phone || ctx.phone,
       userId: ctx.userId || ctx.user_id,
-      publicBaseUrl: ctx.publicBaseUrl || ctx.public_base_url
+      publicBaseUrl: ctx.publicBaseUrl || ctx.public_base_url,
+      appointmentId,
+      calendarId,
+      appointment: {
+        id: appointmentId,
+        calendarId,
+        contactId
+      }
     },
     {
       preserveUnknown: false,

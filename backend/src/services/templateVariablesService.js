@@ -12,6 +12,7 @@ import { buildTriggerLinkRecipientUrl } from './triggerLinkRecipientTokenService
 // de WhatsApp y nunca deben consumirse como variables CRM.
 const TOKEN_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g
 const POSITIONAL_TOKEN_PATTERN = /^\d+$/
+const APPOINTMENT_JOIN_LINK_TOKEN = 'cita.enlace_ingreso'
 const KNOWN_TOKEN_PREFIXES = [
   'account.',
   'business.',
@@ -361,6 +362,39 @@ async function resolveTriggerLinkToken(rawToken, { contact, publicBaseUrl } = {}
   return buildTriggerLinkPublicUrl(row.public_id, publicBaseUrl)
 }
 
+async function resolveAppointmentJoinLink({ contact = {}, options = {} } = {}) {
+  const appointment = options.appointment && typeof options.appointment === 'object'
+    ? options.appointment
+    : {}
+  const appointmentId = cleanString(
+    appointment.id || appointment.appointmentId || appointment.appointment_id ||
+    options.appointmentId || options.appointment_id,
+    180
+  )
+  const calendarId = cleanString(
+    appointment.calendarId || appointment.calendar_id ||
+    options.calendarId || options.calendar_id,
+    180
+  )
+  const contactId = cleanString(
+    contact.id || appointment.contactId || appointment.contact_id ||
+    options.contactId || options.contact_id,
+    180
+  )
+  if (!appointmentId || !calendarId || !contactId) return ''
+
+  const { buildAppointmentMeetingJoinUrl } = await import('./calendarMeetingService.js')
+  return buildAppointmentMeetingJoinUrl({
+    appointment: {
+      id: appointmentId,
+      calendarId,
+      contactId
+    },
+    contactId,
+    baseUrl: options.publicBaseUrl
+  })
+}
+
 export async function buildTemplateVariableMap(options = {}) {
   const contact = await loadContact(options)
   const [accountVariables, variableFieldVariables] = await Promise.all([
@@ -389,6 +423,7 @@ export async function createTemplateVariableRenderer(options = {}) {
     ...(options.extraVariables || {})
   })
   const triggerCache = new Map()
+  let appointmentJoinLinkPromise = null
 
   const resolveToken = async (rawToken, fullMatch, {
     preserveUnknown = false,
@@ -420,6 +455,11 @@ export async function createTemplateVariableRenderer(options = {}) {
         }))
       }
       return formatResolvedValue(triggerCache.get(normalizedToken))
+    }
+
+    if (normalizedToken === APPOINTMENT_JOIN_LINK_TOKEN) {
+      appointmentJoinLinkPromise ||= resolveAppointmentJoinLink({ contact, options })
+      return formatResolvedValue(await appointmentJoinLinkPromise)
     }
 
     if (typeof resolveUnknownToken === 'function') {

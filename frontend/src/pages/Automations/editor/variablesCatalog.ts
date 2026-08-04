@@ -140,6 +140,7 @@ export const BASE_VARIABLES: FlowVariable[] = [
   { fieldId: 'appointment.calendar', label: 'Calendario', category: 'appointment' },
   { fieldId: 'appointment.type', label: 'Tipo de cita', category: 'appointment' },
   { fieldId: 'appointment.status', label: 'Estado de cita', category: 'appointment' },
+  { fieldId: 'cita.enlace_ingreso', label: 'Enlace de ingreso a la cita', category: 'appointment' },
 
   // Pagos
   { fieldId: 'payment.product', label: 'Producto', category: 'payment' },

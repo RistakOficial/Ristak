@@ -172,8 +172,12 @@ minutos antes con la plantilla `acceso_videollamada_10_minutos`. La
 plantilla es la preferida para calendarios en línea nuevos y conserva texto fijo
 después de la URL dinámica para que Meta pueda aceptarla. La
 variable **Enlace de ingreso a la cita** (`{{cita.enlace_ingreso}}`) aparece en
-el grupo Citas de las plantillas de WhatsApp y se materializa como URL opaca
-individual. La URL de Zoom/Meet no aparece en el catálogo de enlaces de disparo.
+el grupo Citas del catálogo compartido del CRM: plantillas de WhatsApp, correos,
+mensajes y demás campos con variables de Automatizaciones. Se materializa como
+URL opaca individual únicamente cuando la ejecución trae la cita, el calendario
+y el contacto exactos; fuera de ese contexto queda vacía para no enviar el
+enlace de otra reserva. La URL de Zoom/Meet no aparece en el catálogo de enlaces
+de disparo.
 Si la plantilla oficial todavía está en revisión, el panel de salud conserva el
 motivo y el cron reintenta después de que el proveedor la apruebe; WhatsApp QR
 puede usar el texto renderizado bajo sus reglas existentes.

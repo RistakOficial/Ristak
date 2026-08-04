@@ -160,6 +160,21 @@ test('renderTemplateVariables conserva placeholders numericos de plantillas ofic
   )
 })
 
+test('cita.enlace_ingreso queda vacío sin una cita exacta', async () => {
+  const output = await renderTemplateVariables(
+    'Enlace: {{cita.enlace_ingreso}}',
+    {
+      contact: {
+        id: `rstk_contact_without_appointment_${randomUUID()}`,
+        firstName: 'Sin cita'
+      }
+    },
+    { preserveUnknown: true }
+  )
+
+  assert.equal(output, 'Enlace: ')
+})
+
 test('renderTemplateVariables hace una sola expansion y no interpreta tokens dentro del valor resuelto', async () => {
   const suffix = randomUUID().replace(/-/g, '_')
   let outerField

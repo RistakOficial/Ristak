@@ -87,6 +87,11 @@ export async function renderCalendarAppointmentTemplates({
     contactId: firstValue(contactId, appointmentData.contactId, appointmentData.contact_id),
     userId,
     publicBaseUrl,
+    appointment: {
+      id: firstValue(appointmentData.id, appointmentData.appointmentId, appointmentData.appointment_id),
+      calendarId: firstValue(calendar.id, appointmentData.calendarId, appointmentData.calendar_id),
+      contactId: firstValue(contactId, appointmentData.contactId, appointmentData.contact_id)
+    },
     extraVariables: templateVariables
   }
 

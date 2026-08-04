@@ -82,6 +82,10 @@ La variable
 `{{cita.enlace_ingreso}}` se resuelve para la cita y el contacto exactos. Su
 token opaco cifra además `appointment_id`, por lo que el clic puede comprobar
 calendario, contacto y cita sin aceptar IDs manipulables desde el query string.
+El resolvedor canónico también la materializa en correos, mensajes, webhooks y
+demás acciones de Automatizaciones cuando el contexto conserva
+`appointment_id + calendar_id + contact_id`; sin esos tres datos entrega vacío
+en vez de adivinar otra cita del contacto.
 Si el calendario ya tiene otra regla en el mismo horario, la actualización
 responde `409 calendar_online_reminder_conflict` y no reemplaza la configuración
 del usuario.

@@ -16,6 +16,7 @@ import {
   processScheduledContactEnrollments,
   enrollContactManually,
   controlAutomationEnrollment,
+  resolveAutomationTemplateValue,
   testWebhookAction,
   resolveAutomationMediaAssetId,
   resolveAutomationMediaSource,
@@ -34,6 +35,8 @@ import {
 import { captureQrChatMessage, getWhatsAppApiConfigKeys } from '../src/services/whatsappApiService.js'
 import { setAppNotificationPayloadSenderForTest } from '../src/services/pushNotificationsService.js'
 import { createVariableField } from '../src/services/variableFieldsService.js'
+import { upsertSystemTriggerLink } from '../src/services/triggerLinksService.js'
+import { readTriggerLinkRecipientToken } from '../src/services/triggerLinkRecipientTokenService.js'
 
 const EMAIL_CONFIG_KEY = 'email_smtp_config'
 const EMAIL_PASSWORD_KEY = 'email_smtp_password'
@@ -120,6 +123,48 @@ test('renderTemplate resuelve payloads de webhook con objetos y arrays anidados'
   assert.equal(renderTemplate('{{webhook.categories[0].name}}', { payload }), 'Trabajo')
   assert.equal(renderTemplate('{{webhook.categories[1].items[1]}}', { payload }), 'Ejercicio')
   assert.equal(renderTemplate('{{webhook.mixed[1].deep.value}}', { payload }), '7')
+})
+
+test('las automatizaciones convierten el enlace de ingreso de la cita en un enlace seguro', async () => {
+  const suffix = randomUUID().replace(/-/g, '')
+  const calendarId = `calendar_automation_meeting_${suffix}`
+  const appointmentId = `appointment_automation_meeting_${suffix}`
+  const contactId = `contact_automation_meeting_${suffix}`
+  let triggerLink
+
+  try {
+    triggerLink = await upsertSystemTriggerLink({
+      systemScope: 'calendar_meeting',
+      ownerId: calendarId,
+      name: `Videollamada de automatización ${suffix}`,
+      destinationUrl: 'https://meet.google.com/abc-defg-hij'
+    })
+
+    const rendered = await resolveAutomationTemplateValue({
+      subject: 'Enlace para tu cita',
+      body: 'Ingresa aquí: {{cita.enlace_ingreso}}',
+      bodyHtml: '<a href="{{cita.enlace_ingreso}}">Entrar a la videollamada</a>'
+    }, {
+      contact: { id: contactId, fullName: 'Contacto Videollamada' },
+      appointmentId,
+      calendarId,
+      publicBaseUrl: 'https://app.ristak.test'
+    })
+
+    const bodyUrl = rendered.body.match(/https:\/\/app\.ristak\.test\/(pce1_[A-Za-z0-9_-]+)/)?.[0]
+    assert.ok(bodyUrl, rendered.body)
+    assert.equal(rendered.bodyHtml.includes(bodyUrl), true)
+    assert.equal(bodyUrl.includes('meet.google.com'), false)
+    assert.deepEqual(
+      await readTriggerLinkRecipientToken(new URL(bodyUrl).pathname.slice(1)),
+      { publicId: triggerLink.publicId, contactId, appointmentId }
+    )
+  } finally {
+    if (triggerLink?.id) {
+      await db.run('DELETE FROM trigger_link_events WHERE trigger_link_id = ?', [triggerLink.id]).catch(() => undefined)
+      await db.run('DELETE FROM trigger_links WHERE id = ?', [triggerLink.id]).catch(() => undefined)
+    }
+  }
 })
 
 test('los adjuntos de automatización resuelven la URL pública CDN al asset interno', async () => {

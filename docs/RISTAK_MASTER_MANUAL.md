@@ -2084,9 +2084,18 @@ Los calendarios pueden ser **Presenciales** o **En línea**. La elección aparec
 al crear el calendario y al principio de `Detalles`, antes de **Lo básico**. En
 modo en línea se exige la URL HTTP/HTTPS de Zoom, Google Meet u otra plataforma;
 esa URL vive en `calendars.raw_json.meeting` y Ristak crea un enlace de disparo
-interno con `system_scope='calendar_meeting'`. No aparece en la librería de
-enlaces ni como variable genérica, porque el único dato público autorizado es
-`{{cita.enlace_ingreso}}` dentro de una cita real.
+interno con `system_scope='calendar_meeting'`. La URL privada no aparece en la
+librería de enlaces ni como dato genérico; su única representación pública
+autorizada es `{{cita.enlace_ingreso}}` dentro de una cita real.
+
+**Enlace de ingreso a la cita** aparece en el grupo **Citas** del catálogo
+compartido de variables, por lo que puede insertarse en correo, WhatsApp,
+mensajes, webhooks y los demás campos variables de Automatizaciones. Al ejecutar,
+el resolvedor canónico exige el `appointment_id`, `calendar_id` y `contact_id`
+exactos y genera la URL opaca del calendario ligado a esa cita. Sin los tres IDs
+la variable se vuelve vacía; nunca busca "la próxima cita" ni expone el destino
+de Zoom/Meet por aproximación. Una misma pieza renderizada reutiliza el mismo
+enlace seguro en asunto, texto y HTML.
 
 La plantilla preferida `acceso_videollamada_10_minutos` se crea al activar un
 calendario en línea y una regla administrada la programa diez minutos antes. Su
