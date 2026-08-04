@@ -83,7 +83,8 @@ const CAPABILITY_INSTRUCTIONS = {
         ? `Configuración incompleta: ${missingConfiguration.join(', ')}. No inventes ni sustituyas el enlace.`
         : 'Cuando la estrategia determine que ya corresponde mandar el enlace general, usa exclusivamente send_trigger_link y comparte únicamente la URL que regrese.',
       'send_trigger_link sólo entrega el enlace general. Nunca crea, prepara ni completa un Objetivo propio, aunque Objetivo propio también esté activado. No uses send_goal_url para un envío general.',
-      'Enviar o abrir este enlace no confirma una meta, cita o pago y no pasa la conversación a una persona.'
+      'Cuando la respuesta que contiene el enlace quede entregada, Ristak marcará Mandar enlace como cumplido y detendrá el chatbot. No escribas seguimientos ni continúes la conversación después.',
+      'Enviar o abrir este enlace no confirma un Objetivo propio verificable, una cita o un pago y no pasa la conversación a una persona.'
     ].filter(Boolean).join(' '),
   handoff_human: ({ summary = '', config = {} } = {}) => [
     'Esta capacidad es un interruptor terminal. Ristak evalúa por separado y de forma obligatoria las condiciones configuradas; cuando una coincide, esa decisión gana sobre la estrategia, la personalidad y las demás capacidades.',

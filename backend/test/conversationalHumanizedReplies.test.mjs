@@ -1415,6 +1415,17 @@ test('un retry reutiliza el plan durable y continúa sólo con los globos pendie
   let splitterCalls = 0
   let failBeforeSecondPart = true
   let completed = 0
+  const deliveredCompletionEffects = []
+  const completionEffect = {
+    type: 'complete_send_link_objective',
+    actionType: 'send_trigger_link',
+    signal: 'link_sent',
+    stateId: 'state_reply_completion_test',
+    activationCycleId: 'cycle_reply_completion_test',
+    reason: 'Enlace configurado entregado por el agente',
+    actionSummary: 'Envió el enlace configurado',
+    summary: 'La persona pidió continuar mediante el enlace.'
+  }
   const replyDeliveryLedger = {
     get: getConversationalReplyDeliveryPlan,
     create: getOrCreateConversationalReplyDeliveryPlan,
@@ -1437,6 +1448,7 @@ test('un retry reutiliza el plan durable y continúa sólo con los globos pendie
       }
     },
     reply: 'globo uno globo dos globo tres',
+    completionEffect,
     dependencies: {
       replyDeliveryLedger,
       splitter: async () => {
@@ -1455,7 +1467,10 @@ test('un retry reutiliza el plan durable y continúa sólo con los globos pendie
       },
       loadNewerInbound: async () => null,
       recordEvent: async () => {},
-      markReplyComplete: async () => { completed += 1 }
+      markReplyComplete: async ({ completionEffect: deliveredEffect }) => {
+        completed += 1
+        deliveredCompletionEffects.push(deliveredEffect)
+      }
     }
   }
 
@@ -1478,6 +1493,7 @@ test('un retry reutiliza el plan durable y continúa sólo con los globos pendie
     assert.equal(retry.sentParts, 3)
     assert.equal(retry.durableStatus, 'completed')
     assert.equal(completed, 1)
+    assert.deepEqual(deliveredCompletionEffects[0], { version: 1, ...completionEffect })
 
     const completedRetry = await sendReplyParts({
       ...base,
@@ -1490,6 +1506,8 @@ test('un retry reutiliza el plan durable y continúa sólo con los globos pendie
     assert.equal(completedRetry.resumed, true)
     assert.equal(completedRetry.durableStatus, 'completed')
     assert.equal(sent.length, 3)
+    assert.equal(completed, 2)
+    assert.deepEqual(deliveredCompletionEffects[1], { version: 1, ...completionEffect })
   } finally {
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
   }

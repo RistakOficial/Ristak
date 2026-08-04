@@ -6,7 +6,7 @@ import { apiUrl } from './apiBaseUrl'
 export type ConversationalObjective = 'citas' | 'ventas' | 'datos' | 'filtrar' | 'custom'
 export type ConversationalSuccessAction = 'book_appointment' | 'ready_for_human' | 'ready_to_buy' | 'send_goal_url' | 'send_trigger_link' | 'internal_signal' | 'none'
 export type ConversationStatus = 'active' | 'paused' | 'human' | 'skipped' | 'completed' | 'discarded'
-export type ConversationSignal = 'ready_for_human' | 'ready_to_schedule' | 'ready_to_buy' | 'appointment_booked' | 'purchase_completed' | 'discarded'
+export type ConversationSignal = 'ready_for_human' | 'ready_to_schedule' | 'ready_to_buy' | 'appointment_booked' | 'purchase_completed' | 'link_sent' | 'discarded'
 export type ClosingStrategyMode = 'system' | 'custom'
 export type ConversationalPersuasionLevel = 'low' | 'medium' | 'high'
 export type ConversationalLanguageLevel = 'professional' | 'intermediate' | 'colloquial'
@@ -737,7 +737,8 @@ const COMPLETION_SIGNAL_META: Record<Exclude<ConversationSignal, 'discarded'>, {
   ready_to_schedule: { label: 'Listo para agendar', icon: '📅' },
   ready_to_buy: { label: 'Listo para cobrar', icon: '💳' },
   appointment_booked: { label: 'Cita agendada', icon: '📅' },
-  purchase_completed: { label: 'Pago completado', icon: '💰' }
+  purchase_completed: { label: 'Pago completado', icon: '💰' },
+  link_sent: { label: 'Enlace enviado', icon: '🔗' }
 }
 const COMPLETION_SIGNAL_SET = new Set<Exclude<ConversationSignal, 'discarded'>>(Object.keys(COMPLETION_SIGNAL_META) as Array<Exclude<ConversationSignal, 'discarded'>>)
 
@@ -1376,6 +1377,7 @@ function buildLegacyActionSummary(signal: Exclude<ConversationSignal, 'discarded
   }
   if (signal === 'ready_to_buy') return 'Quedó listo para pagar'
   if (signal === 'ready_to_schedule') return 'Quedó listo para agendar'
+  if (signal === 'link_sent') return 'Envió el enlace configurado'
   return reason || result || 'Objetivo concretado'
 }
 

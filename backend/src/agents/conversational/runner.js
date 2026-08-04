@@ -43,6 +43,8 @@ import {
   claimConversationalReplyDelivery,
   checkpointConversationalReplyDelivery,
   settleConversationalReplyDelivery,
+  completeDeliveredConversationalLinkObjective,
+  normalizeConversationalReplyCompletionEffect,
   recoverInterruptedConversationalPaymentReplyDelivery,
   assertConversationalPaymentReconciliationClaim,
   recoverPendingConversationalPaymentSourceBindings,
@@ -187,7 +189,8 @@ const PREVIEW_CONVERSATION_END_FLAG_BY_TOOL = Object.freeze({
   book_appointment: 'wouldMarkObjectiveCompleted',
   request_human_booking: 'wouldTransferToHuman',
   mark_ready_to_advance: 'wouldMarkObjectiveCompleted',
-  send_to_human: 'wouldNotifyHuman'
+  send_to_human: 'wouldNotifyHuman',
+  send_trigger_link: 'wouldMarkObjectiveCompleted'
 })
 
 const PREVIEW_TURN_END_FLAG_BY_TOOL = Object.freeze({
@@ -1769,6 +1772,33 @@ function nativeActionSucceeded(action = {}) {
 function nativeActionFailed(action = {}) {
   const outcome = action?.outcome || {}
   return outcome.status === 'error' || outcome.ok === false || action?.ok === false || Boolean(action?.error || outcome?.error)
+}
+
+export function buildToolCallingV2ReplyCompletionEffect(actions = [], {
+  stateId = '',
+  activationCycleId = ''
+} = {}) {
+  const completedLinkAction = [...(Array.isArray(actions) ? actions : [])]
+    .reverse()
+    .find((action) => (
+      String(action?.type || '').trim() === 'send_trigger_link' &&
+      nativeActionSucceeded(action) &&
+      action?.outcome?.actionCompleted === true &&
+      action?.outcome?.completesConversationAfterDelivery === true &&
+      action?.outcome?.completionSignal === 'link_sent' &&
+      Boolean(nativeActionVisibleUrl(action))
+    ))
+  if (!completedLinkAction) return null
+  return normalizeConversationalReplyCompletionEffect({
+    type: 'complete_send_link_objective',
+    actionType: 'send_trigger_link',
+    signal: 'link_sent',
+    stateId,
+    activationCycleId,
+    reason: 'Enlace configurado entregado por el agente',
+    actionSummary: 'Envió el enlace configurado',
+    summary: String(completedLinkAction.resumen || '').trim()
+  })
 }
 
 export function didConversationalActionEndConversation(action = {}) {
@@ -8226,6 +8256,7 @@ export async function sendReplyParts({
   deliveryFromNumber = null,
   forceHighLevel = false,
   externalIdPrefix = 'convagent',
+  completionEffect = null,
   dependencies = {}
 }) {
   const {
@@ -8255,6 +8286,7 @@ export async function sendReplyParts({
 
   const normalizedChannel = normalizeConversationalChannel(channel || latest?.channel)
   const normalizedDeliveryChannel = normalizeConversationalChannel(deliveryChannel || normalizedChannel)
+  const normalizedCompletionEffect = normalizeConversationalReplyCompletionEffect(completionEffect)
   const fallbackReply = String(reply || '').trim()
   const delivery = normalizeAgentReplyDelivery(agentConfig.replyDelivery)
   const planIdentity = {
@@ -8313,6 +8345,7 @@ export async function sendReplyParts({
       reply: fallbackReply,
       parts,
       delaySchedule,
+      completionEffect: normalizedCompletionEffect,
       splitterMeta: {
         source: splitResult.source,
         reason: splitResult.reason,
@@ -8340,7 +8373,16 @@ export async function sendReplyParts({
 
   const completeReply = async () => {
     if (typeof markReplyComplete === 'function') {
-      await markReplyComplete({ contactId, latest, parts, delaySchedule })
+      await markReplyComplete({
+        contactId,
+        latest,
+        parts,
+        delaySchedule,
+        deliveryPlanId: durablePlan?.id || null,
+        completionEffect: durablePlan
+          ? (durablePlan.completionEffect ?? null)
+          : normalizedCompletionEffect
+      })
       return
     }
     await db.run(`
@@ -9001,6 +9043,10 @@ async function handleToolCallingV2InboundTurn({
   // Si ese intento falla con cero partes, el plan queda pending y el retry debe
   // conservar tanto el texto como la oferta que ese texto confirma. Cerrar aquí
   // la oferta dejaría al retry enviando un horario que ya no puede aceptarse.
+  const replyCompletionEffect = buildToolCallingV2ReplyCompletionEffect(ctx.actions, {
+    stateId: postState?.id || '',
+    activationCycleId: postState?.activationCycleId || ''
+  })
   const delivery = await sendReplyParts({
     contactId,
     phone,
@@ -9013,6 +9059,7 @@ async function handleToolCallingV2InboundTurn({
     deliveryChannel: deliveryRoute?.applies ? deliveryRoute.replyChannel : normalizedChannel,
     deliveryFromNumber: deliveryRoute?.replyFromNumber || null,
     forceHighLevel: deliveryRoute?.applies === true,
+    completionEffect: replyCompletionEffect,
     dependencies: {
       splitter: splitMessageIntoBubbles,
       // Desde que terminó la llamada principal, esta respuesta ya consumió
@@ -9022,7 +9069,33 @@ async function handleToolCallingV2InboundTurn({
       forceSingleMessage: replyGuardResult?.prevented === true ||
         repetitionGuardResult?.prevented === true ||
         hasServerVisibleAppointmentAvailability(ctx.actions),
-      markReplyComplete: async () => {
+      markReplyComplete: async ({
+        deliveryPlanId,
+        completionEffect: deliveredCompletionEffect
+      } = {}) => {
+        if (deliveredCompletionEffect) {
+          const completion = await completeDeliveredConversationalLinkObjective({
+            contactId,
+            agentId: agentConfig.id,
+            channel: normalizedChannel,
+            sourceMessageId: latest.id,
+            inboundClaimToken: String(
+              inboundClaim?.claimToken || ctx.inboundClaim?.claimToken || ''
+            ).trim(),
+            deliveryPlanId,
+            completionEffect: deliveredCompletionEffect
+          })
+          if (completion.completed) {
+            const linkAction = [...ctx.actions].reverse().find((action) => (
+              action?.type === 'send_trigger_link' &&
+              action?.outcome?.completesConversationAfterDelivery === true
+            ))
+            if (linkAction?.outcome) {
+              linkAction.outcome.deliveryConfirmed = true
+              linkAction.outcome.objectiveCompleted = true
+            }
+          }
+        }
         await settleActiveClaim({ status: 'completed', answered: true })
       }
     }

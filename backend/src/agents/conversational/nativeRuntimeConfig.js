@@ -125,7 +125,7 @@ const CAPABILITY_META = {
   },
   send_link: {
     label: 'Mandar enlace',
-    summary: 'Envía el enlace configurado sin mostrar datos internos de seguimiento.'
+    summary: 'Envía el enlace configurado sin mostrar datos internos y detiene el chatbot al entregarlo.'
   },
   handoff_human: {
     label: 'Pasar a un humano',

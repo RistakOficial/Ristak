@@ -9481,7 +9481,14 @@ nunca un booleano escrito por el modelo.
   bloquea el composer hasta reiniciar la prueba. Las operaciones que sí deben
   entregar un resultado al contacto (confirmación de cita, enlace o cobro)
   conservan su salida canónica antes de detener el turno. Preparar un link de
-  pago, mandar un enlace general o dejar una meta pendiente no cuenta como cierre.
+  pago o dejar una meta verificable pendiente no cuenta como cierre. **Mandar
+  enlace** sí termina el objetivo, pero sólo después de que el plan durable de la
+  respuesta con la URL queda `completed` o `ambiguous`; un fallo o bloqueo antes
+  de intentar la entrega conserva al agente activo. El efecto terminal viaja
+  sellado dentro del mismo plan para que un retry no dependa de que el modelo
+  vuelva a elegir la tool. El cierre usa la señal `link_sent`, queda ligado al
+  agente, canal, inbound, estado y ciclo de activación originales, y nunca pisa
+  una pausa o toma humana concurrente.
   Para listas y ofertas de horario, el tester tampoco agrega el globo generico
   "Prueba interna": simula el efecto por estado y deja visible solamente el
   horario que recibiria el contacto. Esas listas y ofertas estructuradas siempre
@@ -9496,13 +9503,19 @@ nunca un booleano escrito por el modelo.
 - Enlaces y meta por URL: **Mandar enlace** por sí sola usa
   `send_trigger_link`. Cuando la configuracion apunta a un enlace de disparo,
   entrega la URL opaca ligada al contacto —no el destino directo ni identidad
-  visible— para que el clic quede registrado; no crea una meta ni cambia el chat
-  a humano. Un enlace general que no es trigger conserva su URL directa.
+  visible— para que el clic quede registrado; no crea una meta verificable ni
+  cambia el chat a humano. Cuando la respuesta queda entregada, cierra el estado
+  del chatbot como `completed/link_sent`, evita seguimientos automáticos y los
+  mensajes posteriores no lo reactivan hasta que una persona reinicie el agente.
+  Un enlace general que no es trigger conserva su URL directa y el mismo cierre
+  posterior a la entrega.
   **Objetivo propio** usa otra tool fisicamente
   separada, `send_goal_url`, para preparar el enlace rastreable y crear la meta
   pendiente. Si ambas capacidades estan activas se exponen ambas tools con
   contratos distintos: una llamada a `send_trigger_link` nunca puede convertirse
-  globalmente en meta por el simple hecho de que Objetivo propio tambien exista.
+  globalmente en la meta verificable de Objetivo propio por el simple hecho de que
+  esa capacidad tambien exista; únicamente cierra su propio objetivo Mandar
+  enlace después de la entrega visible.
   Sólo cuando **Objetivo propio** esta activo, termina mediante `send_link` y usa
   un enlace `verified_goal`, el enlace visible contiene un ID de seguimiento. La
   meta queda `pending`:

@@ -12825,7 +12825,7 @@ export function createConversationalTools(ctx) {
   })
   const sendTriggerLinkTool = tool({
     name: 'send_trigger_link',
-    description: 'Entrega exclusivamente el enlace general configurado en Mandar enlace. No crea, prepara, completa ni rastrea un Objetivo propio, aunque esa otra capacidad también esté activada.',
+    description: 'Entrega exclusivamente el enlace general configurado en Mandar enlace. Cuando la respuesta con la URL queda entregada, Ristak marca este objetivo como cumplido y detiene el chatbot. No crea, prepara, completa ni rastrea un Objetivo propio, aunque esa otra capacidad también esté activada.',
     parameters: linkToolParameters,
     execute: async ({ intencionDetectada, resumen }) => {
       const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
@@ -12862,9 +12862,13 @@ export function createConversationalTools(ctx) {
       const action = pushAction(ctx, 'send_trigger_link', {
         objective: 'send_link',
         intencionDetectada,
+        resumen,
         targetUrl,
         triggerLinkId: triggerLink?.id || null,
-        effect: { liveEffect: 'ENVIARÍA un enlace opaco ligado al contacto sin exponer su identidad y sin crear una meta', marksObjectiveCompleted: false }
+        effect: {
+          liveEffect: 'ENVIARÍA el enlace configurado y, al quedar entregado, marcaría el objetivo como cumplido y detendría el chatbot',
+          marksObjectiveCompleted: true
+        }
       })
       if (!ctx.dryRun) {
         await recordConversationalAgentEvent({
@@ -12885,6 +12889,9 @@ export function createConversationalTools(ctx) {
         sentUrl,
         deliveryConfirmed: false,
         objectiveCompleted: false,
+        completesConversationAfterDelivery: true,
+        wouldMarkObjectiveCompleted: Boolean(ctx.dryRun),
+        completionSignal: 'link_sent',
         confirmationMode: 'none'
       })
       return {
@@ -12894,7 +12901,10 @@ export function createConversationalTools(ctx) {
         sentUrl,
         confirmationMode: 'none',
         objectiveCompleted: false,
-        note: 'Manda sentUrl visible en el chat. Esta herramienta sólo entrega el enlace general y nunca crea ni completa un Objetivo propio.'
+        completesConversationAfterDelivery: true,
+        wouldMarkObjectiveCompleted: Boolean(ctx.dryRun),
+        completionSignal: 'link_sent',
+        note: 'Manda sentUrl visible en el chat. Cuando esa respuesta quede entregada, Ristak cerrará este objetivo y detendrá el chatbot. Esta herramienta no crea ni completa un Objetivo propio verificable.'
       }
     }
   })

@@ -1137,7 +1137,7 @@ const nativeCapabilityMeta: Record<ConversationalCapabilityId, {
   },
   send_link: {
     label: 'Mandar enlace',
-    description: 'Entrega el enlace configurado sin exponer seguimiento ni códigos internos.',
+    description: 'Entrega el enlace configurado y después detiene el chatbot, sin exponer códigos internos.',
     Icon: Link2
   },
   handoff_human: {

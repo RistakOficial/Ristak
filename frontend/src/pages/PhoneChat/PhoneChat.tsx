@@ -19844,6 +19844,7 @@ export const PhoneChat: React.FC = () => {
     ready_to_buy: 'Link de pago enviado',
     appointment_booked: 'Cita agendada',
     purchase_completed: 'Compra confirmada',
+    link_sent: 'Enlace enviado',
     discarded: 'Descartada'
   }
 
@@ -20366,7 +20367,7 @@ export const PhoneChat: React.FC = () => {
           : 'Consulta horarios reales y crea la cita en el calendario elegido.'
       },
       { id: 'collect_payment', label: 'Cobrar', description: 'Genera el cobro con producto, precio o anticipo verificable.' },
-      { id: 'send_link', label: 'Mandar enlace', description: 'Envía una URL configurada sin mostrar códigos internos.' },
+      { id: 'send_link', label: 'Mandar enlace', description: 'Envía una URL configurada sin mostrar códigos internos y después detiene el chatbot.' },
       { id: 'handoff_human', label: 'Pasar a humano', description: 'Entrega el chat y su contexto a una persona.' },
       { id: 'custom_goal', label: 'Objetivo propio', description: 'Persigue una meta escrita por el negocio con salida segura.' }
     ]

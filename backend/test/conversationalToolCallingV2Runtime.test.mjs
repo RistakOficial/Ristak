@@ -16,6 +16,7 @@ import {
   TOOL_CALLING_V2_HISTORY_BYTE_BUDGET,
   TOOL_CALLING_V2_MODEL_SETTINGS,
   buildToolCallingV2HistoryEnvelope,
+  buildToolCallingV2ReplyCompletionEffect,
   createToolCallingV2Agent,
   didConversationalPreviewEndConversation,
   enforceToolCallingV2AppointmentOfferPostcondition,
@@ -2616,9 +2617,12 @@ test('preview distingue una conversación cumplida de una operación intermedia'
       ok: true,
       simulated: true,
       sentUrl: 'https://example.com/continuar',
-      objectiveCompleted: false
+      objectiveCompleted: false,
+      completesConversationAfterDelivery: true,
+      wouldMarkObjectiveCompleted: true,
+      completionSignal: 'link_sent'
     }
-  }]), false)
+  }]), true)
   assert.equal(didConversationalPreviewEndConversation([{
     type: 'create_payment_link',
     outcome: {
@@ -2639,6 +2643,36 @@ test('preview distingue una conversación cumplida de una operación intermedia'
       wouldMarkObjectiveCompleted: true
     }
   }]), false)
+})
+
+test('el cierre de Mandar enlace queda ligado al estado y ciclo que entregarán la respuesta', () => {
+  const effect = buildToolCallingV2ReplyCompletionEffect([{
+    type: 'send_trigger_link',
+    resumen: 'Pidió el acceso al siguiente paso.',
+    outcome: {
+      status: 'ok',
+      ok: true,
+      actionCompleted: true,
+      sentUrl: 'https://example.com/continuar',
+      completesConversationAfterDelivery: true,
+      completionSignal: 'link_sent'
+    }
+  }], {
+    stateId: 'state_link_terminal',
+    activationCycleId: 'cycle_link_terminal'
+  })
+
+  assert.deepEqual(effect, {
+    version: 1,
+    type: 'complete_send_link_objective',
+    actionType: 'send_trigger_link',
+    signal: 'link_sent',
+    stateId: 'state_link_terminal',
+    activationCycleId: 'cycle_link_terminal',
+    reason: 'Enlace configurado entregado por el agente',
+    actionSummary: 'Envió el enlace configurado',
+    summary: 'Pidió el acceso al siguiente paso.'
+  })
 })
 
 test('preview con efectos usa el contacto real elegido y conserva dryRun para todas las tools', async () => {

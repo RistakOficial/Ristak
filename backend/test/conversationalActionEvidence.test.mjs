@@ -169,6 +169,10 @@ test('ctx.actions registra outcomes verificables para objetivo, links, pago y ha
   assert.equal(triggerResult.ok, true)
   assert.equal(triggerCtx.actions[0]?.outcome?.status, 'simulated')
   assert.equal(triggerCtx.actions[0]?.outcome?.deliveryConfirmed, false)
+  assert.equal(triggerCtx.actions[0]?.outcome?.objectiveCompleted, false)
+  assert.equal(triggerCtx.actions[0]?.outcome?.completesConversationAfterDelivery, true)
+  assert.equal(triggerCtx.actions[0]?.outcome?.wouldMarkObjectiveCompleted, true)
+  assert.equal(triggerCtx.actions[0]?.outcome?.completionSignal, 'link_sent')
 
   const contactId = `outcome_payment_${randomUUID()}`
   await db.run(

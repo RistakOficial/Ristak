@@ -11,11 +11,15 @@ import {
 import {
   assignAgentToConversation,
   buildRuleContext,
+  checkpointConversationalReplyDelivery,
   claimConversationInboundMessage,
+  claimConversationalReplyDelivery,
   completeConversationInboundMessage,
+  completeDeliveredConversationalLinkObjective,
   createConversationalAgent,
   failConversationInboundMessage,
   getConversationState,
+  getOrCreateConversationalReplyDeliveryPlan,
   getManualConversationAgentAssignment,
   listConversationStates,
   listConversationStatesForContact,
@@ -23,6 +27,7 @@ import {
   matchAgentForMessage,
   resetConversationalAgentSkippedContacts,
   runWithConversationStateChannel,
+  settleConversationalReplyDelivery,
   setConversationStatus,
   setConversationSignal,
   updateConversationalAgent
@@ -1404,6 +1409,229 @@ test('un handoff pendiente no se borra ni se reabre por un mensaje nuevo', async
 
     const events = await listConversationalAgentEvents({ contactId })
     assert.equal(events.some((event) => event.eventType === 'agent_reopened'), false)
+  } finally {
+    await cleanup(contactId, agentId)
+  }
+})
+
+test('Mandar enlace cierra el objetivo sólo después de que la respuesta quedó entregada', async () => {
+  const contactId = `conversation_agent_link_completed_${randomUUID()}`
+  const messageId = `waapi_msg_link_completed_${randomUUID()}`
+  let agentId = ''
+
+  try {
+    await seedContact(contactId)
+    const agent = await createConversationalAgent({
+      name: 'Agente enlace terminal test',
+      enabled: true,
+      capabilitiesConfig: {
+        schemaVersion: 1,
+        items: [{
+          id: 'send_link',
+          enabled: true,
+          linkKind: 'verified_goal',
+          url: 'https://example.test/continuar'
+        }]
+      },
+      contactScope: 'all'
+    })
+    agentId = agent.id
+    await assignAgentToConversation(contactId, agentId, {
+      activationSource: 'automatic',
+      updatedBy: 'agent',
+      channel: 'whatsapp'
+    })
+    const inboundClaim = await claimConversationInboundMessage(contactId, messageId, {
+      agentId,
+      channel: 'whatsapp'
+    })
+    assert.equal(inboundClaim.claimed, true)
+
+    const completionEffect = {
+      type: 'complete_send_link_objective',
+      actionType: 'send_trigger_link',
+      signal: 'link_sent',
+      stateId: inboundClaim.state.id,
+      activationCycleId: inboundClaim.state.activationCycleId,
+      reason: 'Enlace configurado entregado por el agente',
+      actionSummary: 'Envió el enlace configurado',
+      summary: 'La persona recibió el siguiente paso configurado.'
+    }
+    const deliveryIdentity = {
+      contactId,
+      agentId,
+      channel: 'whatsapp',
+      sourceMessageId: messageId,
+      externalIdPrefix: 'convagent'
+    }
+    const reserved = await getOrCreateConversationalReplyDeliveryPlan(deliveryIdentity, {
+      reply: 'Aquí tienes el enlace: https://example.test/continuar',
+      parts: ['Aquí tienes el enlace: https://example.test/continuar'],
+      delaySchedule: [0],
+      completionEffect
+    })
+
+    const beforeDelivery = await completeDeliveredConversationalLinkObjective({
+      ...deliveryIdentity,
+      inboundClaimToken: inboundClaim.claimToken,
+      deliveryPlanId: reserved.plan.id,
+      completionEffect
+    })
+    assert.equal(beforeDelivery.completed, false)
+    assert.equal(beforeDelivery.reason, 'delivery_not_settled')
+    assert.equal((await getConversationState(contactId, { agentId }))?.status, 'active')
+
+    const deliveryClaim = await claimConversationalReplyDelivery(reserved.plan.id)
+    assert.equal(deliveryClaim.claimed, true)
+    await checkpointConversationalReplyDelivery(reserved.plan.id, deliveryClaim.claimToken, {
+      partIndex: 0,
+      status: 'sending'
+    })
+    await checkpointConversationalReplyDelivery(reserved.plan.id, deliveryClaim.claimToken, {
+      partIndex: 0,
+      status: 'sent',
+      providerMessageId: `provider_${randomUUID()}`
+    })
+    await settleConversationalReplyDelivery(reserved.plan.id, deliveryClaim.claimToken, {
+      status: 'completed'
+    })
+
+    const completed = await completeDeliveredConversationalLinkObjective({
+      ...deliveryIdentity,
+      inboundClaimToken: inboundClaim.claimToken,
+      deliveryPlanId: reserved.plan.id,
+      completionEffect
+    })
+    assert.equal(completed.completed, true)
+    assert.equal(completed.idempotent, false)
+    assert.equal(completed.state?.status, 'completed')
+    assert.equal(completed.state?.signal, 'link_sent')
+    assert.equal(completed.state?.lastAnsweredInboundMessageId, messageId)
+
+    const replay = await completeDeliveredConversationalLinkObjective({
+      ...deliveryIdentity,
+      inboundClaimToken: inboundClaim.claimToken,
+      deliveryPlanId: reserved.plan.id,
+      completionEffect
+    })
+    assert.equal(replay.completed, true)
+    assert.equal(replay.idempotent, true)
+
+    const completions = await listConversationalAgentEvents({ contactId, kind: 'completion' })
+    assert.equal(completions.length, 1)
+    assert.equal(completions[0].detail?.signal, 'link_sent')
+    assert.equal(completions[0].detail?.objectiveCompleted, true)
+    assert.equal(completions[0].detail?.deliveryPlanId, reserved.plan.id)
+
+    const ruleContext = await buildRuleContext({
+      contactId,
+      messageText: '¿Sigues ahí?',
+      channel: 'whatsapp'
+    })
+    const resolved = await resolveInboundAgentForContact({
+      contactId,
+      messageText: '¿Sigues ahí?',
+      channel: 'whatsapp',
+      ruleContext,
+      latestMessageId: `waapi_msg_after_link_${randomUUID()}`
+    })
+    assert.equal(resolved.agentConfig, null)
+    assert.equal(resolved.assigned, false)
+  } finally {
+    await cleanup(contactId, agentId)
+  }
+})
+
+test('el cierre entregado de Mandar enlace no pisa una toma humana concurrente', async () => {
+  const contactId = `conversation_agent_link_human_${randomUUID()}`
+  const messageId = `waapi_msg_link_human_${randomUUID()}`
+  let agentId = ''
+
+  try {
+    await seedContact(contactId)
+    const agent = await createConversationalAgent({
+      name: 'Agente enlace con toma humana test',
+      enabled: true,
+      capabilitiesConfig: {
+        schemaVersion: 1,
+        items: [{
+          id: 'send_link',
+          enabled: true,
+          linkKind: 'direct',
+          url: 'https://example.test/continuar'
+        }]
+      },
+      contactScope: 'all'
+    })
+    agentId = agent.id
+    await assignAgentToConversation(contactId, agentId, {
+      activationSource: 'automatic',
+      updatedBy: 'agent',
+      channel: 'whatsapp'
+    })
+    const inboundClaim = await claimConversationInboundMessage(contactId, messageId, {
+      agentId,
+      channel: 'whatsapp'
+    })
+    assert.equal(inboundClaim.claimed, true)
+
+    const completionEffect = {
+      type: 'complete_send_link_objective',
+      actionType: 'send_trigger_link',
+      signal: 'link_sent',
+      stateId: inboundClaim.state.id,
+      activationCycleId: inboundClaim.state.activationCycleId,
+      reason: 'Enlace configurado entregado por el agente',
+      actionSummary: 'Envió el enlace configurado',
+      summary: 'La persona recibió el enlace configurado.'
+    }
+    const deliveryIdentity = {
+      contactId,
+      agentId,
+      channel: 'whatsapp',
+      sourceMessageId: messageId,
+      externalIdPrefix: 'convagent'
+    }
+    const reserved = await getOrCreateConversationalReplyDeliveryPlan(deliveryIdentity, {
+      reply: 'Aquí tienes el enlace: https://example.test/continuar',
+      parts: ['Aquí tienes el enlace: https://example.test/continuar'],
+      delaySchedule: [0],
+      completionEffect
+    })
+    const deliveryClaim = await claimConversationalReplyDelivery(reserved.plan.id)
+    assert.equal(deliveryClaim.claimed, true)
+    await checkpointConversationalReplyDelivery(reserved.plan.id, deliveryClaim.claimToken, {
+      partIndex: 0,
+      status: 'sending'
+    })
+    await checkpointConversationalReplyDelivery(reserved.plan.id, deliveryClaim.claimToken, {
+      partIndex: 0,
+      status: 'sent',
+      providerMessageId: `provider_${randomUUID()}`
+    })
+    await settleConversationalReplyDelivery(reserved.plan.id, deliveryClaim.claimToken, {
+      status: 'completed'
+    })
+
+    await setConversationStatus(contactId, 'human', {
+      agentId,
+      channel: 'whatsapp',
+      updatedBy: 'user'
+    })
+    const completion = await completeDeliveredConversationalLinkObjective({
+      ...deliveryIdentity,
+      inboundClaimToken: inboundClaim.claimToken,
+      deliveryPlanId: reserved.plan.id,
+      completionEffect
+    })
+
+    assert.equal(completion.completed, false)
+    assert.equal(completion.reason, 'conversation_authority_lost')
+    const state = await getConversationState(contactId, { agentId, channel: 'whatsapp' })
+    assert.equal(state?.status, 'human')
+    assert.equal(state?.signal, null)
+    const completions = await listConversationalAgentEvents({ contactId, kind: 'completion' })
+    assert.equal(completions.length, 0)
   } finally {
     await cleanup(contactId, agentId)
   }

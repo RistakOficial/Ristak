@@ -70,7 +70,7 @@ import {
  * - completed: el agente cumplió el objetivo (dejó señal interna)
  *
  * Señales internas (signal): ready_for_human | ready_to_schedule |
- * ready_to_buy | appointment_booked | purchase_completed
+ * ready_to_buy | appointment_booked | purchase_completed | link_sent
  */
 
 export const CONVERSATIONAL_OBJECTIVES = [
@@ -314,6 +314,7 @@ function buildCompletionActionSummary({ signal, summary = '', reason = '', timez
 
   if (cleanSignal === 'ready_to_buy') return 'Quedó listo para pagar'
   if (cleanSignal === 'ready_to_schedule') return 'Quedó listo para agendar'
+  if (cleanSignal === 'link_sent') return 'Envió el enlace configurado'
   if (cleanSignal === 'ready_for_human') return baseReason || 'Objetivo concretado'
   return baseSummary || baseReason || 'Objetivo concretado'
 }
@@ -16690,6 +16691,7 @@ const CONVERSATIONAL_REPLY_DELIVERY_SETTLE_STATUSES = new Set([
   'pending',
   'ambiguous'
 ])
+const CONVERSATIONAL_REPLY_COMPLETION_EFFECT_TYPE = 'complete_send_link_objective'
 
 function conversationalReplyDeliveryError(message, {
   statusCode = 409,
@@ -16719,6 +16721,46 @@ function normalizeConversationalReplyDeliveryIdentity({
     })
   }
   return identity
+}
+
+export function normalizeConversationalReplyCompletionEffect(value = null) {
+  if (value === null || value === undefined) return null
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw conversationalReplyDeliveryError('El efecto terminal de la respuesta es inválido', {
+      statusCode: 400,
+      code: 'CONVERSATIONAL_REPLY_DELIVERY_INVALID_COMPLETION_EFFECT'
+    })
+  }
+  const type = String(value.type || '').trim()
+  const actionType = String(value.actionType || '').trim()
+  const signal = String(value.signal || '').trim()
+  const stateId = String(value.stateId || '').trim()
+  const activationCycleId = String(value.activationCycleId || '').trim()
+  if (
+    type !== CONVERSATIONAL_REPLY_COMPLETION_EFFECT_TYPE ||
+    actionType !== 'send_trigger_link' ||
+    signal !== 'link_sent' ||
+    !stateId ||
+    !activationCycleId
+  ) {
+    throw conversationalReplyDeliveryError('El efecto terminal de la respuesta no está permitido', {
+      statusCode: 400,
+      code: 'CONVERSATIONAL_REPLY_DELIVERY_INVALID_COMPLETION_EFFECT'
+    })
+  }
+  return {
+    version: 1,
+    type,
+    actionType,
+    signal,
+    stateId,
+    activationCycleId,
+    reason: String(value.reason || 'Enlace configurado entregado por el agente').trim().slice(0, 500) ||
+      'Enlace configurado entregado por el agente',
+    actionSummary: String(value.actionSummary || 'Envió el enlace configurado').trim().slice(0, 500) ||
+      'Envió el enlace configurado',
+    summary: String(value.summary || '').trim().slice(0, 2000)
+  }
 }
 
 export function buildConversationalReplyDeliveryPlanId(identity = {}) {
@@ -16791,6 +16833,7 @@ function assertConversationalReplyDeliveryPlanRow(row, identity = null) {
       code: 'CONVERSATIONAL_REPLY_DELIVERY_PLAN_CORRUPT'
     })
   }
+  normalizeConversationalReplyCompletionEffect(plan.completionEffect)
   if (identity && (
     String(row.contact_id || '') !== identity.contactId ||
     String(row.agent_id || '') !== identity.agentId ||
@@ -16908,6 +16951,7 @@ export async function getOrCreateConversationalReplyDeliveryPlan(identityInput =
     externalIdPrefix: identity.externalIdPrefix,
     replyHash: createHash('sha256').update(reply).digest('hex'),
     splitterMeta: normalizeConversationalReplyDeliverySplitterMeta(candidate.splitterMeta || candidate),
+    completionEffect: normalizeConversationalReplyCompletionEffect(candidate.completionEffect),
     delaySchedule,
     parts,
     attempts: 0,
@@ -17264,6 +17308,203 @@ export async function settleConversationalReplyDelivery(planId, claimToken, {
     reason: finalStatus,
     status: finalStatus,
     plan: mapConversationalReplyDeliveryPlan(row, next)
+  }
+}
+
+/**
+ * Cierra Mandar enlace únicamente después de que su plan durable terminó. El
+ * efecto viaja dentro del plan para que un retry conserve la misma decisión y
+ * no dependa de que el modelo vuelva a escoger la tool después de un crash.
+ */
+export async function completeDeliveredConversationalLinkObjective({
+  contactId = '',
+  agentId = '',
+  channel = 'whatsapp',
+  sourceMessageId = '',
+  inboundClaimToken = '',
+  deliveryPlanId = '',
+  completionEffect = null
+} = {}) {
+  const identity = normalizeConversationalReplyDeliveryIdentity({
+    contactId,
+    agentId,
+    channel,
+    sourceMessageId,
+    externalIdPrefix: 'convagent'
+  })
+  const cleanClaimToken = String(inboundClaimToken || '').trim()
+  const cleanPlanId = String(deliveryPlanId || '').trim()
+  const expectedPlanId = buildConversationalReplyDeliveryPlanId(identity)
+  const normalizedEffect = normalizeConversationalReplyCompletionEffect(completionEffect)
+  if (!normalizedEffect) return { completed: false, reason: 'no_completion_effect', state: null }
+  if (!cleanClaimToken || cleanPlanId !== expectedPlanId) {
+    throw conversationalReplyDeliveryError('Falta la autoridad durable para cerrar el objetivo del enlace', {
+      code: 'CONVERSATIONAL_LINK_OBJECTIVE_AUTHORITY_MISSING'
+    })
+  }
+
+  const completionEventId = `cae_link_sent_${createHash('sha256')
+    .update(cleanPlanId)
+    .digest('hex')
+    .slice(0, 48)}`
+  const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const result = await db.transaction(async () => {
+    const planRow = await db.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json, created_at
+       FROM conversational_agent_events
+       WHERE id = ?${rowLock}`,
+      [cleanPlanId]
+    )
+    if (!planRow) {
+      throw conversationalReplyDeliveryError('Se perdió el plan durable que entregó el enlace', {
+        code: 'CONVERSATIONAL_LINK_OBJECTIVE_DELIVERY_PLAN_MISSING'
+      })
+    }
+    assertConversationalReplyDeliveryPlanRow(planRow, identity)
+    const plan = mapConversationalReplyDeliveryPlan(planRow)
+    if (!['completed', 'ambiguous'].includes(String(plan.status || '').trim())) {
+      return { completed: false, reason: 'delivery_not_settled', stateId: null }
+    }
+    if (
+      JSON.stringify(normalizeConversationalReplyCompletionEffect(plan.completionEffect)) !==
+      JSON.stringify(normalizedEffect)
+    ) {
+      throw conversationalReplyDeliveryError('El cierre no coincide con el efecto sellado en la respuesta', {
+        code: 'CONVERSATIONAL_LINK_OBJECTIVE_EFFECT_MISMATCH'
+      })
+    }
+
+    const stateRow = await db.get(
+      `SELECT id, status, signal, agent_id, channel, activation_cycle_id,
+              inbound_processing_message_id, inbound_processing_claim_token
+       FROM conversational_agent_state
+       WHERE contact_id = ?
+         AND agent_id = ?
+         AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+       LIMIT 1${rowLock}`,
+      [identity.contactId, identity.agentId, identity.channel]
+    )
+    const priorCompletionEvent = await db.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events
+       WHERE id = ?${rowLock}`,
+      [completionEventId]
+    )
+    if (priorCompletionEvent) {
+      const priorDetail = parseJsonField(priorCompletionEvent.detail_json, {})
+      const idempotent = Boolean(
+        priorCompletionEvent.event_type === 'signal_set' &&
+        String(priorCompletionEvent.contact_id || '') === identity.contactId &&
+        String(priorCompletionEvent.agent_id || '') === identity.agentId &&
+        priorDetail.signal === 'link_sent' &&
+        priorDetail.deliveryPlanId === cleanPlanId &&
+        stateRow?.status === 'completed' &&
+        stateRow?.signal === 'link_sent' &&
+        String(stateRow?.id || '') === normalizedEffect.stateId &&
+        String(stateRow?.activation_cycle_id || '') === normalizedEffect.activationCycleId
+      )
+      if (!idempotent) {
+        throw conversationalReplyDeliveryError('La identidad del cierre del enlace ya pertenece a otro efecto', {
+          code: 'CONVERSATIONAL_LINK_OBJECTIVE_COMPLETION_CONFLICT'
+        })
+      }
+      return { completed: true, idempotent: true, reason: 'already_completed', stateId: stateRow.id }
+    }
+
+    const ownsActiveInbound = Boolean(
+      stateRow?.id &&
+      String(stateRow.id) === normalizedEffect.stateId &&
+      String(stateRow.activation_cycle_id || '') === normalizedEffect.activationCycleId &&
+      stateRow.status === 'active' &&
+      !String(stateRow.signal || '').trim() &&
+      String(stateRow.inbound_processing_message_id || '') === identity.sourceMessageId &&
+      String(stateRow.inbound_processing_claim_token || '') === cleanClaimToken
+    )
+    if (!ownsActiveInbound) {
+      return { completed: false, reason: 'conversation_authority_lost', stateId: stateRow?.id || null }
+    }
+
+    const updated = await db.run(
+      `UPDATE conversational_agent_state
+       SET status = 'completed',
+           signal = 'link_sent',
+           signal_reason = ?,
+           signal_summary = ?,
+           signal_at = CURRENT_TIMESTAMP,
+           last_answered_inbound_message_id = ?,
+           last_reply_at = CURRENT_TIMESTAMP,
+           updated_by = 'agent',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND activation_cycle_id = ?
+         AND status = 'active'
+         AND (signal IS NULL OR signal = '')
+         AND inbound_processing_message_id = ?
+         AND inbound_processing_claim_token = ?`,
+      [
+        normalizedEffect.reason,
+        normalizedEffect.summary || normalizedEffect.actionSummary,
+        identity.sourceMessageId,
+        stateRow.id,
+        normalizedEffect.activationCycleId,
+        identity.sourceMessageId,
+        cleanClaimToken
+      ]
+    )
+    if (dbMutationCount(updated) !== 1) {
+      return { completed: false, reason: 'conversation_authority_lost', stateId: stateRow.id }
+    }
+
+    const completionDetail = {
+      signal: 'link_sent',
+      reason: normalizedEffect.reason,
+      actionSummary: normalizedEffect.actionSummary,
+      summary: normalizedEffect.summary,
+      status: 'completed',
+      summarySource: normalizedEffect.summary ? 'tool_summary' : 'action_summary',
+      agentId: identity.agentId,
+      channel: identity.channel,
+      sourceMessageId: identity.sourceMessageId,
+      stateId: normalizedEffect.stateId,
+      activationCycleId: normalizedEffect.activationCycleId,
+      deliveryPlanId: cleanPlanId,
+      deliveryStatus: plan.status,
+      objectiveCompleted: true
+    }
+    await recordConversationalAgentEvent({
+      eventId: completionEventId,
+      contactId: identity.contactId,
+      eventType: 'signal_set',
+      detail: completionDetail,
+      throwOnError: true
+    })
+    const storedCompletion = await db.get(
+      'SELECT contact_id, agent_id, event_type, detail_json FROM conversational_agent_events WHERE id = ?',
+      [completionEventId]
+    )
+    const storedDetail = parseJsonField(storedCompletion?.detail_json, {})
+    if (
+      storedCompletion?.event_type !== 'signal_set' ||
+      String(storedCompletion?.contact_id || '') !== identity.contactId ||
+      String(storedCompletion?.agent_id || '') !== identity.agentId ||
+      storedDetail.signal !== 'link_sent' ||
+      storedDetail.deliveryPlanId !== cleanPlanId
+    ) {
+      throw conversationalReplyDeliveryError('No se pudo sellar el cierre durable del enlace', {
+        code: 'CONVERSATIONAL_LINK_OBJECTIVE_COMPLETION_EVENT_FAILED'
+      })
+    }
+    return { completed: true, idempotent: false, reason: 'completed', stateId: stateRow.id }
+  })
+
+  return {
+    ...result,
+    state: result?.stateId
+      ? await getConversationState(identity.contactId, {
+          agentId: identity.agentId,
+          channel: identity.channel
+        })
+      : null
   }
 }
 

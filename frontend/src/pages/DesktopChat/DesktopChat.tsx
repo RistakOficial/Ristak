@@ -645,6 +645,7 @@ const AGENT_SIGNAL_LABELS: Record<string, string> = {
   ready_to_buy: 'Listo para cobrar',
   appointment_booked: 'Cita agendada',
   purchase_completed: 'Compra confirmada',
+  link_sent: 'Enlace enviado',
   discarded: 'Descartado'
 }
 
