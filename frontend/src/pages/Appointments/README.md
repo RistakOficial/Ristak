@@ -191,9 +191,13 @@ puede usar el texto renderizado bajo sus reglas existentes.
 - **Aviso de cita** usa `timingAnchor: 'after_booking'` y se calcula desde
   `date_added`, sólo para citas agendadas localmente en Ristak.
 - El switch **Usar como confirmación de cita** no cambia el ancla del envío.
-- Una confirmación nueva con IA trae escrita una respuesta de cortesía con nombre,
-  fecha y hora. El usuario puede editarla o borrarla; reglas existentes y
-  recordatorios normales conservan su valor anterior.
+- En cada intento nuevo de crear un mensaje, la primera activación de
+  **Usar como confirmación de cita** escribe de verdad
+  `¡Perfecto! Te esperamos en tu cita. Nos vemos pronto.` dentro del campo de
+  respuesta; no es un placeholder. El usuario puede modificarlo o borrarlo.
+  Después de esa primera activación el borrador conserva exactamente su decisión,
+  incluso si apaga y vuelve a encender el switch. Cancelar y abrir un intento
+  nuevo reinicia la precarga. Las reglas existentes nunca se rellenan.
   Sólo cambia `messageType` a `confirmation` para activar IA, acciones de
   confirmación y ventanas de seguimiento.
 - `appointmentStatus: 'confirmed'` no omite este mensaje ni bloquea su respuesta:

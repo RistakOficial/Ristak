@@ -4694,12 +4694,14 @@ dejan auditoría del mensaje local. Un error de transporte se registra, pero no
 revierte el estado `confirmed`, no cambia el resultado del clasificador y no deja
 la ventana en error.
 
-Al crear una confirmación nueva con IA, el editor precarga
-`Perfecto, {{contact.first_name}}. Tu cita quedó confirmada para el
-{{cita.fecha}} a las {{cita.hora}}. ¡Te esperamos!`. El usuario puede modificarlo
-o borrarlo antes de guardar. El backend aplica el mismo default cuando otro
-cliente crea la regla sin mandar `confirmationReplyText`, pero respeta un valor
-vacío explícito y nunca rellena ni cambia reglas existentes.
+En cada intento nuevo de crear una confirmación con IA, la primera activación del
+switch escribe `¡Perfecto! Te esperamos en tu cita. Nos vemos pronto.` como valor
+real del campo, no como placeholder. El usuario puede modificarlo o borrarlo; el
+editor no lo repone si apaga y vuelve a encender la confirmación dentro del mismo
+borrador. Cancelar y abrir una creación nueva reinicia esta precarga. El backend
+aplica el mismo default cuando otro cliente crea la regla sin mandar
+`confirmationReplyText`, pero respeta un valor vacío explícito y nunca rellena
+ni cambia reglas existentes.
 
 Toda confirmacion con IA configura un plazo, no sólo las que cancelan. El editor
 muestra `no_action` como **Conservar la cita** y `cancel_appointment` como

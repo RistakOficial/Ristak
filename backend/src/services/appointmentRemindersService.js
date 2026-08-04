@@ -108,7 +108,7 @@ const CONFIRMATION_TIMEOUT_MODES = new Set(['elapsed', 'response_window'])
 const MAX_CONFIRMATION_TIMEOUT_MS = 30 * OFFSET_UNIT_MS.days
 const MAX_CONFIRMATION_REPLY_TEXT_LENGTH = 4096
 const DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT =
-  'Perfecto, {{contact.first_name}}. Tu cita quedó confirmada para el {{cita.fecha}} a las {{cita.hora}}. ¡Te esperamos!'
+  '¡Perfecto! Te esperamos en tu cita. Nos vemos pronto.'
 const DEFAULT_CONFIRMATION_RESPONSE_START = '09:00'
 const DEFAULT_CONFIRMATION_RESPONSE_END = '21:00'
 const DEFAULT_TEMPLATE_NAME_BY_PURPOSE = {

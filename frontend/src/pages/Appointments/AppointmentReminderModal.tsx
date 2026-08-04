@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Bell, CalendarCheck, Sparkles, Trash2 } from 'lucide-react'
 import {
   Modal,
@@ -21,10 +21,13 @@ import {
   type ReminderOffsetUnit,
   type ReminderSenderOption,
   type ReminderTimingAnchor,
-  DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT,
   formatReminderOffsetLabel,
   getAppointmentReminderScheduleConflict
 } from '@/services/appointmentRemindersService'
+import {
+  DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT,
+  resolveConfirmationReplyToggle
+} from '@/utils/appointmentConfirmationReply'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import {
   getMessageTemplateProviderStatus,
@@ -294,7 +297,7 @@ const createNewReminderDraft = (): AppointmentReminderInput => ({
   smartOverflow: 'before',
   noConfirmAction: 'no_action',
   ...getDefaultConfirmationTimeout('before_appointment', 1, 'days'),
-  confirmationReplyText: DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT,
+  confirmationReplyText: '',
   confirmationSuccessActions: [...DEFAULT_CONFIRMATION_SUCCESS_ACTIONS]
 })
 
@@ -314,9 +317,11 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
   const [deleting, setDeleting] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [scheduleConflictMessage, setScheduleConflictMessage] = useState('')
+  const confirmationReplyInitializedRef = useRef(false)
 
   useEffect(() => {
     if (!isOpen) return
+    confirmationReplyInitializedRef.current = Boolean(reminder)
     if (reminder) {
       const defaultConfirmationTimeout = getDefaultConfirmationTimeout(
         reminder.timingAnchor || 'before_appointment',
@@ -632,6 +637,13 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
     )
     const shouldSwitchTemplate = !draft.templateId || selectedTemplate?.name === previousName
     const nextTemplate = visibleTemplates.find(template => template.name === nextName) || null
+    const confirmationReplyState = resolveConfirmationReplyToggle({
+      enabled,
+      isNewReminder: !reminder,
+      wasInitialized: confirmationReplyInitializedRef.current,
+      confirmationReplyText: String(draft.confirmationReplyText || '')
+    })
+    confirmationReplyInitializedRef.current = confirmationReplyState.wasInitialized
 
     setDraft(prev => {
       const defaultConfirmationTimeout = getDefaultConfirmationTimeout(
@@ -647,6 +659,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
         confirmationSuccessActions: enabled
           ? [...DEFAULT_CONFIRMATION_SUCCESS_ACTIONS]
           : prev.confirmationSuccessActions,
+        confirmationReplyText: confirmationReplyState.confirmationReplyText,
         ...(enabled && (
           !Number(prev.confirmationTimeoutValue) ||
           !prev.confirmationTimeoutUnit
@@ -881,7 +894,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                         expandedTitle="Editar mensaje de respuesta al confirmar"
                         characterLimit={MAX_CONFIRMATION_REPLY_TEXT_LENGTH}
                         rows={4}
-                        placeholder="Ejemplo: ¡Perfecto! Te esperamos en tu cita. Nos vemos pronto."
+                        placeholder={`Ejemplo: ${DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT}`}
                       />
                       <span className={styles.helpText}>
                         Puedes usar {'{{contact.first_name}}'}, {'{{contact.name}}'}, {'{{cita.titulo}}'}, {'{{cita.fecha}}'} y {'{{cita.hora}}'}.

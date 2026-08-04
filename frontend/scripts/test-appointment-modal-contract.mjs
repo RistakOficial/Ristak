@@ -89,8 +89,8 @@ assert.match(
 
 assert.match(
   reminderModalSource,
-  /confirmationReplyText:\s*DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT/,
-  'una regla nueva debe abrir con la respuesta posterior a la confirmación ya escrita'
+  /resolveConfirmationReplyToggle\(\{/,
+  'el switch debe resolver la precarga real de la respuesta posterior a la confirmación'
 )
 
 console.log('Appointment modal shared contract OK')
