@@ -4,6 +4,7 @@ import {
   getAutomationNodeRequiredFeatures,
   getAutomationTriggerRequiredFeatures,
   normalizeFlow,
+  validateAppointmentPastDueChoicesForSave,
   validateFlowForPublish,
   START_NODE_TYPE
 } from '../src/services/automationFlowValidation.js'
@@ -647,7 +648,7 @@ test('saltar a la siguiente espera sólo es válido cuando hay un destino inequ�
   assert.ok(errors.some((message) => message.includes('siguiente evento de espera inequívoco')))
 })
 
-test('el default automático continúa normal cuando todavía no hay otra espera', () => {
+test('Esperar antes de una cita usa la siguiente espera por default y exige elegir cuando es la última', () => {
   const appointmentWait = {
     id: 'appointment-wait',
     type: 'logic-wait',
@@ -657,7 +658,7 @@ test('el default automático continúa normal cuando todavía no hay otra espera
       appointmentOffset: 'before',
       offsetAmount: 3,
       offsetUnit: 'days',
-      appointmentPastDueAction: 'auto'
+      appointmentPastDueAction: ''
     }
   }
   const flow = {
@@ -665,6 +666,27 @@ test('el default automático continúa normal cuando todavía no hay otra espera
     edges: [edge('e1', 'start', 'appointment-wait')]
   }
 
+  let errors = validateAppointmentPastDueChoicesForSave(flow)
+  assert.ok(errors.some((message) => message.includes('necesita elegir qué debe pasar')))
+  assert.ok(validateFlowForPublish(flow).some((message) => message.includes('necesita elegir qué debe pasar')))
+
+  appointmentWait.config.appointmentPastDueAction = 'auto'
+  errors = validateAppointmentPastDueChoicesForSave(flow)
+  assert.ok(errors.some((message) => message.includes('no hay otra espera más adelante')))
+
+  const downstreamWait = {
+    id: 'downstream-wait',
+    type: 'logic-wait',
+    position: { x: 300, y: 0 },
+    config: { mode: 'duration', amount: 1, unit: 'days' }
+  }
+  flow.nodes.push(downstreamWait)
+  flow.edges.push(edge('e2', 'appointment-wait', 'downstream-wait'))
+  assert.deepEqual(validateAppointmentPastDueChoicesForSave(flow), [])
+  assert.deepEqual(validateFlowForPublish(flow), [])
+
+  appointmentWait.config.appointmentPastDueAction = 'continue'
+  assert.deepEqual(validateAppointmentPastDueChoicesForSave(flow), [])
   assert.deepEqual(validateFlowForPublish(flow), [])
 })
 

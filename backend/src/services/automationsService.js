@@ -2,6 +2,7 @@ import { databaseDialect, db } from '../config/database.js'
 import {
   collectAutomationFlowRequiredFeatures,
   normalizeFlow,
+  validateAppointmentPastDueChoicesForSave,
   validateFlowForPublish,
   START_NODE_TYPE
 } from './automationFlowValidation.js'
@@ -59,6 +60,14 @@ function conflict(message) {
   const error = new Error(message)
   error.status = 409
   return error
+}
+
+function assertAppointmentPastDueChoicesForSave(flow) {
+  const errors = validateAppointmentPastDueChoicesForSave(flow)
+  if (errors.length === 0) return
+  const error = badRequest(errors.join('. '))
+  error.validationErrors = errors
+  throw error
 }
 
 function featureNotAvailable(message, feature) {
@@ -603,6 +612,7 @@ export async function createAutomation(input = {}) {
   const id = makeId('auto')
   const flow = normalizeFlow(input.flow ? input.flow : defaultFlow())
   await assertAutomationFlowFeatureAccess(flow)
+  assertAppointmentPastDueChoicesForSave(flow)
 
   await db.transaction(async (tx) => {
     await tx.run(
@@ -633,6 +643,7 @@ export async function updateAutomation(automationId, input = {}) {
 
   const flow = input.flow !== undefined ? normalizeFlow(input.flow) : current.flow
   await assertAutomationFlowFeatureAccess(flow)
+  if (input.flow !== undefined) assertAppointmentPastDueChoicesForSave(flow)
 
   let status = current.status
   let publishedAt = current.publishedAt

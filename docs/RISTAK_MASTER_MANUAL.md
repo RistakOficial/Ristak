@@ -1523,11 +1523,15 @@ nuevo. Las acciones ya ejecutadas no se repiten. Si el nuevo momento relativo ya
 pasó y el paso está configurado como **Antes de la cita**, la espera aplica
 **¿Qué quieres que pase si ya pasó el tiempo?**: puede continuar al siguiente
 evento, saltar al siguiente evento **Esperar**, saltar a un evento específico o
-sacar la ejecución del flujo. En nodos nuevos, saltar a la siguiente espera es
-el default cuando existe una única siguiente espera inequívoca en las rutas hacia
-adelante. Si no existe otra espera, o distintas ramas llegan primero a esperas
-diferentes, esa opción no aparece y el default es continuar al siguiente evento;
-el usuario todavía puede elegir un destino con **Pasar a un evento específico**.
+sacar la ejecución del flujo. **Saltar a la siguiente espera** aparece y queda
+seleccionado por default sólo cuando existe una única siguiente espera inequívoca
+en las rutas hacia adelante. Si el paso es la última espera, no existe otra o
+distintas ramas llegan primero a esperas diferentes, esa opción no aparece y no
+se selecciona nada automáticamente: el usuario debe elegir continuar, salir o
+usar **Pasar a un evento específico** antes de guardar o publicar. Esta última
+opción además exige seleccionar el evento de destino. Un flujo legacy sin esta
+política mantiene el fallback de continuar mientras corre, pero la próxima
+edición obliga a elegirla cuando no pueda resolverse otra espera inequívoca.
 El salto es parte del grafo lógico aunque no dibuje otro conector; el editor y el backend
 rechazan destinos eliminados, el propio paso, el inicio y cualquier salto que
 forme un ciclo. La política también aplica cuando el contacto llega por primera

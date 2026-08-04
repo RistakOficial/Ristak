@@ -77,7 +77,10 @@ import { EnrollmentRecordsModal, type RecordsTab } from './EnrollmentRecordsModa
 import { NodeEnrollmentsModal } from './NodeEnrollmentsModal'
 import { AutomationTestRunModal } from './AutomationTestRunModal'
 import { createEditorState, editorReducer } from './editorState'
-import { validateAutomationFlow } from './automationValidation'
+import {
+  validateAppointmentPastDueChoicesForSave,
+  validateAutomationFlow
+} from './automationValidation'
 import { RichEmailEditorModal } from './config/RichEmailEditorModal'
 import type { EmailRichEditorRequest } from './config/EmailConfigEditor'
 import { specificFormFromConfig } from './crmFields'
@@ -86,6 +89,12 @@ import styles from './AutomationEditor.module.css'
 // El AppShell escucha este evento (lo usa el editor de Sitios) para ocultar el
 // header global y dar todo el alto de la pantalla al editor.
 const EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
+const APPOINTMENT_CHOICE_ERROR_FRAGMENTS = [
+  'Elige qué debe pasar',
+  'Selecciona el evento al que debe pasar',
+  'siguiente evento de espera inequívoco',
+  'evento elegido para el tiempo vencido'
+]
 
 type SaveState = 'saved' | 'dirty' | 'saving' | 'error'
 type PersistAutomation = (options?: { notify?: boolean }) => Promise<boolean>
@@ -696,6 +705,33 @@ export const AutomationEditor: React.FC = () => {
       }
       return false
     }
+    const appointmentChoiceValidation = validateAppointmentPastDueChoicesForSave(
+      stateRef.current.present.nodes,
+      stateRef.current.present.edges
+    )
+    if (!appointmentChoiceValidation.valid) {
+      setSaveState('error')
+      setNodeErrors((current) => ({ ...current, ...appointmentChoiceValidation.nodeErrors }))
+      if (options.notify) {
+        const summary = appointmentChoiceValidation.issues
+          .slice(0, 3)
+          .map((issue) => issue.message)
+          .join('. ')
+        showToast('error', 'No se pudo guardar', summary)
+      }
+      return false
+    }
+    setNodeErrors((current) => {
+      const next = { ...current }
+      Object.entries(next).forEach(([nodeId, errors]) => {
+        const remaining = errors.filter((error) => (
+          !APPOINTMENT_CHOICE_ERROR_FRAGMENTS.some((fragment) => error.includes(fragment))
+        ))
+        if (remaining.length > 0) next[nodeId] = remaining
+        else delete next[nodeId]
+      })
+      return next
+    })
     setSaveState('saving')
     try {
       const updated = await automationsService.updateAutomation(current.id, {

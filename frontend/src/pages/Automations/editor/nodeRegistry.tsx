@@ -2642,7 +2642,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
           errors.push('Define cuánto tiempo antes o después de la cita')
         }
         if ((str(config.appointmentOffset) || 'before') === 'before') {
-          const pastDueAction = str(config.appointmentPastDueAction) || 'continue'
+          const pastDueAction = str(config.appointmentPastDueAction)
           if (!['auto', 'continue', 'next_wait', 'specific_node', 'exit'].includes(pastDueAction)) {
             errors.push('Elige qué debe pasar si ya pasó el tiempo de espera')
           }

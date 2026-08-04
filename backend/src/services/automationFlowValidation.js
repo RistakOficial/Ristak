@@ -362,6 +362,49 @@ function appointmentPastDueRoutingEdges(nodes, edges) {
   return [...edges, ...routingEdges]
 }
 
+export function validateAppointmentPastDueChoicesForSave(flow) {
+  const nodes = asArray(flow?.nodes)
+  const edges = asArray(flow?.edges)
+  const errors = []
+
+  nodes
+    .filter((node) => node.type === 'logic-wait')
+    .forEach((node) => {
+      const config = isPlainObject(node.config) ? node.config : {}
+      if (
+        config.mode !== 'appointment' ||
+        String(config.appointmentOffset || 'before') !== 'before'
+      ) return
+
+      const action = String(config.appointmentPastDueAction || '').trim()
+      if (!APPOINTMENT_PAST_DUE_ACTIONS.has(action)) {
+        errors.push('El paso Esperar necesita elegir qué debe pasar si ya pasó el tiempo de espera')
+        return
+      }
+      if (action === 'auto') {
+        if (!nextDownstreamWaitNode(nodes, edges, node.id)) {
+          errors.push('El paso Esperar necesita elegir qué debe pasar porque no hay otra espera más adelante')
+        }
+        return
+      }
+      if (action === 'next_wait' && !nextDownstreamWaitNode(nodes, edges, node.id)) {
+        errors.push('El paso Esperar ya no tiene un siguiente evento de espera inequívoco')
+        return
+      }
+      if (action !== 'specific_node') return
+
+      const targetNodeId = String(config.appointmentPastDueTargetNodeId || '').trim()
+      const targetNode = nodes.find((candidate) => candidate.id === targetNodeId)
+      if (!targetNodeId) {
+        errors.push('El paso Esperar necesita elegir un evento para una cita cuyo tiempo ya pasó')
+      } else if (!targetNode || targetNode.type === START_NODE_TYPE || targetNode.id === node.id) {
+        errors.push('El evento elegido para una cita cuyo tiempo ya pasó no es válido')
+      }
+    })
+
+  return errors
+}
+
 function commentTriggerPlatform(trigger) {
   if (trigger?.type === 'trigger-instagram-comment') return 'instagram'
   if (trigger?.type === 'trigger-facebook-comment') return 'facebook'
@@ -590,32 +633,7 @@ export function validateFlowForPublish(flow) {
       }
     })
 
-  nodes
-    .filter((node) => node.type === 'logic-wait')
-    .forEach((node) => {
-      const config = isPlainObject(node.config) ? node.config : {}
-      if (
-        config.mode !== 'appointment' ||
-        String(config.appointmentOffset || 'before') !== 'before'
-      ) return
-      const action = String(config.appointmentPastDueAction || 'continue')
-      if (!APPOINTMENT_PAST_DUE_ACTIONS.has(action)) {
-        errors.push('El paso Esperar tiene una acción inválida para una cita cuyo tiempo ya pasó')
-        return
-      }
-      if (action === 'next_wait' && !nextDownstreamWaitNode(nodes, edges, node.id)) {
-        errors.push('El paso Esperar ya no tiene un siguiente evento de espera inequívoco')
-        return
-      }
-      if (action !== 'specific_node') return
-      const targetNodeId = String(config.appointmentPastDueTargetNodeId || '').trim()
-      const targetNode = nodes.find((candidate) => candidate.id === targetNodeId)
-      if (!targetNodeId) {
-        errors.push('El paso Esperar necesita elegir un evento para una cita cuyo tiempo ya pasó')
-      } else if (!targetNode || targetNode.type === START_NODE_TYPE || targetNode.id === node.id) {
-        errors.push('El evento elegido para una cita cuyo tiempo ya pasó no es válido')
-      }
-    })
+  errors.push(...validateAppointmentPastDueChoicesForSave(flow))
 
   nodes
     .filter((node) => node.type === 'logic-wait')

@@ -124,9 +124,11 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({
       'Esperar'
     : ''
   const configuredPastDueAction = str(config.appointmentPastDueAction)
-  const effectivePastDueAction = configuredPastDueAction === 'auto'
-    ? (nextDownstreamWait ? 'next_wait' : 'continue')
-    : configuredPastDueAction || 'continue'
+  const selectedPastDueAction = configuredPastDueAction === 'auto'
+    ? (nextDownstreamWait ? 'next_wait' : '')
+    : ['continue', 'next_wait', 'specific_node', 'exit'].includes(configuredPastDueAction)
+      ? configuredPastDueAction
+      : ''
   const appointmentPastDueActionOptions = [
     ...(nextDownstreamWait
       ? [{ value: 'next_wait', label: 'Saltar al siguiente evento de espera' }]
@@ -315,19 +317,22 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({
           {(str(config.appointmentOffset) || 'before') === 'before' && (
             <>
               <Field
-                label="¿Qué quieres que pase si ya pasó el tiempo?"
+                label={nextDownstreamWait
+                  ? '¿Qué quieres que pase si ya pasó el tiempo?'
+                  : '¿Qué quieres que pase si ya pasó el tiempo? (obligatorio)'}
                 help={nextDownstreamWaitLabel
-                  ? `La siguiente espera es “${nextDownstreamWaitLabel}”. Esta regla se aplica si el contacto llega tarde.`
-                  : 'Se aplica si el contacto llega a esta espera después del momento configurado.'}
+                  ? `“Saltar a ${nextDownstreamWaitLabel}” queda seleccionado por default. Esta regla se aplica si el contacto llega tarde.`
+                  : 'No hay otra espera más adelante. Elige una opción para poder guardar.'}
               >
                 <CustomSelect
                   options={appointmentPastDueActionOptions}
-                  value={effectivePastDueAction}
+                  value={selectedPastDueAction}
                   onValueChange={(next) => set({ appointmentPastDueAction: next })}
+                  placeholder="Elige qué debe pasar"
                   aria-label="Qué hacer si ya pasó el tiempo"
                 />
               </Field>
-              {effectivePastDueAction === 'specific_node' && (
+              {selectedPastDueAction === 'specific_node' && (
                 <Field
                   label="Evento al que debe pasar"
                   help={appointmentPastDueTargetOptions.length === 0

@@ -143,6 +143,12 @@ function validateAppointmentPastDueRouting(
     config.mode !== 'appointment' ||
     (config.appointmentOffset || 'before') !== 'before'
   ) return
+  if (config.appointmentPastDueAction === 'auto') {
+    if (!getNextDownstreamWaitNode(nodes, edges, node.id)) {
+      pushNodeError(result, node.id, 'Elige qué debe pasar porque no hay otra espera más adelante')
+    }
+    return
+  }
   if (config.appointmentPastDueAction === 'next_wait') {
     if (!getNextDownstreamWaitNode(nodes, edges, node.id)) {
       pushNodeError(result, node.id, 'Ya no existe un siguiente evento de espera inequívoco')
@@ -163,6 +169,56 @@ function validateAppointmentPastDueRouting(
   if (hasPath(routingEdgesWithoutCurrentJump, targetNodeId, node.id)) {
     pushNodeError(result, node.id, 'El evento elegido para el tiempo vencido provocaría un ciclo')
   }
+}
+
+/**
+ * Una espera intermedia puede resolver su default hacia la siguiente espera.
+ * Si no existe un destino inequívoco, la política pasa a ser una decisión
+ * obligatoria antes de guardar. Esta validación es intencionalmente acotada
+ * para que el editor siga permitiendo borradores incompletos en otros nodos.
+ */
+export function validateAppointmentPastDueChoicesForSave(
+  nodes: AutomationNode[],
+  edges: AutomationEdge[]
+): FlowValidationResult {
+  const result: FlowValidationResult = { valid: true, issues: [], nodeErrors: {} }
+  const allowedActions = new Set(['auto', 'continue', 'next_wait', 'specific_node', 'exit'])
+
+  nodes.forEach((node) => {
+    if (node.type !== 'logic-wait') return
+    const config = node.config || {}
+    if (
+      config.mode !== 'appointment' ||
+      (config.appointmentOffset || 'before') !== 'before'
+    ) return
+
+    const action = typeof config.appointmentPastDueAction === 'string'
+      ? config.appointmentPastDueAction.trim()
+      : ''
+    if (!allowedActions.has(action)) {
+      pushNodeError(result, node.id, 'Elige qué debe pasar si ya pasó el tiempo de espera')
+      return
+    }
+    if (action === 'auto') {
+      if (!getNextDownstreamWaitNode(nodes, edges, node.id)) {
+        pushNodeError(result, node.id, 'Elige qué debe pasar porque no hay otra espera más adelante')
+      }
+      return
+    }
+    if (action === 'specific_node') {
+      const targetNodeId = typeof config.appointmentPastDueTargetNodeId === 'string'
+        ? config.appointmentPastDueTargetNodeId.trim()
+        : ''
+      if (!targetNodeId) {
+        pushNodeError(result, node.id, 'Selecciona el evento al que debe pasar si ya pasó el tiempo')
+        return
+      }
+    }
+    validateAppointmentPastDueRouting(node, nodes, edges, result)
+  })
+
+  result.valid = result.issues.length === 0
+  return result
 }
 
 /**

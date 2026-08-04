@@ -341,6 +341,69 @@ test('updateAutomation separa borrador guardado de flujo publicado', async () =>
   }
 })
 
+test('updateAutomation no guarda una espera antes de cita sin política explícita', async () => {
+  const automation = await createAutomation({
+    name: `Espera de cita obligatoria ${Date.now()}`
+  })
+  const flow = makeFlow('Espera antes de cita')
+  flow.nodes[1] = {
+    id: 'node_message',
+    type: 'logic-wait',
+    label: 'Esperar antes de la cita',
+    position: { x: 520, y: 220 },
+    config: {
+      mode: 'appointment',
+      appointmentOffset: 'before',
+      offsetAmount: 3,
+      offsetUnit: 'days',
+      appointmentPastDueAction: ''
+    }
+  }
+
+  try {
+    await assert.rejects(
+      () => updateAutomation(automation.id, { flow }),
+      /necesita elegir qué debe pasar/
+    )
+
+    flow.nodes[1].config.appointmentPastDueAction = 'auto'
+    await assert.rejects(
+      () => updateAutomation(automation.id, { flow }),
+      /no hay otra espera más adelante/
+    )
+
+    flow.nodes.push({
+      id: 'next_wait',
+      type: 'logic-wait',
+      label: 'Siguiente espera',
+      position: { x: 820, y: 220 },
+      config: { mode: 'duration', amount: 1, unit: 'days' }
+    })
+    flow.edges.push({
+      id: 'edge_next_wait',
+      sourceNodeId: 'node_message',
+      sourceHandle: 'out',
+      targetNodeId: 'next_wait',
+      targetHandle: 'in',
+      animated: true
+    })
+    const autoSaved = await updateAutomation(automation.id, { flow })
+    assert.equal(autoSaved.flow.nodes[1].config.appointmentPastDueAction, 'auto')
+
+    flow.nodes[1].config.appointmentPastDueAction = 'specific_node'
+    await assert.rejects(
+      () => updateAutomation(automation.id, { flow }),
+      /necesita elegir un evento/
+    )
+
+    flow.nodes[1].config.appointmentPastDueAction = 'continue'
+    const saved = await updateAutomation(automation.id, { flow })
+    assert.equal(saved.flow.nodes[1].config.appointmentPastDueAction, 'continue')
+  } finally {
+    await db.run('DELETE FROM automations WHERE id = ?', [automation.id])
+  }
+})
+
 test('testAutomationRun inscribe un contacto real desde una automatización guardada sin publicar', async () => {
   const suffix = Date.now()
   const tagId = `tag_test_run_${suffix}`
