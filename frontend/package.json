@@ -12,6 +12,7 @@
     "test:chat-delivery-state": "node scripts/test-chat-message-delivery-state.mjs",
     "test:chat-error-popover": "node scripts/test-chat-error-popover.mjs",
     "test:chat-contact-panel-layout": "node scripts/test-chat-contact-panel-layout.mjs",
+    "test:desktop-chat-live-first-paint": "node scripts/test-desktop-chat-live-first-paint.mjs",
     "test:chat-channel": "node scripts/test-chat-message-channel.mjs",
     "test:chat-audio-playback": "node scripts/test-chat-audio-playback.mjs",
     "test:whatsapp-connection-status": "node scripts/test-whatsapp-connection-status.mjs",

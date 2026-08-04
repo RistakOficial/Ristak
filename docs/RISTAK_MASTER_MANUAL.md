@@ -765,15 +765,18 @@ panel secundario conserva el ultimo dato util y reintenta en una recarga o rango
 posterior sin bloquear el resto de Analiticas.
 
 Contactos confia en los flags de cita/asistencia calculados por su endpoint
-paginado; no descarga anos de calendarios para pintar veinte filas. La busqueda
-de Chat escritorio entrega la primera pagina de inmediato y pagina resultados
-al hacer scroll, en lugar de recorrer toda la cuenta antes de mostrar algo. La
-lista de conversaciones avanza por `last_message_sort + contact_id`, no por
-offset. El montaje no precarga cinco paginas ni 250 conversaciones: solo pide el
-siguiente lote de 50 cuando la lista aun no llena la pantalla o el usuario se
-acerca al final. La lectura de la pagina y del hilo tiene deadline y no puede
-dejar sus loaders activos indefinidamente. Dentro de una conversacion, Desktop y
-movil conservan la tupla privada
+paginado; no descarga anos de calendarios para pintar veinte filas. Chat
+escritorio pide directamente al backend su primera pagina y pagina resultados
+al hacer scroll, en lugar de recorrer toda la cuenta o pintar primero una copia
+persistida en el navegador. La bandeja y los mensajes desktop no guardan
+snapshots de contenido en `localStorage`; al montar muestran carga hasta recibir
+la respuesta autoritativa y limpian las llaves de contenido usadas por versiones
+anteriores. La lista de conversaciones avanza por
+`last_message_sort + contact_id`, no por offset. El montaje no precarga cinco
+paginas ni 250 conversaciones: solo pide el siguiente lote de 50 cuando la lista
+aun no llena la pantalla o el usuario se acerca al final. La lectura de la pagina
+y del hilo tiene deadline y no puede dejar sus loaders activos indefinidamente.
+Dentro de una conversacion, Desktop y movil conservan la tupla privada
 `cursorDate + cursorKey` del mensaje mas antiguo y la envian al pedir historia;
 esto evita saltar mensajes distintos que compartan el mismo instante. La
 app movil solo carga los datos de la seccion activa y sus listas de pagos,
@@ -2788,6 +2791,9 @@ La apertura de una conversacion prioriza siempre `GET /contacts/:id/conversation
 en cuanto llegan los ultimos 50 mensajes se pinta el hilo y se fija el ultimo
 mensaje sin animacion. Mensajes programados, perfil, estados/resumenes del agente
 y marcadores de negocio se hidratan despues y no pueden retener ese primer paint.
+Desktop vacia el hilo anterior antes de pintar el contacto nuevo y no restaura
+mensajes desde almacenamiento persistente; si la lectura falla, muestra el error
+en lugar de presentar una conversacion historica como si estuviera vigente.
 El panel derecho conserva la ficha disponible del contacto mientras esa
 hidratacion termina en segundo plano: no inserta avisos temporales de
 `Actualizando` ni cambia la geometria del panel al cambiar de conversacion.

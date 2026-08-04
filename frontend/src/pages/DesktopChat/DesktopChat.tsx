@@ -150,6 +150,7 @@ import { formatChatDayLabel, formatChatListTimestamp, formatChatMessageTime, get
 import { mergeContactCustomFields } from '@/utils/contactCustomFields'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { parseSortableDateValue } from '@/utils/dateSort'
+import { clearRetiredDesktopChatContentCaches } from '@/utils/desktopChatContentCache'
 import {
   getAssignedConversationAgentStates,
   getConversationAgentAssignmentStatus,
@@ -291,11 +292,6 @@ interface RemovedChatState {
   removedAt: string
 }
 
-interface ChatListCacheSnapshot {
-  chats: DesktopChatContact[]
-  isFresh: boolean
-}
-
 interface DesktopChatMessage {
   id: string
   optimisticId?: string
@@ -354,14 +350,6 @@ interface DesktopChatMessage {
   }
   location?: ChatLocation
   adPreview?: MessageAdPreview
-}
-
-interface ConversationCacheSnapshot {
-  journey: JourneyEvent[]
-  messages: DesktopChatMessage[]
-  agentCompletions: ConversationalAgentCompletionEvent[]
-  contactInfo: Contact | null
-  agentState: ConversationAgentState | null
 }
 
 // Perfil social del contacto + contacto ENLAZADO (misma persona en el mismo
@@ -456,19 +444,10 @@ const AGENT_INBOX_STATUS_FILTERS: Array<{ id: AgentInboxStatusFilter; label: str
 const CHAT_REQUEST_TIMEOUT_MS = 20000
 const CHAT_ARCHIVED_STATE_KEY = 'ristak_phone_chat_archived_state_v1'
 const CHAT_REMOVED_STATE_KEY = 'ristak_desktop_chat_removed_state_v1'
-const CHAT_CACHE_KEY = 'ristak_desktop_chat_list_cache_v1'
-const CHAT_CONVERSATION_CACHE_KEY_PREFIX = 'ristak_desktop_chat_conversation_cache_v1'
 const CHAT_PERSISTENT_CACHE_PREFIXES = [
   CHAT_ARCHIVED_STATE_KEY,
-  CHAT_REMOVED_STATE_KEY,
-  CHAT_CACHE_KEY,
-  CHAT_CONVERSATION_CACHE_KEY_PREFIX
+  CHAT_REMOVED_STATE_KEY
 ] as const
-const CHAT_CACHE_MAX_AGE_MS = 30 * 60 * 1000
-const CHAT_CACHE_STALE_MAX_AGE_MS = 24 * 60 * 60 * 1000
-const CHAT_CACHE_ENTRY_LIMIT = 400
-const CHAT_CONVERSATION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
-const CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS = 360_000
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 50
 const CHAT_FALLBACK_REFRESH_INTERVAL_MS = 30_000
 const CHAT_HEALTHY_RECONCILE_INTERVAL_MS = 2 * 60_000
@@ -1318,47 +1297,6 @@ function getDefaultActiveChatId(chats: DesktopChatContact[], archivedIds: Set<st
     ''
 }
 
-function readCachedChatList(): ChatListCacheSnapshot {
-  if (typeof window === 'undefined') return { chats: [], isFresh: false }
-
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(getScopedChatStorageKey(CHAT_CACHE_KEY)) || 'null')
-    if (!parsed || typeof parsed !== 'object') return { chats: [], isFresh: false }
-    const cacheAgeMs = Date.now() - Number(parsed.storedAt || 0)
-    if (cacheAgeMs > CHAT_CACHE_STALE_MAX_AGE_MS) return { chats: [], isFresh: false }
-    if (!Array.isArray(parsed.chats)) return { chats: [], isFresh: false }
-
-    const chats = parsed.chats
-      .filter((contact: unknown): contact is DesktopChatContact => Boolean(
-        contact &&
-        typeof contact === 'object' &&
-        typeof (contact as DesktopChatContact).id === 'string' &&
-        (contact as DesktopChatContact).id.trim()
-      ))
-      .slice(0, CHAT_CACHE_ENTRY_LIMIT)
-
-    return {
-      chats,
-      isFresh: cacheAgeMs <= CHAT_CACHE_MAX_AGE_MS
-    }
-  } catch {
-    return { chats: [], isFresh: false }
-  }
-}
-
-function writeCachedChatList(chats: DesktopChatContact[]) {
-  if (typeof window === 'undefined') return
-
-  try {
-    window.localStorage.setItem(getScopedChatStorageKey(CHAT_CACHE_KEY), JSON.stringify({
-      storedAt: Date.now(),
-      chats: chats.slice(0, CHAT_CACHE_ENTRY_LIMIT)
-    }))
-  } catch {
-    // Cache best-effort: si el navegador no deja guardar, la red sigue siendo la fuente.
-  }
-}
-
 function compactCompareValue(value: unknown) {
   if (value === null || value === undefined) return ''
   return String(value)
@@ -1422,13 +1360,13 @@ function compareChatListContactCursors(left: DesktopChatContact, right: DesktopC
   )
 }
 
-// Reconcilia la cola cacheada contra la primera página fresca del servidor: descarta
+// Reconcilia la cola ya cargada contra la primera página fresca del servidor: descarta
 // contactos que el servidor ya NO devuelve (fusionados/borrados/ocultos) SIN perder la
 // cola real que el usuario reveló al hacer scroll. Regla: si la página fresca es
 // incompleta (< pageSize) es la lista COMPLETA → no se conserva nada extra; si es una
-// página llena, se conserva solo lo cacheado genuinamente más viejo que el borde de la
+// página llena, se conserva solo lo ya cargado genuinamente más viejo que el borde de la
 // página (lo que caería dentro de la página pero falta = borrado).
-function reconcileCachedChatTail(freshPage: DesktopChatContact[], current: DesktopChatContact[], pageSize: number): DesktopChatContact[] {
+function reconcileLoadedChatTail(freshPage: DesktopChatContact[], current: DesktopChatContact[], pageSize: number): DesktopChatContact[] {
   const freshIds = new Set(freshPage.map((contact) => contact.id))
   const notFresh = current.filter((contact) => !freshIds.has(contact.id))
   if (freshPage.length < pageSize) return []
@@ -1780,73 +1718,6 @@ function mergeJourneyEvents(...eventGroups: JourneyEvent[][]) {
 
   return Array.from(merged.values())
     .sort((left, right) => getMessageTimeValue(left.date) - getMessageTimeValue(right.date))
-}
-
-function getConversationCacheKey(locationId: string | null | undefined, contactId: string) {
-  return [
-    getScopedChatStorageKey(CHAT_CONVERSATION_CACHE_KEY_PREFIX),
-    encodeURIComponent(locationId || 'default'),
-    encodeURIComponent(contactId)
-  ].join(':')
-}
-
-function normalizeCachedContact(value: unknown): Contact | null {
-  if (!value || typeof value !== 'object') return null
-  const contact = value as Contact
-  return typeof contact.id === 'string' && contact.id.trim() ? contact : null
-}
-
-function readCachedConversation(locationId: string | null | undefined, contactId: string): ConversationCacheSnapshot | null {
-  if (typeof window === 'undefined' || !contactId) return null
-
-  const cacheKey = getConversationCacheKey(locationId, contactId)
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(cacheKey) || 'null')
-    if (!parsed || typeof parsed !== 'object') return null
-    const cacheAgeMs = Date.now() - Number(parsed.storedAt || 0)
-    if (cacheAgeMs > CHAT_CONVERSATION_CACHE_MAX_AGE_MS) {
-      window.localStorage.removeItem(cacheKey)
-      return null
-    }
-
-    const journey = Array.isArray(parsed.journey) ? parsed.journey : []
-    const messages = Array.isArray(parsed.messages) ? parsed.messages : []
-    const agentCompletions = Array.isArray(parsed.agentCompletions) ? parsed.agentCompletions : []
-    const contactInfo = parsed.contactInfo && typeof parsed.contactInfo === 'object' ? normalizeCachedContact(parsed.contactInfo) : null
-    const agentState = parsed.agentState && typeof parsed.agentState === 'object' ? parsed.agentState as ConversationAgentState : null
-
-    return { journey, messages, agentCompletions, contactInfo, agentState }
-  } catch {
-    window.localStorage.removeItem(cacheKey)
-    return null
-  }
-}
-
-function writeCachedConversation(
-  locationId: string | null | undefined,
-  contactId: string,
-  snapshot: ConversationCacheSnapshot
-) {
-  if (typeof window === 'undefined' || !contactId) return
-
-  const cacheKey = getConversationCacheKey(locationId, contactId)
-  try {
-    const payload = JSON.stringify({
-      storedAt: Date.now(),
-      journey: snapshot.journey,
-      messages: snapshot.messages.slice(-320),
-      agentCompletions: snapshot.agentCompletions.slice(0, 40),
-      contactInfo: snapshot.contactInfo,
-      agentState: snapshot.agentState
-    })
-    if (payload.length > CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS) {
-      window.localStorage.removeItem(cacheKey)
-      return
-    }
-    window.localStorage.setItem(cacheKey, payload)
-  } catch {
-    window.localStorage.removeItem(cacheKey)
-  }
 }
 
 function getContactSocialKind(contact: DesktopChatContact): AdvancedSocialFilter | '' {
@@ -3336,10 +3207,9 @@ export const DesktopChat: React.FC = () => {
   const messageAudioScrubbingRef = useRef<{ messageId: string; pointerId: number } | null>(null)
   const selectAllChatCheckboxRef = useRef<HTMLInputElement | null>(null)
   const chatsRef = useRef<DesktopChatContact[]>([])
-  const [initialChatCache] = useState<ChatListCacheSnapshot>(() => readCachedChatList())
   const chatListCursorRef = useRef<ChatListKeysetCursor | null>(null)
   const chatListHasAppendedRef = useRef(false)
-  const chatListHasMoreRef = useRef(initialChatCache.chats.length > 0)
+  const chatListHasMoreRef = useRef(false)
   const chatListLoadingMoreRef = useRef(false)
   // Controller propio para "cargar más" (append), independiente de chatsRequestRef, para que
   // el load-more nunca quede bloqueado por una carga inicial o un refresco en segundo plano.
@@ -3376,8 +3246,8 @@ export const DesktopChat: React.FC = () => {
   const archivedChatIdSetRef = useRef<Set<string>>(new Set())
   const removedChatStatesRef = useRef<RemovedChatState[]>([])
   const agentPriorityChatIdSetRef = useRef<Set<string>>(new Set())
-  const [chats, setChats] = useState<DesktopChatContact[]>(() => initialChatCache.chats)
-  const [chatsLoading, setChatsLoading] = useState(() => initialChatCache.chats.length === 0)
+  const [chats, setChats] = useState<DesktopChatContact[]>([])
+  const [chatsLoading, setChatsLoading] = useState(true)
   const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false)
   const [chatsError, setChatsError] = useState('')
   const [chatQuery, setChatQuery] = useState('')
@@ -3953,7 +3823,7 @@ export const DesktopChat: React.FC = () => {
     const selectableIds = new Set(selectableChatRows.map((contact) => contact.id))
     setSelectedChatIds((current) => current.filter((id) => selectableIds.has(id)))
   }, [selectableChatRows, selectedChatIds.length])
-  useEffect(() => {
+  useLayoutEffect(() => {
     activeContactIdRef.current = activeContactId
   }, [activeContactId])
   useEffect(() => {
@@ -3974,9 +3844,6 @@ export const DesktopChat: React.FC = () => {
           : contact
       ))
       chatsRef.current = next
-      if (!chatGoalCompletedFilterRef.current) {
-        writeCachedChatList(next)
-      }
       return next
     })
   }, [])
@@ -4614,7 +4481,7 @@ export const DesktopChat: React.FC = () => {
         // Refresco en segundo plano: NO recortar ni reconstruir la lista entera (eso causa
         // tirones de scroll). Traemos solo la primera página (lo más reciente) y la fusionamos
         // sobre los chats ya cargados, conservando la cola que el usuario reveló con scroll.
-        // El cursor sólo avanza por páginas reales traídas del servidor; el caché no cuenta.
+        // El cursor sólo avanza por páginas reales traídas del servidor; el estado visible no cuenta.
         const freshPage = await fetchChatPage(null)
         if (chatsRequestRef.current !== controller) return
 
@@ -4646,22 +4513,19 @@ export const DesktopChat: React.FC = () => {
             : []),
           ...(serverScopeChanged || goalCompletedUnreviewed
             ? []
-            : reconcileCachedChatTail(freshPage, current, CHAT_LIST_PAGE_SIZE))
+            : reconcileLoadedChatTail(freshPage, current, CHAT_LIST_PAGE_SIZE))
         ]))
-        const mergedForCache = dedupeChatsById([
+        const reconciledChats = dedupeChatsById([
           ...freshPage,
           ...(serverScopeChanged || goalCompletedUnreviewed
             ? []
-            : reconcileCachedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE))
+            : reconcileLoadedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE))
         ])
-        if (!goalCompletedUnreviewed) {
-          writeCachedChatList(mergedForCache)
-        }
-        setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, mergedForCache))
+        setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, reconciledChats))
       } else {
-        // Carga inicial / refresco / al limpiar la búsqueda: UNA sola página rápida fusionada
-        // sobre lo ya mostrado (caché). Sin bucle multi-página y sin bloquear el "cargar más",
-        // por lo que la lista aparece al instante y se rellena al hacer scroll.
+        // Carga inicial / refresco / al limpiar la búsqueda: UNA sola página autoritativa.
+        // No se pinta contenido persistido del navegador; la lista aparece en cuanto responde
+        // el servidor y se rellena al hacer scroll.
         const freshPage = await fetchChatPage(null)
         if (chatsRequestRef.current !== controller) return
 
@@ -4679,10 +4543,10 @@ export const DesktopChat: React.FC = () => {
               .filter((contact) => contact.id === activeContactIdRef.current)
               .map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
             : []),
-          ...(replaceList ? [] : reconcileCachedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE))
+          ...(replaceList ? [] : reconcileLoadedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE))
         ])
 
-        // La frontera keyset representa la última página real, no las filas del caché.
+        // La frontera keyset representa la última página real, no las filas ya visibles.
         const currentCursor = chatListCursorRef.current
         const preserveDeepCursor = Boolean(
           !replaceList && chatListHasAppendedRef.current && currentCursor?.scope === cursorScope
@@ -4695,9 +4559,6 @@ export const DesktopChat: React.FC = () => {
         chatListHasMoreRef.current = (
           freshPage.length >= CHAT_LIST_PAGE_SIZE && Boolean(freshCursor)
         ) || (preserveDeepCursor && chatListHasMoreRef.current)
-        if (!goalCompletedUnreviewed) {
-          writeCachedChatList(merged)
-        }
         setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, merged))
         // setChats funcional: no pisar un "cargar más" que el usuario haya disparado al hacer
         // scroll mientras llegaba esta primera página.
@@ -4708,7 +4569,7 @@ export const DesktopChat: React.FC = () => {
               .filter((contact) => contact.id === activeContactIdRef.current)
               .map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
             : []),
-          ...(replaceList ? [] : reconcileCachedChatTail(freshPage, current, CHAT_LIST_PAGE_SIZE))
+          ...(replaceList ? [] : reconcileLoadedChatTail(freshPage, current, CHAT_LIST_PAGE_SIZE))
         ]))
         setActiveContactId((current) => {
           const removedStates = removedChatStatesRef.current
@@ -4804,7 +4665,7 @@ export const DesktopChat: React.FC = () => {
 
   const loadConversation = useCallback((
     contactId: string,
-    options: { silent?: boolean; useCache?: boolean; showCacheRefresh?: boolean } = {}
+    options: { silent?: boolean } = {}
   ): Promise<void> => {
     if (!contactId) return Promise.resolve()
     const silent = options.silent === true
@@ -4819,41 +4680,12 @@ export const DesktopChat: React.FC = () => {
       activeContactIdRef.current === contactId &&
       !signal.aborted
     )
-    const useCache = options.useCache !== false && !silent
     const shouldRefreshActivityJourney = !silent || Date.now() - conversationActivityLoadedAtRef.current >= CHAT_ACTIVITY_REFRESH_INTERVAL_MS
     if (!silent) {
       conversationHistoryExhaustedContactIdRef.current = null
       olderMessagesLoadingRef.current = false
       conversationHasOlderMessagesRef.current = false
       setOlderMessagesLoading(false)
-    }
-    const cachedConversation = useCache ? readCachedConversation(locationId, contactId) : null
-    const showedCachedConversation = Boolean(cachedConversation)
-
-    if (cachedConversation) {
-      contactJourneyRef.current = cachedConversation.journey
-      setContactJourney((current) => (
-        areJourneyEventsEquivalent(current, cachedConversation.journey) ? current : cachedConversation.journey
-      ))
-      setMessages((current) => (
-        (() => {
-          const nextMessages = mergeDesktopMessagesWithOptimistic(cachedConversation.messages, current)
-          return areDesktopMessagesEquivalent(current, nextMessages) ? current : nextMessages
-        })()
-      ))
-      setAgentCompletionEvents(cachedConversation.agentCompletions)
-      setContactInfoData(cachedConversation.contactInfo)
-      setConversationAgentState(cachedConversation.agentState)
-      if (cachedConversation.agentState) {
-        setAgentStates((current) => ({ ...current, [contactId]: cachedConversation.agentState as ConversationAgentState }))
-        setAgentStateLists((current) => ({ ...current, [contactId]: [cachedConversation.agentState as ConversationAgentState] }))
-      }
-      setMessagesLoading(false)
-      setContactInfoLoading(options.showCacheRefresh !== false)
-      setMessagesRefreshing(options.showCacheRefresh !== false)
-      conversationHasOlderMessagesRef.current = cachedConversation.journey.filter(isConversationJourneyMessage).length >= CHAT_CONVERSATION_MESSAGE_LIMIT &&
-        conversationHistoryExhaustedContactIdRef.current !== contactId
-    } else if (!silent) {
       setMessages([])
       setAgentCompletionEvents([])
       setContactJourney([])
@@ -4951,16 +4783,9 @@ export const DesktopChat: React.FC = () => {
       setConversationAgentState(agentState)
       setAgentStates((current) => (agentState ? { ...current, [contactId]: agentState } : current))
       setAgentStateLists((current) => ({ ...current, [contactId]: contactAgentStates }))
-      writeCachedConversation(locationId, contactId, {
-        journey: canonicalJourney,
-        messages: canonicalMessages,
-        agentCompletions,
-        contactInfo: details,
-        agentState
-      })
     } catch {
       if (!isCurrentConversationLoad()) return
-      if (!messagesLoaded && !silent && !showedCachedConversation) {
+      if (!messagesLoaded && !silent) {
         setMessages([])
         setAgentCompletionEvents([])
         setContactJourney([])
@@ -4979,7 +4804,7 @@ export const DesktopChat: React.FC = () => {
     }
       }
     )
-  }, [conversationRequestCoordinator, locationId])
+  }, [conversationRequestCoordinator])
 
   const loadOlderConversationMessages = useCallback(async (contactId: string) => {
     if (!contactId) return
@@ -5118,6 +4943,10 @@ export const DesktopChat: React.FC = () => {
   }, [])
 
   useEffect(() => {
+    clearRetiredDesktopChatContentCaches()
+  }, [])
+
+  useEffect(() => {
     loadChats()
   }, [loadChats])
 
@@ -5136,7 +4965,7 @@ export const DesktopChat: React.FC = () => {
       // ni salto de scroll.
       const openContactId = activeContactIdRef.current
       if (openContactId) {
-        void loadConversation(openContactId, { silent: true, useCache: false })
+        void loadConversation(openContactId, { silent: true })
       }
       void conversationalAgentService.listStates()
         .then((states) => {
@@ -5172,7 +5001,7 @@ export const DesktopChat: React.FC = () => {
       Promise.all([
         loadChats({ silent: true }),
         shouldRefreshOpenConversation
-          ? loadConversation(openContactId, { silent: true, useCache: false })
+          ? loadConversation(openContactId, { silent: true })
           : Promise.resolve()
       ])
         .finally(() => {
@@ -5346,7 +5175,7 @@ export const DesktopChat: React.FC = () => {
     loadSupportData()
   }, [loadSupportData])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!activeContactId) {
       conversationRequestCoordinator.abort()
       openingConversationScrollContactIdRef.current = ''
@@ -6138,7 +5967,7 @@ export const DesktopChat: React.FC = () => {
           : `${template.name} se mandó por WhatsApp.`
       )
       void Promise.all([
-        loadConversation(activeContact.id, { silent: true, useCache: false }),
+        loadConversation(activeContact.id, { silent: true }),
         loadChats({ silent: true })
       ])
       await loadTemplates()
@@ -7121,7 +6950,7 @@ export const DesktopChat: React.FC = () => {
 		        })
 		        setCommentReplyTarget(null)
 		        setComposerStatus('idle')
-		        void loadConversation(activeContact.id, { silent: true, useCache: false })
+		        void loadConversation(activeContact.id, { silent: true })
 		      } catch (error) {
 		        setComposerStatus('idle')
 		        setMessages((current) => current.filter((message) => message.id !== optimisticId))
@@ -7184,25 +7013,22 @@ export const DesktopChat: React.FC = () => {
 		      }
 		      setComposerMenuOpen(false)
 	      setMessages((current) => [...current, optimisticMessage])
-	      setChats((current) => {
-	        const next = current.map((contact) => (
-	          contact.id === activeContact.id
-	            ? {
-	                ...contact,
-	                lastMessageText: `${subject} · ${text}`,
-	                lastMessageDate: sentAt,
-	                lastMessageDirection: 'outbound',
-	                lastMessageChannel: 'email',
-	                lastMessageTransport: sendEmailThroughHighLevel ? 'ghl_email' : 'email',
-	                messageCount: Number(contact.messageCount || 0) + 1
-	              }
-	            : contact
-	        ))
-	        if (!chatGoalCompletedFilterRef.current) {
-	          writeCachedChatList(next)
-	        }
-	        return next
-	      })
+		      setChats((current) => {
+		        const next = current.map((contact) => (
+		          contact.id === activeContact.id
+		            ? {
+		                ...contact,
+		                lastMessageText: `${subject} · ${text}`,
+		                lastMessageDate: sentAt,
+		                lastMessageDirection: 'outbound',
+		                lastMessageChannel: 'email',
+		                lastMessageTransport: sendEmailThroughHighLevel ? 'ghl_email' : 'email',
+		                messageCount: Number(contact.messageCount || 0) + 1
+		              }
+		            : contact
+		        ))
+		        return next
+		      })
 
 	      try {
 	        if (sendEmailThroughHighLevel) {
@@ -7249,7 +7075,7 @@ export const DesktopChat: React.FC = () => {
 	          ))
 	        }
 	        void Promise.all([
-	          loadConversation(activeContact.id, { silent: true, useCache: false }),
+	          loadConversation(activeContact.id, { silent: true }),
 	          loadChats({ silent: true })
 	        ])
 	      } catch (error: any) {
@@ -7456,9 +7282,6 @@ export const DesktopChat: React.FC = () => {
             }
           : contact
       ))
-      if (!chatGoalCompletedFilterRef.current) {
-        writeCachedChatList(next)
-      }
       return next
     })
 
@@ -7899,7 +7722,7 @@ export const DesktopChat: React.FC = () => {
         throw new Error('Conecta el canal nativo correspondiente para enviar mensajes desde esta pantalla.')
       }
       void Promise.all([
-        loadConversation(activeContact.id, { silent: true, useCache: false }),
+        loadConversation(activeContact.id, { silent: true }),
         loadChats({ silent: true })
       ])
     } catch (error: any) {
@@ -7982,7 +7805,7 @@ export const DesktopChat: React.FC = () => {
       }
 
       await Promise.all([
-        loadConversation(activeContact.id, { silent: true, useCache: false }),
+        loadConversation(activeContact.id, { silent: true }),
         loadChats({ silent: true })
       ])
     } catch (error) {
