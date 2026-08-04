@@ -550,6 +550,12 @@ resumen, la configuracion de tracking y la tabla de sesiones son cargas
 independientes: una configuracion lenta o un error de metricas no desmonta la
 tabla. Toda lectura tiene cancelacion y presupuesto de 20 segundos con error
 reintentable; nunca deja una promesa ni un loader pendientes.
+Aunque `summary`, `facets`, `acquisition-summary` y `sessions/search` usan
+`POST` para recibir filtros estructurados, las cuatro son lecturas y deben
+permanecer clasificadas como tales en `authFetch`. La card de Origen carga
+`acquisition-summary` en paralelo con el resumen web inicial; su respuesta no
+invalida el cache de tracking ni cancela ese resumen. Las invalidaciones duras
+quedan reservadas a escrituras reales.
 En backend el core tiene dos carriles logicos —sesiones y conversiones— y un
 semaforo global permite como maximo dos consultas pesadas activas entre todos los
 builds. Asi el resumen inicial no espera facetas, no suma seis tiempos en serie

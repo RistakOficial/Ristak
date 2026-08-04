@@ -32,6 +32,7 @@ let currentAuthPrincipal = getStoredAuthToken() || ''
 const API_READ_ONLY_POST_PATHS = new Set([
   '/api/chat-events/viewing',
   '/api/sites/analytics/summary',
+  '/api/tracking/analytics/acquisition-summary',
   '/api/tracking/analytics/facets',
   '/api/tracking/analytics/summary',
   '/api/tracking/sessions/search',

@@ -206,6 +206,29 @@ test('authFetch no materializa ni deduplica cuerpos GET globalmente', async () =
   )
 })
 
+test('la lectura de origen no invalida ni cancela el resumen web concurrente', async () => {
+  await withInstalledAuthFetch(
+    async () => jsonResponse({ ok: true }),
+    async ({ registerRistakApiReadCacheInvalidator }, windowMock) => {
+      let analyticsInvalidations = 0
+      registerRistakApiReadCacheInvalidator(
+        () => { analyticsInvalidations += 1 },
+        { pathPrefixes: ['/api/tracking/analytics'] }
+      )
+
+      await windowMock.fetch('/api/tracking/analytics/acquisition-summary', { method: 'POST' })
+      assert.equal(
+        analyticsInvalidations,
+        0,
+        'Origen de contactos es una lectura y no debe cancelar el summary que carga al mismo tiempo'
+      )
+
+      await windowMock.fetch('/api/tracking/sessions/session-1', { method: 'PUT' })
+      assert.equal(analyticsInvalidations, 1, 'una escritura real de tracking sí debe invalidar Analíticas')
+    }
+  )
+})
+
 test('una mutación invalida sólo los snapshots especializados que dependen de su módulo', async () => {
   await withInstalledAuthFetch(
     async () => jsonResponse({ ok: true }),

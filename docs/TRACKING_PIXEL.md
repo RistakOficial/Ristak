@@ -971,6 +971,13 @@ cobertura por `start_boundary + occurrence_date` evita recorrer completo
 `tracking_analytics_range_delta`; en PostgreSQL se crea concurrentemente desde
 una migracion aislada.
 
+`summary`, `facets`, `acquisition-summary` y `sessions/search` usan `POST` por el
+tamaño y la estructura de sus filtros, pero son lecturas. La capa global de
+`fetch` debe mantener las cuatro rutas en su allowlist de POST read-only. En
+particular, la card **Origen de contactos** carga `acquisition-summary` en
+paralelo con el resumen web inicial y nunca debe invalidar su cache ni cancelar
+su request compartido; solo una mutacion real de tracking puede hacerlo.
+
 Deuda explicita: `includeFacets=true` conserva temporalmente el contrato legacy
 que calcula el resumen junto con todas las facetas. No debe describirse como
 raw-free ni usarse para la apertura de Analytics. Las facetas visibles se piden

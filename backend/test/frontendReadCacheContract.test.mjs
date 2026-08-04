@@ -67,6 +67,7 @@ test('mutaciones y eventos vivos invalidan sólo los módulos que realmente depe
   ])
 
   assert.match(authFetch, /const API_READ_ONLY_POST_PATHS = new Set/)
+  assert.match(authFetch, /'\/api\/tracking\/analytics\/acquisition-summary'/)
   assert.match(authFetch, /'\/api\/tracking\/analytics\/facets'/)
   assert.match(authFetch, /'\/api\/tracking\/analytics\/summary'/)
   assert.match(authFetch, /'\/api\/tracking\/sessions\/search'/)
