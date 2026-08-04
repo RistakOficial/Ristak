@@ -169,7 +169,7 @@ import {
 } from './calendarOutbox';
 import { GlobalImageViewer, openImageViewer, openInAppBrowser } from './mediaViewer';
 import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant, type ChatLiveEvent, type ChatLiveMessageEvent } from './api';
-import { hasLicenseFeature, hasModuleAccess, hasPhoneSectionAccess, hasWebAnalyticsAccess } from './access';
+import { hasLicenseFeature, hasPhoneSectionAccess, hasWebAnalyticsAccess } from './access';
 import {
   createVerifiedUserCacheRecord,
   getCachedVerifiedUser,
@@ -516,6 +516,7 @@ type SessionState = {
 
 type Screen = 'boot' | 'login' | 'shell';
 type ChatFilterId = string;
+type ChatbotStatusFilter = 'all' | 'active' | 'paused' | 'completed';
 type ChatSheetMode = 'chatMore' | 'newChat' | 'cameraShare' | 'tag' | 'schedule' | null;
 type ConversationSheetMode = 'attachments' | 'messageActions' | 'chatMore' | 'agent' | 'tag' | 'schedule' | 'channel' | 'templates' | 'clabe' | 'payment' | 'appointment' | null;
 type ContactInfoPanel = 'main' | 'payments' | 'appointments' | 'archives' | 'journey' | 'agent_history';
@@ -869,7 +870,13 @@ class PhoneSectionErrorBoundary extends React.Component<PhoneSectionErrorBoundar
   }
 }
 
-const DEFAULT_CHAT_FILTER_IDS = ['all', 'unread', 'appointments', 'customers', 'leads', 'comments'];
+const DEFAULT_CHAT_FILTER_IDS = ['all', 'chatbot', 'unread', 'appointments', 'customers', 'leads', 'comments'];
+const CHATBOT_STATUS_FILTERS: Array<{ id: ChatbotStatusFilter; label: string }> = [
+  { id: 'all', label: 'Todos' },
+  { id: 'active', label: 'Activos' },
+  { id: 'paused', label: 'Pausados 24 horas' },
+  { id: 'completed', label: 'Meta cumplida' },
+];
 const CHAT_FILTERS_MORE_VALUE = '__filters_more__';
 const CHAT_FILTERS_STORAGE_KEY = 'ristak.native.chat.visibleFilterIds.v1';
 const SHELL_APP_CONFIG_CACHE_KEY = 'shell:app-config';
@@ -1266,6 +1273,7 @@ const EMPTY_ORIGIN_DATA: OriginDistributionData = {
 };
 const CHAT_FILTER_LIBRARY: ChatFilterPreset[] = [
   { id: 'all', label: 'Todos', description: 'Muestra todas las conversaciones activas.', section: 'Rápidos', kind: 'quick', quickFilter: 'all', locked: true },
+  { id: 'chatbot', label: 'Chatbot', description: 'Chats activos, pausados o con una meta pendiente de revisar.', section: 'Rápidos', kind: 'quick', quickFilter: 'chatbot', locked: true },
   { id: 'unread', label: 'No leídos', description: 'Sólo conversaciones con mensajes pendientes.', section: 'Rápidos', kind: 'quick', quickFilter: 'unread' },
   { id: 'appointments', label: 'Agendados', description: 'Contactos con cita guardada.', section: 'Rápidos', kind: 'quick', quickFilter: 'appointments' },
   { id: 'customers', label: 'Contactos compradores', description: 'Contactos marcados como compradores o con compras.', section: 'Rápidos', kind: 'quick', quickFilter: 'customers' },
@@ -1811,7 +1819,6 @@ function PhoneShell({
   onChangeServer: () => Promise<void>;
 }) {
   const [activeSection, setActiveSection] = useState<PhoneSection>('chat');
-  const canUseConversationalAgent = user ? hasModuleAccess(user, 'ai_agent', 'read') : false;
   const allowedNavItems = useMemo(() => {
     return PHONE_NAV_ITEMS.filter((item) => hasPhoneSectionAccess(user, item.key));
   }, [user]);
@@ -2127,7 +2134,6 @@ function PhoneShell({
               baseUrl={baseUrl}
               initialAccountCurrency={String(mobileAppConfig.account_currency || '')}
               initialAccountTimezone={String(mobileAppConfig.account_timezone || '')}
-              canUseConversationalAgent={canUseConversationalAgent}
               customLabels={customLabels}
               settings={mobileChatSettings}
               notificationContactId={notificationContactId}
@@ -2838,7 +2844,6 @@ function LoginScreen({
 function ChatScreen({
   api,
   baseUrl = '',
-  canUseConversationalAgent = true,
   customLabels = DEFAULT_CUSTOM_LABELS,
   footer,
   initialAccountCurrency = '',
@@ -2856,7 +2861,6 @@ function ChatScreen({
 }: {
   api: RistakApiClient;
   baseUrl?: string;
-  canUseConversationalAgent?: boolean;
   customLabels?: CustomLabels;
   footer?: React.ReactNode;
   initialAccountCurrency?: string;
@@ -2876,6 +2880,7 @@ function ChatScreen({
   const cachedFilterCatalog = peekCache<NativeChatFilterCatalogSnapshot>(MOBILE_CACHE_KEYS.chatFilterCatalog, {});
   const [query, setQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<ChatFilterId>('all');
+  const [chatbotStatusFilter, setChatbotStatusFilter] = useState<ChatbotStatusFilter>('all');
   const [visibleFilterIds, setVisibleFilterIds] = useState<ChatFilterId[]>(DEFAULT_CHAT_FILTER_IDS);
   const [filterManagerOpen, setFilterManagerOpen] = useState(false);
   const [archivedChatIds, setArchivedChatIds] = useState<string[]>([]);
@@ -2918,7 +2923,6 @@ function ChatScreen({
   const [agentStatesByContactId, setAgentStatesByContactId] = useState<Record<string, ConversationAgentState[]>>({});
   const [agentStateLoadingId, setAgentStateLoadingId] = useState<string | null>(null);
   const [agentBusyAction, setAgentBusyAction] = useState<AgentAction | null>(null);
-  const [agentHubOpen, setAgentHubOpen] = useState(false);
   const [cameraAttachment, setCameraAttachment] = useState<ConversationDraftAttachment | null>(null);
   const [cameraRecipients, setCameraRecipients] = useState<ChatContact[]>([]);
   const [cameraCaption, setCameraCaption] = useState('');
@@ -2931,9 +2935,11 @@ function ChatScreen({
   useEffect(() => {
     integrationsStatusRef.current = integrationsStatus;
   }, [integrationsStatus]);
-  const canUseCanonicalInboxCache = !settings.selectedWhatsAppPhoneId || settings.selectedWhatsAppPhoneId === 'all';
-  const currentChatListScopeKey = `${query.trim()}|phone:${canUseCanonicalInboxCache ? 'all' : settings.selectedWhatsAppPhoneId}`;
-  const canonicalInboxScopeKey = '|phone:all';
+  const chatbotFilterActive = activeFilter === 'chatbot';
+  const canUseCanonicalInboxCache = !chatbotFilterActive
+    && (!settings.selectedWhatsAppPhoneId || settings.selectedWhatsAppPhoneId === 'all');
+  const currentChatListScopeKey = `${query.trim()}|phone:${canUseCanonicalInboxCache ? 'all' : settings.selectedWhatsAppPhoneId}|goal:${chatbotFilterActive ? '1' : '0'}`;
+  const canonicalInboxScopeKey = '|phone:all|goal:0';
   const hasCanonicalInboxSnapshot = canUseCanonicalInboxCache && (
     Boolean(nativeInboxCache.get(api)?.length) || hasCachedValue(NATIVE_INBOX_CACHE_KEY)
   );
@@ -3113,6 +3119,8 @@ function ChatScreen({
   const loadChats = useCallback(async (silent = false): Promise<ChatContact[] | null> => {
     const requestQuery = query.trim();
     const requestScopeKey = currentChatListScopeKey;
+    const goalCompletedUnreviewed = chatbotFilterActive;
+    const existingRowsAtRequestStart = chatsRef.current;
     const generation = chatListGenerationRef.current + 1;
     chatListGenerationRef.current = generation;
     // On a silent refresh with the same query, merge the fresh first page over
@@ -3189,6 +3197,7 @@ function ChatScreen({
     try {
       const data = await api.getChats(requestQuery, 0, CHAT_LIST_PAGE_SIZE, {
         ...chatListPhoneFilterParams,
+        goalCompletedUnreviewed,
         // Avatar warming can call external providers. It belongs on explicit
         // loads, never on the SSE/poll critical path.
         warmProfilePictures: silent ? false : chatListPhoneFilterParams.warmProfilePictures,
@@ -3200,7 +3209,10 @@ function ChatScreen({
       chatLastInboxReconcileAtRef.current = Date.now();
       chatListLoadedQueryRef.current = requestQuery;
       chatListLoadedScopeRef.current = requestScopeKey;
-      const nextChats = Array.isArray(data) ? data : [];
+      const serverChats = Array.isArray(data) ? data : [];
+      const nextChats = goalCompletedUnreviewed
+        ? mergeChatbotGoalRows(serverChats, existingRowsAtRequestStart)
+        : serverChats;
       setSelected((current) => {
         if (!current) return current;
         const freshContact = nextChats.find((contact) => contact.id === current.id);
@@ -3211,8 +3223,8 @@ function ChatScreen({
         // Page zero is a new pagination snapshot. Keep the already-rendered
         // tail for scroll continuity, but resume the server cursor at the end
         // of this fresh page so inserts/reorders cannot leave a permanent gap.
-        setChatListOffset((current) => Math.max(current, nextChats.length));
-        setChatsHasMore(nextChats.length >= CHAT_LIST_PAGE_SIZE);
+        setChatListOffset((current) => Math.max(current, serverChats.length));
+        setChatsHasMore(serverChats.length >= CHAT_LIST_PAGE_SIZE);
       } else {
         // Reemplazo (query/filtro nuevos) pero conservando avatares e
         // identidad de los contactos que no cambiaron.
@@ -3223,8 +3235,8 @@ function ChatScreen({
             return prior ? mergeContactWithoutLosingAvatar(prior, contact) : contact;
           });
         });
-        setChatListOffset(nextChats.length);
-        setChatsHasMore(nextChats.length >= CHAT_LIST_PAGE_SIZE);
+        setChatListOffset(serverChats.length);
+        setChatsHasMore(serverChats.length >= CHAT_LIST_PAGE_SIZE);
       }
       if (requestScopeKey === canonicalInboxScopeKey && !requestQuery) {
         // Keep the newest threads hot before the operator taps them. The helper
@@ -3264,7 +3276,7 @@ function ChatScreen({
         setRefreshing(false);
       }
     }
-  }, [api, canonicalInboxScopeKey, chatListPhoneFilterParams, currentChatListScopeKey, query]);
+  }, [api, canonicalInboxScopeKey, chatbotFilterActive, chatListPhoneFilterParams, currentChatListScopeKey, query]);
   chatLoadLatestRef.current = loadChats;
 
   const runFirstSync = useCallback(async () => {
@@ -3508,7 +3520,7 @@ function ChatScreen({
     const boundaryContact = chatsRef.current[chatsRef.current.length - 1];
     const boundaryMessageDate = String(boundaryContact?.lastMessageDate || '').trim();
     const boundaryContactId = String(boundaryContact?.id || '').trim();
-    const useCursor = Boolean(boundaryMessageDate && boundaryContactId);
+    const useCursor = !chatbotFilterActive && Boolean(boundaryMessageDate && boundaryContactId);
     setChatsLoadingMore(true);
     try {
       const data = await api.getChats(
@@ -3517,6 +3529,7 @@ function ChatScreen({
         CHAT_LIST_PAGE_SIZE,
         {
           ...chatListPhoneFilterParams,
+          goalCompletedUnreviewed: chatbotFilterActive,
           beforeMessageDate: useCursor ? boundaryMessageDate : undefined,
           beforeContactId: useCursor ? boundaryContactId : undefined,
         },
@@ -3534,7 +3547,7 @@ function ChatScreen({
     } finally {
       if (chatMountedRef.current && generation === chatListGenerationRef.current) setChatsLoadingMore(false);
     }
-  }, [api, chatListOffset, chatListPhoneFilterParams, chatsHasMore, chatsLoadingMore, currentChatListScopeKey, loading, query, refreshing]);
+  }, [api, chatbotFilterActive, chatListOffset, chatListPhoneFilterParams, chatsHasMore, chatsLoadingMore, currentChatListScopeKey, loading, query, refreshing]);
 
   useEffect(() => {
     if (!inboxCacheHydrated) return undefined;
@@ -3693,6 +3706,34 @@ function ChatScreen({
   }, [loadChatFilterCatalogs]);
 
   useEffect(() => {
+    if (!chatbotFilterActive) return undefined;
+    let cancelled = false;
+    void api.listAgentStates(['active', 'paused'])
+      .then((states) => {
+        if (cancelled || !chatMountedRef.current) return;
+        const grouped = groupConversationAgentStates(Array.isArray(states) ? states : []);
+        setAgentStatesByContactId((current) => {
+          const next: Record<string, ConversationAgentState[]> = {};
+          Object.entries(current).forEach(([contactId, contactStates]) => {
+            const retained = contactStates.filter((state) => {
+              const status = getAgentStateStatus(state);
+              return status !== 'active' && status !== 'paused';
+            });
+            if (retained.length) next[contactId] = retained;
+          });
+          Object.entries(grouped).forEach(([contactId, contactStates]) => {
+            next[contactId] = [...(next[contactId] || []), ...contactStates];
+          });
+          return next;
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [api, chatbotFilterActive]);
+
+  useEffect(() => {
     if (!chatPrefsHydrated) return;
     void writeJsonValue(CHAT_FILTERS_STORAGE_KEY, visibleFilterIds);
   }, [chatPrefsHydrated, visibleFilterIds]);
@@ -3762,6 +3803,43 @@ function ChatScreen({
       ? { ...contact, unreadCount: 1 }
       : contact
   )), [chats, manualUnreadChatIdSet]);
+  const chatbotAgentStates = useMemo(
+    () => Object.values(agentStatesByContactId).flat().filter((state) => {
+      const status = getAgentStateStatus(state);
+      return status === 'active' || status === 'paused';
+    }),
+    [agentStatesByContactId],
+  );
+  const chatbotStateGroups = useMemo(
+    () => groupConversationAgentStates(chatbotAgentStates),
+    [chatbotAgentStates],
+  );
+  const chatbotInboxSourceChats = useMemo(() => {
+    const rowsById = new Map<string, ChatContact>();
+    displayChats.forEach((contact) => {
+      if (isChatbotInboxContactVisible(contact, chatbotStateGroups[contact.id] || [], 'all')) {
+        rowsById.set(contact.id, contact);
+      }
+    });
+    chatbotAgentStates.forEach((state) => {
+      const contactId = String(state.contactId || '').trim();
+      if (!contactId || rowsById.has(contactId)) return;
+      const contact = createChatbotInboxContactFromState(state);
+      if (contact) rowsById.set(contactId, contact);
+    });
+    return Array.from(rowsById.values());
+  }, [chatbotAgentStates, chatbotStateGroups, displayChats]);
+  const chatbotStatusCounts = useMemo(() => {
+    const counts: Record<ChatbotStatusFilter, number> = { all: 0, active: 0, paused: 0, completed: 0 };
+    chatbotInboxSourceChats.forEach((contact) => {
+      if (archivedChatIds.includes(contact.id)) return;
+      const states = chatbotStateGroups[contact.id] || [];
+      CHATBOT_STATUS_FILTERS.forEach((filter) => {
+        if (isChatbotInboxContactVisible(contact, states, filter.id)) counts[filter.id] += 1;
+      });
+    });
+    return counts;
+  }, [archivedChatIds, chatbotInboxSourceChats, chatbotStateGroups]);
   const unreadTotal = useMemo(
     () => displayChats.reduce((total, contact) => (
       archivedChatIds.includes(contact.id) ? total : total + getUnreadCount(contact)
@@ -3775,10 +3853,10 @@ function ChatScreen({
   }, [onUnreadTotalChange, visibleUnreadTotal]);
 
   const listBaseChats = useMemo(
-    () => displayChats.filter((contact) => (
+    () => (chatbotFilterActive ? chatbotInboxSourceChats : displayChats).filter((contact) => (
       archivedViewOpen ? archivedChatIds.includes(contact.id) : !archivedChatIds.includes(contact.id)
     )),
-    [archivedChatIds, archivedViewOpen, displayChats],
+    [archivedChatIds, archivedViewOpen, chatbotFilterActive, chatbotInboxSourceChats, displayChats],
   );
 
   const normalizedCustomChatFilters = useMemo(
@@ -3828,11 +3906,25 @@ function ChatScreen({
     const sourceIds = visibleFilterIds.length ? visibleFilterIds : DEFAULT_CHAT_FILTER_IDS;
     const next = sourceIds.filter((id, index, list) => availableIds.has(id) && list.indexOf(id) === index);
     if (!next.includes('all')) next.unshift('all');
+    if (!next.includes('chatbot')) next.splice(Math.min(1, next.length), 0, 'chatbot');
     return next.length ? next : ['all'];
   }, [availableChatFilterPresets, visibleFilterIds]);
   const filteredChats = useMemo(() => {
     const nextChats = listBaseChats
-      .filter((contact) => chatMatchesFilter(contact, archivedViewOpen ? 'all' : activeFilter, phoneChatConditionEvalContext));
+      .filter((contact) => {
+        if (archivedViewOpen) return true;
+        if (chatbotFilterActive) {
+          if (!isChatbotInboxContactVisible(contact, chatbotStateGroups[contact.id] || [], chatbotStatusFilter)) return false;
+          const normalizedQuery = query.trim().toLowerCase();
+          if (!normalizedQuery) return true;
+          return [getContactName(contact), contact.phone, contact.email, contact.lastMessageText]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+            .includes(normalizedQuery);
+        }
+        return chatMatchesFilter(contact, activeFilter, phoneChatConditionEvalContext);
+      });
     const sortedChats = settings.sortMode === 'unread'
       ? nextChats.slice().sort((left, right) => {
         const unreadDelta = getUnreadCount(right) - getUnreadCount(left);
@@ -3841,7 +3933,7 @@ function ChatScreen({
       })
       : sortChatContactsByRecency(nextChats);
     return sortedChats.slice().sort((left, right) => Number(pinnedChatIdSet.has(right.id)) - Number(pinnedChatIdSet.has(left.id)));
-  }, [activeFilter, archivedViewOpen, listBaseChats, phoneChatConditionEvalContext, pinnedChatIdSet, settings.sortMode]);
+  }, [activeFilter, archivedViewOpen, chatbotFilterActive, chatbotStateGroups, chatbotStatusFilter, listBaseChats, phoneChatConditionEvalContext, pinnedChatIdSet, query, settings.sortMode]);
   const selectedChatIdSet = useMemo(() => new Set(selectedChatIds), [selectedChatIds]);
   const mutedChatIdSet = useMemo(() => new Set(mutedChatIds), [mutedChatIds]);
   const selectionActive = selectedChatIds.length > 0;
@@ -3976,6 +4068,9 @@ function ChatScreen({
     }
     if (settings.selectedWhatsAppPhoneId !== 'all') {
       onSelectedWhatsAppPhoneIdChange?.('all');
+    }
+    if (filterId === 'chatbot' && activeFilter !== 'chatbot') {
+      setChatbotStatusFilter('all');
     }
     setActiveFilter(filterId);
   };
@@ -4472,7 +4567,7 @@ function ChatScreen({
 
   const markChatAsRead = (contact: ChatContact) => {
     setChats((current) => current.map((item) => (
-      item.id === contact.id ? { ...item, unreadCount: 0 } : item
+      item.id === contact.id ? { ...item, unreadCount: 0, agentGoalCompletedUnreviewed: false } : item
     )));
     void api.markChatRead(contact.id).catch((err) => {
       Alert.alert('Chat', err instanceof Error ? err.message : 'No se pudo marcar como leído.');
@@ -4641,8 +4736,11 @@ function ChatScreen({
       return;
     }
     setManualUnreadChatIds((current) => current.filter((id) => id !== contact.id));
-    setChats((current) => current.map((item) => item.id === contact.id ? { ...item, unreadCount: 0 } : item));
-    openChatConversation(contact);
+    setChats((current) => current.map((item) => item.id === contact.id ? { ...item, unreadCount: 0, agentGoalCompletedUnreviewed: false } : item));
+    if (contact.agentGoalCompletedUnreviewed === true) {
+      void api.markChatRead(contact.id).catch(() => undefined);
+    }
+    openChatConversation({ ...contact, unreadCount: 0, agentGoalCompletedUnreviewed: false });
   };
 
   // Trampolines estables para las filas memoizadas del inbox.
@@ -4662,7 +4760,7 @@ function ChatScreen({
     if (!contactIds.length || bulkActionBusy) return;
     setBulkActionBusy(true);
     setChats((current) => current.map((contact) => (
-      contactIds.includes(contact.id) ? { ...contact, unreadCount: 0 } : contact
+      contactIds.includes(contact.id) ? { ...contact, unreadCount: 0, agentGoalCompletedUnreviewed: false } : contact
     )));
     setManualUnreadChatIds((current) => current.filter((id) => !contactIds.includes(id)));
     try {
@@ -4752,6 +4850,13 @@ function ChatScreen({
             unreadTotal={visibleUnreadTotal}
             onChange={applyFilter}
           />
+          {chatbotFilterActive ? (
+            <ChatbotStatusFilterBar
+              active={chatbotStatusFilter}
+              counts={chatbotStatusCounts}
+              onChange={setChatbotStatusFilter}
+            />
+          ) : null}
         </View>
       ) : null}
       {selectionActive ? (
@@ -4792,17 +4897,7 @@ function ChatScreen({
       >
       <View style={styles.chatListHeader}>
         <View style={styles.chatTopActionRow}>
-          {canUseConversationalAgent ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Agente conversacional"
-              onPress={() => setAgentHubOpen(true)}
-              style={({ pressed }) => [styles.headerIconButton, pressed && styles.pressed]}
-            >
-              <LiquidControlBackground />
-              <Bot size={25} color={COLORS.accent} strokeWidth={2.15} />
-            </Pressable>
-          ) : <View />}
+          <View />
           <View style={styles.chatHeaderActions}>
             <Pressable
               accessibilityRole="button"
@@ -5049,11 +5144,6 @@ function ChatScreen({
         onSetDraft={setCustomFilterDraft}
         onSetMode={setFilterManagerMode}
         onToggleVisible={toggleVisibleFilter}
-      />
-      <NativeAgentHubSheet
-        api={api}
-        open={agentHubOpen}
-        onClose={() => setAgentHubOpen(false)}
       />
       <ChatMoreSheet
         contact={sheetContact}
@@ -15353,6 +15443,7 @@ function ChatFilterBar({
               ]}
             >
               <LiquidControlBackground selected={selected} />
+              {filter.id === 'chatbot' ? <Bot size={15} color={selected ? COLORS.text : COLORS.muted} strokeWidth={2.3} /> : null}
               <Text numberOfLines={1} style={[styles.filterChipText, selected && styles.filterChipTextActive]}>{filter.label}</Text>
               {count ? (
                 <View style={styles.filterChipCount}>
@@ -15372,6 +15463,45 @@ function ChatFilterBar({
         <Plus size={17} color={COLORS.muted} strokeWidth={2.6} />
       </Pressable>
     </ScrollView>
+  );
+}
+
+function ChatbotStatusFilterBar({
+  active,
+  counts,
+  onChange,
+}: {
+  active: ChatbotStatusFilter;
+  counts: Record<ChatbotStatusFilter, number>;
+  onChange: (filter: ChatbotStatusFilter) => void;
+}) {
+  return (
+    <View style={styles.chatbotStatusSection} accessibilityLabel="Estados del chatbot">
+      <View style={styles.chatbotStatusLabelRow}>
+        <Bot size={14} color={COLORS.muted} strokeWidth={2.35} />
+        <Text style={styles.chatbotStatusLabel}>Estado del chatbot</Text>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chatbotStatusChipRow}>
+        {CHATBOT_STATUS_FILTERS.map((filter) => {
+          const selected = filter.id === active;
+          return (
+            <Pressable
+              key={filter.id}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              onPress={() => onChange(filter.id)}
+              style={({ pressed }) => [styles.filterChip, selected && styles.filterChipActive, pressed && styles.pressed]}
+            >
+              <LiquidControlBackground selected={selected} />
+              <Text numberOfLines={1} style={[styles.filterChipText, selected && styles.filterChipTextActive]}>{filter.label}</Text>
+              <View style={styles.filterChipCount}>
+                <Text style={styles.filterChipCountText}>{counts[filter.id]}</Text>
+              </View>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -19670,6 +19800,7 @@ function parseAdvancedFilterId(filter: ChatFilterId): { group: AdvancedFilterGro
 
 function chatMatchesFilter(contact: ChatContact, filter: ChatFilterId, context: PhoneChatConditionEvalContext) {
   if (filter === 'all') return true;
+  if (filter === 'chatbot') return true;
   if (filter === 'unread') return getUnreadCount(contact) > 0;
   if (filter === 'comments') return contactHasCommentActivity(contact);
 
@@ -19696,6 +19827,61 @@ function chatMatchesFilter(contact: ChatContact, filter: ChatFilterId, context: 
   }
 
   return true;
+}
+
+function groupConversationAgentStates(states: ConversationAgentState[]) {
+  return states.reduce<Record<string, ConversationAgentState[]>>((groups, state) => {
+    const contactId = String(state.contactId || '').trim();
+    if (!contactId) return groups;
+    groups[contactId] = [...(groups[contactId] || []), state];
+    return groups;
+  }, {});
+}
+
+function isChatbotInboxContactVisible(
+  contact: ChatContact,
+  states: ConversationAgentState[],
+  filter: ChatbotStatusFilter,
+) {
+  const hasActiveAgent = states.some((state) => getAgentStateStatus(state) === 'active');
+  const hasPausedAgent = states.some((state) => getAgentStateStatus(state) === 'paused');
+  const hasUnreviewedGoal = contact.agentGoalCompletedUnreviewed === true;
+  if (filter === 'active') return hasActiveAgent;
+  if (filter === 'paused') return hasPausedAgent;
+  if (filter === 'completed') return hasUnreviewedGoal;
+  return hasActiveAgent || hasPausedAgent || hasUnreviewedGoal;
+}
+
+function createChatbotInboxContactFromState(state: ConversationAgentState): ChatContact | null {
+  const contactId = String(state.contactId || '').trim();
+  if (!contactId) return null;
+  const fallbackDate = state.updatedAt || state.activatedAt || state.signalAt || '';
+  return {
+    id: contactId,
+    name: state.contactName || state.contactPhone || 'Contacto sin nombre',
+    phone: state.contactPhone || '',
+    status: 'lead',
+    createdAt: fallbackDate,
+    updatedAt: fallbackDate,
+    lastMessageDate: fallbackDate,
+    lastMessageText: state.signalSummary || '',
+    lastMessageDirection: 'system',
+    unreadCount: 0,
+    messageCount: 0,
+  };
+}
+
+function mergeChatbotGoalRows(goalRows: ChatContact[], existingRows: ChatContact[]) {
+  const existingById = new Map(existingRows.map((contact) => [contact.id, {
+    ...contact,
+    agentGoalCompletedUnreviewed: false,
+  }]));
+  const mergedGoals = goalRows.map((contact) => {
+    const existing = existingById.get(contact.id);
+    existingById.delete(contact.id);
+    return existing ? mergeChatContact(existing, contact) : contact;
+  });
+  return [...mergedGoals, ...existingById.values()];
 }
 
 function getAgentStateStatus(state?: ConversationAgentState | null) {
@@ -21605,7 +21791,7 @@ function NativeConversationScreen({
       if (shouldMarkRead) {
         chatReadPendingRef.current = true;
         unreadCountRef.current = 0;
-        onContactPatchRef.current(contactId, { unreadCount: 0 });
+        onContactPatchRef.current(contactId, { unreadCount: 0, agentGoalCompletedUnreviewed: false });
         if (!chatReadInFlightRef.current) {
           const readContactId = contactId;
           const readVersion = chatReadVersionRef.current;
@@ -23758,7 +23944,7 @@ function NativeConversationScreen({
   };
 
   const markChatAsRead = (target: ChatContact) => {
-    onContactPatch(target.id, { unreadCount: 0 });
+    onContactPatch(target.id, { unreadCount: 0, agentGoalCompletedUnreviewed: false });
     closeSheet();
     void api.markChatRead(target.id).catch((err) => {
       Alert.alert('Chat', err instanceof Error ? err.message : 'No se pudo marcar como leído.');
@@ -31030,6 +31216,29 @@ function createAppStyles() {
     shadowOpacity: 0,
     shadowRadius: 0,
     overflow: 'visible',
+  },
+  chatbotStatusSection: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    paddingTop: 9,
+  },
+  chatbotStatusLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+  },
+  chatbotStatusLabel: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  chatbotStatusChipRow: {
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 10,
   },
   filterChipScroll: {
     marginHorizontal: 0,

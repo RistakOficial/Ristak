@@ -293,55 +293,11 @@ const phoneChatStorage = createAuthScopedLocalStorageNamespace(PHONE_CHAT_PERSIS
 function getScopedPhoneChatStorageKey(prefix: string) {
   return phoneChatStorage.getKey(prefix)
 }
-const AGENT_STATUS_PHRASE_ROTATION_MS = 4400
-type AgentStatusPhraseLabels = {
-  customers: string
-  leads: string
-}
-
 function formatSentenceLabel(label: string) {
   const trimmed = label.trim()
   if (!trimmed) return trimmed
   if (trimmed === trimmed.toLocaleUpperCase('es-MX')) return trimmed
   return trimmed.charAt(0).toLocaleLowerCase('es-MX') + trimmed.slice(1)
-}
-
-function buildAgentStatusPhrases({ customers, leads }: AgentStatusPhraseLabels) {
-  const customersName = formatSentenceLabel(customers)
-  const leadsName = formatSentenceLabel(leads)
-
-  return [
-    'Modo chamba: leyendo chats.',
-    'Ando cazando mensajes nuevos.',
-    `Checando señales de ${customersName}.`,
-    'Aquí atento como compa de guardia.',
-    'Leyendo y armando respuesta.',
-    'Si preguntan, aquí estoy.',
-    'Revisando tono y urgencia.',
-    'Atento al chat, sin drama.',
-    'Sacando la respuesta fina.',
-    'No se me va ni un mensaje.',
-    'En vivo y con café digital.',
-    'Este chat ya lo traigo.',
-    'Buscando la mejor jugada.',
-    'Leyendo entre líneas, jefe.',
-    `Ojo puesto en ${leadsName}.`,
-    `Midiendo intención en ${leadsName}.`,
-    'Listo para entrar al quite.',
-    'Afinando respuesta con flow.',
-    'Aquí, chambeando bonito.',
-    'Escaneando mensajes pendientes.',
-    'Si se pone bueno, aviso.',
-    'Traigo radar de citas prendido.',
-    `Viendo qué ${leadsName} necesitan ayuda.`,
-    'Procesando el cotorreo.',
-    'Poniéndome trucha con este chat.',
-    `Revisando señales de compra en ${leadsName}.`,
-    'No descanso, nomás cargo pila.',
-    `Cuidando la bandeja de ${customersName}.`,
-    'Leyendo rápido y sin hacer show.',
-    `Listo para responderle a ${customersName}.`
-  ]
 }
 
 const CHAT_SWIPE_ACTION_WIDTH = 184
@@ -465,6 +421,7 @@ type WideSidebarMode = 'chats' | 'newChat' | 'appointment'
 type ChatMoreMode = 'default' | 'agentControls'
 type AgentMenuSection = 'menu' | 'agents' | 'agent_detail' | 'create_agent' | 'provider_key' | 'prompt_focus' | 'ready_human'
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers' | 'leads'
+type AgentInboxStatusFilter = 'all' | 'active' | 'paused' | 'completed'
 type PhoneChatFilterManagerMode = 'list' | 'editor'
 type PhoneChatCustomFilterMatchMode = 'all' | 'any'
 type AIAgentHubStatusFilter = 'active' | 'completed' | 'paused' | 'skipped' | 'unassigned'
@@ -574,6 +531,13 @@ const AI_AGENT_HUB_STATUS_FILTERS: Array<{ id: AIAgentHubStatusFilter; label: st
   { id: 'skipped', label: 'Omitidos' },
   { id: 'unassigned', label: 'No asignados' }
 ]
+const DEFAULT_AGENT_INBOX_STATUS_FILTER: AgentInboxStatusFilter = 'all'
+const AGENT_INBOX_STATUS_FILTERS: Array<{ id: AgentInboxStatusFilter; label: string }> = [
+  { id: 'all', label: 'Todos' },
+  { id: 'active', label: 'Activos' },
+  { id: 'paused', label: 'Pausados 24 horas' },
+  { id: 'completed', label: 'Meta cumplida' }
+]
 
 const DEFAULT_ADVANCED_CHAT_FILTERS: AdvancedChatFilters = {
   channel: 'all',
@@ -582,7 +546,7 @@ const DEFAULT_ADVANCED_CHAT_FILTERS: AdvancedChatFilters = {
   stage: 'all',
   activity: 'all'
 }
-const DEFAULT_PHONE_CHAT_FILTER_CHIPS = ['all', 'unread', 'appointments', 'customers', 'leads', 'comments']
+const DEFAULT_PHONE_CHAT_FILTER_CHIPS = ['all', 'agent', 'unread', 'appointments', 'customers', 'leads', 'comments']
 const APPOINTMENT_MONTH_NAMES = [
   'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
   'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
@@ -669,7 +633,7 @@ interface PhoneChatFilterPreset {
   description: string
   section: string
   kind: 'quick' | 'comments' | 'phone' | 'advanced' | 'custom'
-  quickFilter?: Exclude<ChatFilter, 'agent'>
+  quickFilter?: ChatFilter
   phoneId?: string
   advancedGroup?: AdvancedFilterGroupId
   advancedValue?: string
@@ -1436,6 +1400,7 @@ interface ChatContact extends Contact {
   lastMessageTransport?: string
   messageCount?: number
   unreadCount?: number
+  agentGoalCompletedUnreviewed?: boolean
   profilePhotoUrl?: string | null
   avatarUrl?: string | null
   photoUrl?: string | null
@@ -2178,6 +2143,20 @@ function isAIAgentHubStateVisible(state: ConversationAgentState | null | undefin
     return state.status === 'skipped' || state.status === 'human' || state.status === 'discarded' || state.signal === 'discarded'
   }
   return state.status === filter
+}
+
+function isAgentInboxContactVisible(
+  contact: ChatContact,
+  states: Array<ConversationAgentState | null | undefined>,
+  filter: AgentInboxStatusFilter
+) {
+  const hasActiveAgent = states.some((state) => state?.status === 'active')
+  const hasPausedAgent = states.some((state) => state?.status === 'paused')
+  const hasUnreviewedGoal = contact.agentGoalCompletedUnreviewed === true
+  if (filter === 'active') return hasActiveAgent
+  if (filter === 'paused') return hasPausedAgent
+  if (filter === 'completed') return hasUnreviewedGoal
+  return hasActiveAgent || hasPausedAgent || hasUnreviewedGoal
 }
 
 function getConversationalAgentHubStatusLabel(state: ConversationAgentState | null | undefined) {
@@ -5308,6 +5287,7 @@ export const PhoneChat: React.FC = () => {
   const [chatsError, setChatsError] = useState('')
   const [chatQuery, setChatQuery] = useState('')
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
+  const [agentInboxStatusFilter, setAgentInboxStatusFilter] = useState<AgentInboxStatusFilter>(DEFAULT_AGENT_INBOX_STATUS_FILTER)
   const [advancedChatFilters, setAdvancedChatFilters] = useState<AdvancedChatFilters>(DEFAULT_ADVANCED_CHAT_FILTERS)
   const [visibleFilterDraftIds, setVisibleFilterDraftIds] = useState<string[]>([])
   const [activeCustomChatFilterId, setActiveCustomChatFilterId] = useState('')
@@ -5370,7 +5350,6 @@ export const PhoneChat: React.FC = () => {
     options?: { notify?: boolean; enabled?: boolean }
   ) => Promise<ConversationalAgentDef | null>>(async () => null)
   agentDefsRef.current = agentDefs
-  const [agentStatusPhraseIndex, setAgentStatusPhraseIndex] = useState(0)
   const [manualAgentSendPrompt, setManualAgentSendPrompt] = useState<ManualAgentSendPrompt | null>(null)
   const [archivedChatIds, setArchivedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_ARCHIVED_STATE_KEY))
   const [mutedChatIds, setMutedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_MUTED_STATE_KEY))
@@ -5462,6 +5441,8 @@ export const PhoneChat: React.FC = () => {
   // Término de búsqueda de la última carga completa (no-append). Vacío = lista completa.
   // Al limpiar la búsqueda, la recarga REEMPLAZA en vez de fusionar sobre los resultados.
   const chatListLoadedSearchRef = useRef('')
+  const chatGoalCompletedFilterRef = useRef(false)
+  const chatListLoadedGoalCompletedFilterRef = useRef(false)
   const dismissedRestoreIdsRef = useRef<Set<string>>(new Set())
   const composerPlusRef = useRef<HTMLButtonElement | null>(null)
   const composerScheduleRef = useRef<HTMLButtonElement | null>(null)
@@ -6579,6 +6560,15 @@ export const PhoneChat: React.FC = () => {
         locked: true
       },
       {
+        id: 'agent',
+        label: 'Chatbot',
+        description: 'Chats activos, pausados o con una meta pendiente de revisar.',
+        section: 'Rápidos',
+        kind: 'quick',
+        quickFilter: 'agent',
+        locked: true
+      },
+      {
         id: 'unread',
         label: 'No leídos',
         description: 'Sólo conversaciones con mensajes pendientes.',
@@ -6692,6 +6682,7 @@ export const PhoneChat: React.FC = () => {
       : DEFAULT_PHONE_CHAT_FILTER_CHIPS
     const next = sourceIds.filter((id, index, list) => availableIds.has(id) && list.indexOf(id) === index)
     if (!next.includes('all')) next.unshift('all')
+    if (!next.includes('agent')) next.splice(Math.min(1, next.length), 0, 'agent')
     return next
   }, [availableChatFilterPresets, visibleChatFilterIds])
   const visibleChatFilterPresets = useMemo(() => (
@@ -7119,32 +7110,6 @@ export const PhoneChat: React.FC = () => {
           parseSortableDateValue(leftState?.signalAt || left.lastMessageDate || left.createdAt)
       })
   }, [agentPriorityChatIdSet, agentPriorityViewOpen, agentStates, archivedViewOpen, chatFilter, chats])
-  const agentActiveChatIdSet = useMemo(() => {
-    if (!agentEnabled) return new Set<string>()
-    return new Set(
-      Object.values(agentStates)
-        .filter((state) => isStateForKnownConversationAgent(state, knownAgentIdSet))
-        .filter((state) => state.status === 'active' && state.signal !== 'discarded')
-        .map((state) => state.contactId)
-    )
-  }, [agentEnabled, agentStates, knownAgentIdSet])
-  const agentStatusPhrases = useMemo(() => buildAgentStatusPhrases({
-    customers: customersLabel,
-    leads: leadsLabel
-  }), [customersLabel, leadsLabel])
-  useEffect(() => {
-    if (!agentEnabled) {
-      setAgentStatusPhraseIndex(0)
-      return
-    }
-
-    const intervalId = window.setInterval(() => {
-      setAgentStatusPhraseIndex((current) => (current + 1) % agentStatusPhrases.length)
-    }, AGENT_STATUS_PHRASE_ROTATION_MS)
-
-    return () => window.clearInterval(intervalId)
-  }, [agentEnabled, agentStatusPhrases.length])
-  const agentStatusPhrase = agentStatusPhrases[agentStatusPhraseIndex % agentStatusPhrases.length]
   const activeContactAgentStates = useMemo(
     () => {
       if (!activeContact?.id) return []
@@ -7180,12 +7145,6 @@ export const PhoneChat: React.FC = () => {
   } as Record<string, string>)[activeConversationAgentStatus] || 'Asignar agente conversacional'
 
   useEffect(() => {
-    if (chatFilter === 'agent') {
-      setChatFilter('all')
-    }
-  }, [chatFilter])
-
-  useEffect(() => {
     if (!agentEnabled) {
       setAgentPriorityViewOpen(false)
     }
@@ -7207,8 +7166,46 @@ export const PhoneChat: React.FC = () => {
     )),
     [chats, manualUnreadChatIdSet]
   )
+  const agentInboxSourceChats = useMemo(() => {
+    const rows = new Map<string, ChatContact>()
+    displayChats.forEach((contact) => {
+      const states = agentStateLists[contact.id]?.length
+        ? agentStateLists[contact.id]
+        : [agentStates[contact.id]]
+      if (isAgentInboxContactVisible(contact, states, 'all')) rows.set(contact.id, contact)
+    })
+    allAgentStates.forEach((state) => {
+      if (!['active', 'paused'].includes(state.status) || rows.has(state.contactId)) return
+      rows.set(state.contactId, createAIAgentHubContactFromState(state))
+    })
+    return Array.from(rows.values())
+  }, [agentStateLists, agentStates, allAgentStates, displayChats])
+  const agentInboxStatusCounts = useMemo(() => {
+    const counts: Record<AgentInboxStatusFilter, number> = {
+      all: 0,
+      active: 0,
+      paused: 0,
+      completed: 0
+    }
+    agentInboxSourceChats.forEach((contact) => {
+      if (archivedChatIdSet.has(contact.id)) return
+      const states = agentStateLists[contact.id]?.length
+        ? agentStateLists[contact.id]
+        : [agentStates[contact.id]]
+      AGENT_INBOX_STATUS_FILTERS.forEach((filter) => {
+        if (isAgentInboxContactVisible(contact, states, filter.id)) counts[filter.id] += 1
+      })
+    })
+    return counts
+  }, [agentInboxSourceChats, agentStateLists, agentStates, archivedChatIdSet])
   const listBaseChats = useMemo(
-    () => displayChats.filter((contact) => {
+    () => (chatFilter === 'agent' ? agentInboxSourceChats : displayChats).filter((contact) => {
+      if (chatFilter === 'agent') {
+        const states = agentStateLists[contact.id]?.length
+          ? agentStateLists[contact.id]
+          : [agentStates[contact.id]]
+        return !archivedChatIdSet.has(contact.id) && isAgentInboxContactVisible(contact, states, agentInboxStatusFilter)
+      }
       if (agentPriorityViewOpen) return agentPriorityChatIdSet.has(contact.id)
       if (archivedViewOpen) return archivedChatIdSet.has(contact.id)
       if (archivedChatIdSet.has(contact.id)) return false
@@ -7216,7 +7213,7 @@ export const PhoneChat: React.FC = () => {
       if (agentPriorityChatIdSet.has(contact.id)) return false
       return true
     }),
-    [agentPriorityChatIdSet, agentPriorityViewOpen, archivedChatIdSet, archivedViewOpen, displayChats]
+    [agentInboxSourceChats, agentInboxStatusFilter, agentPriorityChatIdSet, agentPriorityViewOpen, agentStateLists, agentStates, archivedChatIdSet, archivedViewOpen, chatFilter, displayChats]
   )
   const isCustomerContact = useCallback((contact: ChatContact) => contact.status === 'customer' || Number(contact.purchases || 0) > 0, [])
   const isAppointmentContact = useCallback((contact: ChatContact) => contact.status === 'appointment' || Boolean(contact.hasAppointments), [])
@@ -7225,9 +7222,7 @@ export const PhoneChat: React.FC = () => {
     return contact.status === 'lead'
   }, [isAppointmentContact, isCustomerContact])
   const filteredChats = useMemo(() => {
-    const sourceChats = chatFilter === 'agent'
-      ? displayChats.filter((contact) => !archivedChatIdSet.has(contact.id) && agentActiveChatIdSet.has(contact.id))
-      : listBaseChats
+    const sourceChats = listBaseChats
 
     const phoneFilteredChats = selectedChatPhoneFilterActive && effectiveSelectedChatPhone
       ? sourceChats.filter((contact) => {
@@ -7276,7 +7271,6 @@ export const PhoneChat: React.FC = () => {
 
     return [...sortedChats].sort((left, right) => Number(pinnedChatIdSet.has(right.id)) - Number(pinnedChatIdSet.has(left.id)))
   }, [
-    agentActiveChatIdSet,
     activeAdvancedChatFilterCount,
     activeCustomChatFilter,
     advancedChatFilters,
@@ -7431,7 +7425,7 @@ export const PhoneChat: React.FC = () => {
         markContactReadState(activeLoadedContact)
         persistChatsRead([currentActiveContactId], { silent: true })
         nextChats = nextChats.map((contact) => (
-          contact.id === currentActiveContactId ? { ...contact, unreadCount: 0 } : contact
+          contact.id === currentActiveContactId ? { ...contact, unreadCount: 0, agentGoalCompletedUnreviewed: false } : contact
         ))
       }
     }
@@ -7460,6 +7454,7 @@ export const PhoneChat: React.FC = () => {
     const append = options.append === true
     const useCache = options.useCache !== false && !silentRefresh
     const trimmed = chatQuery.trim()
+    const goalCompletedUnreviewed = chatGoalCompletedFilterRef.current
     const phoneFilterParams: Record<string, string> = selectedChatPhoneFilterActive && effectiveSelectedChatPhone
       ? {
         businessPhoneNumberId: effectiveSelectedChatPhoneId,
@@ -7469,8 +7464,10 @@ export const PhoneChat: React.FC = () => {
     const cursorScope = JSON.stringify([
       trimmed.toLocaleLowerCase('es-MX'),
       effectiveSelectedChatPhoneId,
-      phoneFilterParams.businessPhone || ''
+      phoneFilterParams.businessPhone || '',
+      goalCompletedUnreviewed ? 'goal:1' : 'goal:0'
     ])
+    const requestedServerScopeChanged = chatListLoadedGoalCompletedFilterRef.current !== goalCompletedUnreviewed
     const appendCursor = chatListCursorRef.current
 
     if (append) {
@@ -7484,7 +7481,7 @@ export const PhoneChat: React.FC = () => {
     }
 
     if (!silentRefresh) setChatsError('')
-    const cacheEnabled = !trimmed
+    const cacheEnabled = !trimmed && !goalCompletedUnreviewed
     const cacheKey = getPhoneDailyCacheKey(
       'phone-chat',
       'chats',
@@ -7503,7 +7500,7 @@ export const PhoneChat: React.FC = () => {
       if (!silentRefresh) {
         setChatsError('')
         // Loader de pantalla completa solo si todavía no hay nada que mostrar (o al buscar).
-        if (chatsRef.current.length === 0 || trimmed.length > 0) {
+        if (chatsRef.current.length === 0 || trimmed.length > 0 || requestedServerScopeChanged) {
           setChatsLoading(true)
         }
       }
@@ -7568,6 +7565,7 @@ export const PhoneChat: React.FC = () => {
       const params: Record<string, string> = {
         ...(trimmed ? { q: trimmed } : {}),
         ...phoneFilterParams,
+        ...(goalCompletedUnreviewed ? { goalCompletedUnreviewed: 'true' } : {}),
         // Una lista nunca debe esperar proveedores externos. El backend nuevo
         // usa esta señal solo para encolar avatares faltantes en segundo plano.
         warmProfilePictures: !cursor && !hasCachedChats ? 'true' : 'false',
@@ -7596,7 +7594,11 @@ export const PhoneChat: React.FC = () => {
         if (nextCursor) chatListCursorRef.current = nextCursor
         if (loadedPageChats.length > 0) chatListHasAppendedRef.current = true
         chatListHasMoreRef.current = loadedPageChats.length >= CHAT_LIST_PAGE_SIZE && cursorAdvanced
-        applyLoadedChats(dedupeChatsById([...chatsRef.current, ...pageChats]))
+        applyLoadedChats(dedupeChatsById(
+          goalCompletedUnreviewed
+            ? [...pageChats, ...chatsRef.current]
+            : [...chatsRef.current, ...pageChats]
+        ))
       } else if (silentRefresh) {
         // Refresco en segundo plano: NO reconstruir la lista entera (causa tirones). Traemos
         // solo la primera página y la fusionamos sobre lo ya cargado, conservando la cola que
@@ -7606,9 +7608,12 @@ export const PhoneChat: React.FC = () => {
         if (chatsRequestRef.current !== controller) return
         acceptFreshResponse()
 
+        const serverScopeChanged = chatListLoadedGoalCompletedFilterRef.current !== goalCompletedUnreviewed
+        chatListLoadedGoalCompletedFilterRef.current = goalCompletedUnreviewed
+
         const currentCursor = chatListCursorRef.current
         const preserveDeepCursor = Boolean(
-          chatListHasAppendedRef.current && currentCursor?.scope === cursorScope
+          !serverScopeChanged && chatListHasAppendedRef.current && currentCursor?.scope === cursorScope
         )
         const freshCursor = getChatListKeysetCursor(freshPage, cursorScope)
         if (!preserveDeepCursor) {
@@ -7620,7 +7625,12 @@ export const PhoneChat: React.FC = () => {
         ) || (preserveDeepCursor && chatListHasMoreRef.current)
         const merged = dedupeChatsById([
           ...freshPage,
-          ...reconcileCachedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE)
+          ...(goalCompletedUnreviewed
+            ? chatsRef.current.map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
+            : []),
+          ...(serverScopeChanged || goalCompletedUnreviewed
+            ? []
+            : reconcileCachedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE))
         ])
         const displayedChats = applyLoadedChats(merged)
         if (cacheEnabled) {
@@ -7638,10 +7648,15 @@ export const PhoneChat: React.FC = () => {
         // En búsqueda (o al venir de una), REEMPLAZAMOS; en lista completa fusionamos sobre el
         // caché para no encoger la lista.
         const hasSearch = trimmed.length > 0
-        const shouldReplace = hasSearch || chatListLoadedSearchRef.current !== ''
+        const serverScopeChanged = chatListLoadedGoalCompletedFilterRef.current !== goalCompletedUnreviewed
+        chatListLoadedGoalCompletedFilterRef.current = goalCompletedUnreviewed
+        const shouldReplace = hasSearch || chatListLoadedSearchRef.current !== '' || serverScopeChanged || goalCompletedUnreviewed
         chatListLoadedSearchRef.current = trimmed
         const merged = dedupeChatsById([
           ...freshPage,
+          ...(goalCompletedUnreviewed
+            ? chatsRef.current.map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
+            : []),
           ...(shouldReplace ? [] : reconcileCachedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE))
         ])
 
@@ -7725,6 +7740,16 @@ export const PhoneChat: React.FC = () => {
     selectedChatPhoneId,
     timezone // (MOB-007) recarga si cambia la zona del negocio
   ])
+
+  useEffect(() => {
+    const goalCompletedUnreviewed = chatFilter === 'agent'
+    if (chatGoalCompletedFilterRef.current === goalCompletedUnreviewed) return
+    chatGoalCompletedFilterRef.current = goalCompletedUnreviewed
+    chatListCursorRef.current = null
+    chatListHasAppendedRef.current = false
+    chatListHasMoreRef.current = true
+    void loadChats({ useCache: false })
+  }, [chatFilter, loadChats])
 
   const loadMoreChatsIfNeeded = useCallback((event?: React.UIEvent<HTMLDivElement>) => {
     if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
@@ -8441,7 +8466,7 @@ export const PhoneChat: React.FC = () => {
       setMessagesRefreshing(false)
       persistChatsRead([contactId], { silent: true })
       setChats((currentChats) => currentChats.map((contact) => (
-        contact.id === contactId ? { ...contact, unreadCount: 0 } : contact
+        contact.id === contactId ? { ...contact, unreadCount: 0, agentGoalCompletedUnreviewed: false } : contact
       )))
 
       const [scheduledMessages, agentCompletions, activityJourney] = await Promise.all([
@@ -8836,9 +8861,13 @@ export const PhoneChat: React.FC = () => {
     }
 
     resetChatPresetFilters()
+    if (preset.quickFilter === 'agent' && chatFilter !== 'agent') {
+      setAgentInboxStatusFilter(DEFAULT_AGENT_INBOX_STATUS_FILTER)
+    }
     setChatFilter(preset.quickFilter || 'all')
   }, [
     availableChatFilterPresetMap,
+    chatFilter,
     openChatFilterManager,
     resetChatPresetFilters,
     saveConfigPreference,
@@ -8863,6 +8892,7 @@ export const PhoneChat: React.FC = () => {
     const next = (visibleFilterDraftIds.length > 0 ? visibleFilterDraftIds : normalizedVisibleChatFilterIds)
       .filter((id, index, list) => availableIds.has(id) && list.indexOf(id) === index)
     if (!next.includes('all')) next.unshift('all')
+    if (!next.includes('agent')) next.splice(Math.min(1, next.length), 0, 'agent')
 
     try {
       await setVisibleChatFilterIds(next)
@@ -10268,7 +10298,7 @@ export const PhoneChat: React.FC = () => {
     runConversationOpenBottomScrollSequence()
     setActiveContactId(nextContact.id)
     setChats((current) => current.map((item) => (
-      item.id === nextContact.id ? { ...item, unreadCount: 0 } : item
+      item.id === nextContact.id ? { ...item, unreadCount: 0, agentGoalCompletedUnreviewed: false } : item
     )))
     setConversationReturnTarget(options?.returnTarget || 'chats')
     setConversationOpen(true)
@@ -10877,7 +10907,7 @@ export const PhoneChat: React.FC = () => {
     writeChatReadState(nextReadState)
     persistChatsRead([...selectedIds])
     setChats((current) => current.map((contact) => (
-      selectedIds.has(contact.id) ? { ...contact, unreadCount: 0 } : contact
+      selectedIds.has(contact.id) ? { ...contact, unreadCount: 0, agentGoalCompletedUnreviewed: false } : contact
     )))
     setManualUnreadChatIds((current) => current.filter((id) => !selectedIds.has(id)))
     clearChatSelection()
@@ -15968,6 +15998,20 @@ export const PhoneChat: React.FC = () => {
   }
 
   const renderChats = () => {
+    const chatbotEmptyTitle = agentInboxStatusFilter === 'paused'
+      ? 'Sin chats pausados 24 horas'
+      : agentInboxStatusFilter === 'completed'
+        ? 'Sin metas pendientes de revisar'
+        : agentInboxStatusFilter === 'active'
+          ? 'Sin chats activos del bot'
+          : 'Sin chats pendientes del chatbot'
+    const chatbotEmptyDescription = agentInboxStatusFilter === 'paused'
+      ? 'Los chats pausados aparecerán aquí hasta que se reactiven.'
+      : agentInboxStatusFilter === 'completed'
+        ? 'Las metas cumplidas aparecerán aquí hasta que una persona abra el chat.'
+        : agentInboxStatusFilter === 'active'
+          ? 'Cuando el bot esté atendiendo una conversación, aparecerá aquí.'
+          : 'Aquí aparecen únicamente chats activos, pausados y metas cumplidas todavía sin abrir.'
     if (chatsLoading) {
       return (
         <div className={styles.centerState} role="status" aria-live="polite" aria-label="Cargando chats">
@@ -16005,7 +16049,7 @@ export const PhoneChat: React.FC = () => {
       }
     }
 
-    if (chats.length === 0 && archivedChatCount === 0) {
+    if (chats.length === 0 && archivedChatCount === 0 && chatFilter !== 'agent') {
       return (
         <div className={styles.emptyChats}>
           <span className={styles.emptyChatsIcon}>
@@ -16072,14 +16116,14 @@ export const PhoneChat: React.FC = () => {
             <span className={styles.emptyChatsIcon}>
               <MessageCircle size={30} />
             </span>
-            <strong>{agentPriorityViewOpen ? 'Sin conversaciones prioritarias' : archivedViewOpen ? 'No hay chats archivados' : chatFilter === 'agent' ? 'Sin chats del agente' : chats.length === 0 ? 'Aún no hay chats' : 'No hay chats en este filtro'}</strong>
+            <strong>{agentPriorityViewOpen ? 'Sin conversaciones prioritarias' : archivedViewOpen ? 'No hay chats archivados' : chatFilter === 'agent' ? chatbotEmptyTitle : chats.length === 0 ? 'Aún no hay chats' : 'No hay chats en este filtro'}</strong>
             <small>
               {agentPriorityViewOpen
                 ? 'Cuando el agente marque una conversación para humano, aparecerá aquí.'
                 : archivedViewOpen
                 ? 'Cuando archives una conversación, aparecerá en esta sección.'
                 : chatFilter === 'agent'
-                ? 'Cuando el agente esté atendiendo una conversación activa, aparecerá en este filtro.'
+                ? chatbotEmptyDescription
                 : chats.length === 0 ? 'Cuando llegue un mensaje de WhatsApp, Messenger o Instagram aparecerá aquí.' : 'Cambia el filtro o busca un contacto para iniciar una conversación.'}
             </small>
           </div>
@@ -22398,18 +22442,6 @@ export const PhoneChat: React.FC = () => {
     </button>
   )
 
-  const renderAgentStatusBubble = (className = '') => (
-    <div className={`${styles.agentStatusBubble} ${className}`.trim()} aria-hidden="true">
-      <span className={styles.agentStatusLabel}>
-        <span className={styles.agentStatusDot} />
-        Activo
-      </span>
-      <span key={agentStatusPhraseIndex} className={styles.agentStatusPhrase}>
-        {agentStatusPhrase}
-      </span>
-    </div>
-  )
-
   const renderPaymentChoiceList = (target: 'sheet' | 'wide') => (
     <div
       className={styles.paymentChoiceList}
@@ -22609,25 +22641,8 @@ export const PhoneChat: React.FC = () => {
           <header className={`${styles.chatListHeader} ${sidebarSearchExpanded ? styles.chatListHeaderSearchExpanded : ''} ${wideSidebarEditing ? styles.chatListHeaderWideMode : ''}`}>
             {!isWideChatDevice && (
               <div className={styles.topActionRow} aria-hidden={sidebarSearchExpanded}>
-                {renderAgentRobotButton({
-                  active: agentEnabled,
-                  label: 'Agente conversacional',
-                  onClick: openAgentHubMenu
-                })}
-                {agentEnabled && renderAgentStatusBubble()}
+                <span className={styles.topActionSpacer} aria-hidden="true" />
                 {renderChatHeaderActions()}
-              </div>
-            )}
-            {isWideChatDevice && wideSidebarMode === 'chats' && !sidebarSearchExpanded && (
-              <div className={styles.tabletAgentHeroRow}>
-                {renderAgentRobotButton({
-                  active: agentEnabled,
-                  className: styles.tabletAgentInboxButton,
-                  label: 'Abrir agente conversacional',
-                  onClick: openAgentHubMenu,
-                  robotSize: 58
-                })}
-                {agentEnabled && renderAgentStatusBubble(styles.tabletAgentStatusBubble)}
               </div>
             )}
             <div className={styles.chatTitleRow} aria-hidden={sidebarSearchExpanded}>
@@ -22708,7 +22723,7 @@ export const PhoneChat: React.FC = () => {
                   options={[
                     ...visibleChatFilterPresets.map((preset) => ({
                       value: preset.id,
-                      label: preset.label,
+                      label: preset.id === 'agent' ? <><Bot size={14} aria-hidden="true" /> Chatbot</> : preset.label,
                       ariaLabel: preset.label,
                       count: preset.id === 'unread' && unreadTotal > 0 ? (unreadTotal > 99 ? '99+' : unreadTotal) : undefined,
                       tone: preset.kind === 'comments' ? 'comments' as const : undefined,
@@ -22720,6 +22735,27 @@ export const PhoneChat: React.FC = () => {
                 />
               )
             )}
+            {wideSidebarMode === 'chats' && !chatSelectionActive && !commentsView && chatFilter === 'agent' ? (
+              <div className={styles.agentInboxStatusSection} aria-label="Estados del chatbot">
+                <span className={styles.agentInboxStatusLabel}>
+                  <Bot size={13} aria-hidden="true" />
+                  Estado del chatbot
+                </span>
+                <PhoneFilterChips<AgentInboxStatusFilter>
+                  className={`${styles.filterChips} ${styles.agentInboxStatusChips}`}
+                  ariaLabel="Filtrar chats por estado del chatbot"
+                  hidden={sidebarSearchExpanded}
+                  wrapOnWide
+                  value={agentInboxStatusFilter}
+                  options={AGENT_INBOX_STATUS_FILTERS.map((filter) => ({
+                    value: filter.id,
+                    label: filter.label,
+                    count: agentInboxStatusCounts[filter.id]
+                  }))}
+                  onChange={setAgentInboxStatusFilter}
+                />
+              </div>
+            ) : null}
           </header>
 
           <div

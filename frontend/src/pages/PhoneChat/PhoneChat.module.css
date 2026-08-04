@@ -424,10 +424,34 @@
   --phone-chat-filter-chip-row: 1;
 }
 
+.agentInboxStatusSection {
+  display: grid;
+  gap: 7px;
+  padding-top: 9px;
+  border-top: 1px solid var(--phone-chat-border);
+}
+
+.agentInboxStatusLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.agentInboxStatusChips {
+  --phone-chat-filter-chip-row: 2;
+}
+
 .chatListHeaderSearchExpanded .topActionRow,
 .chatListHeaderSearchExpanded .chatTitleRow,
 .chatListHeaderSearchExpanded .filterChips {
   pointer-events: none;
+}
+
+.chatListHeaderSearchExpanded .agentInboxStatusSection {
+  display: none;
 }
 
 .chatListHeaderSearchExpanded .topActionRow {

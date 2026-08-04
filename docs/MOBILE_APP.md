@@ -1357,6 +1357,18 @@ tocar `Agregar` manda ese filtro a la fila principal de rapidos y lo guarda de
 inmediato en `app_config.mobile_chat_filter_chip_ids`; tocar `Quitar` lo elimina
 de esa fila. `Todos` queda fijo.
 
+`Chatbot` tambien queda fijo inmediatamente despues de `Todos` en las tres
+superficies moviles: `/movil`, React Native (`mobile/`) y SwiftUI (`ios/app`).
+Sustituye el acceso flotante del robot en el encabezado de la bandeja. Al
+seleccionarlo permanece marcado y abre, debajo de la fila normal y tras un
+separador, un segundo nivel con `Todos`, `Activos`, `Pausados 24 horas` y
+`Meta cumplida`. Ese `Todos` no significa toda la bandeja: es exclusivamente la
+union de contactos con un agente activo, un agente pausado o una meta cumplida
+pendiente de abrir. No incluye omitidos, no asignados ni conversaciones
+normales. Abrir una meta la marca como revisada y la retira del subfiltro; el
+panel conserva su superficie normal y solo los chips seleccionados cambian de
+estado visual.
+
 Esa biblioteca debe incluir los filtros rapidos del chat movil, la entrada de
 `Comentarios`, cada WhatsApp conectado cuando hay mas de un numero y las familias
 avanzadas equivalentes a desktop: canal, origen, red social, etapa y actividad.
@@ -1411,7 +1423,7 @@ texto siempre debe renderizar encima de la superficie para no verse opaco.
 
 La bandeja nativa en `mobile/src/App.tsx` debe seguir esta misma regla de paridad:
 header de chats con acciones superiores, buscador tipo pill, chips horizontales
-(`Todos`, `No leídos`, `Citas`, `Clientes`, `Leads`, `Comentarios`, `+`) y filas
+(`Todos`, `Chatbot`, `No leídos`, `Citas`, `Clientes`, `Leads`, `Comentarios`, `+`) y filas
 planas con separador desde el bloque de texto. La tira de filtros no debe quedar
 encerrada en un panel de fondo ni vivir como banda flotante entre buscador y
 filas: debe renderizarse dentro del `ListHeaderComponent` de la lista, sin fondo,
@@ -1436,8 +1448,9 @@ mensajes entrantes pendientes; si el ultimo mensaje es saliente, aunque el
 backend mande `unreadCount`, la UI nativa no debe mostrarlo como notificacion.
 El avatar nativo debe mantener iniciales/foto en relleno
 Ristak y reservar el color de red social para aro/badge, igual que
-`PhoneChat.module.css`. El acceso de robot en la bandeja abre exclusivamente el
-Hub del agente conversacional; no existe una fila fija de asistente personal.
+`PhoneChat.module.css`. La bandeja no muestra un acceso de robot en el
+encabezado: el inventario del agente se abre desde el filtro `Chatbot`. Los
+controles del agente dentro de una conversación conservan su función propia.
 
 La lista de chats nativa usa una interaccion simplificada respecto a `PhoneChat`:
 mantener presionada una fila abre `Mas acciones` con feedback haptico. La primera

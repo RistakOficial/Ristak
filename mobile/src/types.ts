@@ -118,6 +118,7 @@ export type ChatContact = {
   routingReason?: string;
   unreadCount?: number;
   messageCount?: number;
+  agentGoalCompletedUnreviewed?: boolean;
   tags?: string[];
   createdAt?: string;
   updatedAt?: string;

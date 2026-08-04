@@ -1,9 +1,30 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
-const [desktopChatSource, desktopChatStyles] = await Promise.all([
+const [
+  desktopChatSource,
+  desktopChatStyles,
+  phoneChatSource,
+  phoneChatStyles,
+  androidSource,
+  androidApiSource,
+  androidTypesSource,
+  iosFilterSource,
+  iosInboxSource,
+  iosInboxScreenSource,
+  iosAgentServiceSource
+] = await Promise.all([
   readFile(new URL('../src/pages/DesktopChat/DesktopChat.tsx', import.meta.url), 'utf8'),
-  readFile(new URL('../src/pages/DesktopChat/DesktopChat.module.css', import.meta.url), 'utf8')
+  readFile(new URL('../src/pages/DesktopChat/DesktopChat.module.css', import.meta.url), 'utf8'),
+  readFile(new URL('../src/pages/PhoneChat/PhoneChat.tsx', import.meta.url), 'utf8'),
+  readFile(new URL('../src/pages/PhoneChat/PhoneChat.module.css', import.meta.url), 'utf8'),
+  readFile(new URL('../../mobile/src/App.tsx', import.meta.url), 'utf8'),
+  readFile(new URL('../../mobile/src/api.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../../mobile/src/types.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../../ios/app/Ristak/Features/Chats/Shared/ChatInboxFilterModels.swift', import.meta.url), 'utf8'),
+  readFile(new URL('../../ios/app/Ristak/Features/Chats/Inbox/InboxViewModel.swift', import.meta.url), 'utf8'),
+  readFile(new URL('../../ios/app/Ristak/Features/Chats/Inbox/InboxScreen.swift', import.meta.url), 'utf8'),
+  readFile(new URL('../../ios/app/Ristak/Core/Services/AgentStateService.swift', import.meta.url), 'utf8')
 ])
 
 assert.match(
@@ -77,4 +98,32 @@ assert.doesNotMatch(
   'la bandeja Chatbot debe conservar la misma superficie visual que las demás'
 )
 
-console.log('Desktop Chat chatbot filter hierarchy contract OK')
+assert.match(phoneChatSource, /id: 'agent',[\s\S]*label: 'Chatbot',[\s\S]*quickFilter: 'agent'/, '/movil debe tener Chatbot como filtro principal')
+assert.match(phoneChatSource, /type AgentInboxStatusFilter = 'all' \| 'active' \| 'paused' \| 'completed'/, '/movil sólo debe ofrecer los cuatro estados útiles')
+assert.match(phoneChatSource, /agentGoalCompletedUnreviewed === true[\s\S]*return hasActiveAgent \|\| hasPausedAgent \|\| hasUnreviewedGoal/, '/movil debe excluir conversaciones normales')
+assert.match(phoneChatSource, /goalCompletedUnreviewed \? \{ goalCompletedUnreviewed: 'true' \}/, '/movil debe pedir metas sin revisar al servidor')
+assert.doesNotMatch(phoneChatSource, /<div className=\{styles\.topActionRow\}[\s\S]{0,500}renderAgentRobotButton\(/, '/movil no debe conservar el acceso flotante del bot en la bandeja')
+assert.match(phoneChatStyles, /\.agentInboxStatusSection\s*\{[^}]*border-top:\s*1px solid var\(--phone-chat-border\)/, '/movil debe separar los subfiltros sin teñir el panel')
+assert.doesNotMatch(phoneChatStyles.match(/\.agentInboxStatusSection\s*\{[^}]*\}/)?.[0] || '', /background/, '/movil no debe pintar el panel al seleccionar Chatbot')
+assert.match(phoneChatSource, /agentGoalCompletedUnreviewed:\s*false/, '/movil debe retirar una meta de la bandeja al abrirla')
+
+assert.match(androidSource, /DEFAULT_CHAT_FILTER_IDS = \['all', 'chatbot'/, 'Android debe fijar Chatbot junto a los filtros principales')
+assert.match(androidSource, /type ChatbotStatusFilter = 'all' \| 'active' \| 'paused' \| 'completed'/, 'Android sólo debe ofrecer los cuatro estados útiles')
+assert.match(androidSource, /return hasActiveAgent \|\| hasPausedAgent \|\| hasUnreviewedGoal/, 'Android debe excluir conversaciones normales')
+assert.match(androidApiSource, /goalCompletedUnreviewed:\s*options\.goalCompletedUnreviewed/, 'Android debe mandar el scope de metas sin revisar')
+assert.match(androidApiSource, /listAgentStates\(statuses:[\s\S]*\/conversational-agent\/states/, 'Android debe cargar activos y pausados sin consultar chat por chat')
+assert.match(androidTypesSource, /agentGoalCompletedUnreviewed\?: boolean/, 'Android debe conservar la marca de meta pendiente')
+assert.doesNotMatch(androidSource, /setAgentHubOpen\(true\)/, 'Android no debe conservar el acceso flotante del bot en la bandeja')
+assert.doesNotMatch(androidSource.match(/chatbotStatusSection:\s*\{[^}]*\}/)?.[0] || '', /backgroundColor/, 'Android no debe pintar el panel al seleccionar Chatbot')
+assert.match(androidSource, /agentGoalCompletedUnreviewed:\s*false/, 'Android debe retirar una meta de la bandeja al abrirla')
+
+assert.match(iosFilterSource, /case chatbot/, 'iOS debe tener Chatbot como filtro principal')
+assert.match(iosFilterSource, /enum ChatbotInboxStatusFilter[\s\S]*case all[\s\S]*case active[\s\S]*case paused[\s\S]*case completed/, 'iOS sólo debe ofrecer los cuatro estados útiles')
+assert.match(iosFilterSource, /case \.all: return hasActive \|\| hasPaused \|\| hasCompleted/, 'iOS debe excluir conversaciones normales')
+assert.match(iosInboxSource, /chatbotGoalRows[\s\S]*fetchStates\(statuses: \["active", "paused"\]\)/, 'iOS debe combinar metas sin revisar con activos y pausados')
+assert.match(iosAgentServiceSource, /func fetchStates\(statuses:[\s\S]*\/conversational-agent\/states/, 'iOS debe cargar los estados del bot en una sola consulta')
+assert.doesNotMatch(iosInboxScreenSource, /showsAgentHub|ToolbarItem\(placement: \.topBarLeading\)[\s\S]*AgentBotGlyph/, 'iOS no debe conservar el robot flotante en la bandeja')
+assert.doesNotMatch(iosInboxScreenSource, /if viewModel\.activeFilter == \.quick\(\.chatbot\)[\s\S]{0,900}\.background\(/, 'iOS no debe pintar el panel al seleccionar Chatbot')
+assert.match(iosInboxSource, /chatbotGoalRows\[index\]\.agentGoalCompletedUnreviewed = false/, 'iOS debe retirar una meta de la bandeja al abrirla')
+
+console.log('Desktop, /movil, Android and iOS chatbot filter hierarchy contract OK')

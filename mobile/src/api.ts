@@ -97,6 +97,7 @@ type ChatListQueryOptions = {
   signal?: AbortSignal;
   beforeMessageDate?: string;
   beforeContactId?: string;
+  goalCompletedUnreviewed?: boolean;
 };
 
 type ConversationQueryOptions = Partial<ConversationHistoryCursor> & {
@@ -519,6 +520,7 @@ export class RistakApiClient {
         warmProfilePictures: options.warmProfilePictures || undefined,
         beforeMessageDate: options.beforeMessageDate?.trim() || undefined,
         beforeContactId: options.beforeContactId?.trim() || undefined,
+        goalCompletedUnreviewed: options.goalCompletedUnreviewed || undefined,
       },
     });
   }
@@ -823,6 +825,14 @@ export class RistakApiClient {
     return this.request<ConversationAgentState[]>(`/conversational-agent/states/${encodeURIComponent(contactId)}`, {
       params: {
         includeAll: 1,
+      },
+    });
+  }
+
+  listAgentStates(statuses: string[] = []) {
+    return this.request<ConversationAgentState[]>('/conversational-agent/states', {
+      params: {
+        statuses: statuses.length ? statuses.join(',') : undefined,
       },
     });
   }

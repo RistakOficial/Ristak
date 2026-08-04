@@ -10,15 +10,11 @@ struct InboxScreen: View {
     let onOpenChat: (ChatContact) -> Void
 
     @Environment(ShellState.self) private var shell
-    @Environment(AccessStore.self) private var access
 
     @State private var activeSheet: InboxSheet?
     /// Cámara global (foto/video) del header — flujo separado de `activeSheet`.
     @State private var cameraPickerPresented = false
     @State private var cameraShareVM: CameraShareViewModel?
-    /// Hub del agente conversacional (encender/pausar/editar), abierto desde el
-    /// botón robot del header (paridad /movil).
-    @State private var showsAgentHub = false
 
     enum InboxSheet: Identifiable {
         case more(ChatContact)
@@ -57,16 +53,6 @@ struct InboxScreen: View {
                 viewModel.searchTextDidChange()
             }
             .toolbar {
-                if access.canRead(module: .aiAgent) {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button {
-                            showsAgentHub = true
-                        } label: {
-                            AgentBotGlyph(color: RistakTheme.accent, size: 22)
-                        }
-                        .accessibilityLabel("Agente conversacional")
-                    }
-                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     // Cámara global (a la IZQUIERDA del «+»): toma foto/video y
                     // lo manda a uno o varios contactos por WhatsApp.
@@ -85,14 +71,6 @@ struct InboxScreen: View {
                     .accessibilityLabel("Nuevo chat")
                     .accessibilityIdentifier("ristak-inbox-new-chat")
                 }
-            }
-            .sheet(
-                isPresented: $showsAgentHub,
-                onDismiss: { viewModel.refreshAgentAvailability() }
-            ) {
-                AgentHubSheet()
-                    .presentationDetents([.large])
-                    .presentationDragIndicator(.visible)
             }
             .sheet(item: $activeSheet) { sheet in
                 sheetContent(sheet)
@@ -337,28 +315,58 @@ struct InboxScreen: View {
     // MARK: - Chips de filtros (doc 03 §4.1)
 
     private var chipsRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: RistakTheme.Spacing.xs) {
-                if viewModel.activeFilter.isCommentsLens {
-                    commentsLensChips
-                } else {
-                    standardChips
-                }
+        VStack(alignment: .leading, spacing: RistakTheme.Spacing.sm) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: RistakTheme.Spacing.xs) {
+                    if viewModel.activeFilter.isCommentsLens {
+                        commentsLensChips
+                    } else {
+                        standardChips
+                    }
 
-                Button {
-                    activeSheet = .filters
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(RistakTheme.textPrimary)
-                        .frame(width: 34, height: 34)
-                        .background(Circle().fill(RistakTheme.controlRest))
+                    Button {
+                        activeSheet = .filters
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(RistakTheme.textPrimary)
+                            .frame(width: 34, height: 34)
+                            .background(Circle().fill(RistakTheme.controlRest))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Más filtros")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Más filtros")
+            }
+            .ristakEdgeToEdgeChips(horizontalInset: RistakTheme.Spacing.md)
+
+            if viewModel.activeFilter == .quick(.chatbot) {
+                Divider()
+                    .padding(.horizontal, RistakTheme.Spacing.md)
+
+                HStack(spacing: RistakTheme.Spacing.xs) {
+                    AgentBotGlyph(color: RistakTheme.textDim, size: 13)
+                    Text("Estado del chatbot")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(RistakTheme.textDim)
+                }
+                .padding(.horizontal, RistakTheme.Spacing.md)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: RistakTheme.Spacing.xs) {
+                        ForEach(ChatbotInboxStatusFilter.allCases, id: \.rawValue) { status in
+                            RistakFilterChip(
+                                title: status.title,
+                                count: viewModel.chatbotStatusCounts[status],
+                                isSelected: viewModel.chatbotStatusFilter == status
+                            ) {
+                                viewModel.selectChatbotStatus(status)
+                            }
+                        }
+                    }
+                }
+                .ristakEdgeToEdgeChips(horizontalInset: RistakTheme.Spacing.md)
             }
         }
-        .ristakEdgeToEdgeChips(horizontalInset: RistakTheme.Spacing.md)
     }
 
     @ViewBuilder
@@ -469,6 +477,13 @@ struct InboxScreen: View {
                 message: "Los chats que archives aparecerán aquí."
             )
             .frame(minHeight: 280)
+        } else if viewModel.activeFilter == .quick(.chatbot) {
+            RistakEmptyState(
+                icon: "bubble.left.and.bubble.right",
+                title: chatbotEmptyTitle,
+                message: chatbotEmptyMessage
+            )
+            .frame(minHeight: 280)
         } else if viewModel.activeFilter != .quick(.all) {
             RistakEmptyState(
                 icon: "bubble.left.and.bubble.right",
@@ -503,6 +518,24 @@ struct InboxScreen: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.bottom, RistakTheme.Spacing.xl)
+        }
+    }
+
+    private var chatbotEmptyTitle: String {
+        switch viewModel.chatbotStatusFilter {
+        case .all: return "Sin chats pendientes del chatbot"
+        case .active: return "Sin chats activos del bot"
+        case .paused: return "Sin chats pausados 24 horas"
+        case .completed: return "Sin metas pendientes de revisar"
+        }
+    }
+
+    private var chatbotEmptyMessage: String {
+        switch viewModel.chatbotStatusFilter {
+        case .all: return "Aquí aparecen únicamente chats activos, pausados y metas cumplidas todavía sin abrir."
+        case .active: return "Cuando el bot esté atendiendo una conversación, aparecerá aquí."
+        case .paused: return "Los chats pausados aparecerán aquí hasta que se reactiven."
+        case .completed: return "Las metas cumplidas aparecerán aquí hasta que una persona abra el chat."
         }
     }
 

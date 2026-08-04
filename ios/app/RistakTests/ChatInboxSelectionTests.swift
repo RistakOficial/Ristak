@@ -30,22 +30,28 @@ final class ChatInboxSelectionTests: XCTestCase {
         XCTAssertEqual(reselected, Set(["offscreen-1", "offscreen-2", "visible-1", "visible-2"]))
     }
 
-    func testGoalCompletedQuickFilterMatchesOnlyUnreviewedAgentGoals() throws {
+    func testChatbotFilterIncludesOnlyActivePausedOrUnreviewedGoals() throws {
         let pending = try decodeContact(
             id: "goal-pending",
             agentGoalCompletedUnreviewed: true
         )
-        let reviewed = try decodeContact(
-            id: "goal-reviewed",
+        let normal = try decodeContact(
+            id: "normal",
             agentGoalCompletedUnreviewed: false
         )
+        let active = try decodeAgentState(contactID: normal.id, status: "active")
+        let paused = try decodeAgentState(contactID: normal.id, status: "paused")
 
-        XCTAssertTrue(ChatRowSignals.matchesQuick(.goalCompleted, contact: pending))
-        XCTAssertFalse(ChatRowSignals.matchesQuick(.goalCompleted, contact: reviewed))
+        XCTAssertTrue(ChatbotInboxVisibility.matches(contact: pending, states: [], statusFilter: .all))
+        XCTAssertTrue(ChatbotInboxVisibility.matches(contact: normal, states: [active], statusFilter: .active))
+        XCTAssertTrue(ChatbotInboxVisibility.matches(contact: normal, states: [paused], statusFilter: .paused))
+        XCTAssertFalse(ChatbotInboxVisibility.matches(contact: normal, states: [], statusFilter: .all))
+        XCTAssertFalse(ChatbotInboxVisibility.matches(contact: normal, states: [active], statusFilter: .completed))
         XCTAssertEqual(
-            ChatInboxFilter(chipID: "goal_completed"),
-            .quick(.goalCompleted)
+            ChatInboxFilter(chipID: "chatbot"),
+            .quick(.chatbot)
         )
+        XCTAssertTrue(ChatInboxFilter.quick(.chatbot).usesGoalCompletedServerScope)
     }
 
     func testMissingGoalReviewFlagDefaultsToFalse() throws {
@@ -69,6 +75,13 @@ final class ChatInboxSelectionTests: XCTestCase {
               "agentGoalCompletedUnreviewed": \(agentGoalCompletedUnreviewed)
             }
             """.utf8)
+        )
+    }
+
+    private func decodeAgentState(contactID: String, status: String) throws -> ConversationAgentState {
+        try JSONDecoder().decode(
+            ConversationAgentState.self,
+            from: Data(#"{"contactId":"\#(contactID)","status":"\#(status)"}"#.utf8)
         )
     }
 }

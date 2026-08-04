@@ -2,14 +2,14 @@ import Foundation
 
 // Catálogo de filtros de la bandeja (doc research/03 §3). Los ids de chip son
 // strings persistidos en `app_config.mobile_chat_filter_chip_ids`:
-// `all|unread|appointments|customers|leads|comments`, `phone:<id>`,
+// `all|chatbot|unread|appointments|customers|leads|comments`, `phone:<id>`,
 // `advanced:<grupo>:<valor>`, `custom:<presetId>`.
 
 // MARK: - Rápidos
 
 enum ChatQuickFilter: String, CaseIterable, Sendable {
     case all
-    case goalCompleted = "goal_completed"
+    case chatbot
     case unread
     case appointments
     case customers
@@ -20,7 +20,7 @@ enum ChatQuickFilter: String, CaseIterable, Sendable {
     var managerDescription: String {
         switch self {
         case .all: return "Muestra todas las conversaciones activas."
-        case .goalCompleted: return "Metas cumplidas que ningún usuario ha revisado."
+        case .chatbot: return "Chats activos, pausados o con una meta pendiente de revisar."
         case .unread: return "Sólo conversaciones con mensajes pendientes."
         case .appointments: return "Contactos con cita guardada."
         case .customers: return "Contactos marcados como clientes o con compras."
@@ -157,20 +157,56 @@ enum ChatInboxFilter: Hashable, Sendable {
     }
 
     var usesGoalCompletedServerScope: Bool {
-        self == .quick(.goalCompleted)
+        self == .quick(.chatbot)
     }
 }
 
 /// Chips visibles por defecto (`mobile_chat_filter_chip_ids`, doc 03 §1.7).
 enum ChatFilterChipDefaults {
-    static let baseChipIDs = ["all", "unread", "appointments", "customers", "leads", "comments"]
+    static let baseChipIDs = ["all", "chatbot", "unread", "appointments", "customers", "leads", "comments"]
 
     /// Normaliza la lista guardada: `all` siempre presente y al inicio.
     static func normalized(_ stored: [String]) -> [String] {
-        var result = stored.filter { !$0.isEmpty }
+        var result = stored.filter { !$0.isEmpty && $0 != "goal_completed" }
         result.removeAll { $0 == "all" }
         result.insert("all", at: 0)
+        result.removeAll { $0 == "chatbot" }
+        result.insert("chatbot", at: min(1, result.count))
         return result
+    }
+}
+
+enum ChatbotInboxStatusFilter: String, CaseIterable, Sendable {
+    case all
+    case active
+    case paused
+    case completed
+
+    var title: String {
+        switch self {
+        case .all: return "Todos"
+        case .active: return "Activos"
+        case .paused: return "Pausados 24 horas"
+        case .completed: return "Meta cumplida"
+        }
+    }
+}
+
+enum ChatbotInboxVisibility {
+    static func matches(
+        contact: ChatContact,
+        states: [ConversationAgentState],
+        statusFilter: ChatbotInboxStatusFilter
+    ) -> Bool {
+        let hasActive = states.contains { $0.status.lowercased() == "active" }
+        let hasPaused = states.contains { $0.status.lowercased() == "paused" }
+        let hasCompleted = contact.agentGoalCompletedUnreviewed
+        switch statusFilter {
+        case .active: return hasActive
+        case .paused: return hasPaused
+        case .completed: return hasCompleted
+        case .all: return hasActive || hasPaused || hasCompleted
+        }
     }
 }
 

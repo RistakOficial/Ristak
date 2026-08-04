@@ -28,6 +28,15 @@ struct AgentStateService: Sendable {
         )
     }
 
+    /// Estados de todas las conversaciones, acotados a los estados que usa la
+    /// bandeja Chatbot. Evita consultar contacto por contacto.
+    func fetchStates(statuses: [String] = []) async throws -> [ConversationAgentState] {
+        try await client.get(
+            "/conversational-agent/states",
+            query: ["statuses": statuses.isEmpty ? nil : statuses.joined(separator: ",")]
+        )
+    }
+
     /// `POST /states/:contactId` — `pause`/`resume`/`take_over`/`skip`/
     /// `activate`/`clear_signal`. En multi-agente, la confirmación
     /// "pausar y enviar" debe iterar TODOS los estados activos (un POST por

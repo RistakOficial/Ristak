@@ -95,6 +95,8 @@ final class InboxViewModel {
     // MARK: Estado de datos
 
     private(set) var rows: [ChatContact] = []
+    private(set) var chatbotGoalRows: [ChatContact] = []
+    private(set) var chatbotStatesByContactID: [String: [ConversationAgentState]] = [:]
     private(set) var hasMore = false
     private(set) var isInitialLoading = false
     private(set) var isLoadingMore = false
@@ -185,6 +187,7 @@ final class InboxViewModel {
     // MARK: Filtros
 
     private(set) var activeFilter: ChatInboxFilter = .quick(.all)
+    private(set) var chatbotStatusFilter: ChatbotInboxStatusFilter = .all
     private(set) var commentsPlatform: ChatCommentsPlatform = .all
     private(set) var archivedViewActive = false
 
@@ -294,6 +297,8 @@ final class InboxViewModel {
         unknownContactResolutionIDs.removeAll()
         unknownActivityBuffer.removeAll()
         rows = []
+        chatbotGoalRows = []
+        chatbotStatesByContactID = [:]
         cachedFallbackRows = []
         initialFreshResponseResolved = false
         hasMore = false
@@ -313,6 +318,7 @@ final class InboxViewModel {
         searchText = ""
         searchServerUnavailable = false
         activeFilter = .quick(.all)
+        chatbotStatusFilter = .all
         selectedIDs = []
         isSelecting = false
         isSelectingAll = false
@@ -629,9 +635,6 @@ final class InboxViewModel {
 
     private func applyAgentAvailability(_ enabled: Bool) {
         conversationAgentEnabled = enabled
-        if !enabled, activeFilter.usesGoalCompletedServerScope {
-            select(filter: .quick(.all))
-        }
     }
 
     private func fetchMetaCommentsFlags() async -> (facebook: Bool, instagram: Bool)? {
@@ -715,6 +718,9 @@ final class InboxViewModel {
         }
 
         let fetchKey = currentFetchKey
+        if activeFilter == .quick(.chatbot) {
+            Task { await refreshChatbotStates() }
+        }
         do {
             // `warmProfilePictures=true` puede consultar proveedores externos y
             // convirtio polls de produccion en requests de 8-11 s. Solo se
@@ -725,6 +731,19 @@ final class InboxViewModel {
             // Si el usuario cambió query/número mientras esta carga volaba,
             // descartar el lote (llega otro reload con los params nuevos).
             guard fetchKey == currentFetchKey else { return false }
+            if activeFilter == .quick(.chatbot) {
+                acceptFreshInboxResponse(keepingCachedFallback: false)
+                validateStoredDestinations(in: page)
+                chatbotGoalRows = page
+                serverOffset = page.count
+                hasMore = ChatInboxPaginator.hasMore(batchCount: page.count, limit: ChatsService.defaultPageSize)
+                loadedFetchKey = fetchKey
+                if loadErrorMessage != nil { loadErrorMessage = nil }
+                if isAccessDenied { isAccessDenied = false }
+                prefetchAvatars(page)
+                syncUnreadBadge()
+                return true
+            }
             let wasShowingCachedData = isShowingCachedData
             let hasHiddenCachedFallback = page.isEmpty
                 && rows.isEmpty
@@ -885,6 +904,13 @@ final class InboxViewModel {
             // Descartar lotes si una recarga movió los params mientras tanto.
             guard fetchKey == currentFetchKey, fetchKey == loadedFetchKey else { return }
             validateStoredDestinations(in: page)
+            if activeFilter == .quick(.chatbot) {
+                chatbotGoalRows = ChatInboxPaginator.appendPage(chatbotGoalRows, page: page)
+                prefetchAvatars(page)
+                serverOffset += page.count
+                hasMore = ChatInboxPaginator.hasMore(batchCount: page.count, limit: ChatsService.defaultPageSize)
+                return
+            }
             let appended = ChatInboxPaginator.appendPage(rows, page: page)
             rows = reconcilePendingActivities(in: appended, serverPage: page)
             resolveUnknownActivitiesFromLoadedRows()
@@ -1443,7 +1469,8 @@ final class InboxViewModel {
         guard !query.isEmpty else { return [] }
         let folded = ristakFoldedText(query)
         let digits = ChatRowSignals.digitsOnly(query)
-        return rows.filter { contact in
+        let sourceRows = activeFilter == .quick(.chatbot) ? chatbotInboxRows : rows
+        return sourceRows.filter { contact in
             guard !contact.isCommentOnlyChat else { return false }
             if ristakFoldedText(ChatRowSignals.displayName(contact)).contains(folded) { return true }
             if ristakFoldedText(contact.name).contains(folded) { return true }
@@ -1470,6 +1497,12 @@ final class InboxViewModel {
         guard activeFilter != filter else { return }
         activeFilter = filter
         commentsPlatform = .all
+        if filter == .quick(.chatbot) {
+            chatbotStatusFilter = .all
+            chatbotGoalRows = []
+        } else if wasGoalCompleted {
+            chatbotGoalRows = []
+        }
 
         switch filter {
         case .phone(let id):
@@ -1520,6 +1553,76 @@ final class InboxViewModel {
 
     // MARK: - Filas visibles
 
+    private func chatbotStates(for contactID: String) -> [ConversationAgentState] {
+        chatbotStatesByContactID[contactID] ?? []
+    }
+
+    private func isChatbotContactVisible(
+        _ contact: ChatContact,
+        statusFilter: ChatbotInboxStatusFilter
+    ) -> Bool {
+        ChatbotInboxVisibility.matches(
+            contact: contact,
+            states: chatbotStates(for: contact.id),
+            statusFilter: statusFilter
+        )
+    }
+
+    private var chatbotInboxRows: [ChatContact] {
+        var seen: Set<String> = []
+        var result: [ChatContact] = []
+
+        for contact in chatbotGoalRows where seen.insert(contact.id).inserted {
+            result.append(contact)
+        }
+        for contact in rows where seen.insert(contact.id).inserted {
+            var copy = contact
+            copy.agentGoalCompletedUnreviewed = false
+            result.append(copy)
+        }
+        for state in chatbotStatesByContactID.values.flatMap({ $0 }) {
+            guard ["active", "paused"].contains(state.status.lowercased()),
+                  seen.insert(state.contactId).inserted,
+                  let contact = Self.makeChatbotContact(from: state) else { continue }
+            result.append(contact)
+        }
+        return result.filter { isChatbotContactVisible($0, statusFilter: .all) }
+    }
+
+    private static func makeChatbotContact(from state: ConversationAgentState) -> ChatContact? {
+        guard !state.contactId.isEmpty else { return nil }
+        let fallbackDate = state.updatedAt ?? state.activatedAt ?? state.signalAt
+        let payload: [String: Any] = [
+            "id": state.contactId,
+            "name": state.contactName ?? state.contactPhone ?? "Contacto sin nombre",
+            "phone": state.contactPhone ?? "",
+            "status": "lead",
+            "createdAt": fallbackDate ?? "",
+            "lastMessageDate": fallbackDate ?? "",
+            "lastMessageText": state.signalSummary ?? "",
+            "lastMessageDirection": "system",
+            "unreadCount": 0,
+            "messageCount": 0,
+        ]
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
+        return try? JSONDecoder().decode(ChatContact.self, from: data)
+    }
+
+    var chatbotStatusCounts: [ChatbotInboxStatusFilter: Int] {
+        var counts = Dictionary(uniqueKeysWithValues: ChatbotInboxStatusFilter.allCases.map { ($0, 0) })
+        for contact in chatbotInboxRows where !localState.isArchived(contact.id) {
+            for status in ChatbotInboxStatusFilter.allCases where isChatbotContactVisible(contact, statusFilter: status) {
+                counts[status, default: 0] += 1
+            }
+        }
+        return counts
+    }
+
+    func selectChatbotStatus(_ status: ChatbotInboxStatusFilter) {
+        chatbotStatusFilter = status
+    }
+
     /// Filas a pintar: archivados fuera de la bandeja normal, lente de
     /// comentarios, filtro activo y orden (doc 03 §4.2/§3.1).
     var displayRows: [ChatContact] {
@@ -1527,7 +1630,8 @@ final class InboxViewModel {
         // del servidor no cacheados salen aparte en «Contactos encontrados».
         if isSearchActive { return localSearchMatches }
 
-        let locallyPresentedRows = rows.map { contact -> ChatContact in
+        let sourceRows = activeFilter == .quick(.chatbot) ? chatbotInboxRows : rows
+        let locallyPresentedRows = sourceRows.map { contact -> ChatContact in
             guard localState.isManuallyUnread(contact.id), contact.visibleUnreadCount == 0 else {
                 return contact
             }
@@ -1577,6 +1681,9 @@ final class InboxViewModel {
 
         switch activeFilter {
         case .quick(let quick):
+            if quick == .chatbot {
+                return isChatbotContactVisible(contact, statusFilter: chatbotStatusFilter)
+            }
             return ChatRowSignals.matchesQuick(quick, contact: contact)
         case .phone(let id):
             guard let number = phoneNumbers.first(where: { $0.id == id }) else { return true }
@@ -1590,7 +1697,7 @@ final class InboxViewModel {
     }
 
     func row(for contactID: String) -> ChatContact? {
-        let authoritative = rows.first { $0.id == contactID }
+        let authoritative = (activeFilter == .quick(.chatbot) ? chatbotInboxRows : rows).first { $0.id == contactID }
         let directory = directoryContactByID[contactID]
         var persisted = localState.destinationPhone(for: contactID)
         if let storedPhone = persisted,
@@ -1675,6 +1782,10 @@ final class InboxViewModel {
         for index in rows.indices where idSet.contains(rows[index].id) {
             rows[index].unreadCount = 0
             rows[index].agentGoalCompletedUnreviewed = false
+        }
+        for index in chatbotGoalRows.indices where idSet.contains(chatbotGoalRows[index].id) {
+            chatbotGoalRows[index].unreadCount = 0
+            chatbotGoalRows[index].agentGoalCompletedUnreviewed = false
         }
         syncUnreadBadge()
     }
@@ -1814,11 +1925,7 @@ final class InboxViewModel {
 
     var chipModels: [ChatFilterChipModel] {
         var models: [ChatFilterChipModel] = []
-        var chipIDs = visibleChipIDs.filter { $0 != ChatQuickFilter.goalCompleted.rawValue }
-        if conversationAgentEnabled {
-            let insertionIndex = min(1, chipIDs.count)
-            chipIDs.insert(ChatQuickFilter.goalCompleted.rawValue, at: insertionIndex)
-        }
+        let chipIDs = visibleChipIDs.filter { $0 != "goal_completed" }
         for chipID in chipIDs {
             guard let filter = ChatInboxFilter(chipID: chipID) else { continue }
             guard let model = chipModel(for: filter) else { continue }
@@ -1836,7 +1943,7 @@ final class InboxViewModel {
                 title: quickChipTitle(quick),
                 count: quick == .unread ? unreadTotal : nil,
                 isSelected: activeFilter == filter,
-                showsAgentBotIcon: quick == .goalCompleted,
+                showsAgentBotIcon: quick == .chatbot,
                 leadingDivider: quick == .comments
             )
         case .phone(let id):
@@ -1869,7 +1976,7 @@ final class InboxViewModel {
     private func quickChipTitle(_ quick: ChatQuickFilter) -> String {
         switch quick {
         case .all: return "Todos"
-        case .goalCompleted: return "Meta completada"
+        case .chatbot: return "Chatbot"
         case .unread: return "No leídos"
         case .appointments: return "Agendados"
         case .customers: return customLabels.customers
@@ -1885,14 +1992,13 @@ final class InboxViewModel {
         var sections: [ChatFilterManagerSection] = []
 
         let quickEntries = ChatQuickFilter.allCases
-            .filter { $0 != .goalCompleted }
             .map { quick in
                 ChatFilterManagerEntry(
                     chipID: quick.rawValue,
                     title: quickChipTitle(quick),
                     subtitle: quick.managerDescription,
                     isVisible: visible.contains(quick.rawValue),
-                    isLocked: quick == .all
+                    isLocked: quick == .all || quick == .chatbot
                 )
             }
         sections.append(ChatFilterManagerSection(title: "Rápidos", entries: quickEntries))
@@ -2259,6 +2365,13 @@ final class InboxViewModel {
     }
 
     // MARK: - Agente conversacional (sheet «Más acciones», doc 03 §4.4)
+
+    private func refreshChatbotStates() async {
+        guard activeFilter == .quick(.chatbot) else { return }
+        guard let states = try? await agentService.fetchStates(statuses: ["active", "paused"]),
+              activeFilter == .quick(.chatbot) else { return }
+        chatbotStatesByContactID = Dictionary(grouping: states.filter { !$0.contactId.isEmpty }, by: \.contactId)
+    }
 
     /// Estados del agente para el contacto; errores/403 silenciosos → [].
     func loadAgentStates(contactID: String) async -> [ConversationAgentState] {

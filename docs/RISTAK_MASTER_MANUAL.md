@@ -2811,6 +2811,15 @@ bandeja normal, sin teñir el panel completo. Al elegir cualquier filtro normal
 se cierra el segundo nivel y la bandeja vuelve al inventario general
 correspondiente.
 
+Este mismo contrato aplica a las tres superficies móviles (`/movil`, Android
+React Native e iOS SwiftUI): `Chatbot` queda fijo después de `Todos`, elimina el
+robot flotante del encabezado de la bandeja y despliega el mismo segundo nivel.
+Las apps consultan por separado los estados globales `active`/`paused` y las
+metas `goalCompletedUnreviewed`, y unen únicamente esos resultados. El panel no
+cambia de color al activar el filtro; solamente cambia el estado del chip. Los
+controles contextuales del agente dentro de una conversación no forman parte de
+este acceso de bandeja y se conservan.
+
 El historial de `/chat` conserva una textura punteada ligera, con los puntos
 espaciados para que el fondo se sienta limpio y no compita con los mensajes.
 
@@ -3000,18 +3009,16 @@ Configuracion > Privacidad guarda
 el marcado local como leido, pero no manda acuses externos de visto a WhatsApp
 API/YCloud, WhatsApp QR/Baileys, Messenger ni Instagram.
 
-Desktop e iOS muestran automáticamente el filtro **Meta completada** con icono
-de robot cuando existe al menos un agente conversacional habilitado. No es un
-filtro local ni una preferencia que el usuario pueda quitar: `/contacts/chats`
-recibe `goalCompletedUnreviewed=true` y selecciona antes de paginar únicamente
-estados `completed` con una señal canónica de objetivo cuyo `signal_at` sea
-posterior a la apertura humana más reciente del contacto. El campo de respuesta
-`agentGoalCompletedUnreviewed` expone la misma regla. Tocar el filtro no cuenta
-como revisión ni abre automáticamente la primera fila; abrir una conversación
-sí actualiza `chat_read_states`, la retira para todo el equipo y mantiene el
-hilo visible mientras la persona lo revisa. Si después el agente completa una
-nueva meta, el chat reaparece. Al deshabilitar el último agente el chip
-desaparece y cualquier vista activa regresa a `Todos`.
+Desktop y las tres superficies móviles exponen **Meta cumplida** como subfiltro
+de **Chatbot**, no como filtro principal independiente. No es un filtro local:
+`/contacts/chats` recibe `goalCompletedUnreviewed=true` y selecciona antes de
+paginar únicamente estados `completed` con una señal canónica de objetivo cuyo
+`signal_at` sea posterior a la apertura humana más reciente del contacto. El
+campo de respuesta `agentGoalCompletedUnreviewed` expone la misma regla. Tocar
+el subfiltro no cuenta como revisión ni abre automáticamente la primera fila;
+abrir una conversación sí actualiza `chat_read_states`, la retira para todo el
+equipo y mantiene el hilo visible mientras la persona lo revisa. Si después el
+agente completa una nueva meta, el chat reaparece.
 
 En el chat movil, el selector de canal del composer no debe mostrar rutas
 fantasma: lista cada numero de WhatsApp conectado como opcion separada y envia el
@@ -3544,6 +3551,13 @@ desktop. Los filtros condicionales guardados viven en
 pueden combinar reglas con modo todas/cualquiera, soportan numero de WhatsApp,
 segmento, canal, origen, red social, etapa, actividad, etiquetas y campos
 personalizados, y pueden editarse o eliminarse desde el mismo panel.
+
+`Chatbot` es un chip principal fijo de `/movil`, `mobile/` e `ios/app`. Al
+seleccionarlo, debajo de los filtros normales aparece un bloque separado con
+`Todos`, `Activos`, `Pausados 24 horas` y `Meta cumplida`. La union `Todos` de
+ese bloque contiene solamente chats activos, pausados o con meta pendiente de
+abrir; nunca se rellena con toda la bandeja ni con omitidos/no asignados. Esta
+seleccion tampoco pinta el panel de otro color.
 
 Las fotos de perfil de contactos WhatsApp se guardan en
 `whatsapp_api_contacts.profile_picture_url`, no en el perfil del numero de
