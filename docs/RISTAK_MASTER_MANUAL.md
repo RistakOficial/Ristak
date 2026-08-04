@@ -5866,6 +5866,16 @@ Tracking:
   Las URLs en modo sin tracking, incluidos `?notrack` y `?no_track=1`, omiten
   completamente ambos códigos administrados antes de entregar el HTML, por lo
   que scripts de terceros como Microsoft Clarity tampoco se ejecutan.
+- Cuando un Site público sí carga Clarity desde esos headers, Ristak agrega un
+  puente administrado que identifica la sesión con IDs first-party opacos y
+  marca clicks, acciones de botones, formularios, popups/modales, navegación a
+  otra ventana y eventos/hitos de video. No transmite textos ni valores de
+  campos. Las ventanas CSS basadas sólo en `:target` se materializan como cambios
+  de DOM para que Clarity pueda reconstruirlas; esto corrige modales cuyo estado
+  visual antes cambiaba sin dejar una mutación grabable. Iframes de terceros,
+  canvas y pestañas externas conservan la limitación del navegador: se registra
+  la acción, no el contenido visual ajeno. Preview y `no_track` no cargan este
+  puente.
 - El incidente de CORS del 15 de julio de 2026, la frontera de seguridad, las
   reglas para Cloudflare/CDN y el procedimiento end-to-end viven en
   `docs/TRACKING_PIXEL.md`. Cualquier agente que optimice o audite esta tubería

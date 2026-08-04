@@ -27226,6 +27226,382 @@ function buildNativeSiteTrackingScript(context) {
   </script>`
 }
 
+function buildClarityInteractionBridgeScript(context = {}, { enabled = true } = {}) {
+  if (!enabled) return ''
+
+  return `
+  <style data-rstk-replay-surface-state>
+    [data-rstk-replay-surface="true"][data-rstk-hash-target-active="true"] {
+      display: var(--rstk-replay-display, block) !important;
+      visibility: var(--rstk-replay-visibility, visible) !important;
+      opacity: var(--rstk-replay-opacity, 1) !important;
+      pointer-events: var(--rstk-replay-pointer-events, auto) !important;
+      transform: var(--rstk-replay-transform, none) !important;
+    }
+    html[data-rstk-replay-surface-open="true"] {
+      overflow: var(--rstk-replay-html-overflow, visible) !important;
+    }
+    html[data-rstk-replay-surface-open="true"] body {
+      overflow: var(--rstk-replay-body-overflow, visible) !important;
+    }
+  </style>
+  <script data-rstk-clarity-interaction-bridge>
+    (() => {
+      if (window.ristakClarityInteractionBridgeLoaded) return;
+      window.ristakClarityInteractionBridgeLoaded = true;
+
+      const RSTK_CONTEXT = ${scriptJson(context)};
+      const SURFACE_SELECTOR = [
+        '[data-rstk-site-popup]',
+        'dialog',
+        '[role="dialog"]',
+        '[aria-modal="true"]',
+        '[popover]',
+        '[data-popup]',
+        '[data-modal]',
+        '[data-dialog]',
+        '[class*="popup" i]',
+        '[class*="modal" i]',
+        '[class*="lightbox" i]',
+        '[id*="popup" i]',
+        '[id*="modal" i]',
+        '[id*="dialog" i]'
+      ].join(',');
+      const ACTIONABLE_SELECTOR = [
+        'button',
+        'a[href]',
+        'input[type="button"]',
+        'input[type="submit"]',
+        'input[type="image"]',
+        '[role="button"]',
+        '[data-rstk-button-action]',
+        '[data-rstk-button-actions]',
+        '[data-ristak-button-action]',
+        '[data-ristak-button-actions]',
+        '[data-ristack-button-action]',
+        '[data-ristack-button-actions]'
+      ].join(',');
+      const REPLAY_STYLE_PROPERTIES = [
+        ['display', '--rstk-replay-display'],
+        ['visibility', '--rstk-replay-visibility'],
+        ['opacity', '--rstk-replay-opacity'],
+        ['pointerEvents', '--rstk-replay-pointer-events'],
+        ['transform', '--rstk-replay-transform']
+      ];
+      const surfaceStates = new WeakMap();
+      const videoMilestones = new Map();
+      const priorityEvents = new Set(['surface_open', 'form_submit_attempt', 'form_submitted', 'form_disqualified']);
+      let activeHashSurface = null;
+      let surfaceScanQueued = false;
+      let initialized = false;
+      let clarityIdentified = false;
+
+      const cleanToken = (value, fallback = '') => {
+        let text = String(value || '').trim().toLowerCase();
+        try { text = text.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch (_) {}
+        text = text
+          .replace(/[^a-z0-9_-]+/g, '_')
+          .replace(/^_+|_+$/g, '')
+          .replace(/_{2,}/g, '_');
+        return (text || fallback).slice(0, 96);
+      };
+      const cleanIdentifier = value => String(value || '')
+        .trim()
+        .replace(/[^A-Za-z0-9_-]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 120);
+      const callClarity = (...args) => {
+        try {
+          if (typeof window.clarity !== 'function') return false;
+          window.clarity(...args);
+          return true;
+        } catch (_) {
+          return false;
+        }
+      };
+      const setClarityTag = (key, value) => {
+        const safeKey = cleanToken(key);
+        const safeValue = cleanToken(value);
+        if (!safeKey || !safeValue) return false;
+        return callClarity('set', safeKey.slice(0, 120), safeValue.slice(0, 240));
+      };
+      const track = (category, descriptor = '') => {
+        const safeCategory = cleanToken(category, 'interaction');
+        const safeDescriptor = cleanToken(descriptor);
+        const eventName = ['rstk', safeCategory, safeDescriptor].filter(Boolean).join('__').slice(0, 240);
+        if (!callClarity('event', eventName)) return '';
+        if (priorityEvents.has(safeCategory)) callClarity('upgrade', safeCategory);
+        setClarityTag('ristak_last_event', eventName);
+        if (safeDescriptor) setClarityTag('ristak_last_control', safeDescriptor);
+        return eventName;
+      };
+      window.ristakClarityTrack = (category, detail = {}) => {
+        const source = detail && typeof detail === 'object' ? detail : { id: detail };
+        const descriptor = [source.action, source.kind, source.id, source.state]
+          .map(value => cleanToken(value))
+          .filter(Boolean)
+          .join('_');
+        return track(category, descriptor);
+      };
+
+      const identifyClaritySession = () => {
+        if (clarityIdentified) return true;
+        let identity = null;
+        try {
+          identity = typeof window.ristakNativeIdentity === 'function'
+            ? window.ristakNativeIdentity() || null
+            : null;
+        } catch (_) {
+          identity = null;
+        }
+        const visitorId = cleanIdentifier(identity && identity.visitorId);
+        const sessionId = cleanIdentifier(identity && identity.sessionId);
+        const siteId = cleanIdentifier(RSTK_CONTEXT.siteId);
+        const pageId = cleanIdentifier(RSTK_CONTEXT.pageId);
+        if (!visitorId || !sessionId || !callClarity('identify', visitorId, sessionId, [siteId, pageId].filter(Boolean).join(':'))) {
+          return false;
+        }
+        clarityIdentified = true;
+        setClarityTag('ristak_site_id', siteId);
+        setClarityTag('ristak_page_id', pageId);
+        setClarityTag('ristak_site_type', RSTK_CONTEXT.siteType || 'site');
+        setClarityTag('ristak_tracking_source', 'native_site');
+        return true;
+      };
+
+      const readActions = element => {
+        if (!element || !element.getAttribute) return [];
+        const raw = element.getAttribute('data-rstk-button-actions') ||
+          element.getAttribute('data-ristak-button-actions') ||
+          element.getAttribute('data-ristack-button-actions') || '';
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) return parsed.filter(item => item && item.action);
+          } catch (_) {}
+        }
+        const legacyAction = element.getAttribute('data-rstk-button-action') ||
+          element.getAttribute('data-ristak-button-action') ||
+          element.getAttribute('data-ristack-button-action') || '';
+        return legacyAction ? [{ action: legacyAction }] : [];
+      };
+      const describeControl = element => {
+        const customEvent = element.getAttribute('data-rstk-track-event') || '';
+        const firstAction = readActions(element)[0] || null;
+        const isSubmit = element.matches('button[type="submit"],input[type="submit"],input[type="image"]') ||
+          (element.tagName === 'BUTTON' && !element.getAttribute('type'));
+        const kind = cleanToken(
+          customEvent ? 'custom' :
+            firstAction && firstAction.action ? firstAction.action :
+              isSubmit ? 'submit' :
+                element.matches('a[href]') ? 'link' :
+                  element.getAttribute('role') === 'button' ? 'role_button' : 'button'
+        );
+        const id = cleanToken(
+          customEvent ||
+          (firstAction && firstAction.id) ||
+          element.getAttribute('data-rstk-video-action-target') ||
+          element.getAttribute('data-rstk-native-id') ||
+          element.id || ''
+        );
+        return { kind, id };
+      };
+      const stableElementId = element => cleanToken(
+        element && element.getAttribute
+          ? element.getAttribute('data-rstk-track-event') ||
+            element.getAttribute('data-rstk-native-id') ||
+            element.getAttribute('data-rstk-form-id') ||
+            element.getAttribute('data-rstk-field-id') ||
+            element.getAttribute('data-rstk-block-id') ||
+            element.getAttribute('data-rstk-video-action-target') ||
+            element.id ||
+            element.tagName || ''
+          : ''
+      );
+
+      const isReplaySurface = element => Boolean(element && element.matches && element.matches(SURFACE_SELECTOR));
+      const isSurfaceVisible = element => {
+        if (!element || !element.isConnected || element.hidden) return false;
+        let computed = null;
+        try { computed = window.getComputedStyle(element); } catch (_) { computed = null; }
+        if (!computed) return false;
+        if (computed.display === 'none' || computed.visibility === 'hidden' || Number(computed.opacity || 1) <= 0.001) return false;
+        let rect = null;
+        try { rect = element.getBoundingClientRect(); } catch (_) { rect = null; }
+        return !rect || rect.width > 0 || rect.height > 0 || computed.position === 'fixed';
+      };
+      const surfaceId = element => stableElementId(element) || cleanToken(element && element.className, 'surface');
+      const scanSurfaces = (initial = false) => {
+        surfaceScanQueued = false;
+        const surfaces = Array.from(document.querySelectorAll(SURFACE_SELECTOR));
+        surfaces.forEach(element => {
+          const visible = isSurfaceVisible(element);
+          const previous = surfaceStates.get(element);
+          surfaceStates.set(element, visible);
+          if (previous === undefined) {
+            if (!initial && visible) track('surface_open', surfaceId(element));
+            return;
+          }
+          if (previous === visible) return;
+          track(visible ? 'surface_open' : 'surface_close', surfaceId(element));
+        });
+      };
+      const scheduleSurfaceScan = () => {
+        if (surfaceScanQueued) return;
+        surfaceScanQueued = true;
+        const schedule = typeof window.requestAnimationFrame === 'function'
+          ? window.requestAnimationFrame.bind(window)
+          : callback => window.setTimeout(callback, 0);
+        schedule(() => scanSurfaces(false));
+      };
+      const clearHashSurfaceState = element => {
+        if (!element) return;
+        element.removeAttribute('data-rstk-hash-target-active');
+        element.removeAttribute('data-rstk-replay-surface');
+        REPLAY_STYLE_PROPERTIES.forEach(([, variable]) => element.style && element.style.removeProperty(variable));
+      };
+      const applyHashSurfaceState = element => {
+        if (!isReplaySurface(element)) return false;
+        let computed = null;
+        try { computed = window.getComputedStyle(element); } catch (_) { computed = null; }
+        if (computed && element.style) {
+          REPLAY_STYLE_PROPERTIES.forEach(([property, variable]) => {
+            const value = computed[property];
+            if (value) element.style.setProperty(variable, value);
+          });
+        }
+        element.setAttribute('data-rstk-replay-surface', 'true');
+        element.setAttribute('data-rstk-hash-target-active', 'true');
+        return true;
+      };
+      const syncHashTargetState = () => {
+        if (activeHashSurface) clearHashSurfaceState(activeHashSurface);
+        activeHashSurface = null;
+        let target = null;
+        try {
+          const rawId = String(window.location.hash || '').replace(/^#/, '');
+          const targetId = rawId ? decodeURIComponent(rawId) : '';
+          target = targetId ? document.getElementById(targetId) : null;
+        } catch (_) {
+          target = null;
+        }
+        if (target && applyHashSurfaceState(target)) activeHashSurface = target;
+        const root = document.documentElement;
+        root.removeAttribute('data-rstk-replay-surface-open');
+        root.style.removeProperty('--rstk-replay-html-overflow');
+        root.style.removeProperty('--rstk-replay-body-overflow');
+        if (activeHashSurface) {
+          try {
+            const htmlOverflow = window.getComputedStyle(root).overflow;
+            const bodyOverflow = document.body ? window.getComputedStyle(document.body).overflow : '';
+            if (htmlOverflow) root.style.setProperty('--rstk-replay-html-overflow', htmlOverflow);
+            if (bodyOverflow) root.style.setProperty('--rstk-replay-body-overflow', bodyOverflow);
+          } catch (_) {}
+          root.setAttribute('data-rstk-replay-surface-open', 'true');
+        }
+        scheduleSurfaceScan();
+      };
+
+      const handleActionableClick = event => {
+        const control = event.target && event.target.closest ? event.target.closest(ACTIONABLE_SELECTOR) : null;
+        if (!control) return;
+        const descriptor = describeControl(control);
+        track('click', [descriptor.kind, descriptor.id].filter(Boolean).join('_'));
+
+        if (!control.matches('a[href]')) return;
+        const targetMode = String(control.getAttribute('target') || '').toLowerCase();
+        let destination = null;
+        try { destination = new URL(control.getAttribute('href') || '', window.location.href); } catch (_) { destination = null; }
+        if (targetMode === '_blank') track('window_open', [descriptor.kind, descriptor.id].filter(Boolean).join('_'));
+        if (destination && destination.origin !== window.location.origin) {
+          track('external_navigation', [descriptor.kind, descriptor.id].filter(Boolean).join('_'));
+        }
+      };
+      const handleFieldChange = event => {
+        const field = event.target;
+        if (!field || !field.matches || !field.matches('select,input[type="checkbox"],input[type="radio"],input[type="range"]')) return;
+        const kind = cleanToken(field.type || field.tagName, 'field');
+        track('field_change', [kind, stableElementId(field)].filter(Boolean).join('_'));
+      };
+      const handleToggle = event => {
+        const target = event.target;
+        if (!target || !target.matches || !target.matches('details,[popover]')) return;
+        let open = target.matches('details') ? target.open === true : false;
+        if (!target.matches('details')) {
+          try { open = target.matches(':popover-open'); } catch (_) { open = false; }
+        }
+        track(open ? 'disclosure_open' : 'disclosure_close', stableElementId(target));
+        scheduleSurfaceScan();
+      };
+      const handleVideoPlayback = event => {
+        const detail = event && event.detail ? event.detail : {};
+        const eventName = cleanToken(detail.eventName);
+        const playbackId = cleanToken(detail.playbackId, 'video');
+        const blockId = cleanToken(detail.blockId || detail.videoProvider, 'video');
+        if (!eventName) return;
+        if (eventName !== 'video_progress') {
+          track(eventName, blockId);
+          return;
+        }
+        const percent = Math.max(0, Math.min(100, Number(detail.progressPercent || 0) || 0));
+        const reached = videoMilestones.get(playbackId) || new Set();
+        [10, 25, 50, 75, 90, 100].forEach(milestone => {
+          if (percent < milestone || reached.has(milestone)) return;
+          reached.add(milestone);
+          track('video_' + milestone, blockId);
+        });
+        videoMilestones.set(playbackId, reached);
+      };
+
+      const patchWindowOpen = () => {
+        const originalOpen = window.open;
+        if (typeof originalOpen !== 'function' || originalOpen.__ristakClarityWrapped) return;
+        const wrappedOpen = function (...args) {
+          track('window_open', 'programmatic');
+          return originalOpen.apply(this, args);
+        };
+        try { Object.defineProperty(wrappedOpen, '__ristakClarityWrapped', { value: true }); } catch (_) {}
+        try { window.open = wrappedOpen; } catch (_) {}
+      };
+      const start = () => {
+        if (initialized) return;
+        initialized = true;
+        identifyClaritySession();
+        [500, 2000, 5000].forEach(delay => window.setTimeout(identifyClaritySession, delay));
+        syncHashTargetState();
+        scanSurfaces(true);
+        patchWindowOpen();
+        document.addEventListener('click', handleActionableClick, true);
+        document.addEventListener('change', handleFieldChange, true);
+        document.addEventListener('submit', event => {
+          track('form_submit_attempt', stableElementId(event.target));
+        }, true);
+        document.addEventListener('toggle', handleToggle, true);
+        window.addEventListener('hashchange', syncHashTargetState);
+        window.addEventListener('popstate', syncHashTargetState);
+        window.addEventListener('ristak:native-ready', identifyClaritySession);
+        window.addEventListener('ristak:submitted', event => {
+          const status = cleanToken(event && event.detail && event.detail.status, 'submitted');
+          track('form_submitted', status);
+        });
+        window.addEventListener('ristak:disqualified', () => track('form_disqualified'));
+        window.addEventListener('ristak:video-playback', handleVideoPlayback);
+        if (typeof MutationObserver === 'function') {
+          const observer = new MutationObserver(scheduleSurfaceScan);
+          observer.observe(document.documentElement, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            attributeFilter: ['class', 'style', 'hidden', 'open', 'aria-hidden', 'aria-modal']
+          });
+        }
+      };
+
+      start();
+    })();
+  </script>`
+}
+
 function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
   if (!enabled) return ''
 
@@ -27475,6 +27851,19 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
           ts: Date.now(),
           data
         };
+        try {
+          window.dispatchEvent(new CustomEvent('ristak:video-playback', {
+            detail: {
+              eventName,
+              playbackId: meta.playbackId,
+              blockId: meta.blockId || null,
+              videoProvider: meta.videoProvider || 'bunny_stream',
+              positionSeconds: position,
+              durationSeconds: duration,
+              progressPercent: percent
+            }
+          }));
+        } catch (_) {}
         const body = JSON.stringify(payload);
         if (options.beacon && navigator.sendBeacon) {
           try {
@@ -31373,8 +31762,16 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
         const beforeTerminal = actions.filter(item => item !== terminal);
         return { beforeTerminal, terminal };
       };
+      const trackAction = (action) => {
+        if (!action || typeof window.ristakClarityTrack !== 'function') return;
+        window.ristakClarityTrack('action', {
+          action: action.action,
+          id: action.id || action.buttonPageId || ''
+        });
+      };
       const runOneAction = async (source, action, context = {}) => {
         if (!action || !action.action || action.action === 'none') return;
+        trackAction(action);
         if (action.action === 'submit') {
           await submitFormAndWait(source.closest ? source.closest('form') : context.form, source);
           return;
@@ -31407,6 +31804,7 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
       };
       const runTerminalAction = (source, action) => {
         if (!action) return;
+        trackAction(action);
         if (action.action === 'url') {
           const targetUrl = action.buttonUrl || (source.getAttribute ? source.getAttribute('href') : '') || '';
           if (targetUrl) window.location.href = preserveUrl(targetUrl);
@@ -31487,6 +31885,14 @@ async function buildImportedHtmlRuntimeInjection(site, imported, {
       endpoint: '/collect'
     })
     : ''
+  const clarityInteractionBridge = trackingEnabled && !preview
+    ? buildClarityInteractionBridgeScript({
+      siteId: site.id,
+      siteSlug: site.slug,
+      siteType: site.siteType,
+      pageId: activePageId
+    })
+    : ''
   const videoTrackingScript = trackingEnabled ? buildVideoPlaybackTrackingScript({ enabled: true }) : ''
   const buttonActionScript = buildImportedButtonActionScript(site, { pageId: activePageId, linkStyle })
   const captureScript = buildImportedFormCaptureScript(site, imported, { pageId: activePageId })
@@ -31498,7 +31904,7 @@ async function buildImportedHtmlRuntimeInjection(site, imported, {
   // body: helpers/eventos y demás runtime (se inyecta antes de </body>).
   return {
     head: metaPixel.head,
-    body: `${paramPreservationScript}${nativeTrackingScript}${metaPixel.body}${videoTrackingScript}${buttonActionScript}${captureScript}${popupHtml}`
+    body: `${paramPreservationScript}${nativeTrackingScript}${metaPixel.body}${clarityInteractionBridge}${videoTrackingScript}${buttonActionScript}${captureScript}${popupHtml}`
   }
 }
 
@@ -36028,6 +36434,14 @@ export async function renderPublicSiteHtml(site, {
       pageContextToken: cleanString(pageTrackingContext?.token)
     })
     : ''
+  const clarityInteractionBridge = trackingEnabled && !preview
+    ? buildClarityInteractionBridgeScript({
+      siteId: site.id,
+      siteSlug: site.slug,
+      siteType: site.siteType,
+      pageId: activePage?.id || ''
+    })
+    : ''
   const videoTrackingScript = !noTrack ? buildVideoPlaybackTrackingScript({ enabled: true }) : ''
   // Paridad preview/publicado (pipeline #8): el runtime de acciones de video corre igual en preview.
   const videoActionsScript = buildVideoActionsRuntimeScript(videoLookupBlocks)
@@ -37606,6 +38020,7 @@ export async function renderPublicSiteHtml(site, {
   </script>
   ${nativeTrackingScript}
   ${metaPixel.body}
+  ${clarityInteractionBridge}
   ${videoTrackingScript}
 </body>
 </html>`, { publicHost })

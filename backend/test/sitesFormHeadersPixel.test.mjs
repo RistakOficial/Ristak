@@ -10,6 +10,7 @@ import {
   createImportedSiteFromHtml,
   deleteSite,
   getImportedSiteAssetResponse,
+  getSite,
   renderPublicSiteHtml,
   resolvePublicSitePersonalizationContactId,
   siteUsesContactTemplateVariables,
@@ -159,6 +160,8 @@ test('standard form public pages render global/page headers and page Meta Pixel 
       assert.match(html, /fetch\('\/api\/sites\/public\/meta-event'/)
       assert.match(html, /ristakMetaBuildMetaPayload/)
       assert.match(html, /eventTime: Date\.now\(\)/)
+      assert.match(html, /data-rstk-clarity-interaction-bridge/)
+      assert.match(html, /window\.ristakClarityTrack/)
     }
   } finally {
     if (previousPixelId === undefined) {
@@ -192,6 +195,7 @@ test('public notrack URLs omit global and page managed headers before delivery',
     assert.equal(trackingEnabled, false)
     assert.doesNotMatch(html, /__rstkGlobalHeader/)
     assert.doesNotMatch(html, /__rstkFormHeader/)
+    assert.doesNotMatch(html, /data-rstk-clarity-interaction-bridge/)
   }
 
   const trackedUrl = '/form-headers-pixel?notrack=0'
@@ -208,6 +212,79 @@ test('public notrack URLs omit global and page managed headers before delivery',
 
   assert.match(trackedHtml, /__rstkGlobalHeader/)
   assert.match(trackedHtml, /__rstkFormHeader/)
+  assert.match(trackedHtml, /data-rstk-clarity-interaction-bridge/)
+})
+
+test('Clarity bridge materializes CSS hash modals and records safe Site interactions', async () => {
+  let siteId = ''
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'clarity-hash-modal.html',
+      name: `Clarity hash modal ${randomUUID()}`,
+      siteType: 'landing_page',
+      fileBase64: Buffer.from(`
+        <!doctype html>
+        <html>
+          <head>
+            <style>
+              #solicitud-panel { display: none; }
+              #solicitud-panel:target { display: grid; }
+            </style>
+          </head>
+          <body>
+            <a href="#solicitud-panel" data-rstk-button-actions='[{"id":"abrir-solicitud-principal","action":"url","buttonUrl":"#solicitud-panel"}]'>Solicitar información</a>
+            <section id="solicitud-panel" role="dialog" aria-modal="true">
+              <form data-rstk-form-id="solicitud-medicos">
+                <input name="email" type="email">
+                <button type="submit">Enviar</button>
+              </form>
+            </section>
+          </body>
+        </html>
+      `, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    const site = await getSite(siteId, { includeBlocks: true })
+
+    const trackedHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+    const bridgeMatch = trackedHtml.match(/<script data-rstk-clarity-interaction-bridge>([\s\S]*?)<\/script>/)
+
+    assert.ok(bridgeMatch, 'el sitio público debe incluir el puente administrado de Clarity')
+    assert.match(trackedHtml, /data-rstk-replay-surface-state/)
+    assert.match(trackedHtml, /data-rstk-hash-target-active/)
+    assert.match(trackedHtml, /data-rstk-replay-surface-open/)
+    assert.match(bridgeMatch[1], /window\.addEventListener\('hashchange', syncHashTargetState\)/)
+    assert.match(bridgeMatch[1], /window\.clarity\(\.\.\.args\)/)
+    assert.match(bridgeMatch[1], /callClarity\('identify', visitorId, sessionId/)
+    assert.match(bridgeMatch[1], /track\('form_submit_attempt'/)
+    assert.match(bridgeMatch[1], /callClarity\('upgrade', safeCategory\)/)
+    assert.match(bridgeMatch[1], /track\('window_open'/)
+    assert.match(bridgeMatch[1], /\[10, 25, 50, 75, 90, 100\]/)
+    assert.doesNotMatch(bridgeMatch[1], /field\.value|textContent|innerText/)
+    assert.match(trackedHtml, /const trackAction = \(action\) =>/)
+    assert.match(trackedHtml, /new CustomEvent\('ristak:video-playback'/)
+
+    const noTrackHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: false
+    })
+    const previewHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: true
+    })
+
+    assert.doesNotMatch(noTrackHtml, /data-rstk-clarity-interaction-bridge/)
+    assert.doesNotMatch(previewHtml, /data-rstk-clarity-interaction-bridge/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
 })
 
 test('public Site render resolves variable fields in global/page headers and escapes headline values', async () => {

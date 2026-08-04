@@ -246,6 +246,45 @@ una variable reintrodujera markup ejecutable después de la frontera XSS. El
 header administrado del mismo Site sí se resuelve; cualquier soporte futuro
 dentro de HTML importado requiere parseo contextual y una nueva sanitización.
 
+#### Puente administrado de Clarity en Sites
+
+Una URL pública con tracking activo también recibe el puente administrado de
+interacciones de Sites. El puente no instala Microsoft Clarity ni contiene un
+project ID: usa la función `window.clarity` sólo cuando el código guardado en
+`headerTrackingCode` ya la dejó disponible. Editor, preview y cualquier variante
+`no_track` omiten el puente completo junto con los headers de tracking.
+
+El puente identifica la grabación con los IDs opacos first-party de visitante,
+sesión, Site y página, y emite eventos semánticos seguros para clicks de botones
+y enlaces, ejecución de acciones Ristak, apertura/cierre de superficies,
+intentos y resultados de formularios, navegación externa, apertura de ventanas
+y reproducción de video. El video reporta play/pausa/fin y los hitos 10, 25, 50,
+75, 90 y 100; esos eventos ubican el momento en la línea de tiempo, pero no
+convierten Clarity en una captura de frames del reproductor.
+Las sesiones que abren una superficie o intentan/terminan un formulario usan la
+API `upgrade` de Clarity para priorizar su grabación cuando el proyecto entra en
+muestreo; no cambia el límite ni la política de retención de Microsoft.
+
+No se envían textos de botones, valores de inputs, nombres, correos, teléfonos ni
+respuestas. Los controles se describen únicamente con tipo de acción e IDs
+estables sanitizados. Clarity conserva además su masking propio: Ristak no añade
+`data-clarity-unmask` ni intenta revelar campos sensibles.
+
+Las ventanas hechas sólo con CSS `:target` requieren un contrato adicional. Un
+cambio de `location.hash` puede alterar lo visible sin mutar el DOM y Clarity
+reconstruye sesiones a partir del DOM, no de un video real. Cuando el hash apunta
+a un diálogo, modal o popup, Ristak materializa el estado visible mediante
+`data-rstk-hash-target-active`, `data-rstk-replay-surface` y propiedades CSS
+calculadas; al cerrar, las retira. Así la grabación puede reconstruir la
+superficie aunque su HTML original dependiera exclusivamente de `:target`.
+
+La frontera sigue siendo la del navegador: Clarity no puede mostrar el contenido
+interno de un iframe de terceros, un canvas o una pestaña/ventana externa. Ristak
+sí deja el evento y el destino lógico en la sesión; si la nueva página también es
+un Site público con el mismo proyecto Clarity, esa página genera su propia
+captura identificable. No se debe prometer una grabación de software externo ni
+instalar un snippet dentro de dominios ajenos.
+
 El payload público marca `formFinalSubmit = true` para el envío final de una
 landing, formulario interactivo o última página de un formulario estándar, y
 declara `formFinalMarkerVersion = 2`. Las landings históricas con formulario
