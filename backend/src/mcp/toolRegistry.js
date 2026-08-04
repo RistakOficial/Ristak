@@ -24,6 +24,42 @@ const EPHEMERAL_IDEMPOTENCY_RESULT = Object.freeze({
   __ristakMcpReplayUnavailable: true,
   reason: 'ephemeral'
 })
+const CAPABILITY_SEARCH_STOP_WORDS = new Set([
+  'a', 'al', 'con', 'de', 'del', 'el', 'en', 'la', 'las', 'lo', 'los',
+  'o', 'para', 'por', 'que', 'un', 'una', 'unas', 'unos', 'y'
+])
+const CAPABILITY_SEARCH_TERM_ALIASES = Object.freeze({
+  crear: ['crear', 'crea', 'create', 'add'],
+  crea: ['crear', 'crea', 'create', 'add'],
+  create: ['create', 'crear', 'crea', 'add'],
+  agregar: ['agregar', 'agrega', 'add', 'create'],
+  agrega: ['agregar', 'agrega', 'add', 'create'],
+  contacto: ['contacto', 'contactos', 'contact', 'contacts'],
+  contactos: ['contacto', 'contactos', 'contact', 'contacts'],
+  contact: ['contact', 'contacts', 'contacto', 'contactos'],
+  contacts: ['contact', 'contacts', 'contacto', 'contactos'],
+  calendario: ['calendario', 'calendarios', 'calendar', 'calendars'],
+  calendarios: ['calendario', 'calendarios', 'calendar', 'calendars'],
+  calendar: ['calendar', 'calendars', 'calendario', 'calendarios'],
+  plantilla: ['plantilla', 'plantillas', 'template', 'templates'],
+  plantillas: ['plantilla', 'plantillas', 'template', 'templates'],
+  template: ['template', 'templates', 'plantilla', 'plantillas'],
+  mensaje: ['mensaje', 'mensajes', 'message', 'messages'],
+  mensajes: ['mensaje', 'mensajes', 'message', 'messages'],
+  message: ['message', 'messages', 'mensaje', 'mensajes'],
+  cita: ['cita', 'citas', 'appointment', 'appointments'],
+  citas: ['cita', 'citas', 'appointment', 'appointments'],
+  appointment: ['appointment', 'appointments', 'cita', 'citas'],
+  agendar: ['agendar', 'agenda', 'schedule', 'book', 'booking', 'create'],
+  programar: ['programar', 'schedule', 'scheduled', 'book', 'create'],
+  reservar: ['reservar', 'reserve', 'book', 'booking', 'create'],
+  pausa: ['pausa', 'pausar', 'pause'],
+  pausar: ['pausa', 'pausar', 'pause'],
+  lote: ['lote', 'bulk'],
+  eliminar: ['eliminar', 'delete', 'remove', 'archive'],
+  borrar: ['borrar', 'delete', 'remove', 'archive'],
+  archivar: ['archivar', 'archive']
+})
 
 function makeError(message, code, status = 400, details = null) {
   const error = new Error(message)
@@ -159,6 +195,53 @@ function stableValue(value) {
 
 function sha256(value) {
   return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex')
+}
+
+function normalizeCapabilitySearchText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function capabilitySearchConcepts(value) {
+  return normalizeCapabilitySearchText(value)
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter(term => !CAPABILITY_SEARCH_STOP_WORDS.has(term))
+    .map(term => [...new Set(CAPABILITY_SEARCH_TERM_ALIASES[term] || [term])])
+}
+
+function capabilitySearchScore(entry, concepts) {
+  const nameTokens = new Set(normalizeCapabilitySearchText(entry.name).split(/\s+/).filter(Boolean))
+  const moduleTokens = new Set(normalizeCapabilitySearchText(entry.module).split(/\s+/).filter(Boolean))
+  const titleTokens = new Set(normalizeCapabilitySearchText(entry.title).split(/\s+/).filter(Boolean))
+  const descriptionTokens = new Set(normalizeCapabilitySearchText(entry.description).split(/\s+/).filter(Boolean))
+  let score = 0
+  let matchedConcepts = 0
+
+  for (const aliases of concepts) {
+    let best = 0
+    for (const alias of aliases) {
+      if (nameTokens.has(alias)) best = Math.max(best, 12)
+      else if (moduleTokens.has(alias)) best = Math.max(best, 9)
+      else if (titleTokens.has(alias)) best = Math.max(best, 6)
+      else if (descriptionTokens.has(alias)) best = Math.max(best, 3)
+    }
+    if (best > 0) {
+      matchedConcepts += 1
+      score += best
+    }
+  }
+
+  if (concepts.length && matchedConcepts === concepts.length) {
+    score += concepts.length * 10
+  }
+  const extraNameTokens = Math.max(0, nameTokens.size - matchedConcepts)
+  score -= extraNameTokens * 0.25
+  return { score, matchedConcepts }
 }
 
 function safeJson(value, maxLength = MAX_AUDIT_JSON_LENGTH) {
@@ -483,8 +566,7 @@ async function assertToolAuthorization(context, spec) {
 }
 
 async function searchMcpCapabilities(context, args = {}) {
-  const normalizedQuery = String(args.query || '').trim().toLowerCase()
-  const terms = normalizedQuery.split(/\s+/).filter(Boolean)
+  const concepts = capabilitySearchConcepts(args.query)
   const domain = String(args.domain || '').trim()
   const limit = Math.max(1, Math.min(Number(args.limit) || 20, 50))
   const policyContext = { ...context, connectionPrerequisiteCache: new Map() }
@@ -497,15 +579,15 @@ async function searchMcpCapabilities(context, args = {}) {
     .filter(entry => !args.access || entry.access === args.access)
     .filter(entry => !args.risk || riskLevelFor(entry) === args.risk)
     .map(entry => {
-      const haystack = [entry.name, entry.title, entry.description, entry.module]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase()
-      const score = terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0)
-      return { entry, score }
+      const ranking = capabilitySearchScore(entry, concepts)
+      return { entry, ...ranking }
     })
     .filter(result => result.score > 0)
-    .sort((left, right) => right.score - left.score || left.entry.name.localeCompare(right.entry.name))
+    .sort((left, right) => (
+      right.score - left.score
+      || right.matchedConcepts - left.matchedConcepts
+      || left.entry.name.localeCompare(right.entry.name)
+    ))
 
   return {
     success: true,
@@ -748,6 +830,8 @@ export const __mcpRegistryTestHooks = {
   MCP_DISABLED_TOOL_NAMES,
   riskLevelFor,
   enforcedModulePolicies,
+  capabilitySearchConcepts,
+  capabilitySearchScore,
   searchMcpCapabilities,
   stableValue,
   sanitizeAuditInput,

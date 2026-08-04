@@ -151,13 +151,21 @@ test('el catálogo completa lotes e invitaciones sin herramientas de aprobación
 })
 
 test('búsqueda de capacidades selecciona la acción correcta sin un modelo externo', async () => {
-  const result = await __mcpRegistryTestHooks.searchMcpCapabilities(mcpContext(), {
-    query: 'pausa lote contactos',
-    limit: 5
-  })
-  assert.equal(result.success, true)
-  assert.equal(result.tools[0].name, 'contacts_bulk_action_pause')
-  assert.equal(result.tools.some(tool => tool.name === 'campaigns_builder_draft_create'), false)
+  for (const [query, expected] of [
+    ['pausa lote contactos', 'contacts_bulk_action_pause'],
+    ['crear un contacto', 'contacts_create'],
+    ['crear un calendario', 'appointments_create_calendar'],
+    ['crear una plantilla de mensaje', 'settings_message_template_create'],
+    ['agendar una cita', 'appointments_create']
+  ]) {
+    const result = await __mcpRegistryTestHooks.searchMcpCapabilities(mcpContext(), {
+      query,
+      limit: 5
+    })
+    assert.equal(result.success, true)
+    assert.equal(result.tools[0].name, expected, `resultado incorrecto para: ${query}`)
+    assert.equal(result.tools.some(tool => tool.name === 'campaigns_builder_draft_create'), false)
+  }
 })
 
 test('la bandeja durable entrega, redacta y acusa eventos por grant', async () => {

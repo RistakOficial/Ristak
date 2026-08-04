@@ -130,7 +130,11 @@ invitations can be listed or revoked.
 Every advertised tool has an explicit output schema, OAuth security declaration
 and read/destructive/open-world/idempotency annotations. `mcp_search_capabilities`
 provides deterministic discovery by intent, domain, access and risk so clients do
-not need to load or guess the entire catalog.
+not need to load or guess the entire catalog. Its ranking normalizes common
+Spanish/English action and entity terms, ignores filler words and prioritizes
+matches in the tool name; phrases such as `crear un contacto`, `crear un
+calendario`, `crear una plantilla de mensaje` and `agendar una cita` therefore
+select the corresponding mutation before loosely related tools.
 
 Payment metadata edits cannot change payment status. Recording a payment uses
 `ristak.execute`; refunds, voids and payment-plan cancellation/deletion use
