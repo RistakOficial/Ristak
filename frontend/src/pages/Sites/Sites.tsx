@@ -47021,10 +47021,10 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     ? trackingAggregate.conversionRate
     : null
   const aggregateEntityCount = analyticsSummary?.inventory?.entities?.current ?? null
-  const activeEntityCount = analyticsSummary?.inventory?.entities?.activeInRange ?? null
   const rowsByViews = analyticsSummary?.rankings?.byViews || []
   const rowsByConversions = analyticsSummary?.rankings?.byConversions || []
   const rowsByConversionRate = analyticsSummary?.rankings?.byConversionRate || []
+  const showEntityComparisons = !selectedSiteId
   const entitySeriesChart = (analyticsSummary?.series || []).map(point => ({
     label: formatSitesChartLabel(point.periodKey),
     value: isFormsView ? point.completedSubmissions : point.views,
@@ -47176,7 +47176,9 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     : typeLabel
   const scopeDescription = isVideosView
     ? `${formatSitesCompactNumber(videoInventory?.total)} videos en el alcance · ${formatSitesCompactNumber(videoInventory?.originsTotal)} orígenes · ${selectedVideoMode ? currentVideoLabel : 'vista agregada'} · ${analyticsSummary?.meta?.timezone || 'zona de la cuenta'}`
-    : `${formatSitesCompactNumber(aggregateEntityCount)} ${entityPluralLabel} publicados · ${formatSitesCompactNumber(activeEntityCount)} con actividad en el periodo · ${analyticsSummary?.meta?.timezone || 'zona de la cuenta'}`
+    : selectedSiteId
+      ? `Métricas del ${entityLabel} seleccionado · ${analyticsSummary?.meta?.timezone || 'zona de la cuenta'}`
+      : `Todos los ${entityPluralLabel} publicados · ${analyticsSummary?.meta?.timezone || 'zona de la cuenta'}`
   const kpiCards = isVideosView
     ? selectedVideoMode
       ? [
@@ -47305,74 +47307,65 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
       <>
         {renderSelectedStageJourneyPanel()}
         {renderSelectedConversionPanel()}
-        <div className={styles.sitesAnalyticsGrid}>
-          <div className={styles.sitesAnalyticsChartBlock}>
-            <div className={styles.sitesAnalyticsChartTitle}>
-              <span>{isFormsView ? 'Formularios con más conversiones calificadas' : `${entityPluralTitle} con más vistas`}</span>
-              <strong>{formatSitesCompactNumber(isFormsView ? totalQualifiedConversions : totalSiteViews)}</strong>
+        {showEntityComparisons && (
+          <div className={styles.sitesAnalyticsGrid}>
+            <div className={styles.sitesAnalyticsChartBlock}>
+              <div className={styles.sitesAnalyticsChartTitle}>
+                <span>{isFormsView ? 'Formularios con más conversiones calificadas' : `${entityPluralTitle} con más vistas`}</span>
+                <strong>{formatSitesCompactNumber(isFormsView ? totalQualifiedConversions : totalSiteViews)}</strong>
+              </div>
+              {renderDetailRows(
+                (isFormsView ? rowsByConversions : rowsByViews).slice(0, 5).map(row => ({
+                  key: row.siteId,
+                  icon: isFormsView ? <ListChecks size={15} /> : <Eye size={15} />,
+                  label: row.name,
+                  value: isFormsView
+                    ? `${formatSitesCompactNumber(row.qualifiedConversions)} conversiones`
+                    : `${formatSitesCompactNumber(row.views)} vistas`
+                })),
+                `Sin actividad registrada en estos ${entityPluralLabel}.`
+              )}
             </div>
-            {renderDetailRows(
-              (isFormsView ? rowsByConversions : rowsByViews).slice(0, 5).map(row => ({
-                key: row.siteId,
-                icon: isFormsView ? <ListChecks size={15} /> : <Eye size={15} />,
-                label: row.name,
-                value: isFormsView
-                  ? `${formatSitesCompactNumber(row.qualifiedConversions)} conversiones`
-                  : `${formatSitesCompactNumber(row.views)} vistas`
-              })),
-              `Sin actividad registrada en estos ${entityPluralLabel}.`
-            )}
-          </div>
 
-          <div className={styles.sitesAnalyticsChartBlock}>
-            <div className={styles.sitesAnalyticsChartTitle}>
-              <span>Conversión por {entityLabel}</span>
-              <strong>{formatSitesPercent(conversionRate)}</strong>
+            <div className={styles.sitesAnalyticsChartBlock}>
+              <div className={styles.sitesAnalyticsChartTitle}>
+                <span>Conversión por {entityLabel}</span>
+                <strong>{formatSitesPercent(conversionRate)}</strong>
+              </div>
+              {renderDetailRows(
+                rowsByConversionRate.slice(0, 5).map(row => ({
+                  key: row.siteId,
+                  icon: <BarChart3 size={15} />,
+                  label: row.name,
+                  value: `${formatSitesPercent(row.conversionRate)} · ${formatSitesCompactNumber(row.convertingVisitors)} visitantes`
+                })),
+                `Sin conversiones registradas en estos ${entityPluralLabel}.`
+              )}
             </div>
-            {renderDetailRows(
-              rowsByConversionRate.slice(0, 5).map(row => ({
-                key: row.siteId,
-                icon: <BarChart3 size={15} />,
-                label: row.name,
-                value: `${formatSitesPercent(row.conversionRate)} · ${formatSitesCompactNumber(row.convertingVisitors)} visitantes`
-              })),
-              `Sin conversiones registradas en estos ${entityPluralLabel}.`
-            )}
           </div>
+        )}
 
-          <div className={styles.sitesAnalyticsChartBlock}>
-            <div className={styles.sitesAnalyticsChartTitle}>
-              <span>Actividad por periodo</span>
-              <strong>{analyticsSummary?.meta?.timezone || 'Zona de la cuenta'}</strong>
-            </div>
-            {entitySeriesChart.length ? (
-              <AreaChart
-                data={entitySeriesChart}
-                height={220}
-                color="var(--accent)"
-                color2="var(--pos)"
-                showLegend
-                legendLabels={isFormsView
-                  ? { label1: 'Envíos completados', label2: 'Conversiones calificadas' }
-                  : { label1: 'Vistas', label2: 'Sesiones' }}
-                formatValue={(value) => formatSitesCompactNumber(value)}
-                formatTooltipValue={(value) => formatSitesCompactNumber(value)}
-              />
-            ) : (
-              <div className={styles.sitesAnalyticsChartEmpty}>Sin actividad registrada en el periodo.</div>
-            )}
+        <div className={styles.sitesAnalyticsChartBlock}>
+          <div className={styles.sitesAnalyticsChartTitle}>
+            <span>Actividad por periodo</span>
+            <strong>{analyticsSummary?.meta?.timezone || 'Zona de la cuenta'}</strong>
           </div>
-
-          <div className={styles.sitesAnalyticsChartBlock}>
-            <div className={styles.sitesAnalyticsChartTitle}>
-              <span>Elementos en vivo</span>
-              <strong>{formatSitesCompactNumber(aggregateEntityCount)} {entityPluralLabel}</strong>
-            </div>
-            {renderDetailRows([
-              { key: 'published', icon: <CheckCircle2 size={15} />, label: 'Publicados actualmente', value: formatSitesCompactNumber(aggregateEntityCount) },
-              { key: 'active', icon: <BarChart3 size={15} />, label: 'Con actividad en el periodo', value: formatSitesCompactNumber(activeEntityCount) }
-            ], `Sin elementos en vivo para estos ${entityPluralLabel}.`)}
-          </div>
+          {entitySeriesChart.length ? (
+            <AreaChart
+              data={entitySeriesChart}
+              height={220}
+              color="var(--accent)"
+              color2="var(--pos)"
+              showLegend
+              legendLabels={isFormsView
+                ? { label1: 'Envíos completados', label2: 'Conversiones calificadas' }
+                : { label1: 'Vistas', label2: 'Sesiones' }}
+              formatValue={(value) => formatSitesCompactNumber(value)}
+              formatTooltipValue={(value) => formatSitesCompactNumber(value)}
+            />
+          ) : (
+            <div className={styles.sitesAnalyticsChartEmpty}>Sin actividad registrada en el periodo.</div>
+          )}
         </div>
       </>
     )

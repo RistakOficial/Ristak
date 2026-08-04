@@ -97,10 +97,6 @@ function StageCell({
   mode: StageConversionTableProps['mode']
 }) {
   const fields = mode === 'form' ? stage.fields || [] : []
-  const hasTerminalOutcome = stage.nextStages.length === 0 && stage.terminalAttempts > 0
-  const stageKind = stage.kind === 'page'
-    ? 'Página'
-    : stage.kind === 'slide' ? 'Diapositiva' : 'Paso'
 
   return (
     <div className={styles.stageCell}>
@@ -109,9 +105,6 @@ function StageCell({
         <div>
           <div className={styles.stageTitleLine}>
             <strong>{stage.label}</strong>
-            <Badge variant={hasTerminalOutcome ? 'primary' : 'neutral'}>
-              {hasTerminalOutcome ? 'Terminación' : stageKind}
-            </Badge>
           </div>
           {stage.terminalAttempts > 0 ? (
             <span className={styles.stageDetail}>

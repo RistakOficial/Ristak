@@ -1060,7 +1060,13 @@ detalle del elemento seleccionado y se intersecta con el scope.
 `formJourneySiteId` solicita el recorrido first-party de un formulario y
 `pageFunnelSiteId`, el recorrido página a página de un embudo; ambos devuelven su
 propio estado de cobertura y nunca se rellenan con datos de otra revisión. El
-contrato rechaza scopes o modos desconocidos y exige un rango completo de fechas
+frontend separa la lectura agregada de la individual: sin una entidad elegida
+muestra rankings comparativos y actividad por periodo; al seleccionar un embudo
+o formulario oculta los rankings entre entidades y conserva únicamente sus KPIs,
+su recorrido y su serie temporal. El inventario de elementos publicados no se
+presenta como métrica de rendimiento y las etapas del recorrido muestran nombre
+y orden sin etiquetas redundantes de tipo o terminación.
+El contrato rechaza scopes o modos desconocidos y exige un rango completo de fechas
 de calendario del negocio. `dateFrom` y `dateTo` deben venir juntos, en formato
 estricto `YYYY-MM-DD`, representar días reales y no estar invertidos; un rango
 inválido responde `400` y jamás degrada la consulta a todo el historial. El

@@ -22,6 +22,7 @@
     "test:sites-video-rule-contract": "node scripts/test-sites-video-rule-contract.mjs",
     "test:sites-video-resolution-contract": "node scripts/test-sites-video-resolution-contract.mjs",
     "test:sites-video-analytics-layout": "node scripts/test-sites-video-analytics-layout.mjs",
+    "test:sites-entity-analytics-relevance": "node scripts/test-sites-entity-analytics-relevance.mjs",
     "test:sites-html-creation-flow": "node scripts/test-sites-html-creation-flow.mjs",
     "test:sites-name": "node --experimental-strip-types --test scripts/test-sites-name.mjs",
     "test:sites-imported-form-meta-trigger": "node scripts/test-sites-imported-form-meta-trigger.mjs",
