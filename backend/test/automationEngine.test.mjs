@@ -841,6 +841,11 @@ test('filtersMatch: coincide / NO coincide / contiene / NO contiene', () => {
   // Un campo del evento sin dato en este contexto (p. ej. calendario en un
   // mensaje) no bloquea: se trata como desconocido
   assert.equal(filtersMatch([{ field: 'calendar', match: 'is', value: 'x' }], ctx), true)
+  // Los objetivos terminales usan modo estricto: un dato ausente o un filtro
+  // incompleto nunca puede sacar al contacto por accidente.
+  assert.equal(filtersMatch([{ field: 'calendar', match: 'is', value: 'x' }], ctx, { requireKnown: true }), false)
+  assert.equal(filtersMatch([{ field: 'provider', match: 'is', value: '' }], ctx, { requireKnown: true }), false)
+  assert.equal(filtersMatch([{ field: 'product', match: 'is', value: 'curso' }], ctx, { requireKnown: true }), false)
   // Un campo de contacto reconocido cuyo valor no coincide sí bloquea
   assert.equal(filtersMatch([{ field: 'stage', match: 'is', value: 'x' }], ctx), false)
 })
@@ -5527,6 +5532,12 @@ test('todos los eventos objetivo candidatos se cumplen sólo en la ejecución ac
       eventData: { formId: `form_${suffix}`, formName: 'Registro' }
     },
     {
+      key: 'form-legacy-name',
+      goal: { goalType: 'form', formName: `Registro ${suffix}` },
+      eventType: 'form-submitted',
+      eventData: { formId: `form_legacy_${suffix}`, formName: `Registro ${suffix}` }
+    },
+    {
       key: 'trigger-link',
       goal: { goalType: 'link', link: `link_${suffix}` },
       eventType: 'trigger-link-clicked',
@@ -5716,6 +5727,465 @@ test('todos los eventos objetivo candidatos se cumplen sólo en la ejecución ac
   }
 })
 
+test('un objetivo terminal sólo saca al contacto cuando todos sus filtros quedan comprobados', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_goal_filters_${suffix}`
+  const contactId = `contact_goal_filters_${suffix}`
+  const flow = {
+    nodes: [
+      { id: 'start', type: 'start', label: 'Cuando...', config: { triggers: [] } },
+      {
+        id: 'active-sequence',
+        type: 'logic-wait',
+        label: 'Secuencia activa',
+        config: { mode: 'duration', amount: 30, unit: 'days' }
+      },
+      {
+        id: 'payment-goal',
+        type: 'logic-goal',
+        label: 'Evento objetivo',
+        config: {
+          name: 'Pago Stripe en USD',
+          goalType: 'payment',
+          paymentEvent: 'received',
+          amountOperator: 'any',
+          evaluate: 'during-automation',
+          onMet: 'remove',
+          onNotMet: 'continue',
+          windowMode: 'none',
+          filters: [
+            { field: 'provider', match: 'is', value: 'stripe', connector: 'and' },
+            { field: 'product', match: 'is', value: `product_${suffix}`, connector: 'and' },
+            { field: 'currency', match: 'is', value: 'USD', connector: 'and' },
+            { field: 'source', match: 'is', value: 'facebook', connector: 'and' }
+          ]
+        }
+      }
+    ],
+    edges: [
+      { id: 'edge-start-active', sourceNodeId: 'start', targetNodeId: 'active-sequence' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, source, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+528${Date.now().toString().slice(-9)}`,
+        `goal-filters-${suffix}@test.com`,
+        'Contacto con filtros',
+        'Contacto',
+        'facebook',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test objetivo con filtros', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    const enrollment = await enrollContactManually({ automationId, contactId })
+    assert.equal(enrollment.status, 'waiting')
+
+    await handleAutomationEvent('payment-received', {
+      contactId,
+      paymentStatus: 'paid',
+      amount: 500,
+      currency: 'USD'
+    })
+    let row = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(row.status, 'waiting', 'un dato de filtro ausente no puede sacar al contacto')
+
+    await handleAutomationEvent('payment-received', {
+      contactId,
+      paymentStatus: 'paid',
+      amount: 500,
+      currency: 'USD',
+      provider: 'paypal',
+      product: `product_${suffix}`
+    })
+    row = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(row.status, 'waiting', 'un filtro que no coincide mantiene al contacto dentro')
+
+    await handleAutomationEvent('payment-received', {
+      contactId,
+      paymentStatus: 'paid',
+      amount: 500,
+      currency: 'USD',
+      provider: 'stripe',
+      product: `product_${suffix}`
+    })
+    row = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(row.status, 'exited')
+    assert.equal(row.wait_kind, null)
+    assert.equal(row.resume_at, null)
+    assert.equal(
+      JSON.parse(row.log || '[]').some((entry) => /Objetivo cumplido en esta ejecución/.test(entry.detail || '')),
+      true
+    )
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('un objetivo inmediato respeta sus filtros antes de terminar la automatización', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_immediate_goal_filters_${suffix}`
+  const advancedAutomationId = `automation_immediate_advanced_filters_${suffix}`
+  const tagId = `tag_immediate_goal_${suffix}`
+  const nonMatchingContactId = `contact_immediate_goal_no_${suffix}`
+  const matchingContactId = `contact_immediate_goal_yes_${suffix}`
+  const flow = {
+    nodes: [
+      { id: 'start', type: 'start', label: 'Cuando...', config: { triggers: [] } },
+      {
+        id: 'tag-goal',
+        type: 'logic-goal',
+        label: 'Evento objetivo',
+        config: {
+          name: 'VIP de Facebook',
+          goalType: 'tag',
+          tagOperator: 'has',
+          tag: tagId,
+          evaluate: 'immediate',
+          onMet: 'end-automation',
+          onNotMet: 'continue',
+          windowMode: 'none',
+          filters: [{ field: 'source', match: 'is', value: 'facebook', connector: 'and' }]
+        }
+      },
+      { id: 'done', type: 'extra-comment', label: 'Sigue en el flujo', config: {} }
+    ],
+    edges: [
+      { id: 'edge-start-goal', sourceNodeId: 'start', targetNodeId: 'tag-goal' },
+      { id: 'edge-goal-done', sourceNodeId: 'tag-goal', sourceHandle: 'out', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run('INSERT INTO contact_tags (id, name) VALUES (?, ?)', [tagId, 'VIP inmediato'])
+    for (const [contactId, source, phonePrefix] of [
+      [nonMatchingContactId, 'organic', '+528'],
+      [matchingContactId, 'facebook', '+529']
+    ]) {
+      await db.run(
+        `INSERT INTO contacts (id, phone, email, full_name, first_name, source, tags, custom_fields)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          contactId,
+          `${phonePrefix}${Date.now().toString().slice(-9)}`,
+          `${contactId}@test.com`,
+          `Contacto ${source}`,
+          'Contacto',
+          source,
+          JSON.stringify([tagId]),
+          JSON.stringify({ stage: 'cliente' })
+        ]
+      )
+    }
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test objetivo inmediato filtrado', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    const advancedFlow = {
+      ...flow,
+      nodes: flow.nodes.map((node) => node.id !== 'tag-goal'
+        ? node
+        : {
+            ...node,
+            id: 'advanced-goal',
+            config: {
+              ...node.config,
+              goalType: 'advanced',
+              advancedCondition: {
+                branches: [{
+                  name: 'Cliente',
+                  groupsOperator: 'AND',
+                  groups: [{
+                    operator: 'AND',
+                    negate: false,
+                    rules: [{ field: 'contact-stage', operator: 'is', value: 'cliente' }]
+                  }]
+                }]
+              }
+            }
+          }),
+      edges: flow.edges.map((edge) => ({
+        ...edge,
+        sourceNodeId: edge.sourceNodeId === 'tag-goal' ? 'advanced-goal' : edge.sourceNodeId,
+        targetNodeId: edge.targetNodeId === 'tag-goal' ? 'advanced-goal' : edge.targetNodeId
+      }))
+    }
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [
+        advancedAutomationId,
+        'Test objetivo avanzado inmediato filtrado',
+        JSON.stringify(advancedFlow),
+        JSON.stringify(advancedFlow)
+      ]
+    )
+
+    const nonMatching = await enrollContactManually({ automationId, contactId: nonMatchingContactId })
+    assert.equal(nonMatching.status, 'completed')
+    assert.equal(nonMatching.currentNodeId, 'done')
+
+    const matching = await enrollContactManually({ automationId, contactId: matchingContactId })
+    assert.equal(matching.status, 'exited')
+    assert.equal(matching.currentNodeId, 'tag-goal')
+
+    const nonMatchingAdvanced = await enrollContactManually({
+      automationId: advancedAutomationId,
+      contactId: nonMatchingContactId
+    })
+    assert.equal(nonMatchingAdvanced.status, 'completed')
+    assert.equal(nonMatchingAdvanced.currentNodeId, 'done')
+
+    const matchingAdvanced = await enrollContactManually({
+      automationId: advancedAutomationId,
+      contactId: matchingContactId
+    })
+    assert.equal(matchingAdvanced.status, 'exited')
+    assert.equal(matchingAdvanced.currentNodeId, 'advanced-goal')
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id IN (?, ?)', [automationId, advancedAutomationId])
+    await db.run('DELETE FROM automations WHERE id IN (?, ?)', [automationId, advancedAutomationId])
+    await db.run('DELETE FROM contacts WHERE id IN (?, ?)', [nonMatchingContactId, matchingContactId])
+    await db.run('DELETE FROM contact_tags WHERE id = ?', [tagId])
+  }
+})
+
+test('un objetivo de pago inmediato respeta el comparador y el producto seleccionado', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_immediate_payment_amount_${suffix}`
+  const paymentId = `payment_immediate_amount_${suffix}`
+  const greaterAutomationId = `automation_immediate_payment_gt_${suffix}`
+  const greaterOrEqualAutomationId = `automation_immediate_payment_gte_${suffix}`
+  const differentProductAutomationId = `automation_immediate_payment_product_${suffix}`
+  const flowFor = (amountOperator, overrides = {}) => ({
+    nodes: [
+      { id: 'start', type: 'start', label: 'Cuando...', config: { triggers: [] } },
+      {
+        id: 'payment-goal',
+        type: 'logic-goal',
+        label: 'Evento objetivo',
+        config: {
+          name: 'Pago acumulado',
+          goalType: 'payment',
+          paymentEvent: 'received',
+          amountOperator,
+          amount: 500,
+          evaluate: 'immediate',
+          onMet: 'end-automation',
+          onNotMet: 'continue',
+          windowMode: 'none',
+          ...overrides
+        }
+      },
+      { id: 'done', type: 'extra-comment', label: 'Sigue en el flujo', config: {} }
+    ],
+    edges: [
+      { id: 'edge-start-goal', sourceNodeId: 'start', targetNodeId: 'payment-goal' },
+      { id: 'edge-goal-done', sourceNodeId: 'payment-goal', sourceHandle: 'out', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  })
+  const greaterFlow = flowFor('gt')
+  const greaterOrEqualFlow = flowFor('gte')
+  const differentProductFlow = flowFor('any', { product: `another_product_${suffix}` })
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+527${Date.now().toString().slice(-9)}`,
+        `immediate-payment-${suffix}@test.com`,
+        'Contacto pago inmediato',
+        'Contacto',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO payments (id, contact_id, amount, currency, status, payment_method, payment_mode, reference, title, date)
+       VALUES (?, ?, 500, 'USD', 'paid', 'card', 'live', ?, ?, ?)`,
+      [paymentId, contactId, `ref_${suffix}`, 'Pago exacto', new Date().toISOString()]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [greaterAutomationId, 'Test pago mayor', JSON.stringify(greaterFlow), JSON.stringify(greaterFlow)]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [
+        greaterOrEqualAutomationId,
+        'Test pago mayor o igual',
+        JSON.stringify(greaterOrEqualFlow),
+        JSON.stringify(greaterOrEqualFlow)
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [
+        differentProductAutomationId,
+        'Test pago de otro producto',
+        JSON.stringify(differentProductFlow),
+        JSON.stringify(differentProductFlow)
+      ]
+    )
+
+    const greater = await enrollContactManually({ automationId: greaterAutomationId, contactId })
+    assert.equal(greater.status, 'completed')
+    assert.equal(greater.currentNodeId, 'done')
+
+    const greaterOrEqual = await enrollContactManually({ automationId: greaterOrEqualAutomationId, contactId })
+    assert.equal(greaterOrEqual.status, 'exited')
+    assert.equal(greaterOrEqual.currentNodeId, 'payment-goal')
+
+    const differentProduct = await enrollContactManually({
+      automationId: differentProductAutomationId,
+      contactId
+    })
+    assert.equal(differentProduct.status, 'completed')
+    assert.equal(differentProduct.currentNodeId, 'done')
+  } finally {
+    await db.run(
+      'DELETE FROM automation_enrollments WHERE automation_id IN (?, ?, ?)',
+      [greaterAutomationId, greaterOrEqualAutomationId, differentProductAutomationId]
+    )
+    await db.run(
+      'DELETE FROM automations WHERE id IN (?, ?, ?)',
+      [greaterAutomationId, greaterOrEqualAutomationId, differentProductAutomationId]
+    )
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('los objetivos que dependen de un evento nuevo no se autocumplen con historial en modo inmediato', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_immediate_event_only_${suffix}`
+  const tagId = `tag_immediate_event_only_${suffix}`
+  const paymentId = `payment_immediate_event_only_${suffix}`
+  const appointmentId = `appointment_immediate_event_only_${suffix}`
+  const calendarId = `calendar_immediate_event_only_${suffix}`
+  const cases = [
+    {
+      key: 'tag-lost',
+      goal: { goalType: 'tag', tagOperator: 'lost', tag: tagId }
+    },
+    {
+      key: 'payment-refund',
+      goal: { goalType: 'payment', paymentEvent: 'refund', amountOperator: 'any' }
+    },
+    {
+      key: 'appointment-cancelled',
+      goal: { goalType: 'appointment', appointmentStatus: 'cancelled' }
+    },
+    {
+      key: 'appointment-other-calendar',
+      goal: {
+        goalType: 'appointment',
+        appointmentStatus: 'booked',
+        calendar: `another_calendar_${suffix}`
+      }
+    }
+  ]
+
+  try {
+    await db.run('INSERT INTO contact_tags (id, name) VALUES (?, ?)', [tagId, 'Evento pendiente'])
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, tags, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+527${Date.now().toString().slice(-9)}`,
+        `immediate-event-only-${suffix}@test.com`,
+        'Contacto con historial',
+        'Contacto',
+        JSON.stringify([tagId]),
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO payments (id, contact_id, amount, currency, status, payment_method, payment_mode, reference, title, date)
+       VALUES (?, ?, ?, 'USD', 'paid', 'card', 'live', ?, ?, ?)`,
+      [paymentId, contactId, 500, `REF-${suffix}`, 'Pago previo', new Date().toISOString()]
+    )
+    await db.run(
+      `INSERT INTO appointments
+         (id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time)
+       VALUES (?, ?, ?, ?, 'confirmed', 'confirmed', ?, ?)`,
+      [
+        appointmentId,
+        calendarId,
+        contactId,
+        'Cita activa previa',
+        new Date(Date.now() + 86_400_000).toISOString(),
+        new Date(Date.now() + 90_000_000).toISOString()
+      ]
+    )
+
+    for (const item of cases) {
+      const automationId = `automation_immediate_event_only_${item.key}_${suffix}`
+      const flow = {
+        nodes: [
+          { id: 'start', type: 'start', label: 'Cuando...', config: { triggers: [] } },
+          {
+            id: 'goal',
+            type: 'logic-goal',
+            label: 'Evento objetivo',
+            config: {
+              name: `Objetivo ${item.key}`,
+              evaluate: 'immediate',
+              onMet: 'end-automation',
+              onNotMet: 'continue',
+              windowMode: 'none',
+              ...item.goal
+            }
+          },
+          { id: 'done', type: 'extra-comment', label: 'Continúa', config: {} }
+        ],
+        edges: [
+          { id: 'edge-start-goal', sourceNodeId: 'start', targetNodeId: 'goal' },
+          { id: 'edge-goal-done', sourceNodeId: 'goal', sourceHandle: 'out', targetNodeId: 'done' }
+        ],
+        settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+      }
+      await db.run(
+        `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+         VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+        [automationId, `Test inmediato ${item.key}`, JSON.stringify(flow), JSON.stringify(flow)]
+      )
+
+      const enrollment = await enrollContactManually({ automationId, contactId })
+      assert.equal(enrollment.status, 'completed', item.key)
+      assert.equal(enrollment.currentNodeId, 'done', item.key)
+    }
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id LIKE ?', [`automation_immediate_event_only_%_${suffix}`])
+    await db.run('DELETE FROM automations WHERE id LIKE ?', [`automation_immediate_event_only_%_${suffix}`])
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    await db.run('DELETE FROM contact_tags WHERE id = ?', [tagId])
+  }
+})
+
 test('objetivo sin respuesta vence por ejecución y una respuesta nueva lo descarta', async () => {
   const suffix = randomUUID()
   const automationId = `automation_no_reply_goal_${suffix}`
@@ -5737,7 +6207,8 @@ test('objetivo sin respuesta vence por ejecución y una respuesta nueva lo desca
           onNotMet: 'continue',
           windowMode: 'duration',
           windowAmount: 1,
-          windowUnit: 'days'
+          windowUnit: 'days',
+          filters: [{ field: 'source', match: 'is', value: 'facebook', connector: 'and' }]
         }
       },
       { id: 'done', type: 'extra-comment', label: 'Listo', config: {} }
@@ -5751,14 +6222,15 @@ test('objetivo sin respuesta vence por ejecución y una respuesta nueva lo desca
 
   try {
     await db.run(
-      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, source, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         contactId,
         `+527${Date.now().toString().slice(-9)}`,
         `no-reply-goal-${suffix}@test.com`,
         'Contacto Sin Respuesta',
         'Contacto',
+        'facebook',
         '{}'
       ]
     )
@@ -5797,6 +6269,23 @@ test('objetivo sin respuesta vence por ejecución y una respuesta nueva lo desca
     assert.equal(row.current_node_id, 'done')
     assert.equal(
       JSON.parse(row.log || '[]').some((entry) => /objetivo de no respuesta no se cumplió/.test(entry.detail || '')),
+      true
+    )
+
+    await db.run('UPDATE contacts SET source = ? WHERE id = ?', ['organic', contactId])
+    const third = await enrollContactManually({ automationId, contactId })
+    assert.equal(third.status, 'waiting')
+    await db.run(
+      'UPDATE automation_enrollments SET resume_at = ? WHERE id = ?',
+      [new Date(Date.now() - 1000).toISOString(), third.id]
+    )
+    await processDueResumes()
+
+    row = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [third.id])
+    assert.equal(row.status, 'completed')
+    assert.equal(row.current_node_id, 'done')
+    assert.equal(
+      JSON.parse(row.log || '[]').some((entry) => /ya no cumple los filtros del objetivo/.test(entry.detail || '')),
       true
     )
   } finally {

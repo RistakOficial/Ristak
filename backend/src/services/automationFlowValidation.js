@@ -15,6 +15,63 @@ const APPOINTMENT_PAST_DUE_ACTIONS = new Set(['auto', 'continue', 'next_wait', '
 const SENT_MESSAGE_NODE_TYPES = new Set(['channel-whatsapp', 'channel-messenger', 'channel-instagram'])
 const DRIP_INTERVAL_UNITS = new Set(['minutes', 'hours', 'days'])
 const DEFAULT_REPLY_ACTION_CHANNELS = new Set(['whatsapp', 'messenger', 'instagram', 'email'])
+const SUPPORTED_GOAL_TYPES = new Set([
+  'tag',
+  'payment',
+  'appointment',
+  'form',
+  'link',
+  'conversation',
+  'contact',
+  'ads',
+  'custom',
+  'advanced'
+])
+const GOAL_EVALUATION_MODES = new Set(['immediate', 'during-automation', 'window'])
+const GOAL_ON_MET_ACTIONS = new Set(['end-automation', 'end-branch', 'continue', 'remove'])
+const GOAL_ON_NOT_MET_ACTIONS = new Set(['continue', 'wait', 'timeout-branch'])
+const GOAL_WINDOW_MODES = new Set(['none', 'duration', 'until'])
+const GOAL_TAG_OPERATORS = new Set(['has', 'received', 'lost', 'not_has', 'not-has', 'nothas'])
+const GOAL_PAYMENT_EVENTS = new Set(['received', 'failed', 'refund'])
+const GOAL_PAYMENT_AMOUNT_OPERATORS = new Set(['any', 'gt', 'gte', 'lt', 'lte', 'eq'])
+const GOAL_APPOINTMENT_STATUSES = new Set([
+  'booked',
+  'confirmed',
+  'cancelled',
+  'rescheduled',
+  'no_show',
+  'completed',
+  'attended',
+  'showed'
+])
+const GOAL_CONVERSATION_EVENTS = new Set(['replied', 'keyword', 'no_reply'])
+const GOAL_CONTACT_EVENTS = new Set(['created', 'updated', 'field_contains', 'assigned'])
+const GOAL_ADS_EVENTS = new Set(['fb_click', 'ctwa'])
+const GOAL_LINK_EVENTS = new Set(['clicked', 'activation'])
+const FILTER_OPERATORS_WITHOUT_VALUE = new Set([
+  'empty',
+  'not_empty',
+  'yes',
+  'no',
+  'is_disqualified',
+  'not_disqualified'
+])
+const SUPPORTED_FILTER_OPERATORS = new Set([
+  'is',
+  'not',
+  'eq',
+  'neq',
+  'gt',
+  'gte',
+  'lt',
+  'lte',
+  'contains',
+  'not_contains',
+  'starts_with',
+  'ends_with',
+  ...FILTER_OPERATORS_WITHOUT_VALUE
+])
+const FILTER_FIELDS_REQUIRING_KEY = new Set(['custom', 'form_field', 'form-field-value'])
 
 // Únicos canales conversacionales soportados (sin SMS ni Email)
 export const ALLOWED_CHANNELS = ['whatsapp', 'messenger', 'instagram']
@@ -536,6 +593,135 @@ function validateReplyMessageWaitSource({ node, nodes, edges, errors }) {
   }
 }
 
+function validateGoalFilters(config, errors) {
+  asArray(config.filters).forEach((filter, index) => {
+    const position = `Filtro ${index + 1} del objetivo`
+    if (!isPlainObject(filter) || !String(filter.field || '').trim()) {
+      errors.push(`${position}: elige el dato que debe revisar`)
+      return
+    }
+    const field = String(filter.field || '').trim()
+    if (FILTER_FIELDS_REQUIRING_KEY.has(field) && !String(filter.customKey || filter.custom_key || '').trim()) {
+      errors.push(`${position}: elige el campo o la pregunta`)
+    }
+    const operator = String(filter.match || '').trim()
+    if (!operator) {
+      errors.push(`${position}: elige qué debe pasar`)
+      return
+    }
+    if (!SUPPORTED_FILTER_OPERATORS.has(operator)) {
+      errors.push(`${position}: la comparación seleccionada no es válida`)
+      return
+    }
+    if (!FILTER_OPERATORS_WITHOUT_VALUE.has(operator) && !String(filter.value ?? '').trim()) {
+      errors.push(`${position}: captura el valor a comparar`)
+    }
+    if (filter.connector && !['and', 'or'].includes(String(filter.connector))) {
+      errors.push(`${position}: la combinación Y/O no es válida`)
+    }
+  })
+}
+
+function validateGoalNode(node, errors) {
+  const config = isPlainObject(node.config) ? node.config : {}
+  const goalType = String(config.goalType || '').trim()
+  if (!goalType) {
+    errors.push('El Evento objetivo necesita un tipo de objetivo')
+    return
+  }
+  if (!SUPPORTED_GOAL_TYPES.has(goalType)) {
+    errors.push(`El Evento objetivo usa un tipo no soportado (${goalType})`)
+    return
+  }
+
+  if (goalType === 'tag' && !String(config.tag || '').trim()) {
+    errors.push('El objetivo de etiqueta necesita una etiqueta seleccionada')
+  }
+  if (goalType === 'tag' && !GOAL_TAG_OPERATORS.has(String(config.tagOperator || 'has'))) {
+    errors.push('El objetivo de etiqueta necesita una condición válida')
+  }
+  if (goalType === 'payment' && !GOAL_PAYMENT_EVENTS.has(String(config.paymentEvent || 'received'))) {
+    errors.push('El objetivo de pago necesita un evento válido')
+  }
+  if (goalType === 'payment' && !GOAL_PAYMENT_AMOUNT_OPERATORS.has(String(config.amountOperator || 'any'))) {
+    errors.push('El objetivo de pago necesita una comparación de monto válida')
+  }
+  if (
+    goalType === 'payment' &&
+    String(config.amountOperator || 'any') !== 'any' &&
+    (!String(config.amount ?? '').trim() || !Number.isFinite(Number(config.amount)))
+  ) {
+    errors.push('El objetivo de pago necesita un monto válido')
+  }
+  if (goalType === 'form' && !String(config.form || config.formName || '').trim()) {
+    errors.push('El objetivo de formulario necesita un formulario seleccionado')
+  }
+  if (goalType === 'link' && !GOAL_LINK_EVENTS.has(String(config.linkEvent || 'clicked'))) {
+    errors.push('El objetivo de clic de disparo necesita un evento válido')
+  }
+  if (goalType === 'appointment' && !GOAL_APPOINTMENT_STATUSES.has(String(config.appointmentStatus || 'booked'))) {
+    errors.push('El objetivo de cita necesita un estado válido')
+  }
+  if (goalType === 'conversation' && !GOAL_CONVERSATION_EVENTS.has(String(config.conversationEvent || 'replied'))) {
+    errors.push('El objetivo de conversación necesita un evento válido')
+  }
+  if (
+    goalType === 'conversation' &&
+    String(config.conversationEvent || 'replied') === 'keyword' &&
+    !String(config.keyword || '').trim()
+  ) {
+    errors.push('El objetivo de conversación necesita una palabra clave')
+  }
+  if (goalType === 'custom' && !String(config.customEventName || '').trim()) {
+    errors.push('El objetivo personalizado necesita el nombre del evento')
+  }
+  if (goalType === 'contact' && !GOAL_CONTACT_EVENTS.has(String(config.contactEvent || 'created'))) {
+    errors.push('El objetivo de contacto necesita un evento válido')
+  }
+  if (
+    goalType === 'contact' &&
+    String(config.contactEvent || 'created') === 'field_contains' &&
+    (!String(config.contactField || '').trim() || !String(config.contactFieldValue || '').trim())
+  ) {
+    errors.push('El objetivo de contacto necesita el campo y el valor que debe contener')
+  }
+  if (goalType === 'ads' && !GOAL_ADS_EVENTS.has(String(config.adsEvent || 'fb_click'))) {
+    errors.push('El objetivo de Ads necesita un evento válido')
+  }
+
+  const evaluation = String(config.evaluate || 'during-automation')
+  const onMet = String(config.onMet || 'end-automation')
+  const onNotMet = String(config.onNotMet || 'continue')
+  const windowMode = String(config.windowMode || 'none')
+  if (!GOAL_EVALUATION_MODES.has(evaluation)) {
+    errors.push('El Evento objetivo necesita un modo de evaluación válido')
+  }
+  if (!GOAL_ON_MET_ACTIONS.has(onMet)) {
+    errors.push('El Evento objetivo necesita una acción válida al cumplirse')
+  }
+  if (!GOAL_ON_NOT_MET_ACTIONS.has(onNotMet)) {
+    errors.push('El Evento objetivo necesita una acción válida si no se cumple')
+  }
+  if (!GOAL_WINDOW_MODES.has(windowMode)) {
+    errors.push('El Evento objetivo necesita una ventana de tiempo válida')
+  }
+  if (windowMode === 'duration' && !(Number(config.windowAmount) > 0)) {
+    errors.push('La ventana del Evento objetivo debe ser mayor a cero')
+  }
+  if (windowMode === 'until' && !String(config.windowUntil || '').trim()) {
+    errors.push('El Evento objetivo necesita una fecha límite')
+  }
+  if (
+    goalType === 'conversation' &&
+    String(config.conversationEvent || 'replied') === 'no_reply' &&
+    !['duration', 'until'].includes(windowMode)
+  ) {
+    errors.push('El objetivo "No ha respondido" necesita una ventana de tiempo')
+  }
+
+  validateGoalFilters(config, errors)
+}
+
 /**
  * Validación estructural mínima antes de publicar una automatización.
  * La validación detallada por tipo de paso vive en el editor (frontend);
@@ -653,16 +839,7 @@ export function validateFlowForPublish(flow) {
 
   nodes
     .filter((node) => node.type === 'logic-goal')
-    .forEach((node) => {
-      const config = isPlainObject(node.config) ? node.config : {}
-      if (
-        config.goalType === 'conversation' &&
-        config.conversationEvent === 'no_reply' &&
-        !['duration', 'until'].includes(String(config.windowMode || 'none'))
-      ) {
-        errors.push('El objetivo "No ha respondido" necesita una ventana de tiempo')
-      }
-    })
+    .forEach((node) => validateGoalNode(node, errors))
 
   nodes
     .filter((node) => node.type === 'channel-comment-public-reply' || node.type === 'channel-comment-dm-reply')

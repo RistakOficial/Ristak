@@ -1930,6 +1930,21 @@ function filterFieldValue(filter, ctx) {
 
 /** Operadores de filtro que no comparan contra un valor capturado */
 const NO_VALUE_FILTER_OPERATORS = new Set(['empty', 'not_empty', 'yes', 'no', 'is_disqualified', 'not_disqualified'])
+const SUPPORTED_FILTER_OPERATORS = new Set([
+  'is',
+  'not',
+  'eq',
+  'neq',
+  'gt',
+  'gte',
+  'lt',
+  'lte',
+  'contains',
+  'not_contains',
+  'starts_with',
+  'ends_with',
+  ...NO_VALUE_FILTER_OPERATORS
+])
 
 function truthyFilterValue(value) {
   return ['true', '1', 'yes', 'si', 'sí'].includes(normalizeText(value))
@@ -2006,11 +2021,11 @@ const PAYMENT_CANDIDATE_FILTER_FIELDS = new Set([
   'ghl_price_id'
 ])
 
-function evaluatePaymentCandidateFilter(filter, ctx) {
+function evaluatePaymentCandidateFilter(filter, ctx, { requireKnown = false } = {}) {
   const candidates = filter.field === 'product'
     ? paymentProductCandidatesFromContext(ctx)
     : paymentProductFieldCandidatesFromContext(ctx, filter.field)
-  if (candidates.length === 0) return true
+  if (candidates.length === 0) return !requireKnown
   const normalizedCandidates = candidates.map(normalizeText).filter(Boolean)
   const expected = normalizeText(filter.value)
   const exactMatch = normalizedCandidates.some((candidate) => candidate === expected)
@@ -2027,13 +2042,15 @@ function evaluatePaymentCandidateFilter(filter, ctx) {
   }
 }
 
-function evaluateFilter(filter, ctx) {
+function evaluateFilter(filter, ctx, { requireKnown = false } = {}) {
   if (filter.field === 'changed_detail') return evaluateChangedDetailFilter(filter, ctx)
   if (filter.field === 'tag') return evaluateTagFilter(filter, ctx)
   if (filter.field === 'stage') return evaluateLifecycleStageFilter(filter, ctx)
-  if (PAYMENT_CANDIDATE_FILTER_FIELDS.has(filter.field)) return evaluatePaymentCandidateFilter(filter, ctx)
+  if (PAYMENT_CANDIDATE_FILTER_FIELDS.has(filter.field)) {
+    return evaluatePaymentCandidateFilter(filter, ctx, { requireKnown })
+  }
   const actualRaw = filterFieldValue(filter, ctx)
-  if (actualRaw === null) return true
+  if (actualRaw === null) return !requireKnown
   const actual = normalizeText(actualRaw)
   const expected = normalizeText(filter.value)
   switch (filter.match) {
@@ -2058,15 +2075,27 @@ function evaluateFilter(filter, ctx) {
   }
 }
 
-export function filtersMatch(filters, ctx) {
+export function filtersMatch(filters, ctx, { requireKnown = false } = {}) {
   // Los filtros se unen en secuencia con Y / O (connector del propio filtro)
-  const list = (Array.isArray(filters) ? filters : []).filter(
+  const rawList = Array.isArray(filters) ? filters : []
+  if (requireKnown && rawList.some((filter) => {
+    const field = str(filter?.field)
+    const match = str(filter?.match)
+    const needsValue = !NO_VALUE_FILTER_OPERATORS.has(match)
+    const needsKey = ['custom', 'form_field', 'form-field-value'].includes(field)
+    return !field || !match || !SUPPORTED_FILTER_OPERATORS.has(match) || (needsValue && !String(filter?.value ?? '').trim()) || (
+      needsKey && !str(filter?.customKey || filter?.custom_key)
+    )
+  })) {
+    return false
+  }
+  const list = rawList.filter(
     (filter) =>
       filter?.field &&
       (NO_VALUE_FILTER_OPERATORS.has(filter.match) || String(filter.value || '').trim())
   )
   return list.reduce((accumulated, filter, index) => {
-    const met = evaluateFilter(filter, ctx)
+    const met = evaluateFilter(filter, ctx, { requireKnown })
     if (index === 0) return met
     return filter.connector === 'or' ? accumulated || met : accumulated && met
   }, true)
@@ -2527,7 +2556,7 @@ function replyEventMatches(config = {}, eventType, ctx = {}, {
 
 function formEventMatches(config = {}, eventType, ctx = {}) {
   if (eventType !== 'form-submitted') return false
-  const configuredForm = str(config.form || config.actionResource)
+  const configuredForm = str(config.form || config.formName || config.actionResource)
   if (
     configuredForm &&
     !formSubmittedMatches(configuredForm, ctx) &&
@@ -2616,12 +2645,17 @@ function expectedActionMatches(config = {}, eventType, ctx = {}) {
 }
 
 function goalMatchesEvent(config = {}, eventType, ctx = {}) {
-  if (!filtersMatch(config.filters, ctx)) return false
+  // Un objetivo es terminal por default: ningún filtro puede darse por bueno si
+  // el evento no trae el dato necesario para comprobarlo. Los disparadores
+  // legacy conservan el modo tolerante de filtersMatch; los objetivos no, para
+  // evitar sacar contactos por una coincidencia que nunca quedó demostrada.
+  if (!filtersMatch(config.filters, ctx, { requireKnown: true })) return false
   const goalType = str(config.goalType)
   switch (goalType) {
     case 'tag': {
       if (eventType !== 'tag-changed') return false
       const configuredTag = str(config.tag)
+      if (!configuredTag) return false
       if (
         configuredTag &&
         !selectedResourceMatches([ctx.tag, ctx.tagId, ctx.tag_id], configuredTag)
@@ -2629,21 +2663,38 @@ function goalMatchesEvent(config = {}, eventType, ctx = {}) {
         return false
       }
       const operator = str(config.tagOperator) || 'has'
+      if (!['has', 'received', 'lost', 'not_has', 'not-has', 'nothas'].includes(operator)) {
+        return false
+      }
       const removed = normalizeText(ctx.tagAction) === 'removed'
       if (operator === 'lost' || operator === 'not_has' || operator === 'not-has') return removed
       return !removed
     }
-    case 'payment':
+    case 'payment': {
+      const paymentEvent = str(config.paymentEvent) || 'received'
+      const amountOperator = str(config.amountOperator) || 'any'
+      if (!['received', 'failed', 'refund'].includes(paymentEvent)) return false
+      if (!['any', 'gt', 'gte', 'lt', 'lte', 'eq'].includes(amountOperator)) return false
       return paymentEventMatches(config, eventType, ctx)
-    case 'appointment':
+    }
+    case 'appointment': {
+      const status = str(config.appointmentStatus) || 'booked'
+      if (!['booked', 'confirmed', 'cancelled', 'rescheduled', 'no_show', 'completed', 'attended', 'showed'].includes(status)) {
+        return false
+      }
       return appointmentEventMatches(config, eventType, ctx)
+    }
     case 'form':
+      if (!str(config.form || config.formName || config.actionResource)) return false
       return formEventMatches(config, eventType, ctx)
     case 'link':
+      if (!['clicked', 'activation'].includes(str(config.linkEvent) || 'clicked')) return false
       return triggerLinkEventMatches(config, eventType, ctx)
     case 'conversation': {
       const conversationEvent = str(config.conversationEvent) || 'replied'
+      if (!['replied', 'keyword', 'no_reply'].includes(conversationEvent)) return false
       if (conversationEvent === 'no_reply') return false
+      if (conversationEvent === 'keyword' && !str(config.keyword)) return false
       return replyEventMatches(config, eventType, ctx, {
         channelKey: 'conversationChannel',
         singleKeywordKey: conversationEvent === 'keyword' ? 'keyword' : ''
@@ -2651,6 +2702,7 @@ function goalMatchesEvent(config = {}, eventType, ctx = {}) {
     }
     case 'contact': {
       const contactEvent = str(config.contactEvent) || 'created'
+      if (!['created', 'updated', 'field_contains', 'assigned'].includes(contactEvent)) return false
       if (contactEvent === 'created') return eventType === 'contact-created'
       if (eventType !== 'contact-updated') return false
       if (contactEvent === 'assigned') {
@@ -2661,6 +2713,7 @@ function goalMatchesEvent(config = {}, eventType, ctx = {}) {
         return false
       }
       if (contactEvent === 'field_contains') {
+        if (!str(config.contactField) || !str(config.contactFieldValue)) return false
         const actual = filterFieldValue({ field: config.contactField }, ctx)
         return normalizeText(actual).includes(normalizeText(config.contactFieldValue))
       }
@@ -2668,6 +2721,7 @@ function goalMatchesEvent(config = {}, eventType, ctx = {}) {
     }
     case 'ads': {
       const adsEvent = str(config.adsEvent) || 'fb_click'
+      if (!['fb_click', 'ctwa'].includes(adsEvent)) return false
       const eventAdId = str(
         ctx.adId ||
         ctx.ad_id ||
@@ -2707,6 +2761,7 @@ function goalMatchesEvent(config = {}, eventType, ctx = {}) {
       )
     }
     case 'custom':
+      if (!str(config.customEventName || config.actionResource)) return false
       return customEventMatches(config, eventType, ctx)
     case 'advanced':
       return evaluateConditionNode(config.advancedCondition, ctx).handle === 'yes'
@@ -5397,43 +5452,113 @@ function executeRandomizerNode(node) {
 
 // (AUTO-006) Evalúa, con el estado ACTUAL del contacto, si el objetivo del nodo
 // ya está cumplido. Sólo decide para los tipos que se pueden comprobar contra el
-// estado actual (etiqueta, pago, cita). Para tipos puramente por evento
-// (formulario/link/conversación/personalizado/ads/avanzado) devuelve null =
-// "no evaluable inline": el flujo conserva el comportamiento anterior (continúa).
+// estado actual (etiqueta presente/ausente, pago exitoso acumulado, cita activa
+// o condición avanzada). Para variantes puramente por evento (etiqueta
+// recibida/perdida, reembolso, cancelación, formulario, link, conversación,
+// personalizado o ads) devuelve null = "no evaluable inline".
 // Devuelve true (cumplido), false (no cumplido) o null (no evaluable aquí).
 function evaluateGoalMet(config, ctx) {
   const goalType = str(config?.goalType)
   const contact = ctx.contact || {}
+  const withFilters = (met) => (
+    met === true
+      ? filtersMatch(config?.filters, ctx, { requireKnown: true })
+      : met
+  )
   switch (goalType) {
     case 'tag': {
       const tag = normalizeText(config.tag)
       if (!tag) return null
       const has = (contact.tagKeys || contact.tags || []).map(normalizeText).includes(tag)
       const operator = str(config.tagOperator) || 'has'
-      return operator === 'not-has' || operator === 'not_has' || operator === 'nothas'
-        ? !has
-        : has
+      if (operator === 'received' || operator === 'lost') return null
+      if (operator === 'not-has' || operator === 'not_has' || operator === 'nothas') {
+        return withFilters(!has)
+      }
+      if (operator !== 'has') return null
+      return withFilters(has)
     }
     case 'payment': {
+      if (!['', 'received'].includes(str(config.paymentEvent))) return null
       const purchases = Number(contact.purchasesCount || contact.purchases_count || 0) || 0
       if (purchases <= 0) return false
       const amountOperator = str(config.amountOperator) || 'any'
-      if (amountOperator === 'any') return true
+      if (!['any', 'gt', 'gte', 'lt', 'lte', 'eq'].includes(amountOperator)) return false
+      const configuredProduct = str(config.product || config.actionResource)
+      if (
+        configuredProduct &&
+        !paymentProductCandidatesFromContext(ctx)
+          .some((candidate) => normalizeText(candidate) === normalizeText(configuredProduct))
+      ) {
+        return false
+      }
+      const configuredProvider = str(config.provider)
+      if (
+        configuredProvider &&
+        normalizeText(firstPaymentContextValue(ctx, 'provider')) !== normalizeText(configuredProvider)
+      ) {
+        return false
+      }
+      const configuredCurrency = str(config.currency)
+      if (
+        configuredCurrency &&
+        normalizeText(firstPaymentContextValue(ctx, 'currency')) !== normalizeText(configuredCurrency)
+      ) {
+        return false
+      }
+      if (amountOperator === 'any') return withFilters(true)
       const amount = Number(String(config.amount ?? '').trim())
-      if (!Number.isFinite(amount)) return true
+      if (!Number.isFinite(amount)) return false
       const totalPaid = Number(contact.totalPaid || contact.total_paid || 0) || 0
-      if (amountOperator === 'gte' || amountOperator === 'gt') return totalPaid >= amount
-      if (amountOperator === 'lte' || amountOperator === 'lt') return totalPaid <= amount
-      if (amountOperator === 'eq') return totalPaid === amount
-      return true
+      if (amountOperator === 'gt') return withFilters(totalPaid > amount)
+      if (amountOperator === 'gte') return withFilters(totalPaid >= amount)
+      if (amountOperator === 'lt') return withFilters(totalPaid < amount)
+      if (amountOperator === 'lte') return withFilters(totalPaid <= amount)
+      if (amountOperator === 'eq') return withFilters(totalPaid === amount)
+      return withFilters(true)
     }
     case 'appointment': {
       const status = str(config.appointmentStatus) || 'booked'
-      if (status === 'attended' || status === 'showed' || status === 'completed') {
-        return Number(contact.attendedAppointmentsCount || 0) > 0
+      const configuredCalendar = str(config.calendar || config.actionResource)
+      if (
+        configuredCalendar &&
+        !selectedResourceMatches(
+          [
+            ctx.calendarId,
+            ctx.calendar_id,
+            ctx.calendarName,
+            ctx.calendar_name,
+            contact.activeAppointmentCalendarId
+          ],
+          configuredCalendar
+        )
+      ) {
+        return false
       }
-      return Number(contact.activeAppointmentsCount || 0) > 0
+      const configuredType = str(config.appointmentType)
+      if (
+        configuredType &&
+        !selectedResourceMatches(
+          [ctx.appointmentType, ctx.appointment_type, ctx.service, ctx.title, contact.activeAppointmentTitle],
+          configuredType
+        )
+      ) {
+        return false
+      }
+      if (status === 'attended' || status === 'showed' || status === 'completed') {
+        return withFilters(Number(contact.attendedAppointmentsCount || 0) > 0)
+      }
+      if (status === 'confirmed') {
+        return withFilters(
+          Number(contact.activeAppointmentsCount || 0) > 0 &&
+          normalizeText(contact.activeAppointmentStatus) === 'confirmed'
+        )
+      }
+      if (status !== 'booked') return null
+      return withFilters(Number(contact.activeAppointmentsCount || 0) > 0)
     }
+    case 'advanced':
+      return withFilters(evaluateConditionNode(config.advancedCondition, ctx).handle === 'yes')
     default:
       return null
   }
@@ -8931,7 +9056,12 @@ export async function processDueResumes() {
         row.wait_kind === WAIT_KIND_CONDITION
       const wasGoalTimeout = row.wait_kind === WAIT_KIND_GOAL
       const wasDripResume = row.wait_kind === WAIT_KIND_DRIP
-      const noReplyGoalTimedOut = wasGoalTimeout && isNoReplyGoal(currentNode?.config)
+      const noReplyGoalWindowElapsed = wasGoalTimeout && isNoReplyGoal(currentNode?.config)
+      const noReplyGoalTimedOut = noReplyGoalWindowElapsed && filtersMatch(
+        currentNode?.config?.filters,
+        ctx,
+        { requireKnown: true }
+      )
       if (noReplyGoalTimedOut) {
         const completedGoals = completedGoalNodeIds(enrollment.context)
         completedGoals.add(currentNode.id)
@@ -8975,6 +9105,8 @@ export async function processDueResumes() {
                 ? 'La acción o condición no se cumplió a tiempo'
                 : noReplyGoalTimedOut
                   ? 'El contacto no respondió dentro del tiempo configurado'
+                  : noReplyGoalWindowElapsed
+                    ? 'El contacto no respondió, pero ya no cumple los filtros del objetivo'
                   : wasGoalTimeout
                     ? 'El objetivo no se cumplió dentro de su ventana'
                     : 'Espera terminada')

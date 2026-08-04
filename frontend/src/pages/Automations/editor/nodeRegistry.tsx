@@ -2863,6 +2863,12 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       }
       if (goalType === 'tag' && !str(config.tag)) errors.push('Selecciona la etiqueta del objetivo')
       if (goalType === 'payment') {
+        if (!['received', 'failed', 'refund'].includes(str(config.paymentEvent) || 'received')) {
+          errors.push('Selecciona un evento de pago válido')
+        }
+        if (!['any', 'gt', 'gte', 'lt', 'lte', 'eq'].includes(str(config.amountOperator) || 'any')) {
+          errors.push('Selecciona una comparación de monto válida')
+        }
         if (str(config.amountOperator) !== 'any' && !String(config.amount ?? '').trim()) {
           errors.push('Captura el monto del pago')
         }
@@ -2870,10 +2876,19 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       if (goalType === 'form' && !str(config.form) && !str(config.formName)) {
         errors.push('Selecciona el formulario del objetivo')
       }
+      if (goalType === 'link' && !['clicked', 'activation'].includes(str(config.linkEvent) || 'clicked')) {
+        errors.push('Selecciona un evento válido para el clic de disparo')
+      }
       if (goalType === 'conversation') {
+        if (!['replied', 'keyword', 'no_reply'].includes(str(config.conversationEvent) || 'replied')) {
+          errors.push('Selecciona un evento de conversación válido')
+        }
         const channel = str(config.conversationChannel)
         if (!['any', ...ALLOWED_CHANNELS].includes(channel)) {
           errors.push('Canal inválido: usa WhatsApp, Messenger o Instagram Direct')
+        }
+        if (str(config.conversationEvent) === 'keyword' && !str(config.keyword).trim()) {
+          errors.push('Captura la palabra clave del objetivo')
         }
         if (
           str(config.conversationEvent) === 'no_reply' &&
@@ -2882,11 +2897,30 @@ const OTHER_ACTIONS: NodeDefinition[] = [
           errors.push('El objetivo "No ha respondido" necesita una ventana de tiempo')
         }
       }
+      if (
+        goalType === 'contact' &&
+        str(config.contactEvent) === 'field_contains' &&
+        (!str(config.contactField).trim() || !str(config.contactFieldValue).trim())
+      ) {
+        errors.push('Selecciona el campo y captura el valor que debe contener')
+      }
       if (goalType === 'custom' && !str(config.customEventName).trim()) {
         errors.push('Indica el nombre del evento personalizado')
       }
       if (goalType === 'advanced') {
         errors.push(...validateAdvancedCondition(config.advancedCondition).map((error) => `Condición: ${error}`))
+      }
+      if (!['immediate', 'during-automation', 'window'].includes(str(config.evaluate) || 'during-automation')) {
+        errors.push('Selecciona un modo válido para evaluar el objetivo')
+      }
+      if (!['end-automation', 'end-branch', 'continue', 'remove'].includes(str(config.onMet) || 'end-automation')) {
+        errors.push('Selecciona una acción válida al cumplirse el objetivo')
+      }
+      if (!['continue', 'wait', 'timeout-branch'].includes(str(config.onNotMet) || 'continue')) {
+        errors.push('Selecciona una acción válida si el objetivo no se cumple')
+      }
+      if (!['none', 'duration', 'until'].includes(str(config.windowMode) || 'none')) {
+        errors.push('Selecciona una ventana de tiempo válida')
       }
       if (str(config.windowMode) === 'duration' && (Number(config.windowAmount) || 0) <= 0) {
         errors.push('La ventana de tiempo debe ser mayor a cero')
@@ -2894,6 +2928,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       if (str(config.windowMode) === 'until' && !str(config.windowUntil)) {
         errors.push('Selecciona la fecha límite del objetivo')
       }
+      errors.push(...validateTriggerFilters(config.filters))
       return errors
     },
     summary: (config) => {

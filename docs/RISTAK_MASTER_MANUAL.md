@@ -1494,6 +1494,20 @@ timeouts conservan sus salidas `timeout`/`notmet`, y las fechas limite se
 interpretan en la zona horaria del flujo o, si no esta configurada, en la zona
 horaria efectiva de la cuenta.
 
+Un `Evento objetivo` configurado para terminar o remover sólo saca al contacto
+cuando el evento base y todos sus filtros quedan comprobados. Un campo ausente
+en el payload no se considera coincidencia silenciosa, y los conectores Y/O se
+evalúan con los valores reales del evento y del contacto hidratado. Esta misma
+regla aplica a la evaluación inmediata: tener la etiqueta, el pago o la cita no
+basta si fallan los filtros adicionales. Las variantes que exigen un hecho nuevo
+—perder/recibir etiqueta, reembolso, pago fallido, cancelacion o reprogramacion—
+no se autocumplen en modo inmediato usando historial acumulado. `No ha
+respondido` vuelve a comprobar sus filtros al vencer la ventana antes de sacar
+al contacto. Antes de publicar, frontend y backend rechazan filtros incompletos,
+palabras clave vacías y acciones terminales no válidas; una configuración
+guardada con nombre legacy de formulario sigue comparando ese nombre en vez de
+degradarse a "cualquier formulario".
+
 Cada ejecución carga automáticamente la identidad del contacto que entró y el
 contexto de la entidad que produjo el disparador. Las acciones normales sobre el
 contacto —incluida **Notificaciones**— usan `enrollment.contact_id`/`ctx.contact`

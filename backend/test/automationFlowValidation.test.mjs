@@ -508,6 +508,96 @@ test('publicar exige ventana de tiempo para el objetivo sin respuesta', () => {
   assert.deepEqual(errors, [])
 })
 
+test('publicar rechaza objetivos con filtros incompletos o configuración terminal inválida', () => {
+  const goalNode = {
+    id: 'goal-payment',
+    type: 'logic-goal',
+    position: { x: 100, y: 0 },
+    config: {
+      goalType: 'payment',
+      paymentEvent: 'received',
+      amountOperator: 'any',
+      evaluate: 'during-automation',
+      onMet: 'end-automation',
+      onNotMet: 'continue',
+      windowMode: 'none',
+      filters: [{ field: 'provider', match: 'is', value: '' }]
+    }
+  }
+  const flow = {
+    nodes: [startNode(), goalNode],
+    edges: [edge('e1', 'start', 'goal-payment')]
+  }
+
+  let errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('Filtro 1 del objetivo') && message.includes('valor')))
+
+  goalNode.config.filters[0].value = 'stripe'
+  goalNode.config.onMet = 'inventado'
+  errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('acción válida al cumplirse')))
+
+  goalNode.config.onMet = 'remove'
+  errors = validateFlowForPublish(flow)
+  assert.deepEqual(errors, [])
+})
+
+test('publicar exige palabra clave cuando ese es el objetivo de conversación', () => {
+  const goalNode = {
+    id: 'goal-keyword',
+    type: 'logic-goal',
+    position: { x: 100, y: 0 },
+    config: {
+      goalType: 'conversation',
+      conversationEvent: 'keyword',
+      conversationChannel: 'whatsapp',
+      keyword: '',
+      evaluate: 'during-automation',
+      onMet: 'end-automation',
+      onNotMet: 'continue',
+      windowMode: 'none'
+    }
+  }
+  const flow = {
+    nodes: [startNode(), goalNode],
+    edges: [edge('e1', 'start', 'goal-keyword')]
+  }
+
+  let errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('palabra clave')))
+
+  goalNode.config.keyword = 'confirmo'
+  errors = validateFlowForPublish(flow)
+  assert.deepEqual(errors, [])
+})
+
+test('publicar rechaza un tipo de clic inválido en Evento objetivo', () => {
+  const goalNode = {
+    id: 'goal-link',
+    type: 'logic-goal',
+    position: { x: 100, y: 0 },
+    config: {
+      goalType: 'link',
+      linkEvent: 'inventado',
+      evaluate: 'during-automation',
+      onMet: 'end-automation',
+      onNotMet: 'continue',
+      windowMode: 'none'
+    }
+  }
+  const flow = {
+    nodes: [startNode(), goalNode],
+    edges: [edge('e1', 'start', 'goal-link')]
+  }
+
+  let errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('clic de disparo') && message.includes('evento válido')))
+
+  goalNode.config.linkEvent = 'clicked'
+  errors = validateFlowForPublish(flow)
+  assert.deepEqual(errors, [])
+})
+
 test('Instagram bloquea documentos salientes antes de publicar el flujo', () => {
   const instagramNode = {
     id: 'ig1',
