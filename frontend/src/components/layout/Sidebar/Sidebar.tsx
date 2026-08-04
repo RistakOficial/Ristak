@@ -346,10 +346,8 @@ const cancelAllSidebarRoutePrefetches = () => {
 const routePrefetchIntentProps = (destination: string) => ({
   onPointerEnter: () => scheduleSidebarRoutePrefetch(destination),
   onPointerLeave: () => cancelSidebarRoutePrefetch(destination),
-  onPointerDown: () => prefetchSidebarRoute(destination),
-  onFocus: () => prefetchSidebarRoute(destination),
-  onBlur: () => cancelSidebarRoutePrefetch(destination),
-  onTouchStart: () => prefetchSidebarRoute(destination)
+  onFocus: () => scheduleSidebarRoutePrefetch(destination),
+  onBlur: () => cancelSidebarRoutePrefetch(destination)
 })
 
 interface SettingsNavLinkProps {
@@ -679,7 +677,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const settingsDestination = useMemo(() => getFirstAllowedSettingsPath(user), [user])
   const canPreloadSites = hasModuleAccess(user, 'sites', 'read')
 
-  useEffect(() => cancelAllSidebarRoutePrefetches, [])
+  // Una ruta nueva invalida cualquier intención anterior que todavía estuviera
+  // esperando el dwell. Pointer-down/touch no precargan: en esos gestos el Link
+  // ya inicia el chunk al navegar y arrancarlo antes deja trabajo obsoleto vivo
+  // cuando el usuario cambia de destino rápidamente.
+  useEffect(() => {
+    cancelAllSidebarRoutePrefetches()
+    return cancelAllSidebarRoutePrefetches
+  }, [location.pathname])
 
   // Sites incluye un editor grande. Lo calentamos solamente después de que la
   // ruta actual quedó estable, con permiso real, red apropiada y tiempo ocioso.

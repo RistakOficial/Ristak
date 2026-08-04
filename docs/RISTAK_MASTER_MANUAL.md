@@ -233,16 +233,24 @@ cuenta desconectada o sin permiso no consulta `/api/highlevel/sync/progress`.
 La navegacion del CRM debe conservar el shell montado y cargar cada modulo por
 separado. `frontend/src/routing/routeModules.tsx` es el registro canonico de
 chunks para rutas desktop, moviles y publicas. El sidebar inicia la descarga al
-detectar intencion real de navegar: el pointer exige 150 ms de permanencia y se
-cancela al salir, mientras foco, touch y pointer-down son inmediatos. En Sites esa
+detectar intencion estable de navegar: pointer y foco exigen 150 ms de
+permanencia y se cancelan al salir. `pointer-down` y `touchstart` no precargan:
+el `Link` ya inicia el chunk al confirmar la navegacion y adelantarlo desde el
+gesto deja descargas obsoletas cuando el usuario cambia rapidamente de destino.
+En Sites esa
 precarga trae solamente la compuerta liviana de ruta; el workspace/editor pesado
 se importa al entrar realmente a Sites y nunca durante el idle global. Configuracion hace lo
 mismo con cada panel interno y navega directamente al primero permitido. Los
 redirects de login/inicio precargan su destino. No se permite volver a importar todas las
 paginas de forma estatica desde `App.tsx` ni bloquear el contenido completo con
 un loader global mientras existan requests de una ruta. Las esperas inevitables
-deben aparecer dentro de la zona que aun no tiene datos, conservando navegacion,
-header y contenido anterior utilizable.
+deben aparecer dentro de la zona que aun no tiene datos, conservando navegacion
+y header. El router declarativo usa `useTransitions={false}`: una ruta confirmada
+desmonta inmediatamente la anterior para ejecutar sus limpiezas y abortar sus
+lecturas, y un segundo clic reemplaza la primera intencion sin permitir que una
+pantalla atrasada se monte despues. Los snapshots anteriores pueden conservarse
+dentro de la misma ruta durante una revalidacion, pero nunca como una pagina
+anterior retenida mientras se abre otro modulo.
 
 Si un chunk JS/CSS falla durante una navegacion real,
 `LazyLoadErrorBoundary` mantiene el shell y muestra el cargador solamente dentro
@@ -253,7 +261,7 @@ evita ciclos durante una ventana de cinco minutos; si el mismo build vuelve a
 fallar en esa ventana, conserva los menus utilizables y muestra el estado de
 error reintentable. El editor pesado de Automatizaciones usa el mismo mecanismo
 al entrar a una automatizacion. Esta recuperacion no vive en el prefetch:
-un hover, foco o pointer-down fallido nunca recarga Ristak por si solo. Tampoco se
+un hover o foco fallido nunca recarga Ristak por si solo. Tampoco se
 activa para errores normales de render. En Configuracion el boundary de cada
 panel queda dentro de `mainContent`, por lo que su navegacion lateral permanece
 montada durante la espera.

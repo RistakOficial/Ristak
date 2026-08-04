@@ -53,11 +53,13 @@ test('las rutas principales se descargan por modulo y no inflan el bundle inicia
 })
 
 test('el AppShell permanece montado y ya no bloquea la vista por cada request', async () => {
-  const [appShell, appShellStyles] = await Promise.all([
+  const [app, appShell, appShellStyles] = await Promise.all([
+    repoFile('frontend/src/App.tsx'),
     repoFile('frontend/src/components/layout/AppShell/AppShell.tsx'),
     repoFile('frontend/src/components/layout/AppShell/AppShell.module.css')
   ])
 
+  assert.match(app, /<BrowserRouter useTransitions=\{false\}>/)
   assert.doesNotMatch(appShell, /useRouteDataLoadGate|routeDataLoadGate/)
   assert.match(appShell, /<React\.Suspense[\s\S]*?<Outlet \/>[\s\S]*?<\/React\.Suspense>/)
   assert.doesNotMatch(appShellStyles, /routeContentLoading|routeDataLoader/)
@@ -71,9 +73,10 @@ test('el sidebar precarga chunks cuando el usuario expresa intencion de navegar'
   assert.match(sidebar, /ROUTE_PREFETCH_POINTER_DWELL_MS = 150/)
   assert.match(sidebar, /onPointerEnter:\s*\(\) => scheduleSidebarRoutePrefetch\(destination\)/)
   assert.match(sidebar, /onPointerLeave:\s*\(\) => cancelSidebarRoutePrefetch\(destination\)/)
-  assert.match(sidebar, /onPointerDown:\s*\(\) => prefetchSidebarRoute\(destination\)/)
-  assert.match(sidebar, /onFocus:\s*\(\) => prefetchSidebarRoute\(destination\)/)
-  assert.match(sidebar, /onTouchStart:\s*\(\) => prefetchSidebarRoute\(destination\)/)
+  assert.match(sidebar, /onFocus:\s*\(\) => scheduleSidebarRoutePrefetch\(destination\)/)
+  assert.doesNotMatch(sidebar, /onPointerDown:\s*\(\) => prefetchSidebarRoute\(destination\)/)
+  assert.doesNotMatch(sidebar, /onTouchStart:\s*\(\) => prefetchSidebarRoute\(destination\)/)
+  assert.match(sidebar, /cancelAllSidebarRoutePrefetches\(\)[\s\S]*?\[location\.pathname\]/)
   assert.match(sidebar, /\.\.\.routePrefetchIntentProps\(item\.href\)/)
   assert.match(sidebar, /\.\.\.routePrefetchIntentProps\(child\.to\)/)
 })

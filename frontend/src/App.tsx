@@ -809,7 +809,15 @@ const AppWithNotifications: React.FC = () => {
 
   return (
     <>
-      <BrowserRouter>
+      {/*
+        Las rutas del CRM deben cambiar de forma urgente. Si React Router conserva
+        la pantalla anterior dentro de una transición mientras resuelve un chunk,
+        esa pantalla también conserva sus effects y requests vivos; un segundo
+        clic rápido termina pareciendo una navegación doble. El Suspense del
+        AppShell mantiene sidebar/header disponibles mientras sólo la zona de la
+        ruta nueva muestra su loader.
+      */}
+      <BrowserRouter useTransitions={false}>
         <PhoneRouteEffects />
         <KeyboardFocusScrollEffect />
         <NativeIosMobileRouteGate />
