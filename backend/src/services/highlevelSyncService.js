@@ -13,6 +13,7 @@ import {
   resolveHighLevelContactCustomFields
 } from './highlevelCustomFieldsService.js'
 import { hasContactCustomFieldsPayload } from '../utils/contactCustomFields.js'
+import { mergeAndPersistContactCustomFields } from './contactCustomFieldsPersistenceService.js'
 import {
   finalizePreparedPhoneUpsert,
   linkContactToGhl,
@@ -902,7 +903,6 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
           attribution_ad_id = COALESCE(NULLIF(contacts.attribution_ad_id, ''), EXCLUDED.attribution_ad_id),
           attribution_ad_name = COALESCE(NULLIF(contacts.attribution_ad_name, ''), EXCLUDED.attribution_ad_name),
           visitor_id = COALESCE(EXCLUDED.visitor_id, contacts.visitor_id),
-          custom_fields = COALESCE(EXCLUDED.custom_fields, contacts.custom_fields),
           updated_at = EXCLUDED.updated_at`
       : `INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, first_name, last_name, source,
           attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name,
@@ -922,7 +922,6 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
           attribution_ad_id = COALESCE(NULLIF(contacts.attribution_ad_id, ''), excluded.attribution_ad_id),
           attribution_ad_name = COALESCE(NULLIF(contacts.attribution_ad_name, ''), excluded.attribution_ad_name),
           visitor_id = COALESCE(excluded.visitor_id, contacts.visitor_id),
-          custom_fields = COALESCE(excluded.custom_fields, contacts.custom_fields),
           updated_at = excluded.updated_at`
 
     // No guardar el teléfono como nombre (HighLevel a veces devuelve el
@@ -952,6 +951,10 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
       contact.dateAdded || new Date().toISOString(),
       contact.dateUpdated || contact.dateAdded || new Date().toISOString()
     ])
+    await mergeAndPersistContactCustomFields({
+      contactId: localContactId,
+      updates: customFieldsResult.customFields
+    })
     await finalizePreparedPhoneUpsert(phoneUpsert, localContactId)
 
     return { localContactId, created }
@@ -1143,7 +1146,6 @@ async function syncHighLevelContacts(locationId, apiToken) {
             attribution_ad_id = COALESCE(NULLIF(contacts.attribution_ad_id, ''), EXCLUDED.attribution_ad_id),
             attribution_ad_name = COALESCE(NULLIF(contacts.attribution_ad_name, ''), EXCLUDED.attribution_ad_name),
             visitor_id = COALESCE(EXCLUDED.visitor_id, contacts.visitor_id),
-            custom_fields = COALESCE(EXCLUDED.custom_fields, contacts.custom_fields),
             updated_at = EXCLUDED.updated_at`
         : `INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, first_name, last_name, source,
             attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name,
@@ -1163,7 +1165,6 @@ async function syncHighLevelContacts(locationId, apiToken) {
             attribution_ad_id = COALESCE(NULLIF(contacts.attribution_ad_id, ''), excluded.attribution_ad_id),
             attribution_ad_name = COALESCE(NULLIF(contacts.attribution_ad_name, ''), excluded.attribution_ad_name),
             visitor_id = COALESCE(excluded.visitor_id, contacts.visitor_id),
-            custom_fields = COALESCE(excluded.custom_fields, contacts.custom_fields),
             updated_at = excluded.updated_at`
 
       // No guardar el teléfono como nombre (HighLevel a veces devuelve el
@@ -1193,6 +1194,10 @@ async function syncHighLevelContacts(locationId, apiToken) {
         contact.dateAdded || new Date().toISOString(),
         contact.dateUpdated || contact.dateAdded || new Date().toISOString()
       ])
+      await mergeAndPersistContactCustomFields({
+        contactId: localContactId,
+        updates: customFieldsResult.customFields
+      })
       await finalizePreparedPhoneUpsert(phoneUpsert, localContactId)
 
       saved++

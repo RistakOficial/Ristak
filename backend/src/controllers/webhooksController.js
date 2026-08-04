@@ -20,6 +20,7 @@ import {
   triggerMetaPaymentPurchaseEvent
 } from '../services/metaConversionEventsService.js';
 import { resolveHighLevelContactCustomFields } from '../services/highlevelCustomFieldsService.js';
+import { mergeAndPersistContactCustomFields } from '../services/contactCustomFieldsPersistenceService.js';
 import { hasContactCustomFieldsPayload } from '../utils/contactCustomFields.js';
 import {
   finalizePreparedPhoneUpsert,
@@ -1053,7 +1054,6 @@ export const handleContactWebhook = async (req, res) => {
           attribution_ad_id = COALESCE(NULLIF(contacts.attribution_ad_id, ''), EXCLUDED.attribution_ad_id),
           attribution_ad_name = COALESCE(NULLIF(contacts.attribution_ad_name, ''), EXCLUDED.attribution_ad_name),
           visitor_id = COALESCE(EXCLUDED.visitor_id, contacts.visitor_id),
-          custom_fields = COALESCE(EXCLUDED.custom_fields, contacts.custom_fields),
           updated_at = CURRENT_TIMESTAMP`
       : `INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, first_name, last_name, source, created_at,
           attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name, visitor_id, custom_fields)
@@ -1072,7 +1072,6 @@ export const handleContactWebhook = async (req, res) => {
           attribution_ad_id = COALESCE(NULLIF(contacts.attribution_ad_id, ''), excluded.attribution_ad_id),
           attribution_ad_name = COALESCE(NULLIF(contacts.attribution_ad_name, ''), excluded.attribution_ad_name),
           visitor_id = COALESCE(excluded.visitor_id, contacts.visitor_id),
-          custom_fields = COALESCE(excluded.custom_fields, contacts.custom_fields),
           updated_at = CURRENT_TIMESTAMP`;
 
     const contactExistedBefore = !contactCreatedNow;
@@ -1095,6 +1094,10 @@ export const handleContactWebhook = async (req, res) => {
       visitorId,
       customFieldsJson
     ]);
+    await mergeAndPersistContactCustomFields({
+      contactId: localContactId,
+      updates: customFieldsResult.customFields
+    });
     await finalizePreparedPhoneUpsert(phoneUpsert, localContactId);
 
     // Si viene visitor_id, vincular histórico de sesiones

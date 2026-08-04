@@ -7175,6 +7175,13 @@ anteriores que todavía declaran `destinationType/saveMode = standard` con
 personalizado durante el submit, antes de guardar el contacto. Así la respuesta
 no queda solamente en `public_site_submissions` ni desaparece de la ficha del
 contacto. El editor ya no ofrece **Mensaje o nota** entre los campos del sistema.
+Una sincronización posterior desde HighLevel, un webhook de contacto o la API
+externa tampoco puede reemplazar el arreglo completo de `contacts.custom_fields`.
+Esos ingresos fusionan sus campos por identidad sobre la versión más reciente del
+contacto y conservan las respuestas locales de Sites —incluidos texto, radio,
+dropdown, checkbox y multiselección— para que sigan seleccionadas o visibles en
+la ficha. Un proveedor externo sólo actualiza el campo que realmente envía; que
+su payload no conozca un campo local nunca significa que deba borrarlo.
 Si una llave ya existe con un tipo incompatible, Ristak no pisa la definición:
 crea o reutiliza una llave tipada estable. Reescribir o resubir el mismo campo
 conserva su definición y no la duplica.

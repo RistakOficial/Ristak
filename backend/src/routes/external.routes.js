@@ -51,6 +51,7 @@ import {
 } from '../utils/contactCustomFields.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizeContactNameFields, splitContactName } from '../utils/contactNameFormatter.js'
+import { mergeAndPersistContactCustomFields } from '../services/contactCustomFieldsPersistenceService.js'
 import {
   buildHiddenContactDataCondition,
   getHiddenContactFilters
@@ -370,11 +371,14 @@ async function upsertLocalContact(contact = {}) {
     })
     if (resolvedId) id = resolvedId
   }
-  const customFieldsJson = hasContactCustomFieldsPayload(contact)
-    ? serializeContactCustomFieldsForDb(normalizeContactCustomFields(contact))
+  const incomingCustomFields = hasContactCustomFieldsPayload(contact)
+    ? normalizeContactCustomFields(contact)
     : contact.custom_fields !== undefined
-      ? serializeContactCustomFieldsForDb(parseContactCustomFields(contact.custom_fields))
-      : null
+      ? parseContactCustomFields(contact.custom_fields)
+      : []
+  const customFieldsJson = incomingCustomFields.length
+    ? serializeContactCustomFieldsForDb(incomingCustomFields)
+    : null
   const customFieldsValueSql = process.env.DATABASE_URL
     ? "COALESCE(?::jsonb, '[]'::jsonb)"
     : "COALESCE(?, '[]')"
@@ -394,7 +398,6 @@ async function upsertLocalContact(contact = {}) {
        source = excluded.source,
        attribution_ad_name = COALESCE(excluded.attribution_ad_name, contacts.attribution_ad_name),
        attribution_ad_id = COALESCE(excluded.attribution_ad_id, contacts.attribution_ad_id),
-       custom_fields = COALESCE(excluded.custom_fields, contacts.custom_fields),
        updated_at = CURRENT_TIMESTAMP`,
     [
       id,
@@ -410,6 +413,10 @@ async function upsertLocalContact(contact = {}) {
       contact.createdAt || contact.dateAdded || contact.created_at || null
     ]
   )
+  await mergeAndPersistContactCustomFields({
+    contactId: id,
+    updates: incomingCustomFields
+  })
   await finalizePreparedPhoneUpsert(phoneUpsert, id)
 
   return db.get('SELECT * FROM contacts WHERE id = ?', [id])
