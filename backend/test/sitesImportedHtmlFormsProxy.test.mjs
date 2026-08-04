@@ -14,6 +14,7 @@ import {
   updateImportedSiteFieldMapping,
   updateSite
 } from '../src/services/sitesService.js'
+import { clearHighLevelIntegrationCredentials } from '../src/services/integrationCredentialsCleanupService.js'
 
 const DOMAIN_KEYS = {
   domain: 'sites_public_domain',
@@ -31,6 +32,19 @@ function getSourceQuestionBlocks(site) {
 async function deleteSites(siteIds = []) {
   for (const siteId of new Set(siteIds.filter(Boolean))) {
     await deleteSite(siteId).catch(() => undefined)
+  }
+}
+
+async function restoreHighLevelConfig(rows = []) {
+  await db.run('DELETE FROM highlevel_config')
+  for (const row of rows) {
+    const columns = Object.keys(row)
+    if (!columns.length) continue
+    const quotedColumns = columns.map(column => `"${String(column).replace(/"/g, '""')}"`).join(', ')
+    await db.run(
+      `INSERT INTO highlevel_config (${quotedColumns}) VALUES (${columns.map(() => '?').join(', ')})`,
+      columns.map(column => row[column])
+    )
   }
 }
 
@@ -516,15 +530,17 @@ test('stable field ids separate repeated names and drop removed or arbitrary raw
   }
 })
 
-test('public imported submit creates and stores every single-or-multiple choice control in its typed custom field', async () => {
+test('public imported submit stores text and typed choices locally without HighLevel and preserves them after disconnect', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const email = `typed-html-${suffix}@example.test`
+  const situationKey = `situacion_consultorio_${suffix}`.toLowerCase()
   const planKey = `plan_grupo_${suffix}`.toLowerCase()
   const consentKey = `consentimiento_grupo_${suffix}`.toLowerCase()
   const interestsKey = `intereses_grupo_${suffix}`.toLowerCase()
   const priorityKey = `prioridad_grupo_${suffix}`.toLowerCase()
   const channelsKey = `canales_grupo_${suffix}`.toLowerCase()
-  const customFieldKeys = [planKey, consentKey, interestsKey, priorityKey, channelsKey]
+  const customFieldKeys = [situationKey, planKey, consentKey, interestsKey, priorityKey, channelsKey]
+  const previousHighLevelConfig = await db.all('SELECT * FROM highlevel_config')
   const previousConfig = {
     domain: await getAppConfig(DOMAIN_KEYS.domain),
     verified: await getAppConfig(DOMAIN_KEYS.verified),
@@ -535,6 +551,10 @@ test('public imported submit creates and stores every single-or-multiple choice 
   const sourceFormIds = []
 
   try {
+    await db.run('DELETE FROM highlevel_config')
+    const disconnectedConfig = await db.get('SELECT COUNT(*) AS total FROM highlevel_config')
+    assert.equal(Number(disconnectedConfig.total), 0)
+
     await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
     await setAppConfig(DOMAIN_KEYS.verified, '1')
     await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
@@ -548,6 +568,8 @@ test('public imported submit creates and stores every single-or-multiple choice 
         <form data-rstk-form-id="preferencias-contacto" data-rstk-label="Preferencias">
           <label for="email">Correo</label>
           <input id="email" type="email" name="email" data-rstk-field-id="email">
+          <label for="situacion">¿Cuál es la situación actual de tu consultorio?</label>
+          <textarea id="situacion" name="situacion" data-rstk-field-id="situacion"></textarea>
           <fieldset>
             <legend>Plan</legend>
             <label><input type="radio" name="plan" value="starter" data-rstk-field-id="plan-starter"> Starter</label>
@@ -580,11 +602,12 @@ test('public imported submit creates and stores every single-or-multiple choice 
     sourceFormIds.push(...created.import.formMappings.map(mapping => mapping.formSiteId).filter(Boolean))
 
     const detectedForm = created.import.formMappings.find(mapping => mapping.formId === 'preferencias_contacto')
-    assert.equal(detectedForm.fields.filter(field => field.present !== false).length, 6)
+    assert.equal(detectedForm.fields.filter(field => field.present !== false).length, 7)
     assert.deepEqual(
       detectedForm.fields.map(field => [field.fieldId, field.type, field.options.map(option => option.value)]),
       [
         ['email', 'email', []],
+        ['situacion', 'textarea', []],
         ['plan', 'radio', ['starter', 'pro']],
         ['consentimiento', 'checkbox', ['aceptado']],
         ['intereses', 'checkbox', ['ventas', 'soporte']],
@@ -596,6 +619,7 @@ test('public imported submit creates and stores every single-or-multiple choice 
     assert.equal(detectedForm.fields.find(field => field.fieldId === 'intereses').hasStableFieldId, false)
 
     for (const [fieldId, destinationKey] of [
+      ['situacion', situationKey],
       ['plan', planKey],
       ['consentimiento', consentKey],
       ['intereses', interestsKey],
@@ -630,6 +654,7 @@ test('public imported submit creates and stores every single-or-multiple choice 
         importedFormId: 'preferencias-contacto',
         rawFields: {
           email,
+          situacion: 'Necesito atraer pacientes de forma constante.',
           plan: 'pro',
           consentimiento: 'aceptado',
           intereses: ['ventas', 'soporte'],
@@ -646,6 +671,7 @@ test('public imported submit creates and stores every single-or-multiple choice 
     assert.ok(submission.form_site_id)
     assert.deepEqual(JSON.parse(submission.raw_fields_json), {
       email,
+      situacion: 'Necesito atraer pacientes de forma constante.',
       plan: 'pro',
       consentimiento: ['aceptado'],
       intereses: ['ventas', 'soporte'],
@@ -655,6 +681,7 @@ test('public imported submit creates and stores every single-or-multiple choice 
     const mapped = JSON.parse(submission.mapped_fields_json)
     assert.deepEqual(mapped.standard, { email })
     assert.deepEqual(mapped.custom, {
+      [situationKey]: 'Necesito atraer pacientes de forma constante.',
       [planKey]: 'pro',
       [consentKey]: ['aceptado'],
       [interestsKey]: ['ventas', 'soporte'],
@@ -672,6 +699,11 @@ test('public imported submit creates and stores every single-or-multiple choice 
         options: field.options.map(option => option.value)
       }])),
       {
+        [situationKey]: {
+          dataType: 'textarea',
+          value: 'Necesito atraer pacientes de forma constante.',
+          options: []
+        },
         [planKey]: {
           dataType: 'radio',
           value: 'pro',
@@ -703,7 +735,7 @@ test('public imported submit creates and stores every single-or-multiple choice 
     const definitions = await db.all(`
       SELECT field_key, data_type, options_json
       FROM contact_custom_field_definitions
-      WHERE field_key IN (?, ?, ?, ?, ?)
+      WHERE field_key IN (?, ?, ?, ?, ?, ?)
       ORDER BY field_key ASC
     `, customFieldKeys)
     assert.deepEqual(
@@ -712,12 +744,21 @@ test('public imported submit creates and stores every single-or-multiple choice 
         options: JSON.parse(definition.options_json || '[]').map(option => option.value)
       }])),
       {
+        [situationKey]: { dataType: 'textarea', options: [] },
         [planKey]: { dataType: 'radio', options: ['starter', 'pro'] },
         [consentKey]: { dataType: 'checkboxes', options: ['aceptado'] },
         [interestsKey]: { dataType: 'checkboxes', options: ['ventas', 'soporte'] },
         [priorityKey]: { dataType: 'dropdown', options: ['normal', 'urgente'] },
         [channelsKey]: { dataType: 'multiselect', options: ['email', 'whatsapp'] }
       }
+    )
+
+    await clearHighLevelIntegrationCredentials()
+    const contactAfterDisconnect = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [result.contactId])
+    assert.deepEqual(
+      JSON.parse(contactAfterDisconnect.custom_fields || '[]'),
+      customFields,
+      'desconectar HighLevel no debe borrar las respuestas locales del formulario'
     )
 
     await assert.rejects(
@@ -773,7 +814,7 @@ test('public imported submit creates and stores every single-or-multiple choice 
     if (siteId) await deleteSite(siteId).catch(() => undefined)
     await deleteSites(sourceFormIds)
     const definitions = await db.all(
-      'SELECT id FROM contact_custom_field_definitions WHERE field_key IN (?, ?, ?, ?, ?)',
+      'SELECT id FROM contact_custom_field_definitions WHERE field_key IN (?, ?, ?, ?, ?, ?)',
       customFieldKeys
     ).catch(() => [])
     for (const definition of definitions) {
@@ -781,6 +822,7 @@ test('public imported submit creates and stores every single-or-multiple choice 
       await db.run('DELETE FROM contact_custom_field_definitions WHERE id = ?', [definition.id]).catch(() => undefined)
     }
     await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+    await restoreHighLevelConfig(previousHighLevelConfig).catch(() => undefined)
     await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain || '')
     await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified || '')
     await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt || '')

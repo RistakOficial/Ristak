@@ -7200,6 +7200,13 @@ contacto y conservan las respuestas locales de Sites —incluidos texto, radio,
 dropdown, checkbox y multiselección— para que sigan seleccionadas o visibles en
 la ficha. Un proveedor externo sólo actualiza el campo que realmente envía; que
 su payload no conozca un campo local nunca significa que deba borrarlo.
+La captura y consulta de estas respuestas es nativa de Ristak y no depende de
+HighLevel: `/api/sites/public/submit` crea o actualiza el contacto y persiste el
+campo personalizado en la base local aunque `highlevel_config` no exista. Al
+desconectar HighLevel se eliminan sus credenciales y se apagan sus procesos, pero
+no se eliminan las respuestas ya guardadas ni se deshabilitan los formularios de
+Sites. Este contrato cubre tanto preguntas de texto como radio buttons y queda
+protegido por `backend/test/sitesImportedHtmlFormsProxy.test.mjs`.
 Si una llave ya existe con un tipo incompatible, Ristak no pisa la definición:
 crea o reutiliza una llave tipada estable. Reescribir o resubir el mismo campo
 conserva su definición y no la duplica.
