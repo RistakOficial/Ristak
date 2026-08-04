@@ -2581,20 +2581,23 @@ Una fila solamente QR usa Baileys. Si el mismo teléfono también tiene una fila
 oficial sana, API conserva prioridad aunque una ruta histórica solicite QR; esa
 sesión queda como respaldo. Si la API está indisponible y ese mismo número tiene
 respaldo QR listo, el mensaje puede salir por QR únicamente cuando la solicitud
-lo autorizó. La ventana de 24 horas, una plantilla no aprobada, errores de
-contenido o destinatario, `131047`, `131053`, timeout, red o HTTP 5xx jamás
-autorizan Baileys. La ventana cerrada exige plantilla oficial. Sólo una
-indisponibilidad inequívoca del transporte (desconexión, autorización perdida,
-suspensión/restricción o límite confirmado) permite el respaldo. Cuando Meta
-pierde permisos, sólo su fila queda inactiva y YCloud/QR continúan operando. La
+lo autorizó. La ventana de 24 horas cerrada o desconocida para contenido libre
+también autoriza Baileys del mismo número; el preflight evita tocar la API y un
+`131047` posterior usa un claim `at-most-once` durante 15 minutos. Una plantilla
+no aprobada, errores de contenido o destinatario, `131053`, timeout, red o HTTP
+5xx jamás autorizan Baileys. También permite el respaldo una indisponibilidad
+inequívoca del transporte (desconexión, autorización perdida,
+suspensión/restricción o límite confirmado). Cuando Meta pierde permisos, sólo
+su fila queda inactiva y YCloud/QR continúan operando. La
 única excepción de contenido es una plantilla aceptada y luego rechazada por una
 validación estructural inequívoca de variables, cuerpo, componentes o idioma.
 Como ese mensaje nunca pudo entregarse, Ristak puede enviar su texto renderizado
 por QR si la solicitud original lo autorizó, el QR está listo y no han pasado
 15 minutos. El código numérico se conserva para auditoría, pero no decide: puede
 variar entre proveedor y versión. Timeouts, red, HTTP 408/429/5xx, fallos
-temporales, destinatario, ventana y multimedia quedan fuera aunque el texto
-también mencione una plantilla.
+temporales, destinatario y multimedia quedan fuera aunque el texto también
+mencione una plantilla. La ventana usa su propia regla anterior y nunca sirve
+para saltarse la aprobación de una plantilla.
 
 Esta prioridad es independiente del orden de conexión. Cuando termina de
 conectarse cualquier proveedor registrado como API oficial, el backend marca esa
@@ -3654,8 +3657,9 @@ entrante del cliente para ese contacto y numero de negocio. Si la ventana de 24
 horas sigue abierta, los envios manuales del chat deben salir por la API oficial
 de esa fila aunque el frontend haya pedido `transport='qr'` por un calculo local
 incompleto. Si la ventana ya esta cerrada o no existe una respuesta entrante
-comprobable, no debe intentar un mensaje libre ni cambiar a QR: debe solicitar
-una plantilla oficial. QR sólo es primario cuando la API de ese número está
+comprobable y existe un QR usable del mismo teléfono, una solicitud que autoriza
+respaldo debe cambiar a QR antes de tocar la API. Sin ese QR, debe solicitar una
+plantilla oficial. QR también es primario cuando la API de ese número está
 indisponible o cuando se trata de un número QR standalone. Desktop y movil deben calcular el
 transporte antes de pintar el mensaje optimista, pero el backend es la autoridad
 final para evitar tanto que un QR previo secuestre conversaciones API como que
@@ -3881,15 +3885,14 @@ minutos, únicamente con autorización original y claim `at-most-once`; la misma
 fila cambia a `transport=qr`, conserva el ID oficial para auditoría y la UI
 muestra un solo globo.
 
-La ventana cerrada, una plantilla pendiente/rechazada, errores de contenido o
-media (`131053`) y errores de conversación (`131047`) no son indisponibilidad de
-la API y nunca cambian a QR; la validación estructural definitiva anterior es la
-única excepción de contenido. Tampoco cambian a QR los timeout, errores de red,
-HTTP 408/429/5xx o respuestas temporales/reintentables. Para texto o media fuera
-de 24 horas, el flujo se detiene y ofrece una plantilla oficial. Si un fallback
-legítimo confirma el envío, el historial registra el transporte real `qr` y la
-UI muestra un solo globo; no se oculta una segunda fila para aparentar
-deduplicación.
+Una ventana cerrada/desconocida y el error `131047` sí cambian contenido libre a
+QR cuando el respaldo del mismo número está listo y autorizado. Una plantilla
+pendiente/rechazada, errores de contenido o media (`131053`), timeout, errores de
+red, HTTP 408/429/5xx o respuestas temporales/reintentables no cambian a QR; la
+validación estructural definitiva anterior es la única excepción de contenido.
+Si un fallback legítimo confirma el envío, el historial registra el transporte
+real `qr` y la UI muestra un solo globo; no se oculta una segunda fila para
+aparentar deduplicación.
 Una vez que Baileys devuelve `key.id`, el request manual responde `sent` sin
 esperar hasta 20 segundos por `delivered`/`read`. Los ACK posteriores se guardan
 en background y actualizan la misma fila; si el ACK llega antes del INSERT, el
@@ -4734,8 +4737,8 @@ Esta sección y todo su despacho en segundo plano requieren
   el backend sustituye la petición QR por API.
 - Los mensajes directos por WhatsApp API no sustituyen a las plantillas fuera de
   la ventana permitida por Meta: sólo salen si existe conversación abierta de
-  24 horas. Fuera de esa ventana debe usarse plantilla aprobada; QR sólo aplica
-  si la API dejó de estar disponible o el remitente es QR standalone.
+  24 horas. Fuera de esa ventana se usa el QR del mismo número si el despacho
+  autorizó respaldo; sin QR usable debe usarse una plantilla aprobada.
 - WhatsApp registra el despacho en `payment_automation_dispatches` con
   `channel='whatsapp'` o `channel='whatsapp_qr'` segun la ruta elegida.
 - Correo electronico usa la conexion SMTP guardada en Configuracion > Integraciones
@@ -5021,9 +5024,9 @@ el QR pertenezca al mismo número.
 
 Los mensajes directos por WhatsApp API en citas tambien dependen de ventana de
 conversacion abierta de 24 horas. Si no existe una respuesta reciente del
-contacto, el envio libre por API falla de forma explicita; para mensajes
-proactivos fuera de ventana debe usarse plantilla aprobada. Tener QR conectado
-no evita esta regla mientras la API esté disponible.
+contacto, el envio libre no toca la API: usa el QR del mismo número cuando el
+recordatorio autorizó respaldo. Sin QR usable, para mensajes proactivos fuera de
+ventana debe usarse plantilla aprobada.
 
 Cada par `reminder_id + appointment_id` se reclama en
 `appointment_reminder_sends` antes de enviar para evitar duplicados. Estados

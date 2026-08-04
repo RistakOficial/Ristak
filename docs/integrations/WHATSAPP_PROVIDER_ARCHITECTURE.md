@@ -105,16 +105,21 @@ las superficies reconcilien por SSE sin consultar al proveedor en polling.
 
 Por lo tanto, seleccionar un número Meta directo sano mantiene el composer en
 WhatsApp API y calcula su ventana de 24 horas con los mensajes entrantes de ese
-mismo número. Si la ventana está cerrada, la UI ofrece plantillas y no desvía el
-texto libre a HighLevel. Adjuntos, audio, reacciones y mensajes programados
-respetan la misma autoridad del número seleccionado.
+mismo número. Si la ventana está abierta, el mensaje sale por la API oficial. Si
+está cerrada o no existe un inbound comprobable y ese mismo número tiene un QR
+listo, una solicitud que autoriza respaldo cambia a Baileys antes de tocar la
+API. Si no existe QR usable, la UI ofrece plantillas. Este fallback nunca desvía
+el texto libre a HighLevel. Adjuntos, audio, reacciones y mensajes programados
+respetan la misma autoridad del número seleccionado y el flag
+`allowQrFallback`.
 
 Si una fila QR representa el mismo teléfono que una fila oficial sana, la fila
 oficial toma la salida aunque el consumidor histórico haya solicitado
-`transport=qr`. QR es respaldo, no un segundo remitente: sólo toma el mensaje
-cuando la API está inequívocamente indisponible y la solicitud puntual lo
-autorizó. Una ventana de 24 horas cerrada exige plantilla oficial y nunca cambia
-el transporte a Baileys.
+`transport=qr` mientras la ventana oficial esté abierta. QR es respaldo, no un
+segundo remitente: toma el mensaje cuando la API está inequívocamente
+indisponible o cuando el texto libre no puede salir por API porque la ventana de
+24 horas está cerrada o es desconocida, siempre que la solicitud puntual lo
+autorice y la sesión corresponda al mismo teléfono.
 
 El orden de conexión no modifica esa autoridad. Al completar la conexión de
 cualquier proveedor marcado como API oficial en el registro interno,
@@ -132,10 +137,14 @@ Esto protege rutas históricas, pero no sustituye la regla por fila.
 
 El respaldo QR sólo se ejecuta cuando existe una sesión compatible del mismo
 teléfono, la solicitud tiene `allowQrFallback=true` y el fallo confirma pérdida
-de conexión/autorización, suspensión, restricción o límite del transporte. No
-aplica a ventana cerrada, plantilla no aprobada, destinatario, contenido,
-`131047`, `131053`, timeout, red ni HTTP 5xx. Campañas/broadcasts siempre usan
-`allowQrFallback=false`. Existe una excepción deliberadamente estrecha para una
+de conexión/autorización, suspensión, restricción o límite del transporte, o la
+ventana de 24 horas cerrada/desconocida para contenido libre. El preflight evita
+tocar la API cuando la evidencia local ya lo demuestra; si el proveedor devuelve
+`131047` después de aceptar el request, Ristak conserva la autorización original,
+reclama el mensaje con una barrera `at-most-once` y lo manda por QR durante los
+primeros 15 minutos. No aplica a plantilla no aprobada, destinatario, contenido,
+`131053`, timeout, red ni HTTP 5xx. Campañas/broadcasts siempre usan
+`allowQrFallback=false`. Existe otra excepción deliberadamente estrecha para una
 plantilla que la API aceptó y el proveedor después rechazó por validación
 estructural de variables, cuerpo, componentes o idioma. El código numérico no
 decide porque cambia entre proveedores y versiones: el mensaje del fallo debe
@@ -144,31 +153,33 @@ ausencia o invalidez. Si el intento original autorizó QR, tiene texto
 renderizado, ocurrió hace menos de 15 minutos y el respaldo está listo, Ristak
 manda ese mismo texto por QR.
 
-La excepción semántica excluye expresamente timeout, red, HTTP 408/429/5xx,
-errores temporales o reintentables, ventana de conversación, destinatario y
-multimedia. También excluye el estado local pendiente/rechazado/no aprobado de
-una plantilla: el fallback no sirve para saltarse la revisión de Meta. Un código
-desconocido con un error estructural definitivo sí puede aplicar; un código
-conocido con texto ambiguo no.
+La excepción semántica de plantilla excluye expresamente timeout, red, HTTP
+408/429/5xx, errores temporales o reintentables, ventana de conversación,
+destinatario y multimedia. La ventana tiene su propio fallback anterior y nunca
+convierte una plantilla inválida en texto. También se excluye el estado local
+pendiente/rechazado/no aprobado de una plantilla: el fallback no sirve para
+saltarse la revisión de Meta. Un código desconocido con un error estructural
+definitivo sí puede aplicar; un código conocido con texto ambiguo no.
 
 Los nodos de WhatsApp en Automatizaciones y los recordatorios/avisos de Citas
 autorizan este ruteo estricto automáticamente. En esas superficies,
 `sendViaQr` y `qr_fallback_enabled` son campos legacy de compatibilidad y no
 deciden el transporte: QR-only envía por QR; API-only envía por API; y el mismo
-número con API+QR intenta API una sola vez y sólo usa su QR ante una
-indisponibilidad inequívoca. Las plantillas continúan saliendo como plantillas
-oficiales cuando existe API; estar pendientes/rechazadas o tener la ventana de
-24 horas cerrada nunca habilita QR. Campañas/broadcasts conservan su prohibición
-explícita de fallback.
+número con API+QR usa API cuando la ventana permite contenido libre y usa QR
+cuando esa ventana está cerrada/desconocida o existe indisponibilidad inequívoca.
+Las plantillas aprobadas continúan saliendo como plantillas oficiales cuando
+existe API; estar pendientes/rechazadas nunca habilita QR. Campañas/broadcasts
+conservan su prohibición explícita de fallback.
 
 El webhook es un observador: persiste estados y puede marcar la API restringida
 para solicitudes futuras; un `failed` posterior normalmente se conserva como
-fallo API. La única excepción es el rechazo estructural definitivo de plantilla
-descrito arriba. `whatsapp_api_qr_fallback_attempts` reclama el mensaje antes de
-tocar Baileys y deja una barrera `at-most-once`: webhooks duplicados o
-concurrentes no pueden mandar una segunda copia. Un intento QR que falla después
-del claim no se reintenta automáticamente porque ya no se puede probar con
-certeza que WhatsApp Web no lo aceptó.
+fallo API. Las dos excepciones demostrables son `131047` para texto libre con
+autorización original y el rechazo estructural definitivo de plantilla descrito
+arriba. `whatsapp_api_qr_fallback_attempts` reclama el mensaje antes de tocar
+Baileys y deja una barrera `at-most-once`: webhooks duplicados o concurrentes no
+pueden mandar una segunda copia. Un intento QR que falla después del claim no se
+reintenta automáticamente porque ya no se puede probar con certeza que WhatsApp
+Web no lo aceptó.
 
 Los recordatorios de Citas agregan una reconciliación específica sobre ese
 estado asíncrono. Si el request de plantilla fue aceptado pero el mensaje final
@@ -242,9 +253,9 @@ Compatibilidad histórica:
   `provider_message_id` además de los campos legacy.
 - `whatsapp_api_template_sends.qr_fallback_authorized` congela la autorización
   de la solicitud original; nunca se infiere después por tener un QR conectado.
-- `whatsapp_api_qr_fallback_attempts` es el claim y auditoría durable de la
-  excepción semántica de validación estructural. Su PK es el mensaje API
-  canónico.
+- `whatsapp_api_qr_fallback_attempts` es el claim y auditoría durable de los
+  fallbacks asíncronos demostrables: `131047` de texto libre y validación
+  estructural definitiva de plantilla. Su PK es el mensaje API canónico.
 - `whatsapp_api_contacts` conserva teléfono y, cuando el proveedor los entregue,
   `whatsapp_user_id`, `parent_whatsapp_user_id` y `username`.
 - Después del rollout de BSUID, no se debe asumir que el teléfono es el único
@@ -378,7 +389,8 @@ contacto; esa fila es invisible para conversación, bandeja y conteos, y el
 INSERT del envío la convierte en el mensaje real usando el mismo `wamid`.
 
 Todo envío de texto aceptado por Graph debe persistirse de inmediato con el texto
-visible, `provider=meta_direct`, `source_adapter=meta_direct`,
+visible, la autorización original de fallback, `provider=meta_direct`,
+`source_adapter=meta_direct`,
 `meta_message_id`, `wamid`, `contact_id` y `localMessageId`. Los ACK posteriores
 se fusionan con esa misma fila. Texto, plantillas, interactivos, ubicación,
 foto, documento, video y audio seleccionados para Meta Direct salen por Graph y
@@ -478,11 +490,12 @@ nuevo sigue el flujo estándar de Cloud API.
    pero solo un proveedor API debe ser el remitente activo para un número en un
    momento dado. No se debe enviar el mismo request por ambos “por seguridad”.
 7. Baileys puede ser fallback explícito. El resultado final debe registrar
-   `transport=qr` y `source_adapter=baileys`. Para un rechazo asíncrono
-   estructural y definitivo de plantilla, debe actualizar la misma fila canónica,
-   preservar el ID oficial en `ycloud_message_id`/`meta_message_id` y reclamar
-   primero `whatsapp_api_qr_fallback_attempts`. El código de error se audita, pero
-   no gobierna la clasificación.
+   `transport=qr` y `source_adapter=baileys`. Para `131047` en texto libre o un
+   rechazo asíncrono estructural y definitivo de plantilla, debe actualizar la
+   misma fila canónica, preservar el ID oficial en
+   `ycloud_message_id`/`meta_message_id` y reclamar primero
+   `whatsapp_api_qr_fallback_attempts`. El código identifica la ventana; en la
+   excepción de plantilla se audita, pero no gobierna la clasificación.
 8. La preferencia global del tenant no decide el proveedor de salida. Cada
    mensaje usa el proveedor de la fila `phoneNumberId` elegida.
 9. Al arrancar una versión que introduce la identidad de protocolo, Ristak

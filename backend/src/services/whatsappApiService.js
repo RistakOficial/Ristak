@@ -185,6 +185,8 @@ const CHAT_AUDIO_PLAYBACK_EXTENSION = 'm4a'
 const WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000
 const WHATSAPP_REPLY_WINDOW_CLOSED_REASON = 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.'
 const WHATSAPP_REPLY_WINDOW_UNKNOWN_REASON = 'No hay una respuesta reciente del cliente registrada; WhatsApp API solo permite mensajes libres dentro de la ventana de 24 horas.'
+const WHATSAPP_REPLY_WINDOW_CLOSED_QR_FALLBACK_REASON = 'La conversación lleva más de 24 horas sin respuesta del cliente; Ristak usó el respaldo QR del mismo número.'
+const WHATSAPP_REPLY_WINDOW_UNKNOWN_QR_FALLBACK_REASON = 'No hay una respuesta reciente del cliente que abra la ventana de WhatsApp API; Ristak usó el respaldo QR del mismo número.'
 const WHATSAPP_API_PROFILE_PICTURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const WHATSAPP_API_PROFILE_PICTURE_BATCH_LIMIT = 40
 const WHATSAPP_PROFILE_PICTURE_BACKFILL_DEFAULT_LIMIT = 1000
@@ -269,9 +271,11 @@ const API_FALLBACK_PHONE_STATUSES = new Set([
 ])
 const QR_FALLBACK_READY_STATUSES = new Set(['connected', 'reconnecting', 'restarting', 'connection_replaced'])
 // El respaldo QR sólo puede activarse cuando la API oficial dejó de ser un
-// transporte utilizable para ESE número/cuenta. Los errores de conversación
-// (ventana de 24 h), destinatario o contenido no autorizan Baileys. Más abajo
-// existe una excepción acotada para validación estructural definitiva de plantilla.
+// transporte utilizable para ESE número/cuenta. Una ventana de conversación
+// cerrada sí autoriza el QR compatible cuando la solicitud puntual permite el
+// respaldo; destinatario, contenido, red y errores ambiguos siguen excluidos.
+// Más abajo existe otra excepción acotada para validación estructural definitiva
+// de plantilla.
 const API_FALLBACK_ERROR_PATTERN = /\b(MESSAGING LIMIT|RATE.?LIMIT|RESTRICT(?:ED|ION)?|BANNED|BLOCKED|DISABLED|SUSPENDED|LOCKED|NOT ALLOWED|NOT_ALLOWED|DISCONNECTED|MIGRATED)\b/i
 const API_CONNECTION_ERROR_PATTERN = /\b(ACCESS TOKEN|OAUTH|AUTHENTICATION|AUTHORIZATION|MISSING PERMISSIONS?|PERMISSION DENIED|UNSUPPORTED POST REQUEST|OBJECT .* DOES NOT EXIST|NOT CONNECTED|NO EST[AÁ] CONECTAD[OA]|NO SE ENCUENTRA CONECTAD[OA])\b/i
 const API_FALLBACK_RECIPIENT_ERROR_PATTERN = /\b(RECIPIENT|CUSTOMER|USER|DESTINATION|TO PHONE|UNSUBSCRIBED|OPTED.?OUT|BLOCKED BY USER|USER BLOCKED)\b/i
@@ -281,7 +285,7 @@ const TEMPLATE_FALLBACK_AMBIGUOUS_ERROR_PATTERN = /\b(408|429|5\d\d|TIMEOUT|TIME
 const TEMPLATE_FALLBACK_NON_TEXT_ERROR_PATTERN = /\b(131047|131053|24.?HOUR|CUSTOMER SERVICE WINDOW|OUTSIDE (?:THE )?WINDOW|MEDIA|AUDIO|VIDEO|IMAGE|DOCUMENT|STICKER|MIME(?:TYPE)?|DOWNLOAD|UPLOAD|VENTANA DE (?:ATENCI[ÓO]N|CONVERSACI[ÓO]N)|FUERA DE (?:LA )?VENTANA|MULTIMEDIA|IMAGEN|DOCUMENTO|DESCARGA)\b/i
 const TEMPLATE_FALLBACK_RECIPIENT_ERROR_PATTERN = /\b(DESTINATARI[OA]S?|CLIENTE|USUARI[OA]S?|N[ÚU]MERO DE DESTINO|DIO DE BAJA|BLOQUEAD[OA] POR (?:EL )?USUARIO)\b/i
 const TEMPLATE_REJECTION_QR_FALLBACK_REASON = 'WhatsApp rechazó definitivamente la plantilla antes de entregarla; Ristak la envió como texto por el respaldo QR.'
-const TEMPLATE_QR_FALLBACK_MAX_AGE_MS = 15 * 60 * 1000
+const ASYNC_QR_FALLBACK_MAX_AGE_MS = 15 * 60 * 1000
 
 const REQUIRED_WEBHOOK_EVENTS = [
   'whatsapp.inbound_message.received',
@@ -3687,8 +3691,9 @@ async function loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone } = {}) {
 
   // Una fila QR puede representar el respaldo del mismo número que vive en una
   // fila API separada. Si la API oficial está realmente disponible, esa fila es
-  // la autoridad de salida. La ventana de 24 horas nunca cambia el transporte:
-  // exige plantilla oficial y QR permanece reservado para indisponibilidad real.
+  // la autoridad que evalúa la salida. Con ventana abierta usa API; con ventana
+  // cerrada/desconocida el preflight posterior puede elegir el QR compatible si
+  // la solicitud autorizó respaldo.
   if (cleanString(requestedPhoneRow?.provider).toLowerCase() === 'qr') {
     const requestedPhones = getPhoneRowMatchValues(requestedPhoneRow)
     const officialRows = requestedPhones.length
@@ -4053,6 +4058,13 @@ function getOfficialApiConversationWindowReason(error) {
   return ''
 }
 
+function getReplyWindowQrFallbackReason(windowReason = '') {
+  if (!cleanString(windowReason)) return ''
+  return windowReason === WHATSAPP_REPLY_WINDOW_CLOSED_REASON
+    ? WHATSAPP_REPLY_WINDOW_CLOSED_QR_FALLBACK_REASON
+    : WHATSAPP_REPLY_WINDOW_UNKNOWN_QR_FALLBACK_REASON
+}
+
 function getOfficialApiRestrictionErrorReason(error) {
   const statusCode = Number(error?.statusCode || 0)
   // OJO: para decidir el ALCANCE del error se usa solo el mensaje del error,
@@ -4106,7 +4118,8 @@ async function getOfficialApiFallbackDecision({
   toPhone,
   contactId,
   error,
-  checkReplyWindow = false
+  checkReplyWindow = false,
+  allowReplyWindowFallback = true
 } = {}) {
   const phoneRow = config?.selectedPhoneRow || await findBusinessPhoneRowForSender({ phoneNumberId, fromPhone })
   const unavailableReason = !error
@@ -4118,9 +4131,9 @@ async function getOfficialApiFallbackDecision({
   const preflightWindowReason = !error && checkReplyWindow
     ? await getOfficialApiClosedReplyWindowReason({ contactId, toPhone, fromPhone, phoneNumberId })
     : ''
-  // La ventana cerrada exige plantilla oficial. Nunca es una autorización para
-  // cambiar silenciosamente de API a QR.
-  const reason = errorReason || unavailableReason || signalReason
+  const replyWindowReason = windowReason || preflightWindowReason
+  const reason = errorReason || unavailableReason || signalReason ||
+    (allowReplyWindowFallback ? getReplyWindowQrFallbackReason(replyWindowReason) : '')
   const fallbackPhoneRow = reason
     ? await findQrFallbackPhoneRowForSender({ phoneNumberId, fromPhone, phoneRow })
     : null
@@ -4262,7 +4275,7 @@ async function findAuthorizedTemplateSendForProviderMessage({
   ]).catch(() => null)
 }
 
-async function readCompletedTemplateQrFallback({ messageId, attempt } = {}) {
+async function readCompletedQrFallback({ messageId, attempt } = {}) {
   if (cleanString(attempt?.status).toLowerCase() !== 'sent') return null
   const stored = await db.get(`
     SELECT status, transport, routing_reason, provider_message_id, wamid
@@ -4286,6 +4299,205 @@ async function readCompletedTemplateQrFallback({ messageId, attempt } = {}) {
       routingReason: fallbackReason,
       localMessageId: messageId
     }
+  }
+}
+
+/**
+ * Si un texto libre fue aceptado por el request pero el proveedor confirma
+ * después que la ventana de 24 horas estaba cerrada, el fallo ya demuestra que
+ * la API no lo entregó. La autorización original viaja en la fila del mensaje y
+ * este claim durable permite mandar exactamente una copia por el QR del mismo
+ * número, incluso si llegan webhooks duplicados o concurrentes.
+ */
+async function maybeFallbackFailedReplyWindowTextViaQr({
+  messageId,
+  status,
+  errorCode,
+  errorMessage
+} = {}) {
+  if (normalizeMessageDeliveryStatus(status) !== 'failed') {
+    return { applied: false, pending: false }
+  }
+
+  const replyWindowReason = getOfficialApiConversationWindowReason({
+    message: `${cleanString(errorCode)} ${cleanString(errorMessage)}`.trim()
+  })
+  if (!replyWindowReason) return { applied: false, pending: false }
+
+  const stored = await db.get(`
+    SELECT id, provider, provider_message_id, ycloud_message_id, meta_message_id,
+           wamid, business_phone_number_id, contact_id, phone, from_phone, to_phone,
+           business_phone, direction, message_type, message_text, status, transport,
+           raw_payload_json, error_code, error_message, message_timestamp, created_at
+    FROM whatsapp_api_messages
+    WHERE id = ?
+    LIMIT 1
+  `, [messageId]).catch(() => null)
+
+  const storedPolicy = parseJsonValue(stored?.raw_payload_json, {})?.qrFallbackPolicy
+  if (
+    !stored?.id ||
+    cleanString(stored.direction).toLowerCase() !== 'outbound' ||
+    cleanString(stored.message_type).toLowerCase() !== 'text' ||
+    cleanString(stored.transport).toLowerCase() !== 'api' ||
+    normalizeMessageDeliveryStatus(stored.status) !== 'failed' ||
+    !cleanString(stored.message_text) ||
+    storedPolicy?.authorized !== true ||
+    storedPolicy?.replyWindow !== true
+  ) {
+    return { applied: false, pending: false }
+  }
+
+  const sentAt = Date.parse(stored.message_timestamp || stored.created_at || '')
+  if (Number.isFinite(sentAt) && Date.now() - sentAt > ASYNC_QR_FALLBACK_MAX_AGE_MS) {
+    return { applied: false, pending: false }
+  }
+
+  const fromPhone = normalizePhoneForStorage(stored.business_phone || stored.from_phone) ||
+    cleanString(stored.business_phone || stored.from_phone)
+  const toPhone = normalizePhoneForStorage(stored.phone || stored.to_phone) ||
+    cleanString(stored.phone || stored.to_phone)
+  const fallbackPhoneRow = await findQrFallbackPhoneRowForSender({
+    phoneNumberId: stored.business_phone_number_id,
+    fromPhone
+  })
+  if (!fallbackPhoneRow?.id || !fromPhone || !toPhone) {
+    return { applied: false, pending: false }
+  }
+
+  const fallbackReason = getReplyWindowQrFallbackReason(replyWindowReason)
+  const cleanProvider = cleanString(stored.provider).toLowerCase() || PROVIDER_NAME
+  const cleanProviderMessageId = cleanString(
+    stored.ycloud_message_id ||
+    stored.meta_message_id ||
+    stored.provider_message_id ||
+    stored.wamid
+  )
+  const claim = await db.run(`
+    INSERT INTO whatsapp_api_qr_fallback_attempts (
+      api_message_id, provider, provider_message_id, error_code, error_message,
+      fallback_reason, qr_phone_number_id, status, attempt_count, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'claimed', 1, CURRENT_TIMESTAMP)
+    ON CONFLICT(api_message_id) DO NOTHING
+  `, [
+    messageId,
+    cleanProvider,
+    cleanProviderMessageId || null,
+    cleanString(errorCode || stored.error_code) || null,
+    cleanString(errorMessage || stored.error_message) || null,
+    fallbackReason,
+    fallbackPhoneRow.id
+  ])
+
+  if (Number(claim?.changes || 0) !== 1) {
+    const previousAttempt = await db.get(`
+      SELECT *
+      FROM whatsapp_api_qr_fallback_attempts
+      WHERE api_message_id = ?
+      LIMIT 1
+    `, [messageId]).catch(() => null)
+    const completed = await readCompletedQrFallback({
+      messageId,
+      attempt: previousAttempt
+    })
+    if (completed) return completed
+    return {
+      applied: false,
+      pending: cleanString(previousAttempt?.status).toLowerCase() === 'claimed'
+    }
+  }
+
+  try {
+    const qrResponse = await sendTextViaQrFallback({
+      phoneNumberId: fallbackPhoneRow.id,
+      fromPhone,
+      toPhone,
+      body: stored.message_text,
+      externalId: `reply-window-qr-fallback:${messageId}`,
+      contactId: stored.contact_id,
+      fallbackReason,
+      persist: false
+    })
+    const qrMessageId = cleanString(qrResponse.id || qrResponse.wamid)
+    const qrWamid = cleanString(qrResponse.wamid || qrResponse.id)
+    const qrStatus = normalizeMessageDeliveryStatus(qrResponse.status) || 'sent'
+    const protocolMessageKeyId = resolveWhatsAppProtocolMessageKey({
+      transport: 'qr',
+      wamid: qrWamid
+    })
+    const originalPayload = parseJsonValue(stored.raw_payload_json, {}) || {}
+    const rawPayload = safeJson({
+      ...originalPayload,
+      apiFailure: {
+        provider: cleanProvider,
+        providerMessageId: cleanProviderMessageId || null,
+        errorCode: cleanString(errorCode || stored.error_code) || null,
+        errorMessage: cleanString(errorMessage || stored.error_message) || null
+      },
+      qrFallback: {
+        applied: true,
+        reason: fallbackReason,
+        phoneNumberId: fallbackPhoneRow.id,
+        messageId: qrMessageId || null,
+        status: qrStatus
+      }
+    })
+
+    await db.transaction(async transactionDatabase => {
+      await transactionDatabase.run(`
+        UPDATE whatsapp_api_messages
+        SET source_adapter = 'baileys',
+            origin = 'whatsapp.qr.message.fallback_sent',
+            provider_message_id = ?,
+            wamid = ?,
+            protocol_message_key_id = ?,
+            transport = 'qr',
+            routing_reason = ?,
+            status = ?,
+            error_code = NULL,
+            error_message = NULL,
+            raw_payload_json = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND LOWER(COALESCE(direction, '')) = 'outbound'
+          AND LOWER(COALESCE(message_type, '')) = 'text'
+      `, [
+        qrMessageId || null,
+        qrWamid || null,
+        protocolMessageKeyId || null,
+        fallbackReason,
+        qrStatus,
+        rawPayload,
+        messageId
+      ])
+      await transactionDatabase.run(`
+        UPDATE whatsapp_api_qr_fallback_attempts
+        SET qr_message_id = ?,
+            status = 'sent',
+            last_error = NULL,
+            sent_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE api_message_id = ?
+      `, [qrMessageId || qrWamid || null, messageId])
+    })
+
+    return {
+      applied: true,
+      response: {
+        ...qrResponse,
+        localMessageId: messageId
+      }
+    }
+  } catch (error) {
+    await db.run(`
+      UPDATE whatsapp_api_qr_fallback_attempts
+      SET status = 'failed',
+          last_error = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE api_message_id = ?
+    `, [cleanString(error?.message).slice(0, 2000) || 'El respaldo QR falló', messageId]).catch(() => undefined)
+    logger.error(`[WhatsApp API] El respaldo QR por ventana cerrada ${messageId} falló: ${error.message}`)
+    return { applied: false, pending: false, failed: true }
   }
 }
 
@@ -4347,7 +4559,7 @@ async function maybeFallbackRejectedTemplateViaQr({
   // respaldo sólo es válido cerca del intento original, mientras el usuario aún
   // espera que ese mismo envío salga.
   const sentAt = Date.parse(stored.message_timestamp || stored.created_at || '')
-  if (Number.isFinite(sentAt) && Date.now() - sentAt > TEMPLATE_QR_FALLBACK_MAX_AGE_MS) {
+  if (Number.isFinite(sentAt) && Date.now() - sentAt > ASYNC_QR_FALLBACK_MAX_AGE_MS) {
     return { applied: false, pending: false }
   }
 
@@ -4369,7 +4581,7 @@ async function maybeFallbackRejectedTemplateViaQr({
     return { applied: false, pending: false }
   }
   const authorizedAt = Date.parse(authorizedSend.created_at || '')
-  if (Number.isFinite(authorizedAt) && Date.now() - authorizedAt > TEMPLATE_QR_FALLBACK_MAX_AGE_MS) {
+  if (Number.isFinite(authorizedAt) && Date.now() - authorizedAt > ASYNC_QR_FALLBACK_MAX_AGE_MS) {
     return { applied: false, pending: false }
   }
 
@@ -4416,7 +4628,7 @@ async function maybeFallbackRejectedTemplateViaQr({
       WHERE api_message_id = ?
       LIMIT 1
     `, [messageId]).catch(() => null)
-    const completed = await readCompletedTemplateQrFallback({
+    const completed = await readCompletedQrFallback({
       messageId,
       attempt: previousAttempt
     })
@@ -8437,6 +8649,21 @@ async function upsertMessage({
   const preservedDeliveryReceipt = isPlainObject(existingRawPayload.deliveryReceipt)
     ? { deliveryReceipt: existingRawPayload.deliveryReceipt }
     : {}
+  const incomingQrFallbackPolicy = isPlainObject(normalizedMessage.qrFallbackPolicy)
+    ? normalizedMessage.qrFallbackPolicy
+    : null
+  const existingQrFallbackPolicy = isPlainObject(existingRawPayload.qrFallbackPolicy)
+    ? existingRawPayload.qrFallbackPolicy
+    : null
+  const qrFallbackPolicy = incomingQrFallbackPolicy || existingQrFallbackPolicy
+  const preservedQrFallbackPolicy = qrFallbackPolicy
+    ? {
+        qrFallbackPolicy: {
+          authorized: qrFallbackPolicy.authorized === true,
+          replyWindow: qrFallbackPolicy.replyWindow === true
+        }
+      }
+    : {}
   const preservedAgentMetadata = formatConversationalAgentMessageMetadata(
     incomingAgentMarker.sentByAgent ? incomingAgentMarker : existingAgentMarker
   )
@@ -8612,7 +8839,12 @@ async function upsertMessage({
     existingQrFallbackApplied ? null : (errorCode || null),
     existingQrFallbackApplied ? null : (errorMessage || null),
     messageTimestamp,
-    existingQrFallbackApplied ? null : safeJson({ ...normalizedMessage, ...preservedAgentMetadata, ...preservedDeliveryReceipt }),
+    existingQrFallbackApplied ? null : safeJson({
+      ...normalizedMessage,
+      ...preservedQrFallbackPolicy,
+      ...preservedAgentMetadata,
+      ...preservedDeliveryReceipt
+    }),
     safeJson(normalizedMessage.context || normalizedMessage.contextInfo || null),
     safeJson(attribution.referral || null),
     attribution.ctwaClid || null,
@@ -8789,11 +9021,12 @@ async function upsertMessage({
   const canonicalStatus = canonicalQrFallbackApplied
     ? (normalizeMessageDeliveryStatus(existingMessage?.status) || status)
     : pickBestMessageDeliveryStatus(existingMessage?.status, incomingStatus)
-  // Por regla general, los webhooks sólo observan y concilian estado. La única
-  // excepción es un rechazo definitivo de validación de plantilla: el contenido
-  // del fallo prueba que el mensaje no salió, aunque el código del proveedor
-  // cambie, y una solicitud que autorizó QR puede reclamar exactamente una vez
-  // su respaldo como texto. Fallos ambiguos siguen siendo sólo observación.
+  // Por regla general, los webhooks sólo observan y concilian estado. Hay dos
+  // excepciones donde el fallo demuestra que la API no entregó: una ventana de
+  // respuesta cerrada para texto libre y un rechazo estructural definitivo de
+  // plantilla. En ambos casos la solicitud debe haber autorizado QR y el claim
+  // durable impide enviar una segunda copia. Fallos ambiguos siguen siendo sólo
+  // observación.
   const effectiveErrorCode = errorCode || cleanString(existingMessage?.error_code)
   const effectiveErrorMessage = errorMessage || cleanString(existingMessage?.error_message)
   const effectiveFailure = incomingStatus === 'failed' || normalizeMessageDeliveryStatus(existingMessage?.status) === 'failed'
@@ -8815,7 +9048,15 @@ async function upsertMessage({
     })
   }
 
-  const deterministicTemplateFallback = canonicalQrFallbackApplied
+  const replyWindowFallback = canonicalQrFallbackApplied
+    ? { applied: false, pending: false }
+    : await maybeFallbackFailedReplyWindowTextViaQr({
+        messageId,
+        status: canonicalStatus,
+        errorCode: effectiveErrorCode,
+        errorMessage: effectiveErrorMessage
+      })
+  const deterministicTemplateFallback = canonicalQrFallbackApplied || replyWindowFallback.applied
     ? { applied: false, pending: false }
     : await maybeFallbackRejectedTemplateViaQr({
         messageId,
@@ -8829,8 +9070,11 @@ async function upsertMessage({
         errorCode: effectiveErrorCode,
         errorMessage: effectiveErrorMessage
       })
-  const fallbackApplied = Boolean(deterministicTemplateFallback.applied)
-  const fallbackResponse = fallbackApplied ? deterministicTemplateFallback.response : null
+  const appliedQrFallback = replyWindowFallback.applied
+    ? replyWindowFallback
+    : deterministicTemplateFallback
+  const fallbackApplied = Boolean(appliedQrFallback.applied)
+  const fallbackResponse = fallbackApplied ? appliedQrFallback.response : null
   const finalTransport = canonicalQrFallbackApplied || fallbackApplied ? 'qr' : cleanTransport
   const finalSourceAdapter = resolveWhatsAppSourceAdapter({ provider, transport: finalTransport })
   const finalRoutingReason = cleanString(
@@ -12806,7 +13050,8 @@ export async function sendWhatsAppApiTemplateMessage({
   const fallbackDecision = await getOfficialApiFallbackDecision({
     config,
     fromPhone,
-    phoneNumberId
+    phoneNumberId,
+    allowReplyWindowFallback: false
   })
   if (allowQrFallback && fallbackDecision.shouldFallback) {
     return sendTemplateViaQr({
@@ -12834,7 +13079,8 @@ export async function sendWhatsAppApiTemplateMessage({
       config,
       fromPhone,
       phoneNumberId,
-      error
+      error,
+      allowReplyWindowFallback: false
     })
     if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio de plantilla API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
@@ -13704,6 +13950,10 @@ export async function sendWhatsAppApiTextMessage({
       message: {
         ...response,
         ...agentMetadata,
+        qrFallbackPolicy: {
+          authorized: Boolean(allowQrFallback),
+          replyWindow: true
+        },
         provider: META_DIRECT_PROVIDER_NAME,
         origin: response.origin || 'manual_text_send',
         from: response.from || fromPhone,
@@ -13831,6 +14081,10 @@ export async function sendWhatsAppApiTextMessage({
     message: {
       ...response,
       ...agentMetadata,
+      qrFallbackPolicy: {
+        authorized: Boolean(allowQrFallback),
+        replyWindow: true
+      },
       from: response.from || fromPhone,
       to: response.to || toPhone,
       type: response.type || 'text',

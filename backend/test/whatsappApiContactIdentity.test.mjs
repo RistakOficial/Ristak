@@ -2476,7 +2476,7 @@ test('webhook 131053 conserva el fallo de audio en API y nunca dispara QR', asyn
   }
 })
 
-test('envio API fuera de ventana exige plantilla sin tocar YCloud ni Baileys', async () => {
+test('envio manual fuera de ventana usa el QR del mismo numero sin tocar la API', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52989${suffix}`
@@ -2587,22 +2587,23 @@ test('envio API fuera de ventana exige plantilla sin tocar YCloud ni Baileys', a
         return ycloudJsonResponse({ items: [], total: 0 })
       })
 
-      await assert.rejects(
-        sendWhatsAppApiTextMessage({
-          to: phone,
-          from: businessPhone,
-          text: body,
-          externalId,
-          contactId,
-          phoneNumberId,
-          transport: 'qr',
-          skipQrSendProtection: true
-        }),
-        /24 horas.*plantillas/i
-      )
+      const result = await sendWhatsAppApiTextMessage({
+        to: phone,
+        from: businessPhone,
+        text: body,
+        externalId,
+        contactId,
+        phoneNumberId,
+        transport: 'qr',
+        skipQrSendProtection: true
+      })
 
       assert.equal(ycloudPostCalls, 0)
-      assert.equal(sentMessages.length, 0)
+      assert.equal(sentMessages.length, 1)
+      assert.equal(sentMessages[0].payload.text, body)
+      assert.equal(result.transport, 'qr')
+      assert.equal(result.fallback, true)
+      assert.match(result.fallbackReason, /respaldo QR del mismo número/i)
 
       const message = await db.get(`
         SELECT transport, routing_reason, status, error_code, error_message, message_text
@@ -2612,7 +2613,48 @@ test('envio API fuera de ventana exige plantilla sin tocar YCloud ni Baileys', a
         LIMIT 1
       `, [contactId, body])
 
-      assert.equal(message, null)
+      assert.equal(message.transport, 'qr')
+      assert.match(message.routing_reason, /respaldo QR del mismo número/i)
+      assert.ok(['sent', 'delivered'].includes(message.status))
+      assert.equal(message.error_code, null)
+      assert.equal(message.error_message, null)
+      assert.equal(message.message_text, body)
+
+      await assert.rejects(
+        sendWhatsAppApiTextMessage({
+          to: phone,
+          from: businessPhone,
+          text: 'Este envío desactiva el respaldo de forma explícita',
+          externalId: `${externalId}_blocked`,
+          contactId,
+          phoneNumberId,
+          allowQrFallback: false,
+          skipQrSendProtection: true
+        }),
+        /24 horas.*plantillas/i
+      )
+      assert.equal(ycloudPostCalls, 0)
+      assert.equal(sentMessages.length, 1)
+
+      await db.run(`
+        UPDATE whatsapp_api_phone_numbers
+        SET qr_send_enabled = 0, qr_status = 'disconnected'
+        WHERE id = ?
+      `, [phoneNumberId])
+      await assert.rejects(
+        sendWhatsAppApiTextMessage({
+          to: phone,
+          from: businessPhone,
+          text: 'Este envío ya no tiene un respaldo QR usable',
+          externalId: `${externalId}_without_qr`,
+          contactId,
+          phoneNumberId,
+          skipQrSendProtection: true
+        }),
+        /24 horas.*plantillas/i
+      )
+      assert.equal(ycloudPostCalls, 0)
+      assert.equal(sentMessages.length, 1)
     })
   } finally {
     setYCloudFetchForTest(null)
@@ -2625,7 +2667,7 @@ test('envio API fuera de ventana exige plantilla sin tocar YCloud ni Baileys', a
   }
 })
 
-test('envio de foto fuera de ventana exige plantilla y nunca toca Baileys', async () => {
+test('envio de foto fuera de ventana usa el QR del mismo numero', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52988${suffix}`
@@ -2726,21 +2768,22 @@ test('envio de foto fuera de ventana exige plantilla y nunca toca Baileys', asyn
         return ycloudJsonResponse({ items: [], total: 0 })
       })
 
-      await assert.rejects(
-        sendWhatsAppApiImageMessage({
-          to: phone,
-          from: businessPhone,
-          imageDataUrl: ONE_PIXEL_PNG_DATA_URL,
-          externalId,
-          contactId,
-          phoneNumberId,
-          skipQrSendProtection: true
-        }),
-        /24 horas.*plantillas/i
-      )
+      const result = await sendWhatsAppApiImageMessage({
+        to: phone,
+        from: businessPhone,
+        imageDataUrl: ONE_PIXEL_PNG_DATA_URL,
+        externalId,
+        contactId,
+        phoneNumberId,
+        skipQrSendProtection: true
+      })
 
       assert.equal(ycloudPostCalls, 0)
-      assert.equal(sentMessages.length, 0)
+      assert.equal(sentMessages.length, 1)
+      assert.ok(sentMessages[0].payload.image)
+      assert.equal(result.transport, 'qr')
+      assert.equal(result.fallback, true)
+      assert.match(result.fallbackReason, /respaldo QR del mismo número/i)
 
       const message = await db.get(`
         SELECT transport, routing_reason, status, message_type, message_text
@@ -2750,7 +2793,10 @@ test('envio de foto fuera de ventana exige plantilla y nunca toca Baileys', asyn
         LIMIT 1
       `, [contactId])
 
-      assert.equal(message, null)
+      assert.equal(message.transport, 'qr')
+      assert.match(message.routing_reason, /respaldo QR del mismo número/i)
+      assert.ok(['sent', 'delivered'].includes(message.status))
+      assert.equal(message.message_type, 'image')
     })
   } finally {
     setYCloudFetchForTest(null)
@@ -2763,7 +2809,7 @@ test('envio de foto fuera de ventana exige plantilla y nunca toca Baileys', asyn
   }
 })
 
-test('envio API sin inbound conocido exige plantilla sin tocar YCloud ni Baileys', async () => {
+test('envio sin inbound conocido usa QR y evita arriesgar un texto por la API', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52988${suffix}`
@@ -2852,21 +2898,22 @@ test('envio API sin inbound conocido exige plantilla sin tocar YCloud ni Baileys
         return ycloudJsonResponse({ items: [], total: 0 })
       })
 
-      await assert.rejects(
-        sendWhatsAppApiTextMessage({
-          to: phone,
-          from: businessPhone,
-          text: body,
-          externalId,
-          contactId,
-          phoneNumberId,
-          skipQrSendProtection: true
-        }),
-        /No hay una respuesta reciente.*24 horas/i
-      )
+      const result = await sendWhatsAppApiTextMessage({
+        to: phone,
+        from: businessPhone,
+        text: body,
+        externalId,
+        contactId,
+        phoneNumberId,
+        skipQrSendProtection: true
+      })
 
       assert.equal(ycloudPostCalls, 0)
-      assert.equal(sentMessages.length, 0)
+      assert.equal(sentMessages.length, 1)
+      assert.equal(sentMessages[0].payload.text, body)
+      assert.equal(result.transport, 'qr')
+      assert.equal(result.fallback, true)
+      assert.match(result.fallbackReason, /respaldo QR del mismo número/i)
 
       const message = await db.get(`
         SELECT transport, routing_reason, status, error_code, error_message, message_text
@@ -2876,7 +2923,12 @@ test('envio API sin inbound conocido exige plantilla sin tocar YCloud ni Baileys
         LIMIT 1
       `, [contactId, body])
 
-      assert.equal(message, null)
+      assert.equal(message.transport, 'qr')
+      assert.match(message.routing_reason, /respaldo QR del mismo número/i)
+      assert.ok(['sent', 'delivered'].includes(message.status))
+      assert.equal(message.error_code, null)
+      assert.equal(message.error_message, null)
+      assert.equal(message.message_text, body)
     })
   } finally {
     setYCloudFetchForTest(null)
@@ -2889,7 +2941,7 @@ test('envio API sin inbound conocido exige plantilla sin tocar YCloud ni Baileys
   }
 })
 
-test('131047 no usa el QR hermano del mismo número', async () => {
+test('131047 confirmado usa una sola vez el QR hermano del mismo número', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52993${suffix}`
@@ -2900,7 +2952,7 @@ test('131047 no usa el QR hermano del mismo número', async () => {
   const contactId = `rstk_contact_api_qr_split_${id}`
   const ycloudMessageId = `ycloud_api_split_failed_${id}`
   const externalId = `manual_chat_split_${id}`
-  const body = 'Hola, esto no debe salir por el QR separado'
+  const body = 'Hola, esto debe salir por el QR separado'
   const fallbackReason = 'Message failed to send because more than 24 hours have passed since the customer last replied to this number.'
   const keys = getWhatsAppApiConfigKeys()
   const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
@@ -2987,7 +3039,7 @@ test('131047 no usa el QR hermano del mismo número', async () => {
               code: '131047',
               message: fallbackReason
             },
-            createTime: '2024-05-07T08:09:10.000Z'
+            createTime: new Date().toISOString()
           })
         }
         return ycloudJsonResponse({ items: [], total: 0 })
@@ -3003,26 +3055,68 @@ test('131047 no usa el QR hermano del mismo número', async () => {
         skipQrSendProtection: true
       })
 
-      assert.equal(result.status, 'failed')
-      assert.equal(result.fallback, undefined)
-      assert.equal(sentMessages.length, 0)
+      assert.ok(['sent', 'delivered'].includes(result.status), JSON.stringify(result))
+      assert.equal(result.transport, 'qr')
+      assert.equal(result.fallback, true)
+      assert.match(result.fallbackReason, /respaldo QR del mismo número/i)
+      assert.equal(sentMessages.length, 1)
+      assert.equal(sentMessages[0].payload.text, body)
 
       const message = await db.get(`
-        SELECT transport, routing_reason, status, error_code, error_message, raw_payload_json, message_text
+        SELECT id, transport, routing_reason, status, error_code, error_message, raw_payload_json, message_text
         FROM whatsapp_api_messages
         WHERE ycloud_message_id = ?
       `, [ycloudMessageId])
 
-      assert.equal(message.transport, 'api')
-      assert.equal(message.status, 'failed')
-      assert.equal(message.error_code, '131047')
-      assert.equal(message.error_message, fallbackReason)
+      assert.equal(message.transport, 'qr')
+      assert.ok(['sent', 'delivered'].includes(message.status))
+      assert.equal(message.error_code, null)
+      assert.equal(message.error_message, null)
       assert.equal(message.message_text, body)
-      assert.equal(message.routing_reason, null)
+      assert.match(message.routing_reason, /respaldo QR del mismo número/i)
+
+      for (const duplicateIndex of [1, 2]) {
+        const duplicatePayload = {
+          id: `evt_131047_duplicate_${duplicateIndex}_${id}`,
+          type: 'whatsapp.message.updated',
+          apiVersion: 'v2',
+          createTime: new Date().toISOString(),
+          whatsappMessage: {
+            id: ycloudMessageId,
+            status: 'failed',
+            from: businessPhone,
+            to: phone,
+            wabaId: 'waba_api_qr_split_fallback_test',
+            type: 'text',
+            text: { body },
+            errorCode: '131047',
+            errorMessage: fallbackReason,
+            createTime: new Date().toISOString()
+          }
+        }
+        await processYCloudWhatsAppWebhook({
+          payload: duplicatePayload,
+          rawBody: JSON.stringify(duplicatePayload),
+          signatureHeader: '',
+          endpointId: ''
+        })
+      }
+      assert.equal(sentMessages.length, 1)
+
+      const fallbackAttempt = await db.get(`
+        SELECT status, attempt_count, qr_phone_number_id
+        FROM whatsapp_api_qr_fallback_attempts
+        WHERE api_message_id = ?
+      `, [message.id])
+      assert.equal(fallbackAttempt.status, 'sent')
+      assert.equal(fallbackAttempt.attempt_count, 1)
+      assert.equal(fallbackAttempt.qr_phone_number_id, qrPhoneNumberId)
     })
   } finally {
     setYCloudFetchForTest(null)
     resetWhatsAppQrServiceForTest()
+    await db.run('DELETE FROM whatsapp_api_qr_fallback_attempts WHERE provider_message_id = ?', [ycloudMessageId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_webhook_events WHERE event_id LIKE ?', [`evt_131047_duplicate_%_${id}`]).catch(() => undefined)
     for (const phoneNumberId of [apiPhoneNumberId, qrPhoneNumberId]) {
       await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
       await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
