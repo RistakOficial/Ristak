@@ -133,6 +133,42 @@ export function hasPath(edges: AutomationEdge[], from: string, to: string): bool
 }
 
 /**
+ * Devuelve la única siguiente espera alcanzable desde el nodo indicado.
+ * Cada rama deja de recorrerse al encontrar su primera espera. Si distintas
+ * ramas llevan primero a esperas diferentes, el resultado es ambiguo y no se
+ * elige ninguna automáticamente.
+ */
+export function getNextDownstreamWaitNode(
+  nodes: AutomationNode[],
+  edges: AutomationEdge[],
+  sourceNodeId: string
+): AutomationNode | null {
+  if (!sourceNodeId) return null
+  const nodesById = new Map(nodes.map((node) => [node.id, node]))
+  const adjacency = buildAdjacency(edges)
+  const queue = [...(adjacency.get(sourceNodeId) || [])]
+  const visited = new Set<string>([sourceNodeId])
+  const candidates = new Map<string, AutomationNode>()
+
+  while (queue.length > 0) {
+    const nodeId = queue.shift() as string
+    if (visited.has(nodeId)) continue
+    visited.add(nodeId)
+    const node = nodesById.get(nodeId)
+    if (!node) continue
+    if (node.type === 'logic-wait') {
+      candidates.set(node.id, node)
+      continue
+    }
+    for (const nextNodeId of adjacency.get(nodeId) || []) {
+      if (!visited.has(nextNodeId)) queue.push(nextNodeId)
+    }
+  }
+
+  return candidates.size === 1 ? [...candidates.values()][0] : null
+}
+
+/**
  * Los saltos configurados dentro de una espera de cita también forman parte del
  * recorrido real del flujo, aunque no se dibujen como conectores en el canvas.
  * Los exponemos como aristas virtuales para validar entradas, variables y ciclos.
@@ -147,12 +183,16 @@ export function getAppointmentPastDueRoutingEdges(
     const config = node.config || {}
     if (
       config.mode !== 'appointment' ||
-      (config.appointmentOffset || 'before') !== 'before' ||
-      config.appointmentPastDueAction !== 'specific_node'
+      (config.appointmentOffset || 'before') !== 'before'
     ) return []
-    const targetNodeId = typeof config.appointmentPastDueTargetNodeId === 'string'
-      ? config.appointmentPastDueTargetNodeId.trim()
-      : ''
+    const action = config.appointmentPastDueAction
+    const targetNodeId = action === 'specific_node'
+      ? (typeof config.appointmentPastDueTargetNodeId === 'string'
+          ? config.appointmentPastDueTargetNodeId.trim()
+          : '')
+      : action === 'next_wait' || action === 'auto'
+        ? getNextDownstreamWaitNode(nodes, edges, node.id)?.id || ''
+        : ''
     if (!targetNodeId) return []
     return [{
       id: `virtual-appointment-past-due-${node.id}`,

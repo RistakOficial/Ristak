@@ -1522,8 +1522,13 @@ una espera genérica mantiene su plazo y los pasos posteriores reciben el horari
 nuevo. Las acciones ya ejecutadas no se repiten. Si el nuevo momento relativo ya
 pasó y el paso está configurado como **Antes de la cita**, la espera aplica
 **¿Qué quieres que pase si ya pasó el tiempo?**: puede continuar al siguiente
-evento, saltar a un evento específico o sacar la ejecución del flujo. El salto
-es parte del grafo lógico aunque no dibuje otro conector; el editor y el backend
+evento, saltar al siguiente evento **Esperar**, saltar a un evento específico o
+sacar la ejecución del flujo. En nodos nuevos, saltar a la siguiente espera es
+el default cuando existe una única siguiente espera inequívoca en las rutas hacia
+adelante. Si no existe otra espera, o distintas ramas llegan primero a esperas
+diferentes, esa opción no aparece y el default es continuar al siguiente evento;
+el usuario todavía puede elegir un destino con **Pasar a un evento específico**.
+El salto es parte del grafo lógico aunque no dibuje otro conector; el editor y el backend
 rechazan destinos eliminados, el propio paso, el inicio y cualquier salto que
 forme un ciclo. La política también aplica cuando el contacto llega por primera
 vez al paso después del momento calculado. No aplica al vencimiento normal de

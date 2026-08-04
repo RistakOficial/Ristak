@@ -18,6 +18,7 @@ import {
 } from '../crmFields'
 import {
   getAppointmentPastDueRoutingEdges,
+  getNextDownstreamWaitNode,
   hasPath,
   isStartNode,
   nodeHasInput,
@@ -112,6 +113,28 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({
     if (action.value === 'book_appointment') return hasAppointmentsAccess
     return true
   })
+  const nextDownstreamWait = React.useMemo(
+    () => getNextDownstreamWaitNode(nodes, edges, currentNodeId),
+    [currentNodeId, edges, nodes]
+  )
+  const nextDownstreamWaitLabel = nextDownstreamWait
+    ? str(nextDownstreamWait.config?.customTitle).trim() ||
+      nextDownstreamWait.label ||
+      getNodeDefinition(nextDownstreamWait.type)?.label ||
+      'Esperar'
+    : ''
+  const configuredPastDueAction = str(config.appointmentPastDueAction)
+  const effectivePastDueAction = configuredPastDueAction === 'auto'
+    ? (nextDownstreamWait ? 'next_wait' : 'continue')
+    : configuredPastDueAction || 'continue'
+  const appointmentPastDueActionOptions = [
+    ...(nextDownstreamWait
+      ? [{ value: 'next_wait', label: 'Saltar al siguiente evento de espera' }]
+      : []),
+    { value: 'continue', label: 'Pasar al siguiente evento' },
+    { value: 'specific_node', label: 'Pasar a un evento específico' },
+    { value: 'exit', label: 'Salir del flujo' }
+  ]
   const appointmentPastDueTargetOptions = React.useMemo(() => {
     if (!currentNodeId) return []
     const routingEdgesWithoutCurrentJump = getAppointmentPastDueRoutingEdges(
@@ -293,20 +316,18 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({
             <>
               <Field
                 label="¿Qué quieres que pase si ya pasó el tiempo?"
-                help="Se aplica si el contacto llega a esta espera después del momento configurado."
+                help={nextDownstreamWaitLabel
+                  ? `La siguiente espera es “${nextDownstreamWaitLabel}”. Esta regla se aplica si el contacto llega tarde.`
+                  : 'Se aplica si el contacto llega a esta espera después del momento configurado.'}
               >
                 <CustomSelect
-                  options={[
-                    { value: 'continue', label: 'Pasar al siguiente evento' },
-                    { value: 'specific_node', label: 'Pasar a un evento específico' },
-                    { value: 'exit', label: 'Salir del flujo' }
-                  ]}
-                  value={str(config.appointmentPastDueAction) || 'continue'}
+                  options={appointmentPastDueActionOptions}
+                  value={effectivePastDueAction}
                   onValueChange={(next) => set({ appointmentPastDueAction: next })}
                   aria-label="Qué hacer si ya pasó el tiempo"
                 />
               </Field>
-              {str(config.appointmentPastDueAction) === 'specific_node' && (
+              {effectivePastDueAction === 'specific_node' && (
                 <Field
                   label="Evento al que debe pasar"
                   help={appointmentPastDueTargetOptions.length === 0

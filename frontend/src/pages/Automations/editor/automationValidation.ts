@@ -2,6 +2,7 @@ import type { AutomationEdge, AutomationNode } from '@/services/automationsServi
 import { getNodeDefinition, validateNodeConfig } from './nodeRegistry'
 import {
   getAppointmentPastDueRoutingEdges,
+  getNextDownstreamWaitNode,
   getStartTriggers,
   getWaitMessageSourceOptions,
   hasPath,
@@ -140,9 +141,15 @@ function validateAppointmentPastDueRouting(
   const config = node.config || {}
   if (
     config.mode !== 'appointment' ||
-    (config.appointmentOffset || 'before') !== 'before' ||
-    config.appointmentPastDueAction !== 'specific_node'
+    (config.appointmentOffset || 'before') !== 'before'
   ) return
+  if (config.appointmentPastDueAction === 'next_wait') {
+    if (!getNextDownstreamWaitNode(nodes, edges, node.id)) {
+      pushNodeError(result, node.id, 'Ya no existe un siguiente evento de espera inequívoco')
+    }
+    return
+  }
+  if (config.appointmentPastDueAction !== 'specific_node') return
   const targetNodeId = typeof config.appointmentPastDueTargetNodeId === 'string'
     ? config.appointmentPastDueTargetNodeId.trim()
     : ''

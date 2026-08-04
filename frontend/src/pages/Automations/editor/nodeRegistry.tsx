@@ -2564,7 +2564,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       appointmentOffset: 'before',
       offsetAmount: 1,
       offsetUnit: 'hours',
-      appointmentPastDueAction: 'continue',
+      appointmentPastDueAction: 'auto',
       appointmentPastDueTargetNodeId: '',
       // respuesta
       replyChannel: 'any',
@@ -2643,7 +2643,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         }
         if ((str(config.appointmentOffset) || 'before') === 'before') {
           const pastDueAction = str(config.appointmentPastDueAction) || 'continue'
-          if (!['continue', 'specific_node', 'exit'].includes(pastDueAction)) {
+          if (!['auto', 'continue', 'next_wait', 'specific_node', 'exit'].includes(pastDueAction)) {
             errors.push('Elige qué debe pasar si ya pasó el tiempo de espera')
           }
           if (pastDueAction === 'specific_node' && !str(config.appointmentPastDueTargetNodeId)) {

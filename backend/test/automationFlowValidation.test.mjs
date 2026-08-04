@@ -599,6 +599,75 @@ test('Esperar antes de una cita valida el evento elegido cuando el tiempo ya pas
   assert.ok(errors.some((message) => message.includes('no es válido')))
 })
 
+test('saltar a la siguiente espera sólo es válido cuando hay un destino inequívoco', () => {
+  const appointmentWait = {
+    id: 'appointment-wait',
+    type: 'logic-wait',
+    position: { x: 100, y: 0 },
+    config: {
+      mode: 'appointment',
+      appointmentOffset: 'before',
+      offsetAmount: 3,
+      offsetUnit: 'days',
+      appointmentPastDueAction: 'next_wait'
+    }
+  }
+  const intermediate = actionNode('intermediate')
+  const downstreamWait = {
+    id: 'downstream-wait',
+    type: 'logic-wait',
+    position: { x: 300, y: 0 },
+    config: { mode: 'duration', amount: 1, unit: 'days' }
+  }
+  const otherWait = {
+    id: 'other-wait',
+    type: 'logic-wait',
+    position: { x: 300, y: 100 },
+    config: { mode: 'duration', amount: 1, unit: 'days' }
+  }
+  const flow = {
+    nodes: [startNode(), appointmentWait, intermediate],
+    edges: [
+      edge('e1', 'start', 'appointment-wait'),
+      edge('e2', 'appointment-wait', 'intermediate')
+    ]
+  }
+
+  let errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('siguiente evento de espera inequívoco')))
+
+  flow.nodes.push(downstreamWait)
+  flow.edges.push(edge('e3', 'intermediate', 'downstream-wait'))
+  errors = validateFlowForPublish(flow)
+  assert.deepEqual(errors, [])
+
+  flow.nodes.push(otherWait)
+  flow.edges.push(edge('e4', 'intermediate', 'other-wait'))
+  errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('siguiente evento de espera inequívoco')))
+})
+
+test('el default automático continúa normal cuando todavía no hay otra espera', () => {
+  const appointmentWait = {
+    id: 'appointment-wait',
+    type: 'logic-wait',
+    position: { x: 100, y: 0 },
+    config: {
+      mode: 'appointment',
+      appointmentOffset: 'before',
+      offsetAmount: 3,
+      offsetUnit: 'days',
+      appointmentPastDueAction: 'auto'
+    }
+  }
+  const flow = {
+    nodes: [startNode(), appointmentWait],
+    edges: [edge('e1', 'start', 'appointment-wait')]
+  }
+
+  assert.deepEqual(validateFlowForPublish(flow), [])
+})
+
 test('el salto por tiempo vencido de una cita no puede regresar a un evento anterior', () => {
   const previousNode = actionNode('previous')
   const waitNode = {

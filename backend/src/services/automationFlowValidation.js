@@ -11,7 +11,7 @@ const MAX_FLOW_BYTES = 2 * 1024 * 1024 // 2MB: límite defensivo para el JSON de
 export const START_NODE_TYPE = 'start'
 const TRIGGER_LINK_WAIT_ACTIONS = new Set(['click_link', 'trigger_link_click', 'trigger-link-click'])
 const REPLY_MESSAGE_WAIT_ACTIONS = new Set(['reply_message', 'reply-message'])
-const APPOINTMENT_PAST_DUE_ACTIONS = new Set(['continue', 'specific_node', 'exit'])
+const APPOINTMENT_PAST_DUE_ACTIONS = new Set(['auto', 'continue', 'next_wait', 'specific_node', 'exit'])
 const SENT_MESSAGE_NODE_TYPES = new Set(['channel-whatsapp', 'channel-messenger', 'channel-instagram'])
 const DRIP_INTERVAL_UNITS = new Set(['minutes', 'hours', 'days'])
 const DEFAULT_REPLY_ACTION_CHANNELS = new Set(['whatsapp', 'messenger', 'instagram', 'email'])
@@ -307,6 +307,35 @@ function hasPath(edges, from, to) {
   return false
 }
 
+function nextDownstreamWaitNode(nodes, edges, sourceNodeId) {
+  if (!sourceNodeId) return null
+  const nodesById = new Map(nodes.map((node) => [node.id, node]))
+  const adjacency = new Map()
+  for (const edge of edges) {
+    const targets = adjacency.get(edge.sourceNodeId) || []
+    targets.push(edge.targetNodeId)
+    adjacency.set(edge.sourceNodeId, targets)
+  }
+  const queue = [...(adjacency.get(sourceNodeId) || [])]
+  const visited = new Set([sourceNodeId])
+  const candidates = new Map()
+  while (queue.length > 0) {
+    const nodeId = queue.shift()
+    if (visited.has(nodeId)) continue
+    visited.add(nodeId)
+    const node = nodesById.get(nodeId)
+    if (!node) continue
+    if (node.type === 'logic-wait') {
+      candidates.set(node.id, node)
+      continue
+    }
+    for (const nextNodeId of adjacency.get(nodeId) || []) {
+      if (!visited.has(nextNodeId)) queue.push(nextNodeId)
+    }
+  }
+  return candidates.size === 1 ? [...candidates.values()][0] : null
+}
+
 function appointmentPastDueRoutingEdges(nodes, edges) {
   const nodeIds = new Set(nodes.map((node) => node.id))
   const routingEdges = nodes.flatMap((node) => {
@@ -314,10 +343,14 @@ function appointmentPastDueRoutingEdges(nodes, edges) {
     if (
       node.type !== 'logic-wait' ||
       config.mode !== 'appointment' ||
-      String(config.appointmentOffset || 'before') !== 'before' ||
-      config.appointmentPastDueAction !== 'specific_node'
+      String(config.appointmentOffset || 'before') !== 'before'
     ) return []
-    const targetNodeId = String(config.appointmentPastDueTargetNodeId || '').trim()
+    const action = String(config.appointmentPastDueAction || '')
+    const targetNodeId = action === 'specific_node'
+      ? String(config.appointmentPastDueTargetNodeId || '').trim()
+      : action === 'next_wait' || action === 'auto'
+        ? nextDownstreamWaitNode(nodes, edges, node.id)?.id || ''
+        : ''
     if (!targetNodeId || !nodeIds.has(targetNodeId) || targetNodeId === node.id) return []
     return [{
       id: `virtual-appointment-past-due-${node.id}`,
@@ -568,6 +601,10 @@ export function validateFlowForPublish(flow) {
       const action = String(config.appointmentPastDueAction || 'continue')
       if (!APPOINTMENT_PAST_DUE_ACTIONS.has(action)) {
         errors.push('El paso Esperar tiene una acción inválida para una cita cuyo tiempo ya pasó')
+        return
+      }
+      if (action === 'next_wait' && !nextDownstreamWaitNode(nodes, edges, node.id)) {
+        errors.push('El paso Esperar ya no tiene un siguiente evento de espera inequívoco')
         return
       }
       if (action !== 'specific_node') return

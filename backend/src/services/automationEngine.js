@@ -69,7 +69,7 @@ const WAIT_KIND_TRIGGER_LINK_CLICK = 'trigger-link-click'
 const WAIT_KIND_EVENT_ACTION = 'event-action'
 const WAIT_KIND_CONDITION = 'condition'
 const WAIT_KIND_APPOINTMENT = 'appointment'
-const APPOINTMENT_PAST_DUE_ACTIONS = new Set(['continue', 'specific_node', 'exit'])
+const APPOINTMENT_PAST_DUE_ACTIONS = new Set(['auto', 'continue', 'next_wait', 'specific_node', 'exit'])
 const WAIT_KIND_GOAL = 'goal'
 const WAIT_KIND_DRIP = 'drip'
 // (AUTO-005) Espera especial para reintentar el MISMO nodo que falló de forma
@@ -1358,17 +1358,74 @@ function edgesFrom(flow, nodeId, handle) {
   )
 }
 
-function automationJumpTarget(flow, sourceNodeId, targetNodeId) {
+function nextDownstreamWaitNode(flow, sourceNodeId) {
+  if (!sourceNodeId) return null
+  const nodesById = new Map((flow.nodes || []).map((node) => [node.id, node]))
+  const adjacency = new Map()
+  for (const edge of flow.edges || []) {
+    const targets = adjacency.get(edge.sourceNodeId) || []
+    targets.push(edge.targetNodeId)
+    adjacency.set(edge.sourceNodeId, targets)
+  }
+  const queue = [...(adjacency.get(sourceNodeId) || [])]
+  const visited = new Set([sourceNodeId])
+  const candidates = new Map()
+  while (queue.length > 0) {
+    const nodeId = queue.shift()
+    if (visited.has(nodeId)) continue
+    visited.add(nodeId)
+    const node = nodesById.get(nodeId)
+    if (!node) continue
+    if (node.type === 'logic-wait') {
+      candidates.set(node.id, node)
+      continue
+    }
+    for (const nextNodeId of adjacency.get(nodeId) || []) {
+      if (!visited.has(nextNodeId)) queue.push(nextNodeId)
+    }
+  }
+  return candidates.size === 1 ? [...candidates.values()][0] : null
+}
+
+function automationJumpTarget(flow, sourceNodeId, {
+  targetNodeId = '',
+  nextWaitMode = '',
+  detail = ''
+} = {}) {
+  if (nextWaitMode) {
+    const nextWaitNode = nextDownstreamWaitNode(flow, sourceNodeId)
+    if (nextWaitNode) {
+      return {
+        node: nextWaitNode,
+        error: '',
+        detail: 'El momento antes de la cita ya había pasado; se saltó al siguiente evento de espera'
+      }
+    }
+    if (nextWaitMode === 'required') {
+      return {
+        node: null,
+        error: 'Ya no existe un siguiente evento de espera inequívoco; la ejecución salió del flujo',
+        detail
+      }
+    }
+    return {
+      node: null,
+      error: '',
+      detail: 'El momento antes de la cita ya había pasado; se continuó con el siguiente evento'
+    }
+  }
+
   const cleanTargetNodeId = cleanString(targetNodeId)
-  if (!cleanTargetNodeId) return { node: null, error: '' }
+  if (!cleanTargetNodeId) return { node: null, error: '', detail }
   const targetNode = getNode(flow, cleanTargetNodeId)
   if (!targetNode || targetNode.type === 'start' || targetNode.id === sourceNodeId) {
     return {
       node: null,
-      error: 'El evento configurado como destino ya no es válido; la ejecución salió del flujo'
+      error: 'El evento configurado como destino ya no es válido; la ejecución salió del flujo',
+      detail
     }
   }
-  return { node: targetNode, error: '' }
+  return { node: targetNode, error: '', detail }
 }
 
 function nodeLabel(node) {
@@ -5514,6 +5571,13 @@ function appointmentPastDueResult(config = {}) {
       detail: 'El momento antes de la cita ya había pasado; se continuó en el evento configurado'
     }
   }
+  if (action === 'next_wait' || action === 'auto') {
+    return {
+      handle: 'out',
+      nextWaitMode: action === 'next_wait' ? 'required' : 'if_available',
+      detail: ''
+    }
+  }
   return {
     handle: 'out',
     detail: 'El momento antes de la cita ya había pasado; se continuó con el siguiente evento'
@@ -6486,6 +6550,22 @@ async function runFrom(flow, enrollment, startNodeId, ctx) {
         'Contacto'
     }
 
+    const jump = result.stop
+      ? { node: null, error: '', detail: result.detail }
+      : automationJumpTarget(flow, node.id, result)
+    if (jump.error) {
+      enrollment.status = 'exited'
+      addLog(enrollment, {
+        nodeId: node.id,
+        label: nodeLabel(node),
+        status: 'error',
+        outcome: 'error',
+        detail: jump.error
+      })
+      break
+    }
+    if (jump.detail) result.detail = jump.detail
+
     exposeNodeOutput(ctx, node, result)
 
     const outcome = executionOutcomeForResult(result)
@@ -6513,18 +6593,6 @@ async function runFrom(flow, enrollment, startNodeId, ctx) {
       break
     }
 
-    const jump = automationJumpTarget(flow, node.id, result.targetNodeId)
-    if (jump.error) {
-      enrollment.status = 'exited'
-      addLog(enrollment, {
-        nodeId: node.id,
-        label: nodeLabel(node),
-        status: 'error',
-        outcome: 'error',
-        detail: jump.error
-      })
-      break
-    }
     if (jump.node) {
       currentId = jump.node.id
       continue
@@ -7055,6 +7123,7 @@ export async function controlAutomationEnrollment({
       const currentNode = getNode(automation.flow, enrollment.currentNodeId)
       let pendingHandle = pendingWaitCompletion.handle || 'out'
       let pendingTargetNodeId = pendingWaitCompletion.targetNodeId || ''
+      let pendingNextWaitMode = pendingWaitCompletion.nextWaitMode || ''
       let pendingDetail = pendingWaitCompletion.detail || 'La espera se cumplió mientras estaba pausada'
       if (pendingWaitCompletion.appointmentRecheck && currentNode) {
         const result = await executeNode(currentNode, ctx, enrollment)
@@ -7092,6 +7161,7 @@ export async function controlAutomationEnrollment({
         }
         pendingHandle = result.handle || 'out'
         pendingTargetNodeId = result.targetNodeId || ''
+        pendingNextWaitMode = result.nextWaitMode || ''
         pendingDetail = result.detail || pendingDetail
       }
       await continueEnrollmentAfterEvent({
@@ -7100,6 +7170,7 @@ export async function controlAutomationEnrollment({
         ctx,
         handle: pendingHandle,
         targetNodeId: pendingTargetNodeId,
+        nextWaitMode: pendingNextWaitMode,
         label: nodeLabel(currentNode) || 'Esperar',
         detail: pendingDetail
       })
@@ -7288,6 +7359,7 @@ async function continueEnrollmentAfterEvent({
   ctx,
   handle = 'out',
   targetNodeId = '',
+  nextWaitMode = '',
   label = 'Esperar',
   detail
 }) {
@@ -7298,16 +7370,10 @@ async function continueEnrollmentAfterEvent({
     ...(enrollment.context || {}),
     ...eventContextForEnrollment(ctx.lastAutomationEventType || '', ctx)
   }
-  addLog(enrollment, {
-    nodeId: enrollment.currentNodeId,
-    label,
-    status: 'ok',
-    detail
-  })
   const jump = automationJumpTarget(
     automation.flow,
     enrollment.currentNodeId,
-    targetNodeId
+    { targetNodeId, nextWaitMode, detail }
   )
   if (jump.error) {
     enrollment.status = 'exited'
@@ -7321,6 +7387,12 @@ async function continueEnrollmentAfterEvent({
     await saveEnrollment(enrollment)
     return
   }
+  addLog(enrollment, {
+    nodeId: enrollment.currentNodeId,
+    label,
+    status: 'ok',
+    detail: jump.detail || detail
+  })
   const edge = edgesFrom(automation.flow, enrollment.currentNodeId, handle)[0]
   const nextNodeId = jump.node?.id || edge?.targetNodeId || ''
   if (nextNodeId) {
@@ -7588,6 +7660,7 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
           }
           pendingMatch.handle = result.handle || 'out'
           pendingMatch.targetNodeId = result.targetNodeId || ''
+          pendingMatch.nextWaitMode = result.nextWaitMode || ''
           pendingMatch.detail = result.detail || eventCompletionDetail(eventType, ctx)
         }
         enrollment.context = {
@@ -7595,6 +7668,7 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
           __pendingWaitCompletion: {
             handle: pendingMatch.handle || 'out',
             targetNodeId: pendingMatch.targetNodeId || '',
+            nextWaitMode: pendingMatch.nextWaitMode || '',
             detail: pendingMatch.detail || eventCompletionDetail(eventType, ctx),
             appointmentRecheck: Boolean(pendingMatch.appointmentRecheck),
             eventType,
@@ -7663,6 +7737,7 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
       }
       match.handle = result.handle || 'out'
       match.targetNodeId = result.targetNodeId || ''
+      match.nextWaitMode = result.nextWaitMode || ''
       match.detail = result.detail || eventCompletionDetail(eventType, ctx)
     }
 
@@ -7672,6 +7747,7 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
       ctx,
       handle: match.handle || 'out',
       targetNodeId: match.targetNodeId || '',
+      nextWaitMode: match.nextWaitMode || '',
       label: nodeLabel(currentNode) || 'Esperar',
       detail: match.detail || eventCompletionDetail(eventType, ctx)
     })
@@ -8825,6 +8901,7 @@ export async function processDueResumes() {
               ctx,
               handle: result.handle || 'out',
               targetNodeId: result.targetNodeId || '',
+              nextWaitMode: result.nextWaitMode || '',
               label: nodeLabel(currentNode) || 'Esperar',
               detail: result.detail
             })

@@ -2859,17 +2859,28 @@ test('esperar una cita conserva la identidad de la cita que disparó la ejecuci�
 
 test('Esperar antes de una cita aplica la ruta elegida cuando el contacto llega tarde', async () => {
   const cases = [
-    { action: 'continue', expectedNodeId: 'normal-next', expectedStatus: 'waiting' },
-    { action: 'specific_node', expectedNodeId: 'late-target', expectedStatus: 'waiting' },
-    { action: 'exit', expectedNodeId: 'appointment-wait', expectedStatus: 'exited' }
+    { action: 'continue', expectedNodeId: 'downstream-wait', expectedStatus: 'waiting', runsIntermediate: true },
+    { action: 'next_wait', expectedNodeId: 'downstream-wait', expectedStatus: 'waiting', runsIntermediate: false },
+    { action: 'auto', expectedNodeId: 'downstream-wait', expectedStatus: 'waiting', runsIntermediate: false },
+    {
+      action: 'auto',
+      caseId: 'auto-without-wait',
+      expectedNodeId: 'normal-next',
+      expectedStatus: 'completed',
+      runsIntermediate: true,
+      hasDownstreamWait: false
+    },
+    { action: 'specific_node', expectedNodeId: 'late-target', expectedStatus: 'waiting', runsIntermediate: false },
+    { action: 'exit', expectedNodeId: 'appointment-wait', expectedStatus: 'exited', runsIntermediate: false }
   ]
 
   for (const scenario of cases) {
     const suffix = randomUUID()
-    const automationId = `automation_late_appointment_${scenario.action}_${suffix}`
-    const contactId = `contact_late_appointment_${scenario.action}_${suffix}`
-    const appointmentId = `appointment_late_${scenario.action}_${suffix}`
-    const calendarId = `calendar_late_${scenario.action}_${suffix}`
+    const caseId = scenario.caseId || scenario.action
+    const automationId = `automation_late_appointment_${caseId}_${suffix}`
+    const contactId = `contact_late_appointment_${caseId}_${suffix}`
+    const appointmentId = `appointment_late_${caseId}_${suffix}`
+    const calendarId = `calendar_late_${caseId}_${suffix}`
     const appointmentStart = new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString()
     const flow = {
       nodes: [
@@ -2899,10 +2910,18 @@ test('Esperar antes de una cita aplica la ruta elegida cuando el contacto llega 
         },
         {
           id: 'normal-next',
-          type: 'logic-wait',
-          label: 'Siguiente evento normal',
-          config: { mode: 'duration', amount: 1, unit: 'days' }
+          type: 'logic-condition',
+          label: 'Evento intermedio',
+          config: { conditions: [] }
         },
+        ...(scenario.hasDownstreamWait === false
+          ? []
+          : [{
+              id: 'downstream-wait',
+              type: 'logic-wait',
+              label: 'Siguiente evento de espera',
+              config: { mode: 'duration', amount: 1, unit: 'days' }
+            }]),
         {
           id: 'late-target',
           type: 'logic-wait',
@@ -2917,7 +2936,15 @@ test('Esperar antes de una cita aplica la ruta elegida cuando el contacto llega 
           sourceNodeId: 'appointment-wait',
           sourceHandle: 'out',
           targetNodeId: 'normal-next'
-        }
+        },
+        ...(scenario.hasDownstreamWait === false
+          ? []
+          : [{
+              id: 'edge-normal-downstream-wait',
+              sourceNodeId: 'normal-next',
+              sourceHandle: 'no',
+              targetNodeId: 'downstream-wait'
+            }])
       ],
       settings: {}
     }
@@ -2969,7 +2996,7 @@ test('Esperar antes de una cita aplica la ruta elegida cuando el contacto llega 
       assert.ok(log.some((entry) => entry.nodeId === 'appointment-wait' && entry.detail.includes('ya había pasado')))
       assert.equal(
         log.some((entry) => entry.nodeId === 'normal-next'),
-        scenario.action === 'continue'
+        scenario.runsIntermediate
       )
       assert.equal(
         log.some((entry) => entry.nodeId === 'late-target'),
@@ -3471,7 +3498,7 @@ test('reprogramar una cita recalcula la espera aunque la ejecución esté pausad
   }
 })
 
-test('una reprogramación tardía pausada aplica el evento específico al reanudar', async () => {
+test('una reprogramación tardía pausada salta a la siguiente espera al reanudar', async () => {
   const suffix = randomUUID()
   const automationId = `automation_reschedule_paused_late_${suffix}`
   const contactId = `contact_reschedule_paused_late_${suffix}`
@@ -3497,20 +3524,13 @@ test('una reprogramación tardía pausada aplica el evento específico al reanud
           appointmentOffset: 'before',
           offsetAmount: 1,
           offsetUnit: 'hours',
-          appointmentPastDueAction: 'specific_node',
-          appointmentPastDueTargetNodeId: 'late-target'
+          appointmentPastDueAction: 'next_wait'
         }
       },
       {
         id: 'normal-next',
         type: 'logic-wait',
         label: 'Ruta normal',
-        config: { mode: 'duration', amount: 1, unit: 'days' }
-      },
-      {
-        id: 'late-target',
-        type: 'logic-wait',
-        label: 'Ruta tardía',
         config: { mode: 'duration', amount: 1, unit: 'days' }
       }
     ],
@@ -3589,7 +3609,7 @@ test('una reprogramación tardía pausada aplica el evento específico al reanud
     assert.equal(enrollment.status, 'paused')
     assert.equal(enrollment.current_node_id, 'appointment-wait')
     const pausedContext = JSON.parse(enrollment.context)
-    assert.equal(pausedContext.__pendingWaitCompletion.targetNodeId, 'late-target')
+    assert.equal(pausedContext.__pendingWaitCompletion.nextWaitMode, 'required')
 
     await controlAutomationEnrollment({
       automationId,
@@ -3598,10 +3618,9 @@ test('una reprogramación tardía pausada aplica el evento específico al reanud
     })
     enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
     assert.equal(enrollment.status, 'waiting')
-    assert.equal(enrollment.current_node_id, 'late-target')
+    assert.equal(enrollment.current_node_id, 'normal-next')
     const log = JSON.parse(enrollment.log)
-    assert.equal(log.some((entry) => entry.nodeId === 'normal-next'), false)
-    assert.ok(log.some((entry) => entry.nodeId === 'late-target'))
+    assert.ok(log.some((entry) => entry.nodeId === 'normal-next'))
   } finally {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])

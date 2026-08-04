@@ -121,7 +121,11 @@ Usa estos formatos de forma intencional:
   espera genérica conserva su propio plazo; los nodos posteriores relacionados
   con la cita usan la hora actualizada. Si el nuevo momento relativo de una espera
   **Antes de la cita** ya pasó, aplica la política persistida del nodo: continuar
-  al siguiente evento, saltar a un evento específico válido o salir del flujo.
+  al siguiente evento, saltar a la siguiente espera, saltar a un evento específico
+  válido o salir del flujo. La ruta automática a la siguiente espera sólo existe
+  cuando la búsqueda downstream encuentra una sola primera espera; si no hay
+  otra espera o aparecen primeras esperas distintas entre ramas, continúa por la
+  salida normal salvo que el usuario configure otro destino explícito.
   La misma política aplica si la ejecución entra por primera vez a ese nodo
   después del instante calculado. No la apliques cuando una espera iniciada a
   tiempo vence normalmente: el scheduler debe liberarla por su salida normal.
