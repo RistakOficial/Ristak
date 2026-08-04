@@ -2618,10 +2618,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
           : [{ id: 'out', label: 'Condición cumplida' }]
       }
       if (mode === 'appointment') {
-        return [
-          { id: 'out', label: 'Llegó el momento' },
-          { id: 'cancelled', label: 'Cita cancelada' }
-        ]
+        return [{ id: 'out', label: 'Llegó el momento' }]
       }
       return SINGLE_OUTPUT
     },

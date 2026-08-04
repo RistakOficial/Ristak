@@ -2718,6 +2718,23 @@ test('esperar una cita conserva la identidad de la cita que disparó la ejecuci�
        VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
       [automationId, 'Test contexto de cita', JSON.stringify(flow), JSON.stringify(flow)]
     )
+    await db.run(
+      `INSERT INTO appointments
+         (id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time)
+       VALUES
+         (?, 'calendar-trigger', ?, 'Cita original', 'booked', 'booked', ?, ?),
+         (?, 'calendar-trigger', ?, 'Cita reemplazo', 'confirmed', 'confirmed', ?, ?)`,
+      [
+        triggerAppointmentId,
+        contactId,
+        initialStart,
+        new Date(new Date(initialStart).getTime() + oneHour).toISOString(),
+        otherAppointmentId,
+        contactId,
+        otherStart,
+        new Date(new Date(otherStart).getTime() + oneHour).toISOString()
+      ]
+    )
 
     await handleAutomationEvent('appointment-booked', {
       contactId,
@@ -2752,6 +2769,16 @@ test('esperar una cita conserva la identidad de la cita que disparó la ejecuci�
     storedContext = JSON.parse(enrollment.context)
     assert.equal(storedContext.waitAppointmentId, triggerAppointmentId)
 
+    await db.run(
+      `UPDATE appointments
+       SET status = 'confirmed', appointment_status = 'confirmed', start_time = ?, end_time = ?
+       WHERE id = ?`,
+      [
+        rescheduledStart,
+        new Date(new Date(rescheduledStart).getTime() + oneHour).toISOString(),
+        triggerAppointmentId
+      ]
+    )
     await handleAutomationEvent('appointment-status', {
       contactId,
       appointmentId: triggerAppointmentId,
@@ -2777,13 +2804,35 @@ test('esperar una cita conserva la identidad de la cita que disparó la ejecuci�
       startTime: otherStart
     })
 
-    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
-    assert.equal(enrollment.status, 'waiting')
+    const previousEnrollmentId = enrollment.id
+    const previousEnrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE id = ?',
+      [previousEnrollmentId]
+    )
+    assert.equal(previousEnrollment.status, 'exited')
+    assert.ok(JSON.parse(previousEnrollment.log).some(entry => (
+      entry.detail.includes('reiniciar desde el principio')
+    )))
+
+    enrollment = await db.get(
+      `SELECT * FROM automation_enrollments
+       WHERE automation_id = ? AND contact_id = ? AND status = 'waiting'
+       ORDER BY entered_at DESC, id DESC
+       LIMIT 1`,
+      [automationId, contactId]
+    )
+    assert.notEqual(enrollment.id, previousEnrollmentId)
     assert.equal(enrollment.resume_at, waitTarget(otherStart))
     storedContext = JSON.parse(enrollment.context)
     assert.equal(storedContext.waitAppointmentId, otherAppointmentId)
     assert.equal(storedContext.appointmentId, otherAppointmentId)
 
+    await db.run(
+      `UPDATE appointments
+       SET status = 'cancelled', appointment_status = 'cancelled'
+       WHERE id = ?`,
+      [otherAppointmentId]
+    )
     await handleAutomationEvent('appointment-status', {
       contactId,
       appointmentId: otherAppointmentId,
@@ -2794,7 +2843,7 @@ test('esperar una cita conserva la identidad de la cita que disparó la ejecuci�
     })
 
     enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
-    assert.equal(enrollment.status, 'completed', JSON.stringify({
+    assert.equal(enrollment.status, 'exited', JSON.stringify({
       context: JSON.parse(enrollment.context),
       log: JSON.parse(enrollment.log)
     }, null, 2))
@@ -2802,11 +2851,500 @@ test('esperar una cita conserva la identidad de la cita que disparó la ejecuci�
     assert.equal(log.some(entry => entry.nodeId === 'appointment-time-reached'), false)
     assert.ok(log.some(entry => (
       entry.nodeId === 'wait-trigger-appointment' &&
-      entry.detail === 'Fin del flujo'
+      entry.detail.includes('salió automáticamente del flujo')
     )))
   } finally {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM appointments WHERE id IN (?, ?)', [triggerAppointmentId, otherAppointmentId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('cancelar la cita ligada expulsa la ejecución aunque esté en una espera anterior', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_cancel_before_appointment_wait_${suffix}`
+  const contactId = `contact_cancel_before_appointment_wait_${suffix}`
+  const appointmentId = `appointment_cancel_before_wait_${suffix}`
+  const otherAppointmentId = `appointment_unrelated_cancel_${suffix}`
+  const startTime = new Date(Date.now() + (8 * 60 * 60 * 1000)).toISOString()
+  const endTime = new Date(new Date(startTime).getTime() + (60 * 60 * 1000)).toISOString()
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        config: {
+          triggers: [{ id: 'trigger-appointment', type: 'trigger-appointment-booked', config: {} }]
+        }
+      },
+      {
+        id: 'pre-wait',
+        type: 'logic-wait',
+        label: 'Espera previa',
+        config: { mode: 'duration', amount: 4, unit: 'hours' }
+      },
+      {
+        id: 'must-not-run',
+        type: 'logic-condition',
+        label: 'No debe ejecutarse',
+        config: { conditions: [] }
+      }
+    ],
+    edges: [
+      { id: 'edge-start-wait', sourceNodeId: 'start', targetNodeId: 'pre-wait' },
+      { id: 'edge-wait-end', sourceNodeId: 'pre-wait', sourceHandle: 'out', targetNodeId: 'must-not-run' }
+    ],
+    settings: {}
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, full_name, first_name, custom_fields)
+       VALUES (?, ?, 'Contacto Cancelación', 'Contacto', '{}')`,
+      [contactId, `+1555${Date.now().toString().slice(-8)}`]
+    )
+    await db.run(
+      `INSERT INTO appointments
+         (id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time)
+       VALUES (?, 'calendar-cancel', ?, 'Cita a cancelar', 'confirmed', 'confirmed', ?, ?)`,
+      [appointmentId, contactId, startTime, endTime]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, 'Cancelación antes de espera de cita', 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('appointment-booked', {
+      contactId,
+      appointmentId,
+      calendarId: 'calendar-cancel',
+      status: 'confirmed',
+      startTime,
+      endTime
+    })
+
+    let enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(enrollment.current_node_id, 'pre-wait')
+    const initialResumeAt = enrollment.resume_at
+    const initialContext = JSON.parse(enrollment.context)
+    assert.equal(initialContext.appointmentLifecycleAppointmentId, appointmentId)
+
+    await handleAutomationEvent('appointment-status', {
+      contactId,
+      appointmentId: otherAppointmentId,
+      status: 'cancelled',
+      appointmentChange: 'cancelled',
+      startTime
+    })
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(enrollment.resume_at, initialResumeAt)
+
+    await db.run(
+      `UPDATE appointments
+       SET status = 'cancelled', appointment_status = 'cancelled'
+       WHERE id = ?`,
+      [appointmentId]
+    )
+    await handleAutomationEvent('appointment-status', {
+      contactId,
+      appointmentId,
+      status: 'cancelled',
+      appointmentChange: 'cancelled',
+      startTime
+    })
+
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(enrollment.status, 'exited')
+    assert.equal(enrollment.resume_at, null)
+    assert.equal(enrollment.wait_kind, null)
+    const log = JSON.parse(enrollment.log)
+    assert.equal(log.some(entry => entry.nodeId === 'must-not-run'), false)
+    assert.ok(log.some(entry => entry.detail.includes('salió automáticamente del flujo')))
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('una automatización disparada por cancelación sí puede ejecutar sus propios pasos', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_started_by_cancellation_${suffix}`
+  const contactId = `contact_started_by_cancellation_${suffix}`
+  const appointmentId = `appointment_started_by_cancellation_${suffix}`
+  const startTime = new Date(Date.now() + (8 * 60 * 60 * 1000)).toISOString()
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-cancelled',
+              type: 'trigger-appointment-status',
+              config: { status: 'cancelled' }
+            }
+          ]
+        }
+      },
+      {
+        id: 'short-wait',
+        type: 'logic-wait',
+        label: 'Espera del flujo de cancelación',
+        config: { mode: 'duration', amount: -1, unit: 'seconds' }
+      },
+      {
+        id: 'after-cancellation',
+        type: 'logic-condition',
+        label: 'Atender cancelación',
+        config: { conditions: [] }
+      }
+    ],
+    edges: [
+      { id: 'edge-start-wait', sourceNodeId: 'start', targetNodeId: 'short-wait' },
+      { id: 'edge-wait-action', sourceNodeId: 'short-wait', sourceHandle: 'out', targetNodeId: 'after-cancellation' }
+    ],
+    settings: {}
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, full_name, first_name, custom_fields)
+       VALUES (?, ?, 'Contacto Flujo Cancelación', 'Contacto', '{}')`,
+      [contactId, `+1558${Date.now().toString().slice(-8)}`]
+    )
+    await db.run(
+      `INSERT INTO appointments
+         (id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time)
+       VALUES (?, 'calendar-cancel-trigger', ?, 'Cita ya cancelada', 'cancelled', 'cancelled', ?, ?)`,
+      [
+        appointmentId,
+        contactId,
+        startTime,
+        new Date(new Date(startTime).getTime() + (60 * 60 * 1000)).toISOString()
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, 'Flujo iniciado por cancelación', 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('appointment-status', {
+      contactId,
+      appointmentId,
+      calendarId: 'calendar-cancel-trigger',
+      status: 'cancelled',
+      appointmentChange: 'cancelled',
+      startTime
+    })
+
+    let enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(JSON.parse(enrollment.context).appointmentLifecycleTerminalAtEntry, true)
+
+    await processDueResumes()
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(enrollment.status, 'completed')
+    assert.equal(enrollment.current_node_id, 'after-cancellation')
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('reprogramar durante una espera anterior reinicia el flujo con la hora nueva', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_reschedule_before_appointment_wait_${suffix}`
+  const contactId = `contact_reschedule_before_appointment_wait_${suffix}`
+  const appointmentId = `appointment_reschedule_before_wait_${suffix}`
+  const originalStart = new Date(Date.now() + (8 * 60 * 60 * 1000)).toISOString()
+  const rescheduledStart = new Date(Date.now() + (12 * 60 * 60 * 1000)).toISOString()
+  const oneHour = 60 * 60 * 1000
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        config: {
+          triggers: [
+            { id: 'trigger-appointment', type: 'trigger-appointment-booked', config: {} },
+            {
+              id: 'trigger-rescheduled',
+              type: 'trigger-appointment-status',
+              config: { status: 'rescheduled' }
+            }
+          ]
+        }
+      },
+      {
+        id: 'pre-wait',
+        type: 'logic-wait',
+        label: 'Espera previa',
+        config: { mode: 'duration', amount: 1, unit: 'hours' }
+      },
+      {
+        id: 'appointment-wait',
+        type: 'logic-wait',
+        label: 'Esperar cita',
+        config: {
+          mode: 'appointment',
+          appointmentOffset: 'before',
+          offsetAmount: 1,
+          offsetUnit: 'hours'
+        }
+      }
+    ],
+    edges: [
+      { id: 'edge-start-pre', sourceNodeId: 'start', targetNodeId: 'pre-wait' },
+      { id: 'edge-pre-appointment', sourceNodeId: 'pre-wait', sourceHandle: 'out', targetNodeId: 'appointment-wait' }
+    ],
+    settings: { allowReentry: false }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, full_name, first_name, custom_fields)
+       VALUES (?, ?, 'Contacto Reprogramación', 'Contacto', '{}')`,
+      [contactId, `+1556${Date.now().toString().slice(-8)}`]
+    )
+    await db.run(
+      `INSERT INTO appointments
+         (id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time)
+       VALUES (?, 'calendar-reschedule', ?, 'Cita reprogramable', 'confirmed', 'confirmed', ?, ?)`,
+      [
+        appointmentId,
+        contactId,
+        originalStart,
+        new Date(new Date(originalStart).getTime() + oneHour).toISOString()
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, 'Reprogramación antes de espera de cita', 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('appointment-booked', {
+      contactId,
+      appointmentId,
+      calendarId: 'calendar-reschedule',
+      status: 'confirmed',
+      startTime: originalStart
+    })
+    let enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    const previousEnrollmentId = enrollment.id
+
+    await db.run(
+      `UPDATE appointments
+       SET start_time = ?, end_time = ?
+       WHERE id = ?`,
+      [
+        rescheduledStart,
+        new Date(new Date(rescheduledStart).getTime() + oneHour).toISOString(),
+        appointmentId
+      ]
+    )
+    await handleAutomationEvent('appointment-status', {
+      contactId,
+      appointmentId,
+      calendarId: 'calendar-reschedule',
+      status: 'confirmed',
+      appointmentChange: 'rescheduled',
+      startTime: rescheduledStart
+    })
+
+    const previousEnrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE id = ?',
+      [previousEnrollmentId]
+    )
+    assert.equal(previousEnrollment.status, 'exited')
+    assert.ok(JSON.parse(previousEnrollment.log).some(entry => (
+      entry.detail.includes('reiniciar desde el principio')
+    )))
+
+    enrollment = await db.get(
+      `SELECT * FROM automation_enrollments
+       WHERE automation_id = ? AND contact_id = ? AND status = 'waiting'
+       ORDER BY entered_at DESC, id DESC
+       LIMIT 1`,
+      [automationId, contactId]
+    )
+    assert.notEqual(enrollment.id, previousEnrollmentId)
+    assert.equal(enrollment.current_node_id, 'pre-wait')
+    let context = JSON.parse(enrollment.context)
+    assert.equal(context.startTime, rescheduledStart)
+    assert.equal(context.appointmentLifecycleAppointmentId, appointmentId)
+    const restartedLog = JSON.parse(enrollment.log)
+    assert.equal(restartedLog.filter(entry => entry.nodeId === 'start').length, 1)
+    assert.ok(restartedLog.some(entry => entry.detail.includes('reinició el flujo')))
+
+    await db.run(
+      `UPDATE automation_enrollments
+       SET resume_at = ?
+       WHERE id = ?`,
+      [new Date(Date.now() - 1000).toISOString(), enrollment.id]
+    )
+    await processDueResumes()
+
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(enrollment.current_node_id, 'appointment-wait')
+    assert.equal(
+      enrollment.resume_at,
+      new Date(new Date(rescheduledStart).getTime() - oneHour).toISOString()
+    )
+    context = JSON.parse(enrollment.context)
+    assert.equal(context.startTime, rescheduledStart)
+    assert.equal(context.waitAppointmentId, appointmentId)
+    const log = JSON.parse(enrollment.log)
+    assert.equal(log.filter(entry => entry.nodeId === 'start').length, 1)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('una espera vencida relee la cita canónica antes de continuar', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_due_appointment_recheck_${suffix}`
+  const contactId = `contact_due_appointment_recheck_${suffix}`
+  const appointmentId = `appointment_due_recheck_${suffix}`
+  const initialStart = new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString()
+  const movedStart = new Date(Date.now() + (5 * 60 * 60 * 1000)).toISOString()
+  const oneHour = 60 * 60 * 1000
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        config: {
+          triggers: [{ id: 'trigger-appointment', type: 'trigger-appointment-booked', config: {} }]
+        }
+      },
+      {
+        id: 'appointment-wait',
+        type: 'logic-wait',
+        label: 'Esperar cita',
+        config: {
+          mode: 'appointment',
+          appointmentOffset: 'before',
+          offsetAmount: 1,
+          offsetUnit: 'hours'
+        }
+      },
+      { id: 'normal-path', type: 'logic-condition', label: 'Ruta normal', config: { conditions: [] } }
+    ],
+    edges: [
+      { id: 'edge-start-wait', sourceNodeId: 'start', targetNodeId: 'appointment-wait' },
+      { id: 'edge-wait-normal', sourceNodeId: 'appointment-wait', sourceHandle: 'out', targetNodeId: 'normal-path' }
+    ],
+    settings: {}
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, full_name, first_name, custom_fields)
+       VALUES (?, ?, 'Contacto Revalidación', 'Contacto', '{}')`,
+      [contactId, `+1557${Date.now().toString().slice(-8)}`]
+    )
+    await db.run(
+      `INSERT INTO appointments
+         (id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time)
+       VALUES (?, 'calendar-recheck', ?, 'Cita canónica', 'confirmed', 'confirmed', ?, ?)`,
+      [
+        appointmentId,
+        contactId,
+        initialStart,
+        new Date(new Date(initialStart).getTime() + oneHour).toISOString()
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, 'Revalidación canónica de cita', 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('appointment-booked', {
+      contactId,
+      appointmentId,
+      calendarId: 'calendar-recheck',
+      status: 'confirmed',
+      startTime: initialStart
+    })
+    let enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+
+    await db.run(
+      `UPDATE appointments
+       SET start_time = ?, end_time = ?
+       WHERE id = ?`,
+      [
+        movedStart,
+        new Date(new Date(movedStart).getTime() + oneHour).toISOString(),
+        appointmentId
+      ]
+    )
+    await db.run(
+      'UPDATE automation_enrollments SET resume_at = ? WHERE id = ?',
+      [new Date(Date.now() - 1000).toISOString(), enrollment.id]
+    )
+    await processDueResumes()
+
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(
+      enrollment.resume_at,
+      new Date(new Date(movedStart).getTime() - oneHour).toISOString()
+    )
+    let context = JSON.parse(enrollment.context)
+    assert.equal(context.startTime, movedStart)
+
+    await db.run(
+      `UPDATE appointments
+       SET status = 'cancelled', appointment_status = 'cancelled'
+       WHERE id = ?`,
+      [appointmentId]
+    )
+    await db.run(
+      'UPDATE automation_enrollments SET resume_at = ? WHERE id = ?',
+      [new Date(Date.now() - 1000).toISOString(), enrollment.id]
+    )
+    await processDueResumes()
+
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(enrollment.status, 'exited')
+    assert.equal(enrollment.current_node_id, 'appointment-wait')
+    context = JSON.parse(enrollment.context)
+    assert.equal(context.appointmentStatus, 'cancelled')
+    const log = JSON.parse(enrollment.log)
+    assert.equal(log.some(entry => entry.nodeId === 'normal-path'), false)
+    assert.ok(log.some(entry => entry.detail.includes('salió automáticamente antes de continuar')))
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
   }
 })

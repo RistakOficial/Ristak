@@ -331,10 +331,22 @@ test('un evento nacido en GHL se importa sin duplicarse y el pull propaga sus ca
       locationId: fixture.locationId
     })
 
-    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
-    assert.equal(enrollment.status, 'waiting')
+    const originalEnrollmentId = enrollment.id
+    const lifecycleEnrollments = await db.all(
+      `SELECT * FROM automation_enrollments
+       WHERE automation_id = ? AND contact_id = ?
+       ORDER BY entered_at ASC, id ASC`,
+      [automationId, fixture.contactId]
+    )
+    assert.equal(lifecycleEnrollments.length, 2)
+
+    const previousEnrollment = lifecycleEnrollments.find((row) => row.id === originalEnrollmentId)
+    const restartedEnrollment = lifecycleEnrollments.find((row) => row.id !== originalEnrollmentId)
+    assert.equal(previousEnrollment.status, 'exited')
+    assert.equal(previousEnrollment.resume_at, null)
+    assert.equal(restartedEnrollment.status, 'waiting')
     assert.equal(
-      enrollment.resume_at,
+      restartedEnrollment.resume_at,
       new Date(Date.parse(rescheduledStart) - (60 * 60 * 1000)).toISOString()
     )
 
@@ -352,8 +364,14 @@ test('un evento nacido en GHL se importa sin duplicarse y el pull propaga sus ca
       locationId: fixture.locationId
     })
 
-    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
-    assert.equal(enrollment.status, 'completed')
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [restartedEnrollment.id])
+    assert.equal(enrollment.status, 'exited')
+
+    const finalEnrollments = await db.all(
+      'SELECT id FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, fixture.contactId]
+    )
+    assert.equal(finalEnrollments.length, 2)
   } finally {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId]).catch(() => undefined)
     await db.run('DELETE FROM automations WHERE id = ?', [automationId]).catch(() => undefined)

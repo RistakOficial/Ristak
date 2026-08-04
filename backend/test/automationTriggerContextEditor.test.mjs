@@ -50,8 +50,13 @@ test('Esperar usa la cita del disparador solo cuando todas las entradas entregan
   assert.match(waitEditor, /Se usará automáticamente la cita que activó esta ejecución/)
   assert.match(fields, /triggerTypes\.every\(/)
   assert.match(catalog, /triggerTypes: reachingTriggers\.map\(\(trigger\) => trigger\.type\)/)
-  assert.match(registry, /\{ id: 'out', label: 'Llegó el momento' \}/)
-  assert.match(registry, /\{ id: 'cancelled', label: 'Cita cancelada' \}/)
+  const waitStart = registry.indexOf("type: 'logic-wait'")
+  const waitEnd = registry.indexOf("type: 'logic-goal'", waitStart)
+  const waitDefinition = registry.slice(waitStart, waitEnd)
+  assert.match(waitDefinition, /\{ id: 'out', label: 'Llegó el momento' \}/)
+  assert.doesNotMatch(waitDefinition, /\{ id: 'cancelled', label: 'Cita cancelada' \}/)
+  const editor = readRepoFile('frontend/src/pages/Automations/editor/AutomationEditor.tsx')
+  assert.match(editor, /edges: pruneInvalidEdges\(migratedNodes, edges\)/)
 })
 
 test('el catálogo global ofrece el enlace seguro de la cita en correos y mensajes', () => {

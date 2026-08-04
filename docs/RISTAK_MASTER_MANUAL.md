@@ -1483,20 +1483,33 @@ En **Esperar > Una cita o reserva próxima**, si todas las entradas que alcanzan
 el paso son disparadores de cita, el editor omite calendario, tipo y estado y
 explica que usará la cita que activó esa ejecución. El runtime liga la espera al
 `appointmentId` exacto: otra cita del mismo contacto no puede mover, completar
-ni reprogramar esa espera. Un cambio de hora de la misma cita sí recalcula el
-momento de continuación y limpia los recordatorios calculados con la hora
-anterior. Si el proveedor reemplaza la cita con otro ID, el nuevo evento debe
-declarar explícitamente `replacesAppointmentId`/`previousAppointmentId`; el
-motor religa la espera al ID nuevo, pero nunca lo adivina por contacto o
-calendario. Una cancelación de la cita ligada toma la salida semántica **Cita
-cancelada** y jamás la salida normal **Llegó el momento**. Si esa salida no está
-conectada —como ocurrirá en flujos publicados antes de existir— la rama termina
-de forma segura. Los cambios locales, HighLevel, Google Calendar y las
-cancelaciones automáticas por falta de confirmación deben despachar el contexto
-completo de la cita para conservar este contrato. Si el paso también puede
-alcanzarse desde disparadores sin cita, los filtros permanecen visibles porque
-entonces sirven para elegir la próxima cita aplicable, no para repetir una
-identidad ya conocida.
+ni reprogramar esa espera. La ejecución conserva además ese vínculo desde que
+entra por un disparador de cita, aunque todavía esté detenida en otra espera. Un
+cambio de hora de la misma cita cierra la ejecución anterior y crea una vuelta
+nueva desde el inicio con el horario canónico actualizado, incluso si el flujo
+tiene desactivado el reingreso histórico: es el mismo ciclo de cita, no un evento
+ajeno. Esto permite que confirmaciones, esperas y recordatorios se reconstruyan
+desde cero sin que la vuelta anterior siga viva. Una cancelación saca
+inmediatamente la ejecución del flujo sin ejecutar más pasos. **Esperar** ya no
+muestra una salida **Cita cancelada**; los flujos legacy que todavía conserven
+una conexión `cancelled` tampoco la recorren. Esto no desactiva las
+automatizaciones independientes cuyo disparador es **Cita cancelada**: esas
+empiezan una ejecución nueva para atender el evento terminal y pueden continuar
+con sus propios pasos.
+
+El scheduler relee la fila canónica de `appointments` antes de liberar cualquier
+temporizador de una ejecución ligada. Si el evento de cambio se perdió pero la
+cita tiene una hora nueva, actualiza el contexto y mueve **Esperar** al instante
+correcto; si la cita está cancelada o fue eliminada, termina la ejecución antes
+de ejecutar el siguiente paso. Si el
+proveedor reemplaza la cita con otro ID, el nuevo evento debe declarar
+explícitamente `replacesAppointmentId`/`previousAppointmentId`; el motor religa
+la ejecución al ID nuevo, pero nunca lo adivina por contacto o calendario. Los
+cambios locales, HighLevel, Google Calendar y las cancelaciones automáticas por
+falta de confirmación deben despachar el contexto completo de la cita para
+conservar este contrato. Si el paso también puede alcanzarse desde disparadores
+sin cita, los filtros permanecen visibles porque entonces sirven para elegir la
+próxima cita aplicable, no para repetir una identidad ya conocida.
 
 Las alertas de referencias rotas del Header también son un read-model local.
 `listAutomationReviewProblems` ejecuta un único `SELECT ... LIMIT` sobre el

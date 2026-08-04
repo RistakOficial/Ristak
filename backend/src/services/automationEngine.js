@@ -2008,6 +2008,11 @@ const APPOINTMENT_STATUS_ALIASES = {
   'no-show': 'no_show'
 }
 const CANCELLED_APPOINTMENT_WAIT_STATUSES = new Set(['cancelled', 'deleted', 'invalid'])
+const APPOINTMENT_AUTOMATION_EVENT_TYPES = new Set(['appointment-booked', 'appointment-status'])
+const APPOINTMENT_TRIGGER_NODE_TYPES = new Set([
+  'trigger-appointment-booked',
+  'trigger-appointment-status'
+])
 
 function triggerMatches(trigger, eventType, ctx) {
   const config = trigger.config || {}
@@ -2086,7 +2091,9 @@ function triggerMatches(trigger, eventType, ctx) {
       if (trigger.type !== 'trigger-appointment-status') return false
       const wanted = str(config.status) || 'confirmed'
       const actualRaw = normalizeText(ctx.status)
-      const actual = APPOINTMENT_STATUS_ALIASES[actualRaw] || actualRaw
+      const actual = appointmentChangeFromContext(ctx) === 'rescheduled'
+        ? 'rescheduled'
+        : (APPOINTMENT_STATUS_ALIASES[actualRaw] || actualRaw)
       if (wanted !== actual) return false
       const calendar = str(config.calendar)
       return !calendar || calendar === str(ctx.calendarId)
@@ -2187,9 +2194,11 @@ function appointmentEventMatches(config = {}, eventType, ctx = {}, expectedAppoi
   const wantedStatus = normalizedAppointmentStatus(config.appointmentStatus)
   if (!wantedStatus) return true
   if (wantedStatus === 'booked') return eventType === 'appointment-booked'
-  const actualStatus = normalizedAppointmentStatus(
-    appointmentStatusFromContext({ ...ctx, lastAutomationEventType: eventType })
-  )
+  const actualStatus = appointmentChangeFromContext(ctx) === 'rescheduled'
+    ? 'rescheduled'
+    : normalizedAppointmentStatus(
+        appointmentStatusFromContext({ ...ctx, lastAutomationEventType: eventType })
+      )
   return eventType === 'appointment-status' && actualStatus === wantedStatus
 }
 
@@ -2204,6 +2213,45 @@ function appointmentReplacementOriginIds(ctx = {}) {
     ctx.originalAppointmentId,
     ctx.original_appointment_id
   ].map(cleanString).filter(Boolean)
+}
+
+function isAppointmentAutomationEvent(eventType = '') {
+  return APPOINTMENT_AUTOMATION_EVENT_TYPES.has(cleanString(eventType))
+}
+
+function appointmentLifecycleBindingId(ctx = {}) {
+  if (ctx.appointmentLifecycleTerminalAtEntry) return ''
+  return cleanString(
+    ctx.appointmentLifecycleAppointmentId ||
+    ctx.waitAppointmentId ||
+    (isAppointmentAutomationEvent(ctx.lastAutomationEventType)
+      ? ctx.appointmentId || ctx.appointment_id
+      : '')
+  )
+}
+
+function appointmentLifecycleEventMatch(enrollmentContext = {}, eventType, ctx = {}) {
+  if (!isAppointmentAutomationEvent(eventType)) return null
+
+  const expectedAppointmentId = appointmentLifecycleBindingId(enrollmentContext)
+  if (!expectedAppointmentId) return null
+
+  const eventAppointmentId = cleanString(ctx.appointmentId || ctx.appointment_id)
+  const exactAppointment = eventAppointmentId === expectedAppointmentId
+  const explicitReplacement = Boolean(
+    eventAppointmentId &&
+    eventAppointmentId !== expectedAppointmentId &&
+    appointmentReplacementOriginIds(ctx).includes(expectedAppointmentId)
+  )
+  if (!exactAppointment && !explicitReplacement) return null
+
+  return {
+    previousAppointmentId: expectedAppointmentId,
+    appointmentId: eventAppointmentId || expectedAppointmentId,
+    explicitReplacement,
+    cancelled: appointmentWaitWasCancelled(ctx),
+    rescheduled: appointmentChangeFromContext(ctx) === 'rescheduled'
+  }
 }
 
 function appointmentChangeFromContext(ctx = {}) {
@@ -2248,6 +2296,90 @@ function appointmentWaitEventMatch(config = {}, eventType, ctx = {}, expectedApp
     detail: explicitReplacement
       ? 'La cita fue reemplazada; la espera se movió a la nueva cita'
       : 'La cita cambió; se recalculó el momento de espera'
+  }
+}
+
+function canonicalAppointmentStatus(row = {}) {
+  return normalizedAppointmentStatus(
+    row.appointment_status || row.appointmentStatus || row.status
+  )
+}
+
+async function loadCanonicalAutomationAppointment(appointmentId) {
+  const cleanAppointmentId = cleanString(appointmentId)
+  if (!cleanAppointmentId) return null
+  return db.get(`
+    SELECT
+      id,
+      contact_id,
+      calendar_id,
+      start_time,
+      end_time,
+      appointment_status,
+      status,
+      title,
+      notes
+    FROM appointments
+    WHERE id = ?
+    LIMIT 1
+  `, [cleanAppointmentId])
+}
+
+function canonicalAppointmentContext(appointmentId, appointment = null) {
+  const status = appointment ? canonicalAppointmentStatus(appointment) : 'deleted'
+  return {
+    appointmentId,
+    appointment_id: appointmentId,
+    appointmentLifecycleAppointmentId: appointmentId,
+    appointmentStatus: status,
+    appointment_status: status,
+    status,
+    appointmentChange: appointment ? 'canonical_recheck' : 'cancelled',
+    lastAutomationEventType: 'appointment-status',
+    ...(appointment
+      ? {
+          calendarId: appointment.calendar_id || null,
+          calendar_id: appointment.calendar_id || null,
+          startTime: appointment.start_time || null,
+          start_time: appointment.start_time || null,
+          endTime: appointment.end_time || null,
+          end_time: appointment.end_time || null,
+          title: appointment.title || null,
+          notes: appointment.notes || null
+        }
+      : {})
+  }
+}
+
+async function reconcileCanonicalAppointmentLifecycle(enrollment, ctx = {}, appointmentId = '') {
+  const expectedAppointmentId = cleanString(
+    appointmentId ||
+    appointmentLifecycleBindingId(enrollment?.context) ||
+    appointmentLifecycleBindingId(ctx) ||
+    ctx.appointmentId ||
+    ctx.appointment_id
+  )
+  if (!expectedAppointmentId) {
+    return { appointmentId: '', appointment: null, cancelled: false, missing: false }
+  }
+
+  const appointment = await loadCanonicalAutomationAppointment(expectedAppointmentId)
+  const patch = canonicalAppointmentContext(expectedAppointmentId, appointment)
+  Object.assign(ctx, patch)
+  if (enrollment) {
+    enrollment.context = {
+      ...(enrollment.context || {}),
+      ...getPersistentRuntimeContext(ctx, enrollment.context || {}),
+      ...patch,
+      lastAutomationEventAt: nowIso()
+    }
+  }
+
+  return {
+    appointmentId: expectedAppointmentId,
+    appointment,
+    cancelled: appointmentWaitWasCancelled(ctx),
+    missing: !appointment
   }
 }
 
@@ -2523,8 +2655,12 @@ const EVENT_DESCRIPTIONS = {
   'contact-updated': (ctx) => `cambió ${(ctx.changedFields || []).join(', ') || 'un campo'} del contacto`,
   'tag-changed': (ctx) => `etiqueta "${ctx.tag}" ${ctx.tagAction === 'removed' ? 'eliminada' : 'añadida'}`,
   'form-submitted': (ctx) => `envió el formulario${ctx.formName ? ` "${ctx.formName}"` : ''}`,
-  'appointment-booked': () => 'agendó una cita',
-  'appointment-status': (ctx) => `la cita cambió a ${ctx.status}`,
+  'appointment-booked': (ctx) => appointmentChangeFromContext(ctx) === 'rescheduled'
+    ? 'reprogramó una cita y reinició el flujo'
+    : 'agendó una cita',
+  'appointment-status': (ctx) => appointmentChangeFromContext(ctx) === 'rescheduled'
+    ? 'reprogramó una cita y reinició el flujo'
+    : `la cita cambió a ${ctx.status}`,
   'payment-received': (ctx) => {
     const labels = {
       successful: 'se registró un pago exitoso',
@@ -3052,6 +3188,11 @@ function getPersistentRuntimeContext(ctx = {}, current = {}) {
     appointmentId: isAppointmentEvent
       ? persistentContextValue(ctx.appointmentId || ctx.appointment_id, current.appointmentId)
       : current.appointmentId || null,
+    appointmentLifecycleAppointmentId:
+      current.appointmentLifecycleAppointmentId ||
+      (isAppointmentAutomationEvent(eventType)
+        ? cleanString(ctx.appointmentId || ctx.appointment_id)
+        : null),
     calendarId: isAppointmentEvent
       ? persistentContextValue(ctx.calendarId || ctx.calendar_id, current.calendarId)
       : current.calendarId || null,
@@ -3121,6 +3262,9 @@ async function createEnrollment(automation, contact, ctx) {
     waitKind: null,
     context: {
       ...getPersistentRuntimeContext(ctx),
+      appointmentLifecycleTerminalAtEntry:
+        isAppointmentAutomationEvent(ctx.lastAutomationEventType) &&
+        appointmentWaitWasCancelled(ctx),
       triggerLinkId: ctx.triggerLinkId || null,
       triggerLinkPublicId: ctx.triggerLinkPublicId || null,
       triggerLinkName: ctx.triggerLinkName || null,
@@ -5909,9 +6053,22 @@ async function executeResolvedNode(node, ctx, enrollment) {
         }
       }
       if (mode === 'appointment') {
+        const provisionalTarget = appointmentWaitTarget(config, ctx)
+        const boundAppointmentId = cleanString(
+          appointmentLifecycleBindingId(enrollment?.context) ||
+          provisionalTarget.appointmentId
+        )
+        if (boundAppointmentId) {
+          await reconcileCanonicalAppointmentLifecycle(
+            enrollment,
+            ctx,
+            boundAppointmentId
+          )
+        }
         if (appointmentWaitWasCancelled(ctx)) {
           return {
-            handle: 'cancelled',
+            stop: true,
+            handle: 'out',
             detail: 'La cita asociada a esta ejecución fue cancelada'
           }
         }
@@ -7180,6 +7337,32 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
       automationName: automation.name,
       lastAutomationEventType: eventType
     }
+    const lifecycleMatch = appointmentLifecycleEventMatch(storedContext, eventType, ctx)
+    const lifecycleUpdated = Boolean(lifecycleMatch)
+    if (lifecycleMatch) {
+      ctx.appointmentLifecycleAppointmentId = lifecycleMatch.appointmentId
+      enrollment.context = {
+        ...storedContext,
+        ...eventContextForEnrollment(eventType, ctx)
+      }
+      if (lifecycleMatch.cancelled || lifecycleMatch.rescheduled) {
+        enrollment.status = 'exited'
+        enrollment.resumeAt = null
+        enrollment.waitKind = null
+        addLog(enrollment, {
+          nodeId: enrollment.currentNodeId || 'flow',
+          label: nodeLabel(getNode(automation.flow, enrollment.currentNodeId)) || 'Flujo',
+          status: 'info',
+          detail: lifecycleMatch.cancelled
+            ? 'La cita ligada fue cancelada; la ejecución salió automáticamente del flujo'
+            : 'La cita ligada fue reprogramada; la ejecución anterior cerró para reiniciar desde el principio'
+        })
+        await saveEnrollment(enrollment)
+        if (lifecycleMatch.cancelled) consumedAutomationIds.add(automation.id)
+        continue
+      }
+      consumedAutomationIds.add(automation.id)
+    }
     const completedGoals = completedGoalNodeIds(storedContext)
     let goalMatched = false
     let enrollmentAdvanced = false
@@ -7233,8 +7416,8 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
 
     if (enrollmentAdvanced) continue
     if (['completed', 'exited'].includes(enrollment.status)) continue
+    const currentNode = getNode(automation.flow, enrollment.currentNodeId)
     if (enrollment.status === 'paused') {
-      const currentNode = getNode(automation.flow, enrollment.currentNodeId)
       const pausedWaitKind = str(storedContext.__pausedWaitKind)
       const pausedEnrollment = {
         ...enrollment,
@@ -7265,18 +7448,17 @@ async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
           detail: 'La espera se cumplió mientras estaba pausada; continuará al reanudar'
         })
       }
-      if (goalMatched || pendingMatch) await saveEnrollment(enrollment)
+      if (goalMatched || pendingMatch || lifecycleUpdated) await saveEnrollment(enrollment)
       continue
     }
     if (enrollment.status !== 'waiting') {
-      if (goalMatched) await saveEnrollment(enrollment)
+      if (goalMatched || lifecycleUpdated) await saveEnrollment(enrollment)
       continue
     }
 
-    const currentNode = getNode(automation.flow, enrollment.currentNodeId)
     const match = waitingNodeEventMatch(currentNode, enrollment, eventType, ctx)
     if (!match) {
-      if (goalMatched) await saveEnrollment(enrollment)
+      if (goalMatched || lifecycleUpdated) await saveEnrollment(enrollment)
       continue
     }
 
@@ -7417,15 +7599,23 @@ async function enrollMatching(
   automations,
   eventType,
   baseCtx,
-  { skipAutomationIds = new Set() } = {}
+  {
+    skipAutomationIds = new Set(),
+    allowAppointmentLifecycleReentry = false,
+    allowedTriggerTypes = null
+  } = {}
 ) {
   const contact = baseCtx.contact || {}
+  const enrolledAutomationIds = new Set()
   for (const automation of automations) {
     if (skipAutomationIds.has(automation.id)) continue
     const flow = automation.flow
     const startNode = getStartNode(flow)
     if (!startNode) continue
-    const matched = getTriggers(startNode).find((trigger) => triggerMatches(trigger, eventType, baseCtx))
+    const matched = getTriggers(startNode).find((trigger) => (
+      (!allowedTriggerTypes || allowedTriggerTypes.has(trigger.type)) &&
+      triggerMatches(trigger, eventType, baseCtx)
+    ))
     if (!matched) continue
 
     // La respuesta al comentario ya NO se configura en el disparador: se hace con
@@ -7437,6 +7627,9 @@ async function enrollMatching(
     if (eventType === 'comment-received' && await commentTriggerShouldSkip(matched, baseCtx)) continue
 
     const settings = flow.settings || {}
+    const appointmentLifecycleReentryAllowed =
+      allowAppointmentLifecycleReentry &&
+      APPOINTMENT_TRIGGER_NODE_TYPES.has(matched.type)
     if (contact.id && settings.preventDuplicateActiveEnrollment !== false) {
       const active = await db.get(
         `SELECT id FROM automation_enrollments WHERE automation_id = ? AND contact_id = ? AND status IN (${ACTIVE_ENROLLMENT_STATUS_SQL})`,
@@ -7444,7 +7637,7 @@ async function enrollMatching(
       )
       if (active) continue
     }
-    if (contact.id && settings.allowReentry === false) {
+    if (contact.id && settings.allowReentry === false && !appointmentLifecycleReentryAllowed) {
       const any = await db.get(
         `SELECT id FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?`,
         [automation.id, contact.id]
@@ -7459,6 +7652,7 @@ async function enrollMatching(
     }
     const enrollment = await createEnrollment(automation, contact, ctx)
     if (enrollment.reusedActiveEnrollment) continue
+    enrolledAutomationIds.add(automation.id)
     const describe = EVENT_DESCRIPTIONS[eventType]
     addLog(enrollment, {
       nodeId: 'start',
@@ -7476,6 +7670,7 @@ async function enrollMatching(
       await saveEnrollment(enrollment)
     }
   }
+  return enrolledAutomationIds
 }
 
 function testReceiptResult(receipt, fallbackDetail = '') {
@@ -8012,11 +8207,32 @@ export async function handleAutomationEvent(eventType, data = {}) {
       messageText: eventData.messageText || '',
       channel: normalizeConversationChannel(eventData.channel || '')
     })
+    const appointmentWasRescheduled =
+      eventType === 'appointment-status' &&
+      appointmentChangeFromContext(eventData) === 'rescheduled'
     const automations = await listPublishedAutomations({ eventType, endpointId: eventData.endpointId })
     const consumedAutomationIds = await processActiveEnrollmentEvent(eventType, ctx)
-    await enrollMatching(automations, eventType, ctx, {
-      skipAutomationIds: consumedAutomationIds
+    const enrolledAutomationIds = await enrollMatching(automations, eventType, ctx, {
+      skipAutomationIds: consumedAutomationIds,
+      allowAppointmentLifecycleReentry: appointmentWasRescheduled
     })
+    if (appointmentWasRescheduled) {
+      const bookedAutomations = await listPublishedAutomations({
+        eventType: 'appointment-booked',
+        endpointId: eventData.endpointId
+      })
+      await enrollMatching(bookedAutomations, 'appointment-booked', {
+        ...ctx,
+        appointmentChange: 'rescheduled'
+      }, {
+        skipAutomationIds: new Set([
+          ...consumedAutomationIds,
+          ...enrolledAutomationIds
+        ]),
+        allowAppointmentLifecycleReentry: true,
+        allowedTriggerTypes: new Set(['trigger-appointment-booked'])
+      })
+    }
   } catch (error) {
     logger.error(`[Automatizaciones] Error en evento ${eventType}: ${error.message}`)
   }
@@ -8354,6 +8570,61 @@ export async function processDueResumes() {
         businessPhoneNumberId: enrollment.context.businessPhoneNumberId || null,
         automationName: automation.name
       }
+      const currentNode = getNode(automation.flow, row.current_node_id)
+      const lifecycleAppointmentId = appointmentLifecycleBindingId(enrollment.context)
+      let appointmentWaitDetail = ''
+
+      if (lifecycleAppointmentId) {
+        const canonicalLifecycle = await reconcileCanonicalAppointmentLifecycle(
+          enrollment,
+          ctx,
+          lifecycleAppointmentId
+        )
+        const isAppointmentWait =
+          row.wait_kind === WAIT_KIND_APPOINTMENT &&
+          currentNode?.type === 'logic-wait' &&
+          str(currentNode.config?.mode) === 'appointment'
+
+        if (canonicalLifecycle.cancelled) {
+          enrollment.status = 'exited'
+          enrollment.resumeAt = null
+          enrollment.waitKind = null
+          addLog(enrollment, {
+            nodeId: row.current_node_id,
+            label: nodeLabel(currentNode) || 'Flujo',
+            status: 'info',
+            detail: canonicalLifecycle.missing
+              ? 'La cita ligada ya no existe; la ejecución salió automáticamente antes de continuar'
+              : 'La cita ligada fue cancelada; la ejecución salió automáticamente antes de continuar'
+          })
+          await saveEnrollment(enrollment)
+          continue
+        } else if (isAppointmentWait) {
+          const target = appointmentWaitTarget(currentNode.config || {}, ctx)
+          const targetMs = target.resumeAt ? new Date(target.resumeAt).getTime() : Number.NaN
+          if (!target.resumeAt || (Number.isFinite(targetMs) && targetMs > Date.now())) {
+            enrollment.status = 'waiting'
+            enrollment.waitKind = WAIT_KIND_APPOINTMENT
+            enrollment.resumeAt = target.resumeAt
+            enrollment.context = {
+              ...(enrollment.context || {}),
+              waitExpectedAction: target.resumeAt ? 'appointment_time' : 'appointment_available',
+              waitAppointmentId: target.appointmentId || lifecycleAppointmentId
+            }
+            addLog(enrollment, {
+              nodeId: row.current_node_id,
+              label: nodeLabel(currentNode),
+              status: 'waiting',
+              detail: target.resumeAt
+                ? `La cita cambió; la espera se recalculó hasta ${target.resumeAt}`
+                : 'La cita todavía no tiene un horario válido; la ejecución seguirá esperando'
+            })
+            await saveEnrollment(enrollment)
+            continue
+          }
+          appointmentWaitDetail = 'La cita llegó al momento configurado después de validar su horario actual'
+        }
+      }
       // (AUTO-005) Reintento de un nodo que falló de forma transitoria: re-ejecutamos
       // EL MISMO nodo (no avanzamos por una arista), así el WhatsApp/email que no salió
       // vuelve a intentarse.
@@ -8375,7 +8646,6 @@ export async function processDueResumes() {
         row.wait_kind === WAIT_KIND_CONDITION
       const wasGoalTimeout = row.wait_kind === WAIT_KIND_GOAL
       const wasDripResume = row.wait_kind === WAIT_KIND_DRIP
-      const currentNode = getNode(automation.flow, row.current_node_id)
       const noReplyGoalTimedOut = wasGoalTimeout && isNoReplyGoal(currentNode?.config)
       if (noReplyGoalTimedOut) {
         const completedGoals = completedGoalNodeIds(enrollment.context)
@@ -8410,7 +8680,7 @@ export async function processDueResumes() {
         nodeId: row.current_node_id,
         label: wasDripResume ? 'Goteo' : 'Esperar',
         status: 'ok',
-        detail: wasDripResume
+        detail: appointmentWaitDetail || (wasDripResume
           ? dripBatch > 0 ? `Goteo liberado: lote ${dripBatch}` : 'Goteo liberado'
           : wasReplyTimeout
             ? sourceName ? `No respondió a "${sourceName}" a tiempo` : 'No respondió a tiempo'
@@ -8421,8 +8691,8 @@ export async function processDueResumes() {
                 : noReplyGoalTimedOut
                   ? 'El contacto no respondió dentro del tiempo configurado'
                   : wasGoalTimeout
-                  ? 'El objetivo no se cumplió dentro de su ventana'
-              : 'Espera terminada'
+                    ? 'El objetivo no se cumplió dentro de su ventana'
+                    : 'Espera terminada')
       })
       const edge = edgesFrom(automation.flow, row.current_node_id, handle)[0]
       if (edge) await runFrom(automation.flow, enrollment, edge.targetNodeId, ctx)

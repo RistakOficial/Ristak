@@ -191,7 +191,7 @@ function normalizeEditorFlow(flow: Automation['flow'] | null | undefined): Edito
 
   return {
     nodes: migratedNodes,
-    edges,
+    edges: pruneInvalidEdges(migratedNodes, edges),
     viewport: normalizeViewport(flow?.viewport),
     settings: isRecord(flow?.settings) ? (flow.settings as FlowSettings) : undefined
   }
