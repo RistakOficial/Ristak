@@ -5971,8 +5971,14 @@ opcion radio, checkbox o select descarta candidatos, esa opcion lleva
 `data-rstk-conversion-condition="qualified_only"`. El descarte puede mostrar un
 mensaje (`disqualifyOutcome="message"`), ir a una pagina del sitio
 (`specific_page`) o redirigir a una URL (`url`). En los tres casos Ristak guarda
-contacto y submission como `disqualified`, permite automatizaciones de descarte
-y bloquea el evento de conversion tanto en CAPI como en el Pixel del navegador.
+la submission como `disqualified` para conservar respuestas y analitica, pero
+por default no crea contacto, no inscribe automatizaciones y bloquea el evento
+de conversion tanto en CAPI como en el Pixel del navegador. Esto evita fabricar
+contactos `Lead de site` cuando el descarte ocurre antes de capturar nombre,
+correo o telefono. Crear contacto y automatizaciones para descartados es una
+excepcion code-first: el `<form>` debe declarar expresamente
+`data-rstk-contact-capture="all_submissions"`; sin ese atributo el modo es
+`qualified_only`.
 Usar solo `specific_page` o `url` navega, pero no descalifica; por eso el editor
 y las instrucciones para IA deben exigir `action="disqualify"` cuando el destino
 representa un no candidato. Para HTML importado, el editor mantiene el selector
@@ -5992,9 +5998,12 @@ visitante al paso exacto que la produjo. El envio original no se reescribe: perm
 `disqualified`, y cualquier reintento posterior crea una evaluacion nueva bajo
 la misma condicion `qualified_only`.
 
-Cada submit HTML independiente persistido dispara `form-submitted` despues de
-guardar contacto, respuestas y submission. Automatizaciones puede seleccionar
-tanto el formulario fuente que aparece en la biblioteca de Formularios como la
+Cada submit HTML calificado que produce un contacto dispara `form-submitted`
+despues de guardar contacto, respuestas y submission. Un descarte conserva la
+submission, pero no dispara automatizaciones mientras el formulario use el modo
+default `qualified_only`; el opt-in `all_submissions` conserva el comportamiento
+de captura deliberada para descartados. Automatizaciones puede seleccionar tanto
+el formulario fuente que aparece en la biblioteca de Formularios como la
 identidad estable del formulario dentro del HTML
 `<siteId>:imported:<data-rstk-form-id>`; el mismo evento incluye ambas identidades
 y las respuestas por ID, llave y etiqueta. El formulario de calendario custom
@@ -6960,7 +6969,9 @@ modal, `Subir mi HTML` abre el flujo de importacion
 ZIP/HTML y `Ir al editor` crea una hoja HTML en blanco para pegar codigo pagina
 por pagina. Si el usuario elige formulario HTML personalizado, ese bloque
 copiable incluye el contrato de calificacion por opcion, los tres destinos de
-descarte y `data-rstk-conversion-condition="qualified_only"`; tambien prohibe
+descarte, `data-rstk-conversion-condition="qualified_only"` y la regla de no
+crear contactos descartados por default. Solo una peticion explicita agrega
+`data-rstk-contact-capture="all_submissions"`; tambien prohibe
 disparar Pixel/CAPI manualmente antes del veredicto de Ristak.
 Cuando elige perfil social custom, las instrucciones exigen los cuatro hooks
 obligatorios, prohiben seguidores o identidades inventadas y dejan claro que

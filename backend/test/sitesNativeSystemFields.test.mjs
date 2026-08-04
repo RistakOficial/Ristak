@@ -1598,7 +1598,8 @@ test('native form submission triggers contact and form automations with mappable
       slug: `form-automation-${Date.now()}`,
       siteType: 'standard_form',
       status: 'published',
-      blankCanvas: true
+      blankCanvas: true,
+      theme: { submitIncompleteOnExit: true }
     })
 
     let siteWithBlocks = await createBlock(site.id, {

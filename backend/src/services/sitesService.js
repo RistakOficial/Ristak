@@ -471,6 +471,8 @@ const SITES_APP_DOMAIN_CONFIG_KEYS = {
 }
 const SOCIAL_PROFILE_BLOCK_READY_KEY = 'socialProfileBlockReady'
 const IMPORTED_SITE_TEMPLATE = 'imported_html'
+const IMPORTED_CONTACT_CAPTURE_QUALIFIED_ONLY = 'qualified_only'
+const IMPORTED_CONTACT_CAPTURE_ALL_SUBMISSIONS = 'all_submissions'
 const IMPORTED_HTML_MAX_BYTES = 2 * 1024 * 1024
 const IMPORTED_ZIP_MAX_BYTES = 15 * 1024 * 1024
 const IMPORTED_ASSET_MAX_BYTES = 8 * 1024 * 1024
@@ -1617,6 +1619,40 @@ function normalizeSubmitIncompleteOnExit(theme = {}) {
     : source.submit_incomplete_on_exit
   if (value === undefined || value === null || value === '') return false
   return normalizeBoolean(value) === 1
+}
+
+function normalizeImportedContactCaptureMode(value = '') {
+  const normalized = cleanString(value)
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+
+  return [
+    IMPORTED_CONTACT_CAPTURE_ALL_SUBMISSIONS,
+    'all',
+    'always',
+    'every_submission'
+  ].includes(normalized)
+    ? IMPORTED_CONTACT_CAPTURE_ALL_SUBMISSIONS
+    : IMPORTED_CONTACT_CAPTURE_QUALIFIED_ONLY
+}
+
+function getImportedContactCaptureModeFromAttrs(attrs = {}) {
+  return normalizeImportedContactCaptureMode(
+    attrs['data-rstk-contact-capture'] ||
+    attrs['data-ristak-contact-capture'] ||
+    attrs['data-ristack-contact-capture'] ||
+    attrs['data-rstk-contact-save'] ||
+    attrs['data-ristak-contact-save'] ||
+    attrs['data-ristack-contact-save']
+  )
+}
+
+function emptyContactUpsertResult() {
+  return {
+    contactId: null,
+    created: false,
+    changedFields: []
+  }
 }
 
 function parseJson(value, fallback) {
@@ -3047,6 +3083,7 @@ function detectImportedForms(html = '') {
         sourceFormOffset: formMatch.index,
         title,
         purpose: 'lead_capture',
+        contactCaptureMode: getImportedContactCaptureModeFromAttrs(attrs),
         submitText,
         fields
       })
@@ -4533,6 +4570,9 @@ function buildDefaultImportedFormMappings(forms = []) {
       ...(formIdCounts.get(normalizeImportedFieldKey(form.id, '')) > 1 ? { mappingAmbiguous: true } : {}),
       ...(duplicateFieldIds.size > 0 ? { fieldMappingAmbiguous: true } : {}),
       purpose: form.purpose || 'lead_capture',
+      contactCaptureMode: normalizeImportedContactCaptureMode(
+        form.contactCaptureMode || form.contact_capture_mode
+      ),
       submitText: form.submitText || 'Enviar',
       present: true,
       fields: fields.map(mappedField => {
@@ -5204,6 +5244,9 @@ function buildImportedSourceFormTheme({ sourceSite, existingSite, mapping, detec
     importedHtmlSourceSiteId: sourceSite?.id || '',
     importedHtmlSourceSiteName: cleanString(sourceSite?.name || sourceSite?.title),
     importedHtmlSourceFormId: mapping?.formId || '',
+    submitIncompleteOnExit: normalizeImportedContactCaptureMode(
+      mapping?.contactCaptureMode || mapping?.contact_capture_mode || detectedForm?.contactCaptureMode || detectedForm?.contact_capture_mode
+    ) === IMPORTED_CONTACT_CAPTURE_ALL_SUBMISSIONS,
     importedHtmlSourcePagePath: cleanString(detectedForm?.pagePath || detectedForm?.page_path),
     importedHtmlSourceTitle: cleanString(mapping?.formTitle || detectedForm?.title),
     importedHtmlSourceSubmitText: submitText
@@ -8156,7 +8199,8 @@ ${buildImportedHtmlCustomSocialProfileRulesText()}
 - En radio buttons, checkboxes y <option> de select, usa data-rstk-choice-actions cuando una respuesta cambie el resultado. Para descartar candidatos usa action="disqualify"; no uses specific_page o url solos porque navegan pero no marcan la submission como descalificada.
 - El descarte admite tres resultados en el mismo objeto: disqualifyOutcome="message" con buttonMessage, disqualifyOutcome="specific_page" con buttonPageId, o disqualifyOutcome="url" con buttonUrl.
 - Ejemplo de descarte a página: <input type="radio" name="candidato" value="no" data-rstk-choice-actions='[{"id":"no-califica","action":"disqualify","disqualifyOutcome":"specific_page","buttonPageId":"no-califica"}]'>.
-- Si cualquier opción puede descalificar, agrega data-rstk-conversion-condition="qualified_only" al <form> final. Ristak guarda todos los submits, pero solo manda Pixel/CAPI cuando el resultado sea calificado.
+- Si cualquier opción puede descalificar, agrega data-rstk-conversion-condition="qualified_only" al <form> final. Ristak conserva la submission para analítica, pero por default solo crea contacto, dispara automatizaciones y manda Pixel/CAPI cuando el resultado sea calificado.
+- Crear contactos de descartados es una excepción explícita: solo si el usuario lo pide agrega data-rstk-contact-capture="all_submissions" al <form>. Sin ese atributo, una salida descalificada nunca crea un contacto genérico ni dispara automatizaciones.
 - Nunca llames fbq, gtag, dataLayer ni eventos de conversión manuales desde el HTML por click o submit. Ristak emite la conversión después del veredicto del backend.
 - Acciones declarativas de video: escribe data-rstk-video-rules como una lista JSON en el MISMO slot nativo de video. Cada regla necesita id estable, triggerType, triggerValue, action y targetBlockIds cuando la acción usa elementos de la página. Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'></div>.
 - Condiciones válidas: timeline_reached significa "llegó al minuto X" y adelantar la barra sí cuenta; playback_seconds significa "reprodujo X segundos/minutos" y suma reproducción activa incluso si repite un tramo; unique_watched_seconds exige X segundos distintos realmente vistos; unique_watched_percent expresa esa misma unión como porcentaje. seek, buffering y repetir un rango ya acreditado no inflan los triggers unique_watched_*. triggerValue usa segundos en timeline_reached/playback_seconds/unique_watched_seconds (13 minutos = 780) y de 1 a 100 en unique_watched_percent.
@@ -8202,7 +8246,8 @@ ${buildImportedHtmlVideoGateRulesText()}
 ${buildImportedHtmlVideoPlayerRulesText()}
 ${buildImportedHtmlCustomVideoRulesText()}
 - En formularios ordinarios de captación no fijes data-rstk-conversion-event ni data-rstk-conversion-type: Ristak los detecta como formulario y el usuario elige Lead, CompleteRegistration, Contact, FormSubmitted u otro evento desde Ajustes > Meta Pixel + CAPI. El evento configurado en el editor es la fuente de verdad y también puede apagarse.
-- Si el formulario filtra candidatos, agrega data-rstk-conversion-condition="qualified_only" al <form>. Un submit descalificado se guarda y puede mostrar mensaje/redirigir, pero no dispara la conversion Meta.
+- Si el formulario filtra candidatos, agrega data-rstk-conversion-condition="qualified_only" al <form>. Un submit descalificado conserva su submission analítica y puede mostrar mensaje/redirigir, pero no crea contacto, no dispara automatizaciones ni manda la conversión Meta.
+- Solo cuando el usuario pida guardar también descartados agrega data-rstk-contact-capture="all_submissions" al <form>. No lo actives por default.
 - Para formularios completados conserva email y/o phone con data-rstk-field para que Meta pueda hacer match; Lead o CompleteRegistration se eligen en el editor.
 - data-rstk-conversion-event y data-rstk-conversion-type quedan reservados para conversiones especializadas que el propio HTML confirma fuera de un elemento Ristak conectado, por ejemplo una cita externa ya confirmada o un pago externo ya aprobado.
 - Para citas administradas fuera del calendario conectado usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC solo si la hora ya quedo confirmada. En un calendario custom de Ristak no declares estos atributos.
@@ -38333,6 +38378,10 @@ function automationImportedFormId(siteId, importedFormId) {
 
 async function emitSiteSubmissionAutomationEvents({ contactResult, formEvent, contactChangedFields = [] }) {
   const contactId = contactResult?.contactId || formEvent?.contactId
+  // Las automatizaciones de Ristak son contact-centric. Una respuesta anónima
+  // o descalificada puede conservarse como submission para analítica, pero no
+  // debe fabricar una inscripción ni una notificación de "nuevo prospecto".
+  if (!contactId) return
   try {
     const engine = await import('./automationEngine.js')
     if (contactId) {
@@ -38385,9 +38434,11 @@ async function upsertContactFromSubmissionWithResult({ site, contact, meta }) {
     firstName: contact.firstName || contact.first_name,
     lastName: contact.lastName || contact.last_name
   })
-  const fullName = contactNameFields.fullName || email || phone || 'Lead de site'
+  const fullName = contactNameFields.fullName
 
-  if (!email && !phone && !fullName) return null
+  // No inventar identidades. Si el formulario todavía no obtuvo nombre,
+  // correo ni teléfono, la submission puede existir sin contact_id.
+  if (!email && !phone && !fullName) return emptyContactUpsertResult()
 
   const existing = await findExistingContact({ email, phone })
   const contactId = existing?.id || generateContactId()
@@ -38495,7 +38546,7 @@ async function upsertContactFromSubmissionWithResult({ site, contact, meta }) {
 
 async function upsertContactFromSubmission(args) {
   const result = await upsertContactFromSubmissionWithResult(args)
-  return result.contactId
+  return result?.contactId || null
 }
 
 function normalizeSubmissionResponses(blocks, responses = {}, options = {}) {
@@ -39620,7 +39671,11 @@ async function recordNativeSiteConversionEvent({
   })
 
   if (contactId) {
-    linkVisitorToContact(visitorId, contactId, cleanString(contact?.fullName) || 'Lead de site')
+    linkVisitorToContact(
+      visitorId,
+      contactId,
+      cleanString(contact?.fullName) || cleanString(contact?.email) || cleanString(contact?.phone)
+    )
       .then(() => unifyVisitorIds(contactId))
       .catch(error => {
         logger.warn(`No se pudo vincular visitor nativo ${visitorId} con contacto ${contactId}: ${error.message}`)
@@ -40080,6 +40135,11 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
   }
   const importedDisqualified = meta.importedDisqualified === true || meta.imported_disqualified === true
   const submissionStatus = importedDisqualified ? 'disqualified' : 'received'
+  const contactCaptureMode = normalizeImportedContactCaptureMode(
+    layers.formMapping?.contactCaptureMode || layers.formMapping?.contact_capture_mode
+  )
+  const shouldPersistContact = submissionStatus !== 'disqualified' ||
+    contactCaptureMode === IMPORTED_CONTACT_CAPTURE_ALL_SUBMISSIONS
   const responseMessage = importedDisqualified
     ? cleanString(meta.importedDisqualifiedMessage || meta.imported_disqualified_message) || 'Gracias. Por ahora esta solicitud no califica.'
     : 'Listo. Recibimos tu información.'
@@ -40102,14 +40162,16 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
     }
   }
 
-  const contactResult = await upsertImportedContactFromSubmission({
-    site,
-    contact,
-    customFields: layers.customFields,
-    meta,
-    imported,
-    formMapping: layers.formMapping
-  })
+  const contactResult = shouldPersistContact
+    ? await upsertImportedContactFromSubmission({
+        site,
+        contact,
+        customFields: layers.customFields,
+        meta,
+        imported,
+        formMapping: layers.formMapping
+      })
+    : emptyContactUpsertResult()
   const contactId = contactResult.contactId
   const submissionId = createRistakId('site_submission')
   const importedAutomationFormId = layers.formMapping?.formId || importedFormId
@@ -40124,6 +40186,8 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
     submissionId,
     formStatus: submissionStatus,
     formDisqualified: submissionStatus === 'disqualified',
+    contactCaptureMode,
+    contactPersisted: Boolean(contactId),
     formResponses: automationFormResponses,
     rawFields: layers.rawFields,
     mappedFields: layers.mappedFields,
@@ -41712,7 +41776,11 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     }
   }
 
-  const contactResult = await upsertContactFromSubmissionWithResult({ site, contact: inferredContact, meta })
+  const shouldPersistContact = ruleEvaluation.status !== 'disqualified' ||
+    normalizeSubmitIncompleteOnExit(finalMessageSite.theme)
+  const contactResult = shouldPersistContact
+    ? await upsertContactFromSubmissionWithResult({ site, contact: inferredContact, meta })
+    : emptyContactUpsertResult()
   const contactId = contactResult.contactId
   const preparedCustomFields = await upsertNativeContactCustomFields({
     site,

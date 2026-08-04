@@ -1168,6 +1168,7 @@ export interface ImportedSiteFormMapping {
   formTitle: string
   pagePath?: string
   purpose?: string
+  contactCaptureMode?: 'qualified_only' | 'all_submissions'
   submitText?: string
   present?: boolean
   fields: ImportedSiteFieldMapping[]

@@ -175,6 +175,10 @@ test('imported HTML forms materialize Forms-page source forms and route submissi
       }
     )
 
+    const contact = await db.get('SELECT full_name, email FROM contacts WHERE id = ?', [result.contactId])
+    assert.equal(contact.full_name, 'Ana Proxy')
+    assert.equal(contact.email, email)
+
     const submission = await db.get('SELECT site_id, form_site_id, meta_json FROM public_site_submissions WHERE id = ?', [result.submissionId])
     assert.equal(submission.site_id, siteId)
     assert.equal(submission.form_site_id, sourceFormId)

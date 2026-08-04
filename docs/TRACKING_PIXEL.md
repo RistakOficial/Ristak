@@ -1185,9 +1185,14 @@ usar `action="disqualify"`:
 ```
 
 `disqualifyOutcome` acepta `message` + `buttonMessage`, `specific_page` +
-`buttonPageId`, o `url` + `buttonUrl`. El backend guarda la submission y el
-contacto con estado `disqualified`, pero omite tanto CAPI como el Pixel del
-navegador. En HTML importado, el editor no expone un selector `SUBMITTED` frente
+`buttonPageId`, o `url` + `buttonUrl`. El backend guarda la submission con estado
+`disqualified` para analitica, pero por default no crea contacto, no dispara
+automatizaciones y omite tanto CAPI como el Pixel del navegador. Asi una salida
+temprana que todavia no pidio nombre, correo o telefono no fabrica un contacto
+`Lead de site`. Si el autor necesita capturar deliberadamente tambien a los
+descartados, el `<form>` debe declarar
+`data-rstk-contact-capture="all_submissions"`; la ausencia del atributo significa
+`qualified_only`. En HTML importado, el editor no expone un selector `SUBMITTED` frente
 a `QUALIFIED`: muestra `Enviar cuando · Formulario enviado` como texto fijo y
 deja que el contrato del propio HTML decida la calificacion. Sin
 `data-rstk-conversion-condition`, el evento aplica a todo envio; con
@@ -1196,6 +1201,12 @@ descalificado. El selector `Evento al terminar` permanece disponible, incluida
 la opcion `Sin evento (solo PageView)`. Un HTML importado no debe llamar `fbq`,
 `gtag` o `dataLayer` por su cuenta: Ristak dispara la conversion despues de
 conocer el veredicto.
+
+Los formularios nativos usan la misma frontera: una respuesta descalificada no
+crea contacto ni automatizacion salvo que el formulario tenga encendida la
+opcion **Enviar si sale antes de terminar**. La submission puede conservarse
+para analitica cuando el flujo ya alcanzó un cierre terminal; una submission sin
+`contact_id` no autoriza automatizaciones contact-centric.
 
 En formularios nativos embebidos, las pantallas de resultado calificado y
 descalificado son terminales: ocultan campos y controles de navegacion. Si un

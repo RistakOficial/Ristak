@@ -552,6 +552,7 @@ test('imported HTML forms can declare Purchase conversion metadata with account 
 test('imported HTML qualification rules keep the submit but suppress Pixel/CAPI for disqualified contacts', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const email = `html-qualified-only-${suffix}@example.test`
+  const automationId = `automation-qualified-only-${suffix}`
   let siteId = ''
   let sourceFormId = ''
 
@@ -594,6 +595,30 @@ test('imported HTML qualification rules keep the submit but suppress Pixel/CAPI 
         await db.run(
           "UPDATE public_sites SET status = 'published', meta_capi_enabled = 1, meta_event_name = 'Lead' WHERE id = ?",
           [siteId]
+        )
+        const flow = {
+          nodes: [{
+            id: 'start',
+            type: 'start',
+            category: 'trigger',
+            label: 'Cuando...',
+            position: { x: 120, y: 220 },
+            config: {
+              triggers: [{
+                id: 'trigger-form-submitted',
+                type: 'trigger-form-submitted',
+                config: { form: '', filters: [] }
+              }]
+            }
+          }],
+          edges: [],
+          viewport: { x: 0, y: 0, zoom: 1 },
+          settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+        }
+        await db.run(
+          `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+           VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+          [automationId, 'No notificar descartados anónimos', JSON.stringify(flow), JSON.stringify(flow)]
         )
 
         const rendered = await renderPublicSiteHtml({
@@ -640,19 +665,157 @@ test('imported HTML qualification rules keep the submit but suppress Pixel/CAPI 
 
         assert.equal(result.status, 'disqualified')
         assert.ok(result.submissionId)
+        assert.equal(result.contactId, null)
         assert.equal(result.capi.sent, false)
         assert.equal(result.capi.reason, 'qualified_only_disqualified')
         assert.equal(metaCalls.length, 0)
-        const stored = await db.get('SELECT status, meta_json FROM public_site_submissions WHERE id = ?', [result.submissionId])
+        const stored = await db.get('SELECT contact_id, status, meta_json FROM public_site_submissions WHERE id = ?', [result.submissionId])
+        assert.equal(stored.contact_id, null)
         assert.equal(stored.status, 'disqualified')
         assert.equal(JSON.parse(stored.meta_json).formDisqualified, true)
+        assert.equal(JSON.parse(stored.meta_json).contactCaptureMode, 'qualified_only')
+        const contactCount = await db.get('SELECT COUNT(*) AS total FROM contacts WHERE email = ?', [email])
+        assert.equal(Number(contactCount.total), 0)
+        const enrollmentCount = await db.get(
+          'SELECT COUNT(*) AS total FROM automation_enrollments WHERE automation_id = ?',
+          [automationId]
+        )
+        assert.equal(Number(enrollmentCount.total), 0)
       } finally {
+        await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId]).catch(() => undefined)
+        await db.run('DELETE FROM automations WHERE id = ?', [automationId]).catch(() => undefined)
         if (siteId) await deleteSite(siteId).catch(() => undefined)
         if (sourceFormId) await deleteSite(sourceFormId).catch(() => undefined)
         await db.run('DELETE FROM sessions WHERE visitor_id = ?', ['visitor-imported-qualified-only']).catch(() => undefined)
         await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
       }
     })
+  })
+})
+
+test('imported HTML only captures disqualified contacts when the form explicitly opts in', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const email = `html-all-submissions-${suffix}@example.test`
+  let siteId = ''
+  let sourceFormId = ''
+
+  await withPublicDomain(async () => {
+    try {
+      const html = `
+        <!doctype html>
+        <html>
+          <head><title>Captura explícita</title></head>
+          <body>
+            <form
+              data-rstk-form-id="captura-descartados"
+              data-rstk-contact-capture="all_submissions"
+              data-rstk-conversion-condition="qualified_only">
+              <input data-rstk-field-id="correo" name="email" type="email" data-rstk-field="email">
+              <label>
+                <input
+                  data-rstk-field-id="calificacion"
+                  type="radio"
+                  name="candidato"
+                  value="no"
+                  data-rstk-choice-actions='[{"id":"no-califica","action":"disqualify","disqualifyOutcome":"message"}]'>
+                No califico
+              </label>
+              <button type="submit">Enviar</button>
+            </form>
+          </body>
+        </html>
+      `
+      const created = await createImportedSiteFromHtml({
+        filename: 'captura-explicita.html',
+        fileBase64: Buffer.from(html, 'utf8').toString('base64'),
+        siteType: 'landing_page',
+        name: `Captura explícita ${suffix}`
+      })
+      siteId = created.site.id
+      sourceFormId = created.import.formMappings[0]?.formSiteId || ''
+      assert.equal(created.import.formMappings[0]?.contactCaptureMode, 'all_submissions')
+      await db.run("UPDATE public_sites SET status = 'published' WHERE id = ?", [siteId])
+
+      const result = await createSubmissionFromRequest(publicReq(`/${created.site.slug}`), {
+        siteId,
+        importedFormId: created.import.formMappings[0].formId,
+        rawFields: { correo: email, calificacion: 'no' },
+        meta: {
+          importedDisqualified: true,
+          immediateDisqualify: true,
+          importedConversion: { submitCondition: 'qualified_only' }
+        }
+      })
+
+      assert.equal(result.status, 'disqualified')
+      assert.ok(result.contactId)
+      const stored = await db.get(
+        'SELECT contact_id, meta_json FROM public_site_submissions WHERE id = ?',
+        [result.submissionId]
+      )
+      assert.equal(stored.contact_id, result.contactId)
+      assert.equal(JSON.parse(stored.meta_json).contactCaptureMode, 'all_submissions')
+      const contact = await db.get('SELECT email, full_name FROM contacts WHERE id = ?', [result.contactId])
+      assert.equal(contact.email, email)
+      assert.equal(contact.full_name, '')
+    } finally {
+      if (siteId) await deleteSite(siteId).catch(() => undefined)
+      if (sourceFormId) await deleteSite(sourceFormId).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+    }
+  })
+})
+
+test('qualified imported submissions without identity stay anonymous instead of creating Lead de site', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  let siteId = ''
+  let sourceFormId = ''
+
+  await withPublicDomain(async () => {
+    try {
+      const html = `
+        <!doctype html>
+        <html>
+          <head><title>Encuesta anónima</title></head>
+          <body>
+            <form data-rstk-form-id="encuesta-anonima">
+              <textarea data-rstk-field-id="comentario" name="comentario"></textarea>
+              <button type="submit">Enviar</button>
+            </form>
+          </body>
+        </html>
+      `
+      const created = await createImportedSiteFromHtml({
+        filename: 'encuesta-anonima.html',
+        fileBase64: Buffer.from(html, 'utf8').toString('base64'),
+        siteType: 'landing_page',
+        name: `Encuesta anónima ${suffix}`
+      })
+      siteId = created.site.id
+      sourceFormId = created.import.formMappings[0]?.formSiteId || ''
+      await db.run("UPDATE public_sites SET status = 'published' WHERE id = ?", [siteId])
+
+      const result = await createSubmissionFromRequest(publicReq(`/${created.site.slug}`), {
+        siteId,
+        importedFormId: created.import.formMappings[0].formId,
+        rawFields: { comentario: 'Respuesta sin datos personales' }
+      })
+
+      assert.equal(result.status, 'received')
+      assert.equal(result.contactId, null)
+      const stored = await db.get(
+        'SELECT contact_id FROM public_site_submissions WHERE id = ?',
+        [result.submissionId]
+      )
+      assert.equal(stored.contact_id, null)
+      const fakeContactCount = await db.get(
+        "SELECT COUNT(*) AS total FROM contacts WHERE LOWER(COALESCE(full_name, '')) = 'lead de site'"
+      )
+      assert.equal(Number(fakeContactCount.total), 0)
+    } finally {
+      if (siteId) await deleteSite(siteId).catch(() => undefined)
+      if (sourceFormId) await deleteSite(sourceFormId).catch(() => undefined)
+    }
   })
 })
 
