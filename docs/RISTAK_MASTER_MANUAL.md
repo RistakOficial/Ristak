@@ -4342,6 +4342,16 @@ chatbot y MCP vuelven a validar `payment_links`; una licencia stale no
 puede crear ni enviar un enlace. Los links públicos creados antes del downgrade
 siguen disponibles para que el pagador no reciba una URL rota.
 
+En el Chat de escritorio, `Cobrar` usa un selector común antes de abrir el flujo
+financiero. Fuera de Profesional entra directo al cobro único permitido. En
+Profesional ofrece cobro único y plan de pagos aunque no exista una pasarela:
+en ese caso el plan se crea offline y sus parcialidades se registran conforme se
+reciben. Cuando hay pasarelas compatibles conectadas, el mismo plan puede usar
+sus cobros online y también aparece `Suscripción` si la licencia incluye
+`subscriptions`. Cobro único y plan reutilizan `RecordPaymentModal`; el alta de
+suscripciones reutiliza `CreateSubscriptionModal`, compartido con la pantalla de
+Suscripciones, con el contacto del chat bloqueado como destinatario.
+
 En escritorio, los calendarios de las fechas de cobro dentro del plan de pagos
 se portalean sobre el modal y usan el posicionamiento flotante compartido. Deben
 alinearse dentro del viewport, cambiar arriba o abajo según el espacio real y

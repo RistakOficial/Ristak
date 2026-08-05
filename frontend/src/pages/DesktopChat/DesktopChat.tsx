@@ -39,7 +39,7 @@ import {
   X
 } from 'lucide-react'
 import { FaFacebook, FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
-import { useAnchoredPortal, useAppConfig } from '@/hooks'
+import { useAnchoredPortal, useAppConfig, usePaymentGatewayCapabilities } from '@/hooks'
 import {
   AppointmentModal,
   Button,
@@ -49,6 +49,7 @@ import {
   ContentFocusModal,
   ContactCustomFieldsPanel,
   ContactSearchInput,
+  CreateSubscriptionModal,
   CustomSelect,
   ContactPhoneSelector,
   DropdownMenu,
@@ -61,6 +62,7 @@ import {
   Icon,
   InlineEditableText,
   Modal,
+  PaymentFlowSelectorModal,
   RecordPaymentModal,
   SearchField,
   Switch,
@@ -89,7 +91,7 @@ import {
   formatInTimezone,
   getStoredBusinessTimezone
 } from '@/utils/timezone'
-import { hasLicenseFeature } from '@/utils/accessControl'
+import { hasLicenseFeature, hasPaymentPlansAccess, hasSubscriptionsAccess } from '@/utils/accessControl'
 import { optimizeChatImageFile } from '@/utils/chatMedia'
 import {
   getChatSendResponseIds,
@@ -178,6 +180,7 @@ import {
 import styles from './DesktopChat.module.css'
 
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers'
+type DesktopPaymentFlow = 'closed' | 'choice' | 'single' | 'partial' | 'subscription'
 type AgentInboxStatusFilter = 'all' | 'active' | 'paused' | 'completed'
 type AdvancedChannelFilter = 'all' | 'whatsapp' | 'messenger' | 'instagram' | 'webchat' | 'sms' | 'email'
 type AdvancedSocialFilter = 'all' | 'facebook' | 'instagram' | 'messenger' | 'whatsapp' | 'google' | 'unknown'
@@ -3192,6 +3195,9 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
   const { showToast } = useNotification()
   const { timezone, formatLocalDateTime } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
+  const paymentCapabilities = usePaymentGatewayCapabilities()
+  const canUsePaymentPlans = hasPaymentPlansAccess(user)
+  const hasSubscriptionsFeature = hasSubscriptionsAccess(user)
   const embeddedMode = Boolean(embeddedContact?.id)
 
   const customerLowerLabel = formatCrmLabelLower(labels.customer, DEFAULT_CRM_LABELS.customer)
@@ -3410,7 +3416,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
   const [selectedCalendarId, setSelectedCalendarId] = useState('')
   const [appointmentOpen, setAppointmentOpen] = useState(false)
   const [editingAppointmentEvent, setEditingAppointmentEvent] = useState<CalendarEvent | null>(null)
-  const [paymentOpen, setPaymentOpen] = useState(false)
+  const [paymentFlow, setPaymentFlow] = useState<DesktopPaymentFlow>('closed')
   const [savingTags, setSavingTags] = useState(false)
   const [savingWhatsAppPreference, setSavingWhatsAppPreference] = useState(false)
   const [whatsappPreferenceError, setWhatsappPreferenceError] = useState('')
@@ -3426,6 +3432,15 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     () => chats.find((contact) => contact.id === activeContactId) || null,
     [activeContactId, chats]
   )
+  const openPaymentFlow = () => {
+    setPaymentFlow(canUsePaymentPlans || hasSubscriptionsFeature ? 'choice' : 'single')
+  }
+
+  useEffect(() => {
+    if (paymentFlow !== 'choice' || paymentCapabilities.loading) return
+    if (canUsePaymentPlans || paymentCapabilities.canUseSubscriptions) return
+    setPaymentFlow('single')
+  }, [canUsePaymentPlans, paymentCapabilities.canUseSubscriptions, paymentCapabilities.loading, paymentFlow])
   useEffect(() => {
     if (!embeddedContact) return
 
@@ -9714,7 +9729,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
                   <Button variant="secondary" size="sm" leftIcon={<CalendarDays size={15} />} onClick={openNewAppointment}>
                     Agendar
                   </Button>
-                  <Button variant="secondary" size="sm" leftIcon={<CreditCard size={15} />} onClick={() => setPaymentOpen(true)}>
+                  <Button variant="secondary" size="sm" leftIcon={<CreditCard size={15} />} onClick={openPaymentFlow}>
                     Cobrar
                   </Button>
                 </div>
@@ -10483,7 +10498,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
                   <div className={styles.infoSection}>
                     <div className={styles.sectionTitleRow}>
                       <h3>Pagos</h3>
-                      <Button type="button" variant="ghost" size="sm" onClick={() => setPaymentOpen(true)}>Registrar</Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={openPaymentFlow}>Registrar</Button>
                     </div>
                     <div className={styles.compactList}>
                       {contactPayments.slice(0, 3).map((payment) => (
@@ -10582,10 +10597,22 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
 
       <ContentFocusModal item={contentFocusItem} onClose={() => setContentFocusItem(null)} />
 
+      <PaymentFlowSelectorModal
+        isOpen={paymentFlow === 'choice'}
+        onClose={() => setPaymentFlow('closed')}
+        onSelect={(choice) => setPaymentFlow(choice)}
+        loading={paymentCapabilities.loading}
+        canUsePaymentPlans={canUsePaymentPlans}
+        canUseSubscriptions={paymentCapabilities.canUseSubscriptions}
+        canUsePaymentLinks={paymentCapabilities.canUsePaymentLinks}
+        hasOnlinePaymentPlanProvider={paymentCapabilities.highLevelConnected || paymentCapabilities.planProviders.length > 0}
+      />
+
       <RecordPaymentModal
-        isOpen={paymentOpen}
-        onClose={() => setPaymentOpen(false)}
-        initialPaymentMode="single"
+        key={`${paymentFlow}-${activeContact?.id || 'contact'}`}
+        isOpen={paymentFlow === 'single' || paymentFlow === 'partial'}
+        onClose={() => setPaymentFlow('closed')}
+        initialPaymentMode={paymentFlow === 'partial' ? 'partial' : 'single'}
         lockPaymentMode
         initialContact={activeContact}
         lockInitialContact={Boolean(activeContact?.id)}
@@ -10595,8 +10622,21 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
             return
           }
 
-          setPaymentOpen(false)
-          showToast('success', 'Pago registrado', 'El pago quedó guardado para este contacto.')
+          setPaymentFlow('closed')
+          if (!context?.paymentPlanChanged) {
+            showToast('success', 'Pago registrado', 'El pago quedó guardado para este contacto.')
+          }
+          if (activeContactId) void loadConversation(activeContactId)
+        }}
+      />
+
+      <CreateSubscriptionModal
+        isOpen={paymentFlow === 'subscription'}
+        onClose={() => setPaymentFlow('closed')}
+        providers={paymentCapabilities.subscriptionProviders}
+        initialContact={activeContact}
+        lockInitialContact={Boolean(activeContact?.id)}
+        onSaved={() => {
           if (activeContactId) void loadConversation(activeContactId)
         }}
       />

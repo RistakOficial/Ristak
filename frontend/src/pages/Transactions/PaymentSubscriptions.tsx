@@ -26,6 +26,7 @@ import {
   Button,
   Card,
   ContactSearchInput,
+  CreateSubscriptionModal,
   CustomSelect,
   DropdownMenu,
   DropdownMenuContent,
@@ -905,6 +906,12 @@ export const PaymentSubscriptions: React.FC = () => {
   const hasMultipleLinkPaymentGateways = availableLinkPaymentMethodOptions.length > 1
 
   const hasSubscriptionGateway = availablePaymentMethodOptions.length > 0
+  const connectedSubscriptionProviders = useMemo<PaymentGatewayProvider[]>(() => [
+    ...(stripeConnected ? ['stripe' as const] : []),
+    ...(conektaConnected ? ['conekta' as const] : []),
+    ...(mercadoPagoConnected ? ['mercadopago' as const] : []),
+    ...(rebillConnected ? ['rebill' as const] : [])
+  ], [conektaConnected, mercadoPagoConnected, rebillConnected, stripeConnected])
   const showGatewayStep = formMode === 'create' && formStep === 'gateway'
   const showStartMethodStep = formMode === 'create' && formStep === 'start_method'
   const showSavedCardStep = formMode === 'create' && formStep === 'saved_card'
@@ -2007,8 +2014,17 @@ export const PaymentSubscriptions: React.FC = () => {
           onConfirm={handleConfirmDeleteSubscriptions}
         />
 
+        <CreateSubscriptionModal
+          isOpen={formMode === 'create'}
+          onClose={closeForm}
+          providers={connectedSubscriptionProviders}
+          onSaved={async () => {
+            await loadSubscriptions({ refresh: true })
+          }}
+        />
+
         <Modal
-          isOpen={formMode !== null}
+          isOpen={formMode === 'edit'}
           onClose={closeForm}
           title={formModalTitle}
           size="md"

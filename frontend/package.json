@@ -14,6 +14,7 @@
     "test:chat-contact-panel-layout": "node scripts/test-chat-contact-panel-layout.mjs",
     "test:contact-modal-chat-parity": "node scripts/test-contact-modal-chat-parity.mjs",
     "test:desktop-chat-live-first-paint": "node scripts/test-desktop-chat-live-first-paint.mjs",
+    "test:desktop-chat-payment-flows": "node scripts/test-desktop-chat-payment-flows.mjs",
     "test:mobile-chat-live-first-paint": "node scripts/test-mobile-chat-live-first-paint.mjs",
     "test:chatbot-filter-hierarchy": "node scripts/test-chatbot-filter-hierarchy.mjs",
     "test:chat-channel": "node scripts/test-chat-message-channel.mjs",

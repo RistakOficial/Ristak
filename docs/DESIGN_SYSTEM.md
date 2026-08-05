@@ -156,6 +156,8 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Menú | `<DropdownMenu>`; se portalea, evita colisiones y cambia arriba/abajo según el espacio real | posicionar `DropdownMenuContent` con `top`/`right`/`bottom`/`left` desde CSS local |
 | Centro de notificaciones del topbar | `<NotificationCenter>`; usa `<DropdownMenu>`, lista plana con divisores, acciones de lectura e historial en el mismo panel | dropdown manual, cards anidadas o estado leído en `localStorage` |
 | Modal / overlay | `<Modal>` (recipe `[data-overlay]`/`[data-modal]`) | un `position:fixed` a mano |
+| Elegir tipo de cobro | `<PaymentFlowSelectorModal>`; alimenta licencia y pasarelas disponibles | repetir opciones de cobro dentro de Chat o Pagos |
+| Crear suscripción | `<CreateSubscriptionModal>`; reutiliza contacto, moneda, zona y pasarelas | copiar el alta de suscripciones dentro de otra pantalla |
 | Programar mensaje de chat | `<ChatScheduleModal>`; recibe la zona de la cuenta y usa `<DatePicker>` | copiar el modal de programación dentro de cada chat o usar fechas del navegador |
 | Confirmar borrar/desconectar/revocar | `showConfirm(...)` del `NotificationContext` (o `<Modal type="confirm" typeToConfirm="…">`) — ver §4.1 | `window.confirm`, un modal de confirmación a mano, copiar el JSX de otro borrado |
 | Card / KPI | `<Card>` / `<KpiCard>` (llevan `data-ristak-card`) | — |

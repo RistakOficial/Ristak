@@ -57,6 +57,10 @@ export { VisitorDetailsModal } from './VisitorDetailsModal'
 
 // Componentes de pagos
 export { RecordPaymentModal } from './RecordPaymentModal'
+export { CreateSubscriptionModal } from './CreateSubscriptionModal'
+export type { CreateSubscriptionModalProps } from './CreateSubscriptionModal'
+export { PaymentFlowSelectorModal } from './PaymentFlowSelectorModal'
+export type { PaymentFlowChoice, PaymentFlowSelectorModalProps } from './PaymentFlowSelectorModal'
 export { TransactionsModal } from './TransactionsModal'
 export { PaymentLinkReadyPanel } from './PaymentLinkReadyPanel'
 export type { PaymentLinkReadyData, PaymentLinkReadyKind, PaymentLinkReadyContact } from './PaymentLinkReadyPanel'

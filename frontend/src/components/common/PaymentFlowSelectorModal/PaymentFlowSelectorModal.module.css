@@ -1,0 +1,37 @@
+.choices {
+  display: grid;
+  gap: 12px;
+}
+
+.choice {
+  justify-content: flex-start;
+  height: auto;
+  min-height: 68px;
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.choice > svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.copy strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.copy small {
+  color: var(--text-mute);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: normal;
+}
