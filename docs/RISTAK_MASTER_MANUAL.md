@@ -6320,6 +6320,20 @@ deteccion. El usuario tambien puede pedirle al asistente que devuelva el HTML
 completo modificado. El codigo de cada pagina se puede pegar y editar
 directamente; el preview no modifica copy, imagenes, botones, campos o secciones
 por si solo y solo permite seleccionar slots funcionales de Ristak.
+
+Los botones de copiar en HTML importado son declarativos y no dependen de
+JavaScript proporcionado por el autor. El elemento usa `type="button"` y declara
+el valor exacto en `data-rstk-copy-value`; la etiqueta visible puede vivir en un
+descendiente `data-rstk-copy-label`. El runtime publico intenta
+`navigator.clipboard.writeText` y, si el navegador no lo permite, usa un campo
+temporal fuera de pantalla como respaldo. El mismo boton cambia durante 1.6
+segundos a `Copiado` o `No se pudo copiar`, restaura su etiqueta y `aria-label`
+originales y emite `ristak:copied` sin exponer el valor dentro del evento. Los
+atributos opcionales `data-rstk-copy-success-label` y
+`data-rstk-copy-error-label` personalizan esos mensajes; se aceptan tambien los
+aliases `data-ristak-*` y `data-ristack-*`. Esta accion no manda datos a una API,
+no crea submission ni necesita relajar el sanitizador de scripts o handlers.
+
 Al entrar a una pagina HTML, el editor de codigo izquierdo inicia oculto para
 dar prioridad a la vista previa. El encabezado de la vista muestra
 `Abrir editor de código` y, mientras el panel esta visible,
