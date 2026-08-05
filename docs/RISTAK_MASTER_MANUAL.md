@@ -6643,6 +6643,18 @@ Variantes móvil/escritorio con el mismo gate comparten el mayor progreso
 individual; nunca se suman entre sí. El contador sale del mismo estado real y no
 de decenas de spans o reglas por segundo.
 
+La guía HTML y las herramientas MCP tratan este contrato como obligatorio. Cada
+gate necesita, con el mismo ID no vacío: fuente con trigger y umbral, shell,
+estado bloqueado visible y contenido real. Ristak controla por sí solo
+`locked|unlocked`; el HTML no debe duplicar ese estado con `hidden`, `inert`,
+`aria-hidden`, `display:none` o selectores `:has(...)`. Desktop y móvil repiten
+también persistencia, reanudación, política de seek, `progress-key` y vigencia.
+`sites_validate_html` bloquea el guardado si falta una pieza, existe un destino
+sin fuente, las variantes no coinciden o el contenido trae un ocultamiento
+manual conflictivo. La entrega exige probar una sesión limpia hasta el umbral,
+la recarga con memoria `visitor`, escritorio, 390 px y, cuando corresponda, la
+URL pública real.
+
 Para VSL con continuidad entre visitas, el slot puede declarar
 `data-rstk-video-gate-persist="visitor"`,
 `data-rstk-video-gate-resume="true"` y

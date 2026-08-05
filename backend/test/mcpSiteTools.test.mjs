@@ -115,6 +115,8 @@ test('el flujo HTML premium es la ruta principal y separa claramente los bloques
   assert.equal(replaceHtmlTool.confirmRequired, false)
   assert.equal(replaceHtmlTool.inputSchema.properties.confirm, undefined)
   assert.match(createHtmlTool.description, /bloques genéricos/i)
+  assert.match(createHtmlTool.description, /data-rstk-video-gate-\*/i)
+  assert.match(createHtmlTool.description, /prueba real de desbloqueo y recarga/i)
   assert.match(nativeTool.description, /sites_create_html_draft/)
   assert.equal(createHtmlTool.outputSchema.additionalProperties, false)
   assert.equal(validateTool.outputSchema.additionalProperties, false)
@@ -146,6 +148,106 @@ test('sites_validate_html detecta incompatibilidades antes de crear un borrador'
   assert.equal(valid.data.ready, true)
   assert.equal(valid.data.recommendedCreateTool, 'sites_create_html_draft')
   assert.equal(valid.data.qualityReport.errors.length, 0)
+})
+
+test('sites_validate_html rechaza video gates incompletos antes de guardar', async () => {
+  const incompleteGateHtml = `<!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Gate incompleto</title>
+        <style>main{display:grid}@media(max-width:700px){main{padding:1rem}}</style>
+      </head>
+      <body>
+        <main>
+          <h1>Agenda</h1>
+          <div data-rstk-video-gate-id="agenda" data-rstk-video-gate-trigger="unique_watched_seconds" data-rstk-video-gate-value="30"></div>
+          <section data-rstk-video-gate-content="agenda" hidden>Calendario real</section>
+        </main>
+      </body>
+    </html>`
+
+  const result = await tool('sites_validate_html').execute(recorder().context, { html: incompleteGateHtml })
+  const errorCodes = result.data.qualityReport.errors.map(issue => issue.code)
+
+  assert.equal(result.data.ready, false)
+  assert.ok(errorCodes.includes('video_gate_missing_shell'))
+  assert.ok(errorCodes.includes('video_gate_missing_locked_state'))
+  assert.ok(errorCodes.includes('video_gate_manual_state_conflict'))
+  assert.equal(result.data.recommendedCreateTool, '')
+})
+
+test('sites_validate_html exige persistencia completa y configuración responsive idéntica en video gates', async () => {
+  const invalidPersistenceHtml = `<!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Gate persistente</title>
+        <style>main{display:grid}@media(max-width:700px){main{padding:1rem}}</style>
+      </head>
+      <body>
+        <main>
+          <h1>Agenda</h1>
+          <div data-rstk-video-gate-id="agenda" data-rstk-video-gate-trigger="unique_watched_seconds" data-rstk-video-gate-value="30" data-rstk-video-gate-persist="visitor"></div>
+          <section data-rstk-video-gate-shell="agenda">
+            <p data-rstk-video-gate-locked="agenda">Sigue viendo</p>
+            <div data-rstk-video-gate-content="agenda">Calendario real</div>
+          </section>
+        </main>
+      </body>
+    </html>`
+  const invalidPersistence = await tool('sites_validate_html').execute(recorder().context, { html: invalidPersistenceHtml })
+  assert.ok(invalidPersistence.data.qualityReport.errors.some(
+    issue => issue.code === 'video_gate_visitor_persistence_incomplete'
+  ))
+
+  const mismatchedResponsiveHtml = invalidPersistenceHtml.replace(
+    '<section data-rstk-video-gate-shell="agenda">',
+    '<div data-rstk-video-gate-id="agenda" data-rstk-video-gate-trigger="unique_watched_seconds" data-rstk-video-gate-value="60" data-rstk-video-gate-persist="visitor"></div><section data-rstk-video-gate-shell="agenda">'
+  )
+  const mismatchedResponsive = await tool('sites_validate_html').execute(recorder().context, { html: mismatchedResponsiveHtml })
+  assert.ok(mismatchedResponsive.data.qualityReport.errors.some(
+    issue => issue.code === 'video_gate_responsive_config_mismatch'
+  ))
+})
+
+test('sites_validate_html acepta un video gate completo, persistente y coherente entre vistas', async () => {
+  const sourceAttributes = `data-rstk-video-gate-id="agenda"
+    data-rstk-video-gate-trigger="unique_watched_seconds"
+    data-rstk-video-gate-value="30"
+    data-rstk-video-gate-persist="visitor"
+    data-rstk-video-gate-resume="true"
+    data-rstk-video-gate-seek-policy="watched_only"
+    data-rstk-video-gate-progress-key="agenda-v1"
+    data-rstk-video-gate-progress-days="45"`
+  const validGateHtml = `<!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Gate completo</title>
+        <style>main{display:grid}.mobile{display:none}@media(max-width:700px){.desktop{display:none}.mobile{display:block}}</style>
+      </head>
+      <body>
+        <main>
+          <h1>Agenda</h1>
+          <div class="desktop" ${sourceAttributes}></div>
+          <div class="mobile" ${sourceAttributes}></div>
+          <section data-rstk-video-gate-shell="agenda">
+            <p data-rstk-video-gate-locked="agenda">Sigue viendo</p>
+            <div data-rstk-video-gate-content="agenda">Calendario real</div>
+          </section>
+        </main>
+      </body>
+    </html>`
+
+  const result = await tool('sites_validate_html').execute(recorder().context, { html: validGateHtml })
+
+  assert.equal(result.data.ready, true)
+  assert.equal(result.data.recommendedCreateTool, 'sites_create_html_draft')
+  assert.equal(result.data.qualityReport.errors.length, 0)
 })
 
 test('sites_create_html_draft exige HTML completo y devuelve un contrato compacto', async () => {

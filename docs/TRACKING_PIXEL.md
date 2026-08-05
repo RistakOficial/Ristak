@@ -1412,6 +1412,27 @@ mismo gate; se usa su mayor progreso individual, no la suma. El HTML puede
 ajustar el efecto con `--rstk-video-gate-blur` y
 `--rstk-video-gate-locked-opacity`.
 
+El contrato de entrega para una IA es fail-closed y no se considera completo
+por tener sólo el slot fuente. Cada ID debe incluir fuente con `trigger` y
+`value`, un `data-rstk-video-gate-shell`, un estado visible
+`data-rstk-video-gate-locked` y todo el contenido real dentro de
+`data-rstk-video-gate-content`. Ristak es la única máquina de estados: el HTML
+fuente no debe añadir `hidden`, `inert`, `aria-hidden`, `display:none` ni reglas
+`:has(...)` propias para decidir el desbloqueo. Las variantes desktop/mobile
+deben repetir exactamente el mismo ID, trigger, umbral, persistencia,
+reanudación, política de seek, `progress-key` y vigencia. El validador MCP de
+HTML rechaza fuentes incompletas, destinos huérfanos y configuraciones
+responsive distintas, además de ocultamientos manuales conflictivos, antes de
+guardar el borrador.
+
+Antes de entregar se prueba en una sesión limpia que el contenido inicia
+bloqueado, se reproduce el video real hasta superar el umbral, se confirma que
+el contenido queda visible e interactivo y se recarga la página para comprobar
+la memoria `visitor`. La misma prueba se repite en escritorio y a 390 px. Si el
+Site ya está publicado o la publicación fue autorizada, también se valida la URL
+pública: inspeccionar el HTML o una captura estática no demuestra que el runtime
+funcione.
+
 Una VSL puede conservar el avance real del gate sin JavaScript propio:
 
 ```html

@@ -40,6 +40,7 @@ const HTML_AUTHORING_GUIDANCE = [
   'Usa la skill o capacidad de construcción web del cliente para resolver tipografía, jerarquía, aire, secciones, responsive y accesibilidad antes de guardar.',
   'No simules una landing personalizada apilando bloques nativos ni uses grids de cards o contenedores anidados como estilo por defecto.',
   'Incluye el CSS dentro del documento o en una hoja ya importada. Ristak elimina scripts, handlers on* y URLs javascript: por seguridad; no diseñes interacciones que dependan de JavaScript propio.',
+  'Si un video desbloquea contenido, usa exclusivamente data-rstk-video-gate-* y no entregues el HTML sin fuente, shell, estado bloqueado y contenido coherentes, configuración idéntica entre variantes responsive y una prueba real de desbloqueo y recarga.',
   'La creación y el guardado seguro permanecen en borrador. Abre una sola vista previa en vivo y usa parches de texto exactos para iterar antes de publicar.'
 ].join(' ')
 
@@ -461,6 +462,198 @@ function countHtmlMatches(value, pattern) {
   return (String(value || '').match(pattern) || []).length
 }
 
+const VIDEO_GATE_ATTRIBUTE_PREFIXES = ['rstk', 'ristak', 'ristack']
+const VIDEO_GATE_SOURCE_CONFIG_FIELDS = [
+  'trigger',
+  'threshold',
+  'persist',
+  'resume',
+  'seekPolicy',
+  'progressKey',
+  'progressDays',
+  'progressTtl'
+]
+
+function readVideoGateAttribute(attrsText = '', suffix = '') {
+  const source = String(attrsText || '')
+  for (const prefix of VIDEO_GATE_ATTRIBUTE_PREFIXES) {
+    const name = `data-${prefix}-video-gate-${suffix}`
+    const match = source.match(new RegExp(
+      `(?:^|\\s)${name}(?=\\s|=|$)(?:\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>]+)))?`,
+      'i'
+    ))
+    if (!match) continue
+    return {
+      present: true,
+      value: String(match[1] ?? match[2] ?? match[3] ?? '').trim()
+    }
+  }
+  return { present: false, value: '' }
+}
+
+function normalizeVideoGateNumber(value = '') {
+  const number = Number(value)
+  return Number.isFinite(number) ? String(number) : String(value || '').trim()
+}
+
+function readOpeningTagAttribute(attrsText = '', attributeName = '') {
+  const match = String(attrsText || '').match(new RegExp(
+    `(?:^|\\s)${attributeName}(?=\\s|=|$)(?:\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>]+)))?`,
+    'i'
+  ))
+  if (!match) return { present: false, value: '' }
+  return {
+    present: true,
+    value: String(match[1] ?? match[2] ?? match[3] ?? '').trim()
+  }
+}
+
+function collectVideoGateAuthoringIssues(source = '') {
+  const errors = []
+  const sourcesById = new Map()
+  const targetsByType = {
+    shell: new Set(),
+    locked: new Set(),
+    content: new Set()
+  }
+  const emptyAttributes = new Set()
+  const manualStateConflicts = new Set()
+  const openingTagPattern = /<([a-z][\w:-]*)\b([^>]*)>/gi
+  let match
+
+  while ((match = openingTagPattern.exec(String(source || '')))) {
+    const tagName = String(match[1] || '').toLowerCase()
+    if (tagName === 'style' || tagName === 'script') continue
+    const attrsText = match[2] || ''
+    const idAttribute = readVideoGateAttribute(attrsText, 'id')
+    const targetAttributes = {
+      shell: readVideoGateAttribute(attrsText, 'shell'),
+      locked: readVideoGateAttribute(attrsText, 'locked'),
+      content: readVideoGateAttribute(attrsText, 'content')
+    }
+
+    for (const [type, attribute] of Object.entries(targetAttributes)) {
+      if (!attribute.present) continue
+      if (!attribute.value) {
+        emptyAttributes.add(type)
+        continue
+      }
+      targetsByType[type].add(attribute.value)
+      if (type === 'content') {
+        const hidden = readOpeningTagAttribute(attrsText, 'hidden').present
+        const inert = readOpeningTagAttribute(attrsText, 'inert').present
+        const ariaHidden = readOpeningTagAttribute(attrsText, 'aria-hidden').value.toLowerCase() === 'true'
+        const inlineDisplayNone = /\bdisplay\s*:\s*none\b/i.test(readOpeningTagAttribute(attrsText, 'style').value)
+        const actionHidden = /(?:^|\s)data-(?:rstk|ristak|ristack)-video-action-hidden(?=\s|=|$)/i.test(attrsText)
+        if (hidden || inert || ariaHidden || inlineDisplayNone || actionHidden) {
+          manualStateConflicts.add(attribute.value)
+        }
+      }
+    }
+
+    if (!idAttribute.present) continue
+    if (!idAttribute.value) {
+      emptyAttributes.add('id')
+      continue
+    }
+
+    const trigger = readVideoGateAttribute(attrsText, 'trigger').value.toLowerCase()
+    const valueAttribute = readVideoGateAttribute(attrsText, 'value')
+    const secondsAttribute = readVideoGateAttribute(attrsText, 'seconds')
+    const thresholdRaw = valueAttribute.value || secondsAttribute.value
+    const config = {
+      trigger,
+      threshold: normalizeVideoGateNumber(thresholdRaw),
+      persist: readVideoGateAttribute(attrsText, 'persist').value.toLowerCase(),
+      resume: readVideoGateAttribute(attrsText, 'resume').value.toLowerCase(),
+      seekPolicy: readVideoGateAttribute(attrsText, 'seek-policy').value.toLowerCase(),
+      progressKey: readVideoGateAttribute(attrsText, 'progress-key').value,
+      progressDays: normalizeVideoGateNumber(readVideoGateAttribute(attrsText, 'progress-days').value),
+      progressTtl: normalizeVideoGateNumber(readVideoGateAttribute(attrsText, 'progress-ttl').value)
+    }
+    const entries = sourcesById.get(idAttribute.value) || []
+    entries.push({ config, thresholdRaw })
+    sourcesById.set(idAttribute.value, entries)
+  }
+
+  if (emptyAttributes.size > 0) {
+    errors.push(htmlIssue(
+      'video_gate_empty_id',
+      `Hay atributos de video gate sin ID en: ${[...emptyAttributes].sort().join(', ')}. Cada hook debe repetir el mismo ID estable y no vacío.`
+    ))
+  }
+
+  for (const gateId of manualStateConflicts) {
+    errors.push(htmlIssue(
+      'video_gate_manual_state_conflict',
+      `El contenido del video gate "${gateId}" trae un ocultamiento manual. Quita hidden, inert, aria-hidden="true", display:none y acciones show/hide del mismo elemento; Ristak aplica y retira el bloqueo.`
+    ))
+  }
+
+  for (const [gateId, sources] of sourcesById) {
+    const incompleteSources = sources.filter(({ config, thresholdRaw }) => (
+      !config.trigger || !thresholdRaw || !(Number(thresholdRaw) > 0)
+    ))
+    if (incompleteSources.length > 0) {
+      errors.push(htmlIssue(
+        'video_gate_source_incomplete',
+        `El video gate "${gateId}" necesita trigger y un value/seconds numérico mayor que cero en cada slot fuente.`
+      ))
+    }
+    if (!targetsByType.shell.has(gateId)) {
+      errors.push(htmlIssue(
+        'video_gate_missing_shell',
+        `El video gate "${gateId}" no tiene data-rstk-video-gate-shell con el mismo ID.`
+      ))
+    }
+    if (!targetsByType.locked.has(gateId)) {
+      errors.push(htmlIssue(
+        'video_gate_missing_locked_state',
+        `El video gate "${gateId}" no tiene un estado visible data-rstk-video-gate-locked con el mismo ID.`
+      ))
+    }
+    if (!targetsByType.content.has(gateId)) {
+      errors.push(htmlIssue(
+        'video_gate_missing_content',
+        `El video gate "${gateId}" no envuelve el contenido real con data-rstk-video-gate-content y el mismo ID.`
+      ))
+    }
+
+    const firstConfig = sources[0]?.config || {}
+    const hasResponsiveMismatch = sources.slice(1).some(({ config }) => (
+      VIDEO_GATE_SOURCE_CONFIG_FIELDS.some(field => config[field] !== firstConfig[field])
+    ))
+    if (hasResponsiveMismatch) {
+      errors.push(htmlIssue(
+        'video_gate_responsive_config_mismatch',
+        `Las variantes del video gate "${gateId}" no comparten la misma configuración de trigger, umbral, persistencia, reanudación y progress-key.`
+      ))
+    }
+
+    const visitorPersistenceIncomplete = sources.some(({ config }) => (
+      config.persist === 'visitor' && (config.resume !== 'true' || !config.progressKey)
+    ))
+    if (visitorPersistenceIncomplete) {
+      errors.push(htmlIssue(
+        'video_gate_visitor_persistence_incomplete',
+        `El video gate "${gateId}" usa persist="visitor", pero necesita resume="true" y un progress-key estable para recordar el avance al recargar o volver.`
+      ))
+    }
+  }
+
+  for (const [type, ids] of Object.entries(targetsByType)) {
+    for (const gateId of ids) {
+      if (sourcesById.has(gateId)) continue
+      errors.push(htmlIssue(
+        'video_gate_orphan_target',
+        `El hook data-rstk-video-gate-${type}="${gateId}" no tiene ningún slot fuente data-rstk-video-gate-id con ese ID.`
+      ))
+    }
+  }
+
+  return errors
+}
+
 function inspectHtmlAuthoringQuality(html = '') {
   const source = String(html || '')
   const errors = []
@@ -502,6 +695,8 @@ function inspectHtmlAuthoringQuality(html = '') {
       `El documento contiene ${javascriptUrlCount} URL(s) javascript:; Ristak las bloquea por seguridad.`
     ))
   }
+
+  errors.push(...collectVideoGateAuthoringIssues(source))
 
   if (!/<title\b[^>]*>\s*[^<\s][\s\S]*?<\/title>/i.test(source)) {
     warnings.push(htmlIssue('missing_title', 'Agrega un <title> descriptivo.'))
