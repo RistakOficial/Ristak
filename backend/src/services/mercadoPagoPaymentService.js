@@ -26,6 +26,10 @@ import {
 } from './metaConversionEventsService.js'
 import { getPaymentPlanAuditSummary, hardDeleteRemovablePaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
 import {
+  assertPaymentPlanNamingChangeAllowed,
+  paymentPlanNamingFromMetadata
+} from './paymentPlanNamingService.js'
+import {
   assertPlanCanChangeState,
   markOverduePaymentPlanChargesForReview,
   withPaymentPlanEditState
@@ -1614,6 +1618,7 @@ async function persistMercadoPagoPaymentPlanMirror(flowId, extra = {}) {
     [cleanFlowId]
   )
   const metadata = parseJson(flow.metadata, {})
+  const naming = paymentPlanNamingFromMetadata(flow, metadata)
   const visibleInstallments = (installments || []).filter((installment) => (
     !['cancelled', 'canceled', 'deleted', 'void'].includes(cleanString(installment.status).toLowerCase())
   ))
@@ -1652,6 +1657,10 @@ async function persistMercadoPagoPaymentPlanMirror(flowId, extra = {}) {
   const rawJson = {
     id: cleanFlowId,
     provider: 'mercadopago',
+    name: naming.planName,
+    title: naming.invoiceTitle,
+    description: naming.invoiceDescription,
+    termsNotes: naming.termsNotes,
     paymentFlow: {
       id: cleanFlowId,
       state: flow.current_state,
@@ -1698,12 +1707,12 @@ async function persistMercadoPagoPaymentPlanMirror(flowId, extra = {}) {
       flow.contact_name || null,
       flow.contact_email || null,
       flow.contact_phone || null,
-      flow.concept || 'Plan de pagos',
-      flow.concept || 'Plan de pagos',
+      naming.planName,
+      naming.invoiceTitle,
       getMercadoPagoPlanMirrorStatus(flow),
       Number(flow.total_amount || 0),
       flow.currency || DEFAULT_CURRENCY,
-      flow.concept || 'Plan de pagos',
+      naming.invoiceDescription,
       getMercadoPagoPlanRecurrenceLabel(metadata.remainingFrequency),
       startDate || null,
       nextRunAt || null,
@@ -1873,6 +1882,7 @@ async function updatePlanPaymentTitle(paymentId, title, description = title) {
 
 export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, options = {}) {
   const cleanFlowId = cleanString(flowId)
+  await assertPaymentPlanNamingChangeAllowed(cleanFlowId, input)
   await assertPlanCanChangeState(cleanFlowId)
   const result = await withPaymentPlanEditState(cleanFlowId, 'mercadopago', () => (
     updateMercadoPagoPaymentPlanScheduleLocked(cleanFlowId, input, options)

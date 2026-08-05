@@ -62,6 +62,11 @@ import { applyConektaPaymentPlanAction, updateConektaPaymentPlanSchedule } from 
 import { applyRebillPaymentPlanAction, updateRebillPaymentPlanSchedule } from '../services/rebillPaymentService.js';
 import { applyMercadoPagoPaymentPlanAction, updateMercadoPagoPaymentPlanSchedule } from '../services/mercadoPagoPaymentService.js';
 import { applyOfflinePaymentPlanAction, updateOfflinePaymentPlanSchedule } from '../services/offlinePaymentPlanService.js';
+import {
+  assertPaymentPlanNamingChangeAllowed,
+  hasPaymentPlanNamingInput,
+  updatePaymentPlanNaming
+} from '../services/paymentPlanNamingService.js';
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
 import {
   parseSortableTimestamp,
@@ -4279,6 +4284,8 @@ export const updateInvoiceSchedule = async (req, res) => {
       : req.body;
     const context = await getGhlInvoiceScheduleContext();
     const payload = sanitizeInvoiceSchedulePayload(normalizeInvoiceSchedulePayloadDates(rawPayload, context.timezone));
+    const namingOnly = payload.namingOnly === true || req.body?.namingOnly === true;
+    delete payload.namingOnly;
     const shouldUpdateScheduled = req.body?.updateAndSchedule !== false;
 
     if (!scheduleId) {
@@ -4295,17 +4302,45 @@ export const updateInvoiceSchedule = async (req, res) => {
       });
     }
 
+    const localSchedule = await getLocalInvoiceSchedule(scheduleId);
+    const localRistakPlan = isOfflineLocalInvoiceSchedule(localSchedule)
+      || isStripeLocalInvoiceSchedule(localSchedule)
+      || isMercadoPagoLocalInvoiceSchedule(localSchedule)
+      || isConektaLocalInvoiceSchedule(localSchedule)
+      || isRebillLocalInvoiceSchedule(localSchedule);
+
+    if (namingOnly && localRistakPlan) {
+      await updatePaymentPlanNaming(scheduleId, payload);
+      const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
+      return res.json({ success: true, data: updatedLocalSchedule, source: `local_${updatedLocalSchedule?.source || 'payment_plan'}` });
+    }
+
+    if (localRistakPlan) {
+      await assertPaymentPlanNamingChangeAllowed(scheduleId, payload);
+    }
+
     assertInvoiceScheduleDateNotPast(payload, context.timezone);
 
-    const localSchedule = await getLocalInvoiceSchedule(scheduleId);
+    const localSchedulePayload = { ...payload };
+    delete localSchedulePayload.name;
+    delete localSchedulePayload.title;
+    delete localSchedulePayload.description;
+    delete localSchedulePayload.termsNotes;
+
+    const applyLocalNaming = async () => {
+      if (hasPaymentPlanNamingInput(payload)) await updatePaymentPlanNaming(scheduleId, payload);
+    };
+
     if (isOfflineLocalInvoiceSchedule(localSchedule)) {
-      await updateOfflinePaymentPlanSchedule(scheduleId, payload);
+      await updateOfflinePaymentPlanSchedule(scheduleId, localSchedulePayload);
+      await applyLocalNaming();
       const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
       return res.json({ success: true, data: updatedLocalSchedule, source: 'local_offline' });
     }
 
     if (isStripeLocalInvoiceSchedule(localSchedule)) {
-      await updateStripePaymentPlanSchedule(scheduleId, payload);
+      await updateStripePaymentPlanSchedule(scheduleId, localSchedulePayload);
+      await applyLocalNaming();
       const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
 
       return res.json({
@@ -4316,7 +4351,8 @@ export const updateInvoiceSchedule = async (req, res) => {
     }
 
     if (isMercadoPagoLocalInvoiceSchedule(localSchedule)) {
-      await updateMercadoPagoPaymentPlanSchedule(scheduleId, payload, { baseUrl: getPublicBaseUrl(req) });
+      await updateMercadoPagoPaymentPlanSchedule(scheduleId, localSchedulePayload, { baseUrl: getPublicBaseUrl(req) });
+      await applyLocalNaming();
       const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
 
       return res.json({
@@ -4327,7 +4363,8 @@ export const updateInvoiceSchedule = async (req, res) => {
     }
 
     if (isConektaLocalInvoiceSchedule(localSchedule)) {
-      await updateConektaPaymentPlanSchedule(scheduleId, payload, { baseUrl: getPublicBaseUrl(req) });
+      await updateConektaPaymentPlanSchedule(scheduleId, localSchedulePayload, { baseUrl: getPublicBaseUrl(req) });
+      await applyLocalNaming();
       const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
 
       return res.json({
@@ -4339,7 +4376,8 @@ export const updateInvoiceSchedule = async (req, res) => {
 
 
     if (isRebillLocalInvoiceSchedule(localSchedule)) {
-      await updateRebillPaymentPlanSchedule(scheduleId, payload, { baseUrl: getPublicBaseUrl(req) });
+      await updateRebillPaymentPlanSchedule(scheduleId, localSchedulePayload, { baseUrl: getPublicBaseUrl(req) });
+      await applyLocalNaming();
       const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
       return res.json({ success: true, data: updatedLocalSchedule, source: 'local_rebill' });
     }

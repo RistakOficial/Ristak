@@ -9,6 +9,10 @@ import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idG
 import { publishPaymentChangedEvent } from './paymentLiveEventsService.js'
 import { getPaymentSettings, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { assertExactPaymentPlanTotal, getPaymentPlanDueSafety } from './paymentPlanSafetyService.js'
+import {
+  assertPaymentPlanNamingChangeAllowed,
+  paymentPlanNamingFromMetadata
+} from './paymentPlanNamingService.js'
 
 const OFFLINE_PROVIDER = 'offline'
 const ACTIVE_STATE = 'offline_plan_active'
@@ -191,6 +195,7 @@ export async function persistOfflinePaymentPlanMirror(flowId) {
     [id]
   )
   const metadata = parseJson(flow.metadata)
+  const naming = paymentPlanNamingFromMetadata(flow, metadata)
   const visibleInstallments = installments || []
   const nextInstallment = visibleInstallments.find((item) => !CLOSED_PAYMENT_STATUSES.has(cleanString(item.status, 40).toLowerCase()))
   const firstInstallment = visibleInstallments[0]
@@ -227,6 +232,10 @@ export async function persistOfflinePaymentPlanMirror(flowId) {
   const raw = {
     id,
     provider: OFFLINE_PROVIDER,
+    name: naming.planName,
+    title: naming.invoiceTitle,
+    description: naming.invoiceDescription,
+    termsNotes: naming.termsNotes,
     paymentFlow: {
       id,
       state: flow.current_state,
@@ -272,12 +281,12 @@ export async function persistOfflinePaymentPlanMirror(flowId) {
       flow.contact_name || null,
       flow.contact_email || null,
       flow.contact_phone || null,
-      flow.concept || 'Plan de pagos offline',
-      flow.concept || 'Plan de pagos offline',
+      naming.planName,
+      naming.invoiceTitle,
       status,
       Number(flow.total_amount || 0),
       flow.currency,
-      flow.concept || 'Plan de pagos offline',
+      naming.invoiceDescription,
       recurrenceLabel(metadata.remainingFrequency),
       startDate || null,
       nextInstallment?.due_date || null,
@@ -528,6 +537,7 @@ export async function updateOfflinePaymentPlanSchedule(flowId, input = {}) {
   const id = cleanString(flowId, 200)
   const flow = await db.get('SELECT * FROM payment_flows WHERE id = ? AND payment_provider = ?', [id, OFFLINE_PROVIDER])
   if (!flow) throw createHttpError('Plan offline no encontrado.', 404)
+  await assertPaymentPlanNamingChangeAllowed(id, input)
   if ([CANCELLED_STATE, DELETED_STATE].includes(cleanString(flow.current_state, 80).toLowerCase())) {
     throw createHttpError('Este plan offline ya no se puede editar.', 409)
   }

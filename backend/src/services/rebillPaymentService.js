@@ -14,6 +14,10 @@ import { publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
+  assertPaymentPlanNamingChangeAllowed,
+  paymentPlanNamingFromMetadata
+} from './paymentPlanNamingService.js'
+import {
   assertExactPaymentPlanTotal,
   assertPlanCanChangeState,
   markOverduePaymentPlanChargesForReview,
@@ -2431,6 +2435,7 @@ async function persistRebillPaymentPlanMirror(flowId, extra = {}) {
     [cleanFlowId]
   )
   const metadata = parseJson(flow.metadata, {})
+  const naming = paymentPlanNamingFromMetadata(flow, metadata)
   const visibleInstallments = (installments || []).filter((installment) => (
     !['cancelled', 'canceled', 'deleted', 'void'].includes(cleanString(installment.status, 80).toLowerCase())
   ))
@@ -2491,6 +2496,10 @@ async function persistRebillPaymentPlanMirror(flowId, extra = {}) {
   const rawJson = {
     id: cleanFlowId,
     provider: 'rebill',
+    name: naming.planName,
+    title: naming.invoiceTitle,
+    description: naming.invoiceDescription,
+    termsNotes: naming.termsNotes,
     paymentFlow: {
       id: cleanFlowId,
       state: flow.current_state,
@@ -2537,12 +2546,12 @@ async function persistRebillPaymentPlanMirror(flowId, extra = {}) {
       flow.contact_name || null,
       flow.contact_email || null,
       flow.contact_phone || null,
-      flow.concept || 'Plan de pagos',
-      flow.concept || 'Plan de pagos',
+      naming.planName,
+      naming.invoiceTitle,
       mirrorStatus,
       Number(flow.total_amount || 0),
       flow.currency || DEFAULT_CURRENCY,
-      flow.concept || 'Plan de pagos',
+      naming.invoiceDescription,
       getRebillPlanRecurrenceLabel(metadata.remainingFrequency),
       startDate || null,
       nextRunAt || null,
@@ -2570,6 +2579,7 @@ export async function refreshRebillPaymentPlanMirrors() {
 
 export async function updateRebillPaymentPlanSchedule(flowId, input = {}, options = {}) {
   const cleanFlowId = cleanString(flowId, 180)
+  await assertPaymentPlanNamingChangeAllowed(cleanFlowId, input)
   await assertPlanCanChangeState(cleanFlowId)
   const editResult = await withPaymentPlanEditState(cleanFlowId, 'rebill', (originalState) => (
     updateRebillPaymentPlanScheduleLocked(cleanFlowId, input, options, originalState)

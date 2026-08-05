@@ -5234,6 +5234,16 @@ pueden cambiar de importe o fecha; pausar detiene recordatorios futuros y
 cancelar o eliminar conserva los pagos enviados o pagados para no borrar el
 historial.
 
+El nombre interno del plan, el titulo visible de la factura, su descripcion y
+las notas se editan por una ruta cosmetica separada del calendario. Ristak
+permite corregirlos mientras ninguna cuota del plan tenga un cobro, intento de
+cobro o recordatorio entregado. Un despacho fallido no congela los textos porque
+el cliente no recibio nada. La misma correccion se permite en un plan cancelado
+o eliminado que nunca tuvo actividad: solo cambia sus textos y conserva intactos
+el estado terminal, importes, vencimientos y metodos; nunca reactiva el plan ni
+llama a la pasarela. En cuanto existe actividad financiera o un recordatorio
+enviado, los textos quedan bloqueados para preservar la trazabilidad.
+
 El alta offline se guarda completamente en Ristak: no requiere una pasarela
 conectada, no crea cargos externos y no agrega secrets ni variables de entorno.
 La moneda del payload se reemplaza por `account_currency`, el primer pago
@@ -10007,6 +10017,12 @@ idempotencia, y nunca devuelve ni acepta configuración de checkout, identidad
 fiscal, tokens Gigstack, webhooks o credenciales de pasarela. Así un agente puede
 activar el prerrequisito de un plan offline sin entrar por la base ni ampliar su
 acceso a secretos.
+
+`payments_update_plan` acepta `changes.namingOnly=true` para corregir el nombre
+interno, titulo de factura, descripcion o notas de un plan local sin reenviar su
+calendario. Aplica la misma regla de seguridad de la app: solo antes de cualquier
+cobro, intento o recordatorio enviado, y sin reactivar planes cancelados o
+eliminados sin actividad.
 
 Las conexiones se inician mediante handoffs seguros hacia Configuración de
 Ristak o el OAuth normal de Google; el MCP no recibe ni devuelve credenciales.

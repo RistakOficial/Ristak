@@ -16,6 +16,10 @@ import { publishPaymentChangedEvent, publishSubscriptionChangedEvent } from './p
 import { getPaymentPlanAuditSummary, hardDeleteRemovablePaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
+  assertPaymentPlanNamingChangeAllowed,
+  paymentPlanNamingFromMetadata
+} from './paymentPlanNamingService.js'
+import {
   assertExactPaymentPlanTotal,
   assertPlanCanChangeState,
   markOverduePaymentPlanChargesForReview,
@@ -2736,6 +2740,7 @@ async function persistConektaPaymentPlanMirror(flowId, extra = {}) {
     [cleanFlowId]
   )
   const metadata = parseJson(flow.metadata, {})
+  const naming = paymentPlanNamingFromMetadata(flow, metadata)
   const visibleInstallments = (installments || []).filter((installment) => (
     !['cancelled', 'canceled', 'deleted', 'void'].includes(cleanString(installment.status).toLowerCase())
   ))
@@ -2784,6 +2789,10 @@ async function persistConektaPaymentPlanMirror(flowId, extra = {}) {
   const rawJson = {
     id: cleanFlowId,
     provider: 'conekta',
+    name: naming.planName,
+    title: naming.invoiceTitle,
+    description: naming.invoiceDescription,
+    termsNotes: naming.termsNotes,
     paymentFlow: {
       id: cleanFlowId,
       state: flow.current_state,
@@ -2832,12 +2841,12 @@ async function persistConektaPaymentPlanMirror(flowId, extra = {}) {
       flow.contact_name || null,
       flow.contact_email || null,
       flow.contact_phone || null,
-      flow.concept || 'Plan de pagos',
-      flow.concept || 'Plan de pagos',
+      naming.planName,
+      naming.invoiceTitle,
       mirrorStatus,
       Number(flow.total_amount || 0),
       flow.currency || DEFAULT_CURRENCY,
-      flow.concept || 'Plan de pagos',
+      naming.invoiceDescription,
       getConektaPlanRecurrenceLabel(metadata.remainingFrequency),
       startDate || null,
       nextRunAt || null,
@@ -3791,6 +3800,7 @@ async function createConektaPaymentPlanCardSetupLink(flow, { baseUrl } = {}) {
 
 export async function updateConektaPaymentPlanSchedule(flowId, input = {}, options = {}) {
   const cleanFlowId = cleanString(flowId)
+  await assertPaymentPlanNamingChangeAllowed(cleanFlowId, input)
   await assertPlanCanChangeState(cleanFlowId)
   const editResult = await withPaymentPlanEditState(cleanFlowId, 'conekta', (originalState) => (
     updateConektaPaymentPlanScheduleLocked(cleanFlowId, input, options, originalState)

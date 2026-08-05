@@ -15,6 +15,10 @@ import { sendPaymentNotification } from './pushNotificationsService.js'
 import { publishPaymentChangedEvent, publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
+  assertPaymentPlanNamingChangeAllowed,
+  paymentPlanNamingFromMetadata
+} from './paymentPlanNamingService.js'
+import {
   assertExactPaymentPlanTotal,
   assertPlanCanChangeState,
   markOverduePaymentPlanChargesForReview,
@@ -4175,6 +4179,7 @@ async function persistStripePaymentPlanMirror(flowId, extra = {}) {
   const previousMirror = await db.get('SELECT raw_json FROM payment_plans WHERE id = ?', [cleanFlowId])
   const previousRawJson = parseJson(previousMirror?.raw_json, {})
   const metadata = parseJson(flow.metadata, {})
+  const naming = paymentPlanNamingFromMetadata(flow, metadata)
   const visibleInstallments = (installments || []).filter((installment) => (
     !['cancelled', 'canceled', 'deleted', 'void'].includes(cleanString(installment.status).toLowerCase())
   ))
@@ -4229,6 +4234,10 @@ async function persistStripePaymentPlanMirror(flowId, extra = {}) {
   const rawJson = {
     id: cleanFlowId,
     provider: 'stripe',
+    name: naming.planName,
+    title: naming.invoiceTitle,
+    description: naming.invoiceDescription,
+    termsNotes: naming.termsNotes,
     paymentFlow: {
       id: cleanFlowId,
       state: flow.current_state,
@@ -4278,12 +4287,12 @@ async function persistStripePaymentPlanMirror(flowId, extra = {}) {
       flow.contact_name || null,
       flow.contact_email || null,
       flow.contact_phone || null,
-      flow.concept || 'Plan de pagos',
-      flow.concept || 'Plan de pagos',
+      naming.planName,
+      naming.invoiceTitle,
       mirrorStatus,
       Number(flow.total_amount || 0),
       flow.currency || DEFAULT_CURRENCY,
-      flow.concept || 'Plan de pagos',
+      naming.invoiceDescription,
       getStripePlanRecurrenceLabel(metadata.remainingFrequency),
       startDate || null,
       nextRunAt || null,
@@ -4317,6 +4326,7 @@ export async function refreshStripePaymentPlanMirrors() {
 
 export async function updateStripePaymentPlanSchedule(flowId, input = {}) {
   const cleanFlowId = cleanString(flowId)
+  await assertPaymentPlanNamingChangeAllowed(cleanFlowId, input)
   await assertPlanCanChangeState(cleanFlowId)
   const editResult = await withPaymentPlanEditState(cleanFlowId, 'stripe', (originalState) => (
     updateStripePaymentPlanScheduleLocked(cleanFlowId, input, originalState)

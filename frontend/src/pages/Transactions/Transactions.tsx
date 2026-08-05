@@ -849,6 +849,7 @@ export const Transactions: React.FC = () => {
   })
   const [stripePlanFirstPaymentDraft, setStripePlanFirstPaymentDraft] = useState<StripePlanPaymentDraft | null>(null)
   const [stripePlanInstallmentDrafts, setStripePlanInstallmentDrafts] = useState<StripePlanPaymentDraft[]>([])
+  const [paymentPlanScheduleDirty, setPaymentPlanScheduleDirty] = useState(false)
   const [paymentPlanCreateModal, setPaymentPlanCreateModal] = useState<PaymentPlanCreateModalData>({
     open: false,
     selectedContact: null,
@@ -927,6 +928,7 @@ export const Transactions: React.FC = () => {
   }, [location.search, navigate])
 
   const hydrateStripePlanDraft = useCallback((plan: PaymentPlan | null) => {
+    setPaymentPlanScheduleDirty(false)
     if (!plan || !isLocalCheckoutPaymentPlan(plan)) {
       setStripePlanFirstPaymentDraft(null)
       setStripePlanInstallmentDrafts([])
@@ -1623,6 +1625,8 @@ export const Transactions: React.FC = () => {
   }
 
   const updateStripeFirstPaymentDraft = (updates: Partial<StripePlanPaymentDraft>) => {
+    if (!stripePlanFirstPaymentDraft || stripePlanFirstPaymentDraft.locked) return
+    setPaymentPlanScheduleDirty(true)
     setStripePlanFirstPaymentDraft(prev => {
       if (!prev || prev.locked) return prev
       const next = { ...prev, ...updates }
@@ -1634,11 +1638,14 @@ export const Transactions: React.FC = () => {
   }
 
   const removeStripeFirstPaymentDraft = () => {
+    if (!stripePlanFirstPaymentDraft || stripePlanFirstPaymentDraft.locked) return
+    setPaymentPlanScheduleDirty(true)
     setStripePlanFirstPaymentDraft(prev => prev && !prev.locked ? null : prev)
   }
 
   const addStripeFirstPaymentDraft = () => {
     if (stripePlanFirstPaymentDraft) return
+    setPaymentPlanScheduleDirty(true)
     const provider = getLocalCheckoutPlanProvider(paymentPlanModal.plan)
 
     setStripePlanFirstPaymentDraft({
@@ -1655,6 +1662,9 @@ export const Transactions: React.FC = () => {
   }
 
   const updateStripeInstallmentDraft = (localId: string, updates: Partial<StripePlanPaymentDraft>) => {
+    const editableInstallment = stripePlanInstallmentDrafts.find(installment => installment.localId === localId && !installment.locked)
+    if (!editableInstallment) return
+    setPaymentPlanScheduleDirty(true)
     setStripePlanInstallmentDrafts(prev => prev.map(installment => (
       installment.localId === localId && !installment.locked
         ? (() => {
@@ -1669,6 +1679,7 @@ export const Transactions: React.FC = () => {
   }
 
   const addStripeInstallmentDraft = () => {
+    setPaymentPlanScheduleDirty(true)
     setStripePlanInstallmentDrafts(prev => {
       const provider = getLocalCheckoutPlanProvider(paymentPlanModal.plan)
       const nextPaymentNumber = getInstallmentPlanPaymentNumber(prev.length, Boolean(stripePlanFirstPaymentDraft))
@@ -1692,6 +1703,9 @@ export const Transactions: React.FC = () => {
   }
 
   const removeStripeInstallmentDraft = (localId: string) => {
+    const editableInstallment = stripePlanInstallmentDrafts.find(installment => installment.localId === localId && !installment.locked)
+    if (!editableInstallment) return
+    setPaymentPlanScheduleDirty(true)
     setStripePlanInstallmentDrafts(prev => prev.filter(installment => (
       installment.localId !== localId || installment.locked
     )))
@@ -1741,8 +1755,9 @@ export const Transactions: React.FC = () => {
       const payload: Record<string, any> = {
         name,
         title,
-        description: name,
+        description: title,
         termsNotes: termsNotes || null,
+        namingOnly: !paymentPlanScheduleDirty,
         remainingFrequency,
         installments
       }
@@ -3444,7 +3459,11 @@ export const Transactions: React.FC = () => {
         <div className={styles.stripePlanControls}>
           <div className={styles.formGroup}>
             <label>Frecuencia base</label>
-            <CustomSelect name="remainingFrequency" defaultValue={schedule.remainingFrequency || 'custom'}>
+            <CustomSelect
+              name="remainingFrequency"
+              defaultValue={schedule.remainingFrequency || 'custom'}
+              onChange={() => setPaymentPlanScheduleDirty(true)}
+            >
               {STRIPE_PLAN_FREQUENCY_OPTIONS.map(option => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}

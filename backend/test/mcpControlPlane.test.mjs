@@ -218,6 +218,10 @@ test('pagos separa edición, ejecución y cancelación destructiva', async () =>
   assert.equal(update.inputSchema.properties.changes.additionalProperties, false)
   assert.equal(update.inputSchema.properties.changes.properties.status, undefined)
 
+  const updatePlan = domainTool('payments_update_plan')
+  assert.match(updatePlan.description, /namingOnly=true/i)
+  assert.equal(updatePlan.scope, MCP_SCOPES.EXECUTE)
+
   const execute = domainTool('payments_plan_action')
   assert.equal(execute.scope, MCP_SCOPES.EXECUTE)
   assert.deepEqual(execute.inputSchema.properties.action.enum, [
@@ -244,6 +248,29 @@ test('pagos separa edición, ejecución y cancelación destructiva', async () =>
     action: 'change_card',
     payload: { returnUrl: 'https://app.example.test/settings' }
   })
+
+  calls.length = 0
+  await updatePlan.execute({
+    invoke: async (_handler, request) => {
+      calls.push(request)
+      return { success: true }
+    }
+  }, {
+    planId: 'plan_sin_actividad',
+    changes: {
+      namingOnly: true,
+      name: 'Plan interno corregido',
+      title: 'Factura corregida'
+    },
+    idempotencyKey: 'payment-plan-rename-001'
+  })
+  assert.deepEqual(calls[0].params, { scheduleId: 'plan_sin_actividad' })
+  assert.deepEqual(calls[0].body, {
+    namingOnly: true,
+    name: 'Plan interno corregido',
+    title: 'Factura corregida'
+  })
+  assert.deepEqual(calls[0].headers, { 'idempotency-key': 'payment-plan-rename-001' })
 })
 
 test('scope de lectura lista sólo lecturas y no expone SQL ni proxies arbitrarios', async () => {
