@@ -19,6 +19,7 @@ import * as userAccessController from '../controllers/userAccessController.js'
 import * as emailController from '../controllers/emailController.js'
 import * as highlevelController from '../controllers/highlevelController.js'
 import * as bunnyController from '../controllers/bunnyAccountIntegrationController.js'
+import { paymentCapabilityToolSpecs } from './paymentCapabilityTools.js'
 import { listSiteSubmissions } from '../services/sitesService.js'
 import {
   getAutomation,
@@ -1350,6 +1351,7 @@ export const capabilityToolSpecs = Object.freeze([
   ...contactTools,
   ...whatsAppTools,
   ...paymentTools,
+  ...paymentCapabilityToolSpecs,
   ...appointmentTools,
   ...automationTools,
   ...siteTools,

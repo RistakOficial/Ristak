@@ -640,8 +640,8 @@ const paymentTools = [
     inputSchema: schema({ planId: ID }, ['planId']), params: (args) => ({ scheduleId: args.planId })
   }),
   controllerSpec({
-    name: 'payments_create_plan', description: 'Crea un plan de pagos validado; la moneda predeterminada es la de la cuenta.',
-    module: 'payments', access: 'write', scope: 'ristak.execute', risk: 'critical', featureKeys: ['payment_plans'], handler: paymentPlansController.createPaymentPlan, method: 'POST',
+    name: 'payments_create_plan', description: 'Compatibilidad: crea un calendario de invoices en HighLevel. Para planes nuevos usa la herramienta específica offline, Stripe, Conekta o Rebill.',
+    module: 'payments', access: 'write', scope: 'ristak.execute', risk: 'critical', featureKeys: ['payment_plans', 'highlevel_integration'], connectionPrerequisites: ['highlevel'], handler: paymentPlansController.createPaymentPlan, method: 'POST',
     confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ plan: { type: 'object', additionalProperties: true }, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['plan'], { confirm: true, idempotency: true })),
     body: (args) => ({ ...args.plan, idempotencyKey: args.idempotencyKey })

@@ -79,6 +79,7 @@ import { isHighLevelConversationContactNotFoundError } from '../utils/highLevelC
 import { getCrmLabels, setCrmLabels } from '../services/crmLabelsService.js';
 import { setHighLevelConversationalChannelPreference } from '../services/highLevelConversationalChannelRoutingService.js';
 import { runManualChatSendAfterHumanTakeover } from './manualChatTakeover.js';
+import { getAccountCurrency } from '../utils/accountLocale.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -946,19 +947,15 @@ async function getGhlInvoiceScheduleContext() {
     ? safeJsonParse(config.location_data, {})
     : {};
   const business = locationData?.business || {};
-  const timezone = await getAccountTimezone().catch(() => locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE);
+  const [timezone, accountCurrency] = await Promise.all([
+    getAccountTimezone().catch(() => locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE),
+    getAccountCurrency()
+  ]);
 
   return {
     liveMode: normalizeGhlInvoiceMode(config?.ghl_invoice_mode) === 'live',
     timezone,
-    currency: firstDefined(
-      locationData?.currency,
-      locationData?.currencyCode,
-      locationData?.currency_code,
-      business?.currency,
-      business?.currencyCode,
-      'MXN'
-    ),
+    currency: accountCurrency,
     invoiceTitle: config?.invoice_title || 'PLAN DE PAGO',
     termsNotes: formatInvoiceMultilineText(config?.invoice_terms_notes || null),
     invoiceNumberPrefix: config?.invoice_number_prefix || null,
@@ -2054,6 +2051,11 @@ export const createInvoice = async (req, res) => {
     const liveMode = await getGhlInvoiceLiveMode();
     const paymentMode = liveMode ? 'live' : 'test';
     const rawInvoiceBody = { ...(req.body || {}) };
+    const accountCurrency = await getAccountCurrency();
+    rawInvoiceBody.items = toArray(rawInvoiceBody.items).map(item => ({
+      ...item,
+      currency: item?.currency || accountCurrency
+    }));
     const ristakMetadata = rawInvoiceBody.metadata && typeof rawInvoiceBody.metadata === 'object'
       ? rawInvoiceBody.metadata
       : null;
@@ -2130,7 +2132,7 @@ export const createInvoice = async (req, res) => {
           ghlInvoiceId,
           contactId || null, // Guardar contactId aunque no exista en contacts table
           total,
-          createdInvoice.currency || 'MXN',
+          createdInvoice.currency || accountCurrency,
           'draft', // Inicialmente siempre es draft
           null, // payment_method (se llena cuando se pague)
           paymentMode,
@@ -2309,6 +2311,7 @@ export const recordPayment = async (req, res) => {
     const mode = methodMap[normalizedMethod] || 'cash';
     const liveMode = await getGhlInvoiceLiveMode();
     const paymentMode = liveMode ? 'live' : 'test';
+    const resolvedCurrency = String(currency || await getAccountCurrency()).toUpperCase();
     const accountTimezone = await getAccountTimezone().catch(() => DEFAULT_PAYMENT_TIMEZONE);
     const resolvedPaymentDate = resolvePaymentTimestamp(paymentDate, accountTimezone);
     const previousPayment = await db.get(
@@ -2327,7 +2330,7 @@ export const recordPayment = async (req, res) => {
     const ghlClient = await getGHLClient();
     await ghlClient.recordPayment(invoiceId, {
       amount,
-      currency,
+      currency: resolvedCurrency,
       fulfilledAt: resolvedPaymentDate,
       note: noteParts.join('\n'),
       mode,
@@ -2404,7 +2407,7 @@ export const recordPayment = async (req, res) => {
       sendPaymentNotification({
         id: savedPayment?.id || invoiceId,
         amount: amount || savedPayment?.amount,
-        currency: currency || savedPayment?.currency || 'MXN',
+        currency: resolvedCurrency || savedPayment?.currency,
         status: 'paid',
         contactId: savedPayment?.contact_id,
         contactName: savedPayment?.contact_name || 'Cliente'
@@ -4635,12 +4638,12 @@ export const actionInvoiceSchedule = async (req, res) => {
  */
 export const text2Pay = async (req, res) => {
   try {
-    const { contactId, amount, currency, message } = req.body;
+    const { contactId, amount, message } = req.body;
 
-    if (!contactId || !amount || !currency) {
+    if (!contactId || !amount) {
       return res.status(400).json({
         success: false,
-        error: 'contactId, amount y currency son requeridos'
+        error: 'contactId y amount son requeridos'
       });
     }
 
@@ -4651,6 +4654,7 @@ export const text2Pay = async (req, res) => {
       });
     }
 
+    const currency = String(req.body?.currency || await getAccountCurrency()).toUpperCase();
     const liveMode = await getGhlInvoiceLiveMode();
     const ghlClient = await getGHLClient();
     // El frontend manda el ID local de Ristak; la API de GHL necesita el suyo.

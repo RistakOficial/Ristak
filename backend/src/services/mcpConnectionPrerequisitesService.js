@@ -1,22 +1,32 @@
 import {
   isAnyPaymentProviderConnected,
   isAnyRecurringPaymentProviderConnected,
+  isClipConnected,
+  isConektaConnected,
   isEmailConnected,
   isGoogleCalendarConnected,
   isHighLevelConnected,
+  isMercadoPagoConnected,
   isMetaAdsConnected,
   isMetaSocialConnected,
+  isRebillConnected,
+  isStripeConnected,
   isWhatsAppConnected
 } from './integrationConnectionStateService.js'
 
 const CHECKS = Object.freeze({
   email: isEmailConnected,
+  clip: isClipConnected,
+  conekta: isConektaConnected,
   google_calendar: isGoogleCalendarConnected,
   highlevel: isHighLevelConnected,
+  mercadopago: isMercadoPagoConnected,
   meta_ads: isMetaAdsConnected,
   meta_social: isMetaSocialConnected,
   payments: isAnyPaymentProviderConnected,
   payment_subscriptions: isAnyRecurringPaymentProviderConnected,
+  rebill: isRebillConnected,
+  stripe: isStripeConnected,
   whatsapp: isWhatsAppConnected
 })
 

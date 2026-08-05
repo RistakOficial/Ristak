@@ -58,7 +58,29 @@ const CAPABILITY_SEARCH_TERM_ALIASES = Object.freeze({
   lote: ['lote', 'bulk'],
   eliminar: ['eliminar', 'delete', 'remove', 'archive'],
   borrar: ['borrar', 'delete', 'remove', 'archive'],
-  archivar: ['archivar', 'archive']
+  archivar: ['archivar', 'archive'],
+  pago: ['pago', 'pagos', 'payment', 'payments', 'charge'],
+  pagos: ['pago', 'pagos', 'payment', 'payments', 'charge'],
+  payment: ['payment', 'payments', 'pago', 'pagos', 'charge'],
+  payments: ['payment', 'payments', 'pago', 'pagos', 'charge'],
+  cobro: ['cobro', 'cobros', 'charge', 'payment', 'link'],
+  cobrar: ['cobrar', 'charge', 'payment', 'create'],
+  plan: ['plan', 'planes', 'schedule', 'installment'],
+  planes: ['plan', 'planes', 'schedule', 'installment'],
+  parcialidad: ['parcialidad', 'parcialidades', 'installment', 'installments'],
+  parcialidades: ['parcialidad', 'parcialidades', 'installment', 'installments'],
+  offline: ['offline', 'manual', 'recordatorio', 'reminder'],
+  recordatorio: ['recordatorio', 'recordatorios', 'reminder', 'offline'],
+  recordatorios: ['recordatorio', 'recordatorios', 'reminder', 'offline'],
+  enlace: ['enlace', 'enlaces', 'link', 'links'],
+  link: ['link', 'links', 'enlace', 'enlaces'],
+  tarjeta: ['tarjeta', 'tarjetas', 'card', 'cards', 'paymentmethod'],
+  transferencia: ['transferencia', 'transfer', 'proof', 'comprobante'],
+  comprobante: ['comprobante', 'proof', 'transferencia', 'transfer'],
+  registrar: ['registrar', 'record', 'payment'],
+  reembolso: ['reembolso', 'refund'],
+  anular: ['anular', 'void', 'cancel'],
+  suscripcion: ['suscripcion', 'suscripciones', 'subscription', 'subscriptions']
 })
 
 function makeError(message, code, status = 400, details = null) {
@@ -533,8 +555,11 @@ async function assertToolAuthorization(context, spec) {
   }
   const missingConnections = await missingConnectionPrerequisites(context, spec.connectionPrerequisites)
   if (missingConnections.length) {
+    const paymentProviders = new Set([
+      'clip', 'conekta', 'mercadopago', 'payment_subscriptions', 'rebill', 'stripe'
+    ])
     const handoffProviders = [...new Set(missingConnections.map(provider => (
-      provider === 'payment_subscriptions' ? 'payments' : provider
+      paymentProviders.has(provider) ? 'payments' : provider
     )))]
     throw makeError(
       `Falta conectar: ${missingConnections.join(', ')}. Usa integrations_connection_handoff con: ${handoffProviders.join(', ')}.`,

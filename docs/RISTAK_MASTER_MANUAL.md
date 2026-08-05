@@ -4298,6 +4298,29 @@ Ristak soporta:
 - Payment flows con estados y reparaciones.
 - Automatizaciones al completarse pagos.
 
+El MCP expone las operaciones de cobro mediante herramientas tipadas y los
+controladores canonicos, no como proxy generico de rutas. Su matriz operativa es:
+
+- planes nuevos: offline, Stripe, Conekta y Rebill; los calendarios de invoice de
+  HighLevel conservan una herramienta de compatibilidad;
+- links unicos: Stripe, Conekta, Mercado Pago, Rebill y CLIP;
+- tarjetas o fuentes guardadas: lectura y cobro con Stripe, Conekta y Rebill;
+- HighLevel: crear/enviar invoice, registrar el pago manual, sincronizarlo y
+  Text2Pay;
+- transacciones: estadisticas, resumen, facetas, sincronizacion de invoices
+  HighLevel, registro, envio, borrado seguro, reembolso, anulacion y decision de
+  comprobantes;
+- productos, precios y suscripciones mediante sus herramientas existentes.
+
+Cada herramienta de proveedor desaparece de `tools/list` si esa integracion
+exacta no esta conectada y vuelve a comprobar la conexion al ejecutarse. Las
+mutaciones requieren `idempotencyKey`, respetan permiso de Pagos, feature
+comercial y scope OAuth. La busqueda de capacidades reconoce en espanol pagos,
+cobros, planes, parcialidades, recordatorios offline, enlaces, tarjetas,
+transferencias y comprobantes. El MCP no recibe ni devuelve llaves de pasarela,
+no procesa webhooks y no acepta tokens o datos de tarjeta de un checkout publico;
+esas tareas permanecen en Configuracion y en la pagina segura de pago.
+
 En app movil nativa, la disponibilidad de flujos de pago depende de licencia e
 integraciones conectadas. Los planes `basic` y `medium` solo pueden registrar
 pagos unicos offline como efectivo, transferencia, deposito u otro pago
@@ -5201,13 +5224,21 @@ o deposito; nunca se acepta `card` porque Ristak no debe fingir un cobro que no
 procesó. Los vencimientos posteriores nacen en `pending`. El mismo cron de
 sistema `payment_automations` que procesa los demas avisos recoge estas filas; no
 es un cron de integracion y no depende de conectar o desconectar un proveedor.
+La misma alta esta disponible por MCP como `payments_create_offline_plan`. La
+herramienta recibe contacto, total, primer pago opcional y cada parcialidad con
+importe y vencimiento; la suma exacta se valida en unidades minimas. En el dia de
+vencimiento el job usa los canales configurados en Automatizaciones de Pagos y
+la tabla refleja el envio. El dinero no se marca como recibido por entregar el
+recordatorio: cuando el cliente paga, un operador usa el registro manual
+canonico y entonces la transaccion cambia a pagada.
 
 Los cobros automaticos de planes con tarjeta guardada deben reclamar localmente
 la cuota o primer pago a `processing` antes de llamar a la pasarela. Stripe,
 Conekta y Rebill usan este claim atomico mas los locks del cron para evitar doble
 cargo ante solapes de deploy, ticks concurrentes o ejecuciones manuales. Mercado
 Pago no cobra cuotas locales desde el cron; genera/libera links programados.
-Mercado Pago y CLIP no se ofrecen para crear planes nuevos: Mercado Pago queda
+Mercado Pago y CLIP no se ofrecen para crear planes nuevos, tampoco por MCP:
+Mercado Pago queda
 disponible para links únicos y suscripciones, y CLIP para pagos únicos. El cron
 de Mercado Pago sólo conserva compatibilidad con planes legados; reclama cada
 fila antes de generar el link y nunca libera automáticamente un link atrasado.

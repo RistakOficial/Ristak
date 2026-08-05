@@ -82,7 +82,7 @@ the same server URL; `tools/list` returns the exact tools available to the user
 who authorized that connection.
 
 The MCP is a typed control plane over Ristak's business services, not a generic
-route proxy and not unrestricted SQL. The current registry contains 347 typed
+route proxy and not unrestricted SQL. The current registry contains 371 typed
 tools before authorization filtering. `GET /api/api-access/mcp/status` and
 `tools/list` report only the subset visible to the current user, plan, modules
 and granted scopes. It also removes tools whose provider is not connected in
@@ -117,8 +117,9 @@ an MCP client inside that account.
 The expanded operational set includes contact journeys and bulk field updates,
 persistent WhatsApp/template and automation batches with list/get/pause/resume/
 reschedule/cancel/delete lifecycle, multimedia WhatsApp sends,
-read-state and channel preferences, payment subscriptions and transfer-proof
-decisions, appointment reminders and Google Calendar synchronization, automation
+read-state and channel preferences, payment subscriptions, complete operational
+payment coverage and transfer-proof decisions, appointment reminders, Google
+Calendar synchronization, automation
 folders/catalogs/tests, Site submissions/video analytics, Media folders/assets,
 tracking configuration and sessions, account settings, notification preferences
 and selected user administration. User creation is passwordless from the
@@ -135,6 +136,46 @@ Spanish/English action and entity terms, ignores filler words and prioritizes
 matches in the tool name; phrases such as `crear un contacto`, `crear un
 calendario`, `crear una plantilla de mensaje` and `agendar una cita` therefore
 select the corresponding mutation before loosely related tools.
+
+### Payment tools
+
+The `payments` domain contains 59 typed tools and mirrors the supported
+operational payment matrix rather than exposing provider routes generically:
+
+- offline plans create the complete local installment schedule without a
+  gateway. Due installments are picked up by the durable payment-automation job,
+  sent through the channels configured in Payment Settings and remain pending
+  until an operator records the received payment;
+- new gateway plans are available for Stripe, Conekta and Rebill. The legacy
+  `payments_create_plan` name remains only as a compatibility entry for HighLevel
+  invoice schedules; new clients should choose the provider-specific tool;
+- one-time hosted payment links are available for Stripe, Conekta, Mercado Pago,
+  Rebill and CLIP;
+- saved methods can be listed for Stripe, Conekta and Rebill, Stripe methods can
+  be refreshed, and an existing saved card/source can be charged through the
+  provider's canonical idempotent controller;
+- HighLevel invoice creation, send, manual payment reconciliation, single-invoice
+  sync and Text2Pay are available when HighLevel is connected;
+- transaction statistics, summaries, facets, HighLevel invoice sync, safe
+  deletion, local/manual registration, send, refund, void and transfer-proof
+  decisions use the same protected services as the product UI;
+- products, prices and recurring subscriptions continue through their existing
+  typed tools.
+
+Mercado Pago is deliberately not advertised for new installment plans because
+that backend capability is disabled; it remains available for one-time links and
+subscriptions. CLIP supports one-time links, not plans. Configuration secrets,
+webhooks and public checkout actions that accept card tokens are not MCP tools.
+An AI must hand configuration to `integrations_connection_handoff` and let the
+customer complete it inside Ristak.
+
+Every provider-specific tool declares the exact local connection prerequisite,
+commercial feature and OAuth scope. Payment mutations require an
+`idempotencyKey`; calendar dates are interpreted in the business timezone and
+providers resolve the account currency through the canonical backend services.
+Capability search understands Spanish and English payment concepts including
+`pago`, `cobro`, `plan`, `parcialidad`, `offline`, `recordatorio`, `enlace`,
+`tarjeta`, `transferencia`, `comprobante`, `reembolso` and `suscripción`.
 
 Payment metadata edits cannot change payment status. Recording a payment uses
 `ristak.execute`; refunds, voids and payment-plan cancellation/deletion use
