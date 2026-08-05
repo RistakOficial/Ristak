@@ -3,8 +3,19 @@ import assert from 'node:assert/strict'
 
 import { db } from '../src/config/database.js'
 import { deleteTransaction, voidTransaction } from '../src/controllers/transactionsController.js'
-import { paymentHasExternalArtifact } from '../src/services/paymentRecordSafetyService.js'
+import GHLClient from '../src/services/ghlClient.js'
+import { __invoicesSyncTestHooks } from '../src/services/invoicesSyncService.js'
+import {
+  getPaymentDeletionGuard,
+  paymentHasExternalArtifact,
+  paymentHasLedgerActivity
+} from '../src/services/paymentRecordSafetyService.js'
+import {
+  saveStripePaymentConfig,
+  setStripeFactoryForTest
+} from '../src/services/stripePaymentService.js'
 import { deleteSubscription } from '../src/services/subscriptionsService.js'
+import { initializeMasterKey } from '../src/utils/encryption.js'
 
 function suffix(label = 'payment_safety') {
   return `${label}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -25,6 +36,53 @@ function createResponse() {
     send(payload) {
       this.payload = payload
       return this
+    }
+  }
+}
+
+async function snapshotStripeConfig(callback) {
+  const previousRows = await db.all("SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'stripe_%'")
+
+  try {
+    await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%'")
+    return await callback()
+  } finally {
+    await db.run("DELETE FROM app_config WHERE config_key LIKE 'stripe_%'")
+    for (const row of previousRows) {
+      await db.run(
+        `INSERT INTO app_config (config_key, config_value, updated_at)
+         VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(config_key) DO UPDATE SET
+           config_value = excluded.config_value,
+           updated_at = CURRENT_TIMESTAMP`,
+        [row.config_key, row.config_value]
+      )
+    }
+    setStripeFactoryForTest(null)
+  }
+}
+
+async function snapshotHighLevelConfig(callback) {
+  const columns = await db.all('PRAGMA table_info(highlevel_config)').then(rows => rows.map(row => row.name))
+  const previousRows = await db.all('SELECT * FROM highlevel_config').catch(() => [])
+  await db.run('DELETE FROM highlevel_config')
+
+  try {
+    await db.run(
+      `INSERT INTO highlevel_config (location_id, api_token, ghl_invoice_mode, created_at)
+       VALUES ('location_payment_delete', 'token_payment_delete', 'live', CURRENT_TIMESTAMP)`
+    )
+    return await callback()
+  } finally {
+    await db.run('DELETE FROM highlevel_config').catch(() => undefined)
+    for (const row of previousRows) {
+      const availableColumns = columns.filter(column => Object.prototype.hasOwnProperty.call(row, column))
+      if (!availableColumns.length) continue
+      const placeholders = availableColumns.map(() => '?').join(', ')
+      await db.run(
+        `INSERT INTO highlevel_config (${availableColumns.join(', ')}) VALUES (${placeholders})`,
+        availableColumns.map(column => row[column])
+      ).catch(() => undefined)
     }
   }
 }
@@ -144,24 +202,24 @@ async function seedSafetyRows(label = 'payment_safety') {
   return ids
 }
 
-test('seguridad pagos: borra físicamente un pago manual/offline aunque esté pagado', async () => {
+test('seguridad pagos: conserva un pago manual/offline cuando ya fue pagado', async () => {
   const ids = await seedSafetyRows('paid_delete')
 
   try {
     const res = createResponse()
     await deleteTransaction({ params: { id: ids.paidPaymentId } }, res)
 
-    assert.equal(res.statusCode, 200)
-    assert.equal(res.payload.success, true)
+    assert.equal(res.statusCode, 422)
+    assert.match(res.payload.error, /actividad de pago registrada/i)
 
-    const row = await db.get('SELECT id FROM payments WHERE id = ?', [ids.paidPaymentId])
-    assert.equal(row, null)
+    const row = await db.get('SELECT status FROM payments WHERE id = ?', [ids.paidPaymentId])
+    assert.equal(row.status, 'paid')
   } finally {
     await cleanup(ids)
   }
 })
 
-test('seguridad pagos: borra físicamente un pago manual/offline anulado', async () => {
+test('seguridad pagos: conserva un pago manual/offline que ya fue anulado', async () => {
   const ids = await seedSafetyRows('void_manual_delete')
 
   try {
@@ -176,10 +234,35 @@ test('seguridad pagos: borra físicamente un pago manual/offline anulado', async
     const res = createResponse()
     await deleteTransaction({ params: { id: ids.voidPaymentId } }, res)
 
+    assert.equal(res.statusCode, 422)
+    assert.match(res.payload.error, /actividad de pago registrada/i)
+
+    const row = await db.get('SELECT status FROM payments WHERE id = ?', [ids.voidPaymentId])
+    assert.equal(row.status, 'void')
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('seguridad pagos: borra físicamente un pago manual pendiente sin actividad', async () => {
+  const ids = await seedSafetyRows('pending_manual_delete')
+
+  try {
+    await db.run(
+      `UPDATE payments
+       SET status = 'pending',
+           paid_at = NULL
+       WHERE id = ?`,
+      [ids.paidPaymentId]
+    )
+
+    const res = createResponse()
+    await deleteTransaction({ params: { id: ids.paidPaymentId } }, res)
+
     assert.equal(res.statusCode, 200)
     assert.equal(res.payload.success, true)
 
-    const row = await db.get('SELECT id FROM payments WHERE id = ?', [ids.voidPaymentId])
+    const row = await db.get('SELECT id FROM payments WHERE id = ?', [ids.paidPaymentId])
     assert.equal(row, null)
   } finally {
     await cleanup(ids)
@@ -220,7 +303,21 @@ test('seguridad pagos: detecta IDs de pasarela aunque el proveedor venga mal eti
   assert.equal(paymentHasExternalArtifact({ payment_provider: 'manual', conekta_order_id: 'ord_guard' }), true)
   assert.equal(paymentHasExternalArtifact({ payment_provider: 'manual', rebill_payment_id: 'rebill_guard' }), true)
   assert.equal(paymentHasExternalArtifact({ payment_provider: 'manual', payment_link_request_key: 'link_guard' }), true)
+  assert.equal(paymentHasExternalArtifact({ payment_provider: 'manual', metadata_json: JSON.stringify({ stripeChargeId: 'ch_metadata_guard' }) }), true)
   assert.equal(paymentHasExternalArtifact({ payment_provider: 'manual', payment_method: 'cash' }), false)
+})
+
+test('seguridad pagos: distingue intentos preparados de actividad financiera real', async () => {
+  assert.equal(paymentHasLedgerActivity({ status: 'pending', stripe_payment_intent_id: 'pi_unused' }), false)
+  assert.equal(paymentHasLedgerActivity({ status: 'pending', mercadopago_preference_id: 'pref_unused' }), false)
+  assert.equal(paymentHasLedgerActivity({ status: 'pending', stripe_charge_id: 'ch_real' }), true)
+  assert.equal(paymentHasLedgerActivity({ status: 'pending', mercadopago_payment_id: 'mp_real' }), true)
+  assert.equal(paymentHasLedgerActivity({ status: 'pending', conekta_order_id: 'order_real' }), true)
+  assert.equal(paymentHasLedgerActivity({ status: 'pending', conekta_charge_id: 'charge_real' }), true)
+  assert.equal(paymentHasLedgerActivity({ status: 'pending', rebill_payment_id: 'rebill_real' }), true)
+  assert.equal(paymentHasLedgerActivity({ status: 'pending', metadata_json: JSON.stringify({ stripe: { chargeId: 'ch_nested' } }) }), true)
+  assert.equal(paymentHasLedgerActivity({ status: 'failed', stripe_payment_intent_id: 'pi_failed' }), true)
+  assert.equal(paymentHasLedgerActivity({ status: 'future_provider_unknown_state' }), true)
 })
 
 test('seguridad pagos: no borra un pago manual con documento fiscal remoto', async () => {
@@ -298,7 +395,161 @@ test('seguridad pagos: archiva un link live pendiente sin borrar la fila', async
   }
 })
 
-test('seguridad pagos: borra físicamente una transacción ya archivada como eliminada', async () => {
+test('seguridad pagos: cancela un PaymentIntent Stripe sin intento y elimina el pago pendiente de la vista', async () => {
+  const ids = await seedSafetyRows('pending_stripe_intent')
+  const cancelCalls = []
+
+  try {
+    await initializeMasterKey()
+    await snapshotStripeConfig(async () => {
+      setStripeFactoryForTest(() => ({
+        paymentIntents: {
+          retrieve: async () => ({
+            id: 'pi_unused_pending',
+            status: 'requires_payment_method',
+            amount_received: 0,
+            latest_charge: null,
+            last_payment_error: null,
+            charges: { data: [] }
+          }),
+          cancel: async (id, payload, options) => {
+            cancelCalls.push({ id, payload, options })
+            return { id, status: 'canceled' }
+          }
+        }
+      }))
+      await saveStripePaymentConfig({
+        enabled: true,
+        mode: 'live',
+        publishableKey: 'pk_live_payment_delete',
+        secretKey: 'sk_live_payment_delete'
+      })
+      await db.run(
+        `UPDATE payments
+         SET payment_mode = 'live',
+             status = 'pending',
+             stripe_payment_intent_id = 'pi_unused_pending'
+         WHERE id = ?`,
+        [ids.pendingLinkPaymentId]
+      )
+
+      const guard = await getPaymentDeletionGuard(await db.get('SELECT * FROM payments WHERE id = ?', [ids.pendingLinkPaymentId]))
+      assert.equal(guard.hasLedgerActivity, false)
+      assert.equal(guard.shouldArchive, true)
+
+      const res = createResponse()
+      await deleteTransaction({ params: { id: ids.pendingLinkPaymentId } }, res)
+
+      assert.equal(res.statusCode, 200)
+      assert.equal(cancelCalls.length, 1)
+      assert.equal(cancelCalls[0].id, 'pi_unused_pending')
+      assert.equal(cancelCalls[0].payload.cancellation_reason, 'abandoned')
+      assert.equal(cancelCalls[0].options.timeout, 8000)
+
+      const row = await db.get('SELECT status FROM payments WHERE id = ?', [ids.pendingLinkPaymentId])
+      assert.equal(row.status, 'deleted')
+    })
+  } finally {
+    setStripeFactoryForTest(null)
+    await cleanup(ids)
+  }
+})
+
+test('seguridad pagos: conserva un Stripe pendiente cuando el proveedor ya reporta un intento fallido', async () => {
+  const ids = await seedSafetyRows('pending_stripe_attempt')
+  let cancelCalls = 0
+
+  try {
+    await initializeMasterKey()
+    await snapshotStripeConfig(async () => {
+      setStripeFactoryForTest(() => ({
+        paymentIntents: {
+          retrieve: async () => ({
+            id: 'pi_attempted_pending',
+            status: 'requires_payment_method',
+            amount_received: 0,
+            latest_charge: null,
+            last_payment_error: { code: 'card_declined' },
+            charges: { data: [] }
+          }),
+          cancel: async () => {
+            cancelCalls += 1
+            return { status: 'canceled' }
+          }
+        }
+      }))
+      await saveStripePaymentConfig({
+        enabled: true,
+        mode: 'live',
+        publishableKey: 'pk_live_payment_attempt',
+        secretKey: 'sk_live_payment_attempt'
+      })
+      await db.run(
+        `UPDATE payments
+         SET payment_mode = 'live',
+             status = 'pending',
+             stripe_payment_intent_id = 'pi_attempted_pending'
+         WHERE id = ?`,
+        [ids.pendingLinkPaymentId]
+      )
+
+      const res = createResponse()
+      await deleteTransaction({ params: { id: ids.pendingLinkPaymentId } }, res)
+
+      assert.equal(res.statusCode, 422)
+      assert.match(res.payload.error, /actividad|historial/i)
+      assert.equal(cancelCalls, 0)
+
+      const row = await db.get('SELECT status FROM payments WHERE id = ?', [ids.pendingLinkPaymentId])
+      assert.equal(row.status, 'pending')
+    })
+  } finally {
+    setStripeFactoryForTest(null)
+    await cleanup(ids)
+  }
+})
+
+test('seguridad pagos: anula en HighLevel y conserva un tombstone eliminado que no revive por sync', async (t) => {
+  const ids = await seedSafetyRows('pending_highlevel_invoice')
+  const voidCalls = []
+  t.mock.method(GHLClient.prototype, 'voidInvoice', async function voidInvoice(invoiceId) {
+    voidCalls.push(invoiceId)
+    return { id: invoiceId, status: 'void' }
+  })
+
+  try {
+    await snapshotHighLevelConfig(async () => {
+      await db.run(
+        `UPDATE payments
+         SET payment_mode = 'live',
+             status = 'sent',
+             payment_provider = 'highlevel',
+             payment_method = '',
+             public_payment_id = NULL,
+             payment_url = NULL,
+             ghl_invoice_id = 'ghl_invoice_unused'
+         WHERE id = ?`,
+        [ids.pendingLinkPaymentId]
+      )
+
+      const res = createResponse()
+      await deleteTransaction({ params: { id: ids.pendingLinkPaymentId } }, res)
+
+      assert.equal(res.statusCode, 200)
+      assert.deepEqual(voidCalls, ['ghl_invoice_unused'])
+
+      const row = await db.get('SELECT status FROM payments WHERE id = ?', [ids.pendingLinkPaymentId])
+      assert.equal(row.status, 'deleted')
+      assert.equal(__invoicesSyncTestHooks.resolveSyncedInvoiceStatus('deleted', 'void'), 'deleted')
+      assert.equal(__invoicesSyncTestHooks.resolveSyncedInvoiceStatus('deleted', 'sent'), 'deleted')
+      assert.equal(__invoicesSyncTestHooks.resolveSyncedInvoiceStatus('deleted', 'paid'), 'paid')
+    })
+  } finally {
+    await cleanup(ids)
+  }
+})
+
+test('seguridad pagos: conserva idempotente el tombstone live de una transacción eliminada', async () => {
   const ids = await seedSafetyRows('deleted_archive')
 
   try {
@@ -316,8 +567,10 @@ test('seguridad pagos: borra físicamente una transacción ya archivada como eli
     assert.equal(res.statusCode, 200)
     assert.equal(res.payload.success, true)
 
-    const row = await db.get('SELECT id FROM payments WHERE id = ?', [ids.pendingLinkPaymentId])
-    assert.equal(row, null)
+    const row = await db.get('SELECT id, status, public_payment_id FROM payments WHERE id = ?', [ids.pendingLinkPaymentId])
+    assert.equal(row.id, ids.pendingLinkPaymentId)
+    assert.equal(row.status, 'deleted')
+    assert.equal(row.public_payment_id, 'pay_safety_public')
   } finally {
     await cleanup(ids)
   }

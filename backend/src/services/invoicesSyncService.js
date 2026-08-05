@@ -885,6 +885,16 @@ function resolveSyncedInvoiceStatus(existingStatus, incomingStatus) {
   const normalizedExistingStatus = cleanString(existingStatus).toLowerCase()
   const normalizedIncomingStatus = cleanString(incomingStatus).toLowerCase()
 
+  // Un invoice pendiente eliminado queda como tombstone local después de
+  // anularlo en HighLevel. La sincronización no debe revivirlo como sent/void;
+  // un pago real sí gana para conservar el historial financiero.
+  if (
+    normalizedExistingStatus === 'deleted' &&
+    !isSuccessfulPaymentStatus(normalizedIncomingStatus)
+  ) {
+    return 'deleted'
+  }
+
   if (
     isSuccessfulPaymentStatus(normalizedExistingStatus) &&
     PAID_STATUS_DOWNGRADE_PROTECTED_STATUSES.has(normalizedIncomingStatus)
@@ -1566,7 +1576,8 @@ export async function syncSingleInvoice(invoiceId) {
 export const __invoicesSyncTestHooks = {
   findExistingPaymentForInvoice,
   findHighLevelMirrorForLocalPayment,
-  linkLocalPaymentToHighLevelMirror
+  linkLocalPaymentToHighLevelMirror,
+  resolveSyncedInvoiceStatus
 }
 
 /**

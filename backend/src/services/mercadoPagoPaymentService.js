@@ -100,7 +100,9 @@ function cleanString(value) {
 function shouldIgnorePendingWebhookRegression(payment = {}, nextStatus = '') {
   if (nextStatus !== 'pending') return false
   const currentStatus = cleanString(payment.status).toLowerCase()
-  return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) || Boolean(payment.paid_at)
+  return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) ||
+    ['refunded', 'void', 'deleted'].includes(currentStatus) ||
+    Boolean(payment.paid_at)
 }
 
 function mercadoPagoFetch() {
@@ -1202,6 +1204,51 @@ export async function expireMercadoPagoTestPreference(payment, { now = new Date(
     }
   })
   return { expired: true, preferenceId, paymentId: row.id, paymentMode: 'test' }
+}
+
+/**
+ * Expira la preferencia de un link individual antes de ocultarlo en Ristak.
+ * El payment_mode de la fila elige la conexión correcta y un payment_id real
+ * bloquea la operación antes de tocar el proveedor.
+ */
+export async function expireUnusedMercadoPagoPreference(payment, { now = new Date().toISOString() } = {}) {
+  const row = typeof payment === 'string'
+    ? await findPaymentById(cleanString(payment))
+    : payment
+  if (!row?.id) {
+    return { expired: false, reason: 'payment_not_found' }
+  }
+
+  if (cleanString(row.mercadopago_payment_id)) {
+    const error = new Error('Mercado Pago ya registró actividad para este pago. No se puede eliminar; conserva el historial.')
+    error.status = 422
+    error.code = 'payment_has_financial_activity'
+    throw error
+  }
+
+  const preferenceId = cleanString(row.mercadopago_preference_id)
+  if (!preferenceId) return { expired: false, reason: 'preference_missing' }
+
+  const expirationDate = timestampToIso(now) || new Date().toISOString()
+  const expirationDateMs = Date.parse(expirationDate)
+  const expirationFrom = new Date(Math.min(Date.now(), expirationDateMs - 1000)).toISOString()
+  const config = await getMercadoPagoClientConfig(row.payment_mode || '')
+  await mercadoPagoApiRequest(`/checkout/preferences/${encodeURIComponent(preferenceId)}`, {
+    method: 'PUT',
+    config,
+    body: {
+      expires: true,
+      expiration_date_from: expirationFrom,
+      expiration_date_to: expirationDate
+    }
+  })
+
+  return {
+    expired: true,
+    preferenceId,
+    paymentId: row.id,
+    paymentMode: config.mode
+  }
 }
 
 async function syncMercadoPagoInstallmentPreference({ paymentId, preferenceId = '', notes = '' } = {}) {

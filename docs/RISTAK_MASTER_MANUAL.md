@@ -4607,12 +4607,27 @@ un fallback honesto como `Tarjeta`, `Pendiente de seleccion` o
 La eliminacion desde Transacciones distingue el origen real del pago. Un pago
 manual/offline (`payment_provider=manual` u `offline`) sin IDs, liga, invoice,
 plan, suscripcion ni documento fiscal externo puede borrarse fisicamente aunque
-su estado local sea `paid`, `void` o `refunded`; despues se recalculan las
-estadisticas del contacto. Un cobro o artefacto de Stripe, Conekta, Mercado Pago,
-CLIP, Rebill o HighLevel nunca se vuelve borrable por cambiar solo el estado o
-el metodo: se conserva, archiva, anula o reembolsa segun el flujo de su
-proveedor. Los comprobantes de transferencia sujetos a revision humana y los
-pagos con documento fiscal emitido tambien permanecen protegidos por auditoria.
+su estado local sea `draft`, `sent`, `scheduled`, `pending`, `overdue` o
+`inactive`; despues se recalculan las estadisticas del contacto. Un pago
+individual `draft`/`sent`/`scheduled`/
+`pending`/`overdue` que nunca registro un cobro, intento real, rechazo, cargo,
+documento fiscal, plan ni suscripcion tambien se puede eliminar. Si el link ya
+preparo un PaymentIntent de Stripe o una preferencia de Mercado Pago, ese ID por
+si solo no cuenta como transaccion: Ristak verifica el estado remoto y cancela o
+expira el recurso antes de ocultarlo. Un invoice pendiente de HighLevel se anula
+remotamente antes de quedar eliminado localmente.
+
+Los pagos externos eliminados conservan un tombstone `status='deleted'` para
+desactivar links, absorber webhooks tardios y evitar que una sincronizacion los
+reviva; la tabla y sus facets los excluyen salvo una consulta de auditoria que
+pida `deleted` explicitamente. Si el proveedor confirma un pago real pese a una
+carrera, el estado exitoso vuelve a ganar para no perder historial financiero.
+Un cargo, rechazo, procesamiento, autorizacion, reembolso o cualquier estado
+externo desconocido falla cerrado y no se puede borrar. Los comprobantes de
+transferencia sujetos a revision humana y los pagos con documento fiscal emitido
+tambien permanecen protegidos por auditoria. La misma regla protege pagos
+manuales: si ya quedaron `paid`, `void`, `refunded`, fallidos o con cualquier
+otra actividad financiera, se conserva el registro aunque no use pasarela.
 
 ### Estados de links de pago
 

@@ -18,7 +18,11 @@ import {
 import { getGHLClient } from '../services/ghlClient.js'
 import { getHighLevelConfig } from '../config/database.js'
 import { syncAllInvoices, syncLocalPaymentsToHighLevel } from '../services/invoicesSyncService.js'
-import { syncStripePaymentPlanFromLocalPayment } from '../services/stripePaymentService.js'
+import {
+  cancelUnusedStripePaymentIntent,
+  syncStripePaymentPlanFromLocalPayment
+} from '../services/stripePaymentService.js'
+import { expireUnusedMercadoPagoPreference } from '../services/mercadoPagoPaymentService.js'
 import {
   isOfflinePaymentPlanPayment,
   syncOfflinePaymentPlanFromLocalPayment
@@ -1805,26 +1809,34 @@ export const deleteTransaction = async (req, res) => {
     const guardResponse = sendPaymentDeletionGuardError(res, deletionGuard)
     if (guardResponse) return guardResponse
 
-    if (deletionGuard.isTestMode || deletionGuard.isDeletedRecord) {
+    if (deletionGuard.isTestMode) {
       await hardDeleteTestPaymentRecord(id)
+    } else if (deletionGuard.isDeletedRecord) {
+      if (deletionGuard.canHardDelete) {
+        await hardDeleteTestPaymentRecord(id)
+      }
+      // Los tombstones externos live se conservan para bloquear links y
+      // absorber webhooks/sincronizaciones tardías sin volver a mostrarlos.
     } else if (deletionGuard.shouldArchive) {
-      let archiveStatus = 'deleted'
-      if (transaction.ghl_invoice_id) {
+      if (transaction.stripe_payment_intent_id) {
+        await cancelUnusedStripePaymentIntent(transaction)
+      } else if (transaction.mercadopago_preference_id) {
+        await expireUnusedMercadoPagoPreference(transaction)
+      } else if (transaction.ghl_invoice_id) {
         const ghlClient = await getGHLClient()
         await ghlClient.voidInvoice(transaction.ghl_invoice_id)
-        archiveStatus = 'void'
       }
 
       await db.run(
-        'UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        [archiveStatus, id]
+        "UPDATE payments SET status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        [id]
       )
       dispatchProductPostWebhooksForPaymentInBackground(id, {
-        status: archiveStatus,
+        status: 'deleted',
         previousStatus: transaction.status || ''
       })
       const notificationPayment = await getTransactionByIdForResponse(id, getRequestBaseUrl(req)) || transaction
-      sendPaymentNotification({ ...notificationPayment, status: archiveStatus, previousStatus: transaction.status || '' }).catch((pushError) => {
+      sendPaymentNotification({ ...notificationPayment, status: 'deleted', previousStatus: transaction.status || '' }).catch((pushError) => {
         logger.warn(`No se pudo enviar aviso de pago ${id}: ${pushError.message}`)
       })
       await syncPaymentPlanFromLocalTransaction(transaction, id)

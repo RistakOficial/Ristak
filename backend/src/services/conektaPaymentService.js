@@ -1539,7 +1539,9 @@ export async function reconcileConektaWebhookEvent(event = {}) {
 function shouldIgnorePendingWebhookRegression(payment = {}, nextStatus = '') {
   if (nextStatus !== 'pending') return false
   const currentStatus = cleanString(payment.status).toLowerCase()
-  return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) || Boolean(payment.paid_at)
+  return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) ||
+    ['refunded', 'void', 'deleted'].includes(currentStatus) ||
+    Boolean(payment.paid_at)
 }
 
 // (PAY2-002) Reconcilia un pago de Conekta a partir del payload de un webhook. Conekta

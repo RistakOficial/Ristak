@@ -44,11 +44,12 @@ async function withHiddenFiltersCleared(callback) {
 async function cleanup(ids) {
   await db.run(
     `DELETE FROM payments
-     WHERE id IN (?, ?, ?, ?) OR contact_id IN (?, ?)`,
+     WHERE id IN (?, ?, ?, ?, ?) OR contact_id IN (?, ?)`,
     [
       ids.paidPaymentId,
       ids.succeededPaymentId,
       ids.failedPaymentId,
+      ids.deletedPaymentId,
       ids.otherPaymentId,
       ids.matchingContactId,
       ids.otherContactId
@@ -65,6 +66,7 @@ test('transactions list paginates search results and summary honors search/statu
     paidPaymentId: `payments-page-paid-${suffix}`,
     succeededPaymentId: `payments-page-succeeded-${suffix}`,
     failedPaymentId: `payments-page-failed-${suffix}`,
+    deletedPaymentId: `payments-page-deleted-${suffix}`,
     otherPaymentId: `payments-page-other-payment-${suffix}`
   }
   const searchName = `Ana Blindaje Pagos ${suffix}`
@@ -110,6 +112,13 @@ test('transactions list paginates search results and summary honors search/statu
         `INSERT INTO payments (
           id, contact_id, amount, currency, status, payment_method, payment_mode,
           payment_provider, title, description, date, created_at, updated_at
+        ) VALUES (?, ?, 400, 'MXN', 'deleted', 'card', 'live', 'stripe', 'Pago eliminado', 'Pago eliminado', ?, ?, ?)`,
+        [ids.deletedPaymentId, ids.matchingContactId, date, date, date]
+      )
+      await db.run(
+        `INSERT INTO payments (
+          id, contact_id, amount, currency, status, payment_method, payment_mode,
+          payment_provider, title, description, date, created_at, updated_at
         ) VALUES (?, ?, 999, 'MXN', 'paid', 'card', 'live', 'manual', 'Pago otro contacto', 'Pago otro contacto', ?, ?, ?)`,
         [ids.otherPaymentId, ids.otherContactId, date, date, date]
       )
@@ -143,6 +152,7 @@ test('transactions list paginates search results and summary honors search/statu
       )
       assert.equal(statusCounts.paid, 2)
       assert.equal(statusCounts.failed, 1)
+      assert.equal(statusCounts.deleted, undefined)
 
       const multiStatusRes = createResponse()
       await getTransactions({
@@ -163,6 +173,43 @@ test('transactions list paginates search results and summary honors search/statu
       assert.equal(multiStatusRes.statusCode, 200)
       assert.equal(multiStatusRes.payload.pagination.total, 3)
       assert.deepEqual(multiStatusRes.payload.data.map(payment => payment.amount), [100, 200, 300])
+
+      const defaultVisibleRes = createResponse()
+      await getTransactions({
+        query: {
+          page: '1',
+          limit: '10',
+          q: searchName,
+          startDate: '2026-07-01',
+          endDate: '2026-07-01',
+          sortBy: 'amount',
+          sortOrder: 'ASC',
+          sync: 'false'
+        },
+        headers: {}
+      }, defaultVisibleRes)
+
+      assert.equal(defaultVisibleRes.payload.pagination.total, 3)
+      assert.deepEqual(defaultVisibleRes.payload.data.map(payment => payment.amount), [100, 200, 300])
+
+      const deletedAuditRes = createResponse()
+      await getTransactions({
+        query: {
+          page: '1',
+          limit: '10',
+          q: searchName,
+          status: 'deleted',
+          startDate: '2026-07-01',
+          endDate: '2026-07-01',
+          sortBy: 'amount',
+          sortOrder: 'ASC',
+          sync: 'false'
+        },
+        headers: {}
+      }, deletedAuditRes)
+
+      assert.equal(deletedAuditRes.payload.pagination.total, 1)
+      assert.deepEqual(deletedAuditRes.payload.data.map(payment => payment.amount), [400])
 
       const { summary } = await buildTransactionSummary({
         startDate: '2026-07-01',

@@ -525,6 +525,21 @@ const getDateRangeKeyValue = (value: unknown) => value instanceof Date ? value.g
 
 const REFUNDABLE_TRANSACTION_STATUSES = ['paid']
 const VOIDABLE_HIGHLEVEL_TRANSACTION_STATUSES = new Set(['draft', 'sent', 'pending', 'overdue', 'partial'])
+const DELETABLE_PENDING_TRANSACTION_STATUSES = new Set([
+  'draft',
+  'sent',
+  'scheduled',
+  'pending',
+  'overdue',
+  'inactive',
+  'initiated',
+  'created',
+  'open',
+  'requires_payment_method',
+  'requires_confirmation',
+  'cancelled',
+  'canceled'
+])
 
 const PAYMENT_PLAN_STATUS_ORDER = [
   'active',
@@ -561,6 +576,14 @@ const isHighLevelTransaction = (transaction: Transaction) => {
 const canVoidHighLevelTransaction = (transaction: Transaction) => (
   isHighLevelTransaction(transaction) &&
   VOIDABLE_HIGHLEVEL_TRANSACTION_STATUSES.has(String(transaction.status || '').toLowerCase())
+)
+
+const canDeletePendingTransaction = (transaction: Transaction) => (
+  DELETABLE_PENDING_TRANSACTION_STATUSES.has(String(transaction.status || '').toLowerCase())
+)
+
+const isTestPayment = (transaction: Transaction) => (
+  ['test', 'sandbox'].includes(String(transaction.paymentMode || '').toLowerCase())
 )
 
 interface PaymentPlanProgress {
@@ -2764,8 +2787,6 @@ export const Transactions: React.FC = () => {
     return <Badge variant={config.variant}>{config.label}</Badge>
   }
 
-  const isTestPayment = (transaction: Transaction) => transaction.paymentMode === 'test'
-
   const getStatusCell = (transaction: Transaction) => (
     <div className={styles.statusCell}>
       {getStatusBadge(transaction.status)}
@@ -2870,6 +2891,7 @@ export const Transactions: React.FC = () => {
         const isMercadoPagoTransaction = provider === 'mercadopago' || method.startsWith('mercadopago')
         const isGatewayTransaction = isStripeTransaction || isMercadoPagoTransaction
         const canVoidPayment = canVoidHighLevelTransaction(item)
+        const canDeletePayment = isTestPayment(item) || canDeletePendingTransaction(item)
         const hasPaymentLink = Boolean(item.paymentUrl || item.publicPaymentId || item.invoiceId)
         const isTransferProofPending = item.status === 'pending_review'
         const isTransferProofRecord = isProtectedTransferProofTransaction(item)
@@ -2920,7 +2942,7 @@ export const Transactions: React.FC = () => {
           actions.push('void')
         }
 
-        if (!canVoidPayment && !isTransferProofRecord) {
+        if (canDeletePayment && !isTransferProofRecord) {
           actions.push('delete')
         }
 
@@ -3177,6 +3199,12 @@ export const Transactions: React.FC = () => {
     const selectedIds = new Set(selectedTransactionIds)
     return transactions.filter(transaction => selectedIds.has(transaction.id))
   }, [selectedTransactionIds, transactions])
+  const selectedDeletableTransactions = useMemo(
+    () => selectedTransactions.filter(transaction => (
+      isTestPayment(transaction) || canDeletePendingTransaction(transaction)
+    )),
+    [selectedTransactions]
+  )
 
   const selectedPaymentPlans = useMemo(() => {
     if (selectedPaymentPlanIds.length === 0) return []
@@ -3227,15 +3255,17 @@ export const Transactions: React.FC = () => {
       count={selectedTransactions.length}
       onClearSelection={() => setSelectedTransactionIds([])}
     >
-      <Button
-        type="button"
-        variant="danger"
-        size="sm"
-        onClick={() => openTransactionDeleteModal(selectedTransactions)}
-      >
-        <Trash2 size={16} />
-        Eliminar
-      </Button>
+      {selectedDeletableTransactions.length > 0 && (
+        <Button
+          type="button"
+          variant="danger"
+          size="sm"
+          onClick={() => openTransactionDeleteModal(selectedDeletableTransactions)}
+        >
+          <Trash2 size={16} />
+          Eliminar
+        </Button>
+      )}
     </TableSelectionToolbar>
   ) : null
 

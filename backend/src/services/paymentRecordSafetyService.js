@@ -22,6 +22,24 @@ const LEDGER_PAYMENT_STATUSES = new Set([
   'processing'
 ])
 
+const NON_FINANCIAL_INDIVIDUAL_PAYMENT_STATUSES = new Set([
+  '',
+  'draft',
+  'sent',
+  'scheduled',
+  'pending',
+  'overdue',
+  'inactive',
+  'initiated',
+  'created',
+  'open',
+  'requires_payment_method',
+  'requires_confirmation',
+  'cancelled',
+  'canceled',
+  'deleted'
+])
+
 const NON_FINANCIAL_PLAN_PAYMENT_STATUSES = new Set([
   '',
   'pending',
@@ -137,20 +155,48 @@ export function isTestSubscriptionRecord(subscription = {}) {
 export function paymentHasLedgerActivity(payment = {}) {
   const status = normalizePaymentStatus(payment.status)
   const metadata = parseJson(payment.metadata_json, {})
+  const providerStatuses = [
+    metadata?.stripe?.status,
+    metadata?.mercadoPago?.status,
+    metadata?.mercadopago?.status,
+    metadata?.conekta?.status,
+    metadata?.clip?.status,
+    metadata?.rebill?.status
+  ]
+    .map(normalizePaymentStatus)
+    .filter(Boolean)
+  const statusHasFinancialActivity = Boolean(
+    status && !NON_FINANCIAL_INDIVIDUAL_PAYMENT_STATUSES.has(status)
+  )
+  const providerStatusHasFinancialActivity = providerStatuses.some(providerStatus => (
+    !NON_FINANCIAL_INDIVIDUAL_PAYMENT_STATUSES.has(providerStatus)
+  ))
+
   return Boolean(
     LEDGER_PAYMENT_STATUSES.has(status) ||
+    statusHasFinancialActivity ||
+    providerStatusHasFinancialActivity ||
     cleanString(payment.paid_at) ||
-    cleanString(payment.stripe_payment_intent_id) ||
     cleanString(payment.stripe_charge_id) ||
     cleanString(payment.mercadopago_payment_id) ||
-    cleanString(payment.mercadopago_preference_id) ||
+    cleanString(payment.conekta_order_id) ||
+    cleanString(payment.conekta_charge_id) ||
     cleanString(payment.clip_payment_id) ||
     cleanString(payment.clip_receipt_no) ||
-    cleanString(metadata.stripePaymentIntentId) ||
+    cleanString(payment.rebill_payment_id) ||
     cleanString(metadata.stripeChargeId) ||
+    cleanString(metadata.stripe?.chargeId) ||
+    cleanString(metadata.stripe?.latestChargeId) ||
     cleanString(metadata.mercadoPagoPaymentId) ||
+    cleanString(metadata.mercadoPago?.paymentId) ||
+    cleanString(metadata.conektaOrderId) ||
+    cleanString(metadata.conekta?.orderId) ||
+    cleanString(metadata.conektaChargeId) ||
+    cleanString(metadata.conekta?.chargeId) ||
     cleanString(metadata.clipPaymentId) ||
-    cleanString(metadata.clip?.paymentId)
+    cleanString(metadata.clip?.paymentId) ||
+    cleanString(metadata.rebillPaymentId) ||
+    cleanString(metadata.rebill?.paymentId)
   )
 }
 
@@ -192,6 +238,7 @@ function getProviderPaymentPlanTransactions(mirror = {}) {
 export function paymentHasExternalArtifact(payment = {}) {
   const provider = cleanString(payment.payment_provider).toLowerCase()
   const method = cleanString(payment.payment_method).toLowerCase()
+  const metadata = parseJson(payment.metadata_json || payment.metadata, {})
   // El proveedor es una clasificación abierta. Cualquier valor distinto de
   // manual/offline se trata como integración externa para que una pasarela
   // futura quede protegida sin depender de otra allowlist.
@@ -215,6 +262,22 @@ export function paymentHasExternalArtifact(payment = {}) {
     cleanString(payment.rebill_customer_id) ||
     cleanString(payment.rebill_card_id) ||
     cleanString(payment.payment_link_request_key) ||
+    cleanString(metadata.stripePaymentIntentId) ||
+    cleanString(metadata.stripeChargeId) ||
+    cleanString(metadata.stripe?.paymentIntentId) ||
+    cleanString(metadata.stripe?.chargeId) ||
+    cleanString(metadata.mercadoPagoPaymentId) ||
+    cleanString(metadata.mercadoPagoPreferenceId) ||
+    cleanString(metadata.mercadoPago?.paymentId) ||
+    cleanString(metadata.mercadoPago?.preferenceId) ||
+    cleanString(metadata.conektaOrderId) ||
+    cleanString(metadata.conektaChargeId) ||
+    cleanString(metadata.conekta?.orderId) ||
+    cleanString(metadata.conekta?.chargeId) ||
+    cleanString(metadata.clipPaymentId) ||
+    cleanString(metadata.clip?.paymentId) ||
+    cleanString(metadata.rebillPaymentId) ||
+    cleanString(metadata.rebill?.paymentId) ||
     hasExternalProvider ||
     method.startsWith('stripe') ||
     method.startsWith('mercadopago') ||
@@ -334,10 +397,11 @@ export async function getPaymentDeletionGuard(payment = {}) {
     isManualOffline,
     isTestMode,
     isDeletedRecord,
-    canHardDelete: isTestMode || isDeletedRecord || (
-      isDetached && !hasFiscalArtifact && (
-        isManualOffline || (!hasLedgerActivity && !hasExternalArtifact)
-      )
+    canHardDelete: isTestMode || (
+      isDetached &&
+      !hasFiscalArtifact &&
+      !hasLedgerActivity &&
+      (isManualOffline || !hasExternalArtifact)
     ),
     shouldArchive: !isTestMode && !isDeletedRecord && isDetached && !hasFiscalArtifact && !hasLedgerActivity && hasExternalArtifact
   }

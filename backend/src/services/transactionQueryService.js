@@ -183,9 +183,17 @@ export function buildTransactionListWhere({
 } = {}) {
   const filters = []
   const params = []
+  const selectedStatuses = normalizeTransactionStatusFilters(statuses)
+
+  // Los registros archivados como tombstone protegen links/webhooks externos,
+  // pero para el usuario ya están eliminados. Sólo se leen si el consumidor
+  // pide explícitamente el estado deleted para una auditoría interna.
+  if (!selectedStatuses.includes('deleted')) {
+    filters.push(`LOWER(COALESCE(${paymentAlias}.status, '')) != 'deleted'`)
+  }
 
   if (includeStatus) {
-    const statusCondition = buildTransactionStatusCondition(statuses, paymentAlias)
+    const statusCondition = buildTransactionStatusCondition(selectedStatuses, paymentAlias)
     if (statusCondition) {
       filters.push(statusCondition.condition)
       params.push(...statusCondition.params)

@@ -163,7 +163,9 @@ function getCanonicalStripeWebhookUrl() {
 function shouldIgnorePendingWebhookRegression(payment = {}, nextStatus = '') {
   if (nextStatus !== 'pending') return false
   const currentStatus = cleanString(payment.status).toLowerCase()
-  return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) || Boolean(payment.paid_at)
+  return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) ||
+    ['refunded', 'void', 'deleted'].includes(currentStatus) ||
+    Boolean(payment.paid_at)
 }
 
 function shouldSendStripeReceiptEmail(paymentSettings = {}) {
@@ -1143,6 +1145,61 @@ export async function getStripeClient(mode = '') {
     // Ninguna interacción del CRM debe quedar esperando indefinidamente a Stripe.
     // Stripe combina estas opciones con idempotencyKey en las operaciones de escritura.
     requestOptions: { timeout: 8000, maxNetworkRetries: 1 }
+  }
+}
+
+/**
+ * Cancela un PaymentIntent que sólo se preparó para un link individual y que
+ * todavía no tiene evidencia de intento o movimiento financiero. La consulta
+ * remota es obligatoria: si Stripe reporta actividad, el borrado falla cerrado.
+ */
+export async function cancelUnusedStripePaymentIntent(payment = {}) {
+  const paymentIntentId = cleanString(payment.stripe_payment_intent_id)
+  if (!paymentIntentId) {
+    return { cancelled: false, reason: 'payment_intent_missing' }
+  }
+
+  const { stripe, requestOptions } = await getStripeClient(payment.payment_mode || '')
+  const intent = await retrieveStripeResource(stripe.paymentIntents, paymentIntentId, requestOptions)
+  const status = cleanString(intent?.status).toLowerCase()
+  const latestChargeId = extractStripeObjectId(intent?.latest_charge)
+  const charges = Array.isArray(intent?.charges?.data) ? intent.charges.data : []
+  const hasFinancialActivity = Boolean(
+    Number(intent?.amount_received || 0) > 0 ||
+    latestChargeId ||
+    charges.length ||
+    hasStripePaymentAttemptFailure(intent) ||
+    ['processing', 'requires_action', 'succeeded'].includes(status)
+  )
+
+  if (hasFinancialActivity) {
+    const error = new Error('Stripe ya registró actividad para este pago. No se puede eliminar; conserva el historial y usa anulación o reembolso según corresponda.')
+    error.status = 422
+    error.code = 'payment_has_financial_activity'
+    throw error
+  }
+
+  if (['canceled', 'cancelled'].includes(status)) {
+    return { cancelled: false, alreadyCancelled: true, paymentIntentId, status }
+  }
+
+  if (!['requires_payment_method', 'requires_confirmation'].includes(status)) {
+    const error = new Error('Stripe no confirmó que este intento siga sin actividad. No se eliminó el pago para proteger el historial.')
+    error.status = 422
+    error.code = 'payment_activity_unverified'
+    throw error
+  }
+
+  const cancelledIntent = await stripe.paymentIntents.cancel(
+    paymentIntentId,
+    { cancellation_reason: 'abandoned' },
+    requestOptions
+  )
+
+  return {
+    cancelled: true,
+    paymentIntentId,
+    status: cleanString(cancelledIntent?.status).toLowerCase() || 'canceled'
   }
 }
 
