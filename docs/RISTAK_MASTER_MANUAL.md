@@ -6134,7 +6134,9 @@ El nombre interno de cada sitio o formulario se puede cambiar desde la accion
 de `Ajustes` dentro del editor, antes de `Ruta publica`. Este nombre sirve para
 ordenar e identificar piezas en Ristak: cambiarlo no modifica el slug, la URL
 publica ni el titulo que ve el visitante. El backend rechaza nombres vacios para
-evitar elementos imposibles de identificar en la biblioteca.
+evitar elementos imposibles de identificar en la biblioteca. Dentro de `Ajustes`,
+el campo conserva un margen interior horizontal consistente con los demas controles
+del panel para que el nombre nunca quede pegado al borde.
 En vista galeria, la miniatura usa el mismo renderer de preview que el editor y el
 publicado, en un iframe inerte y sin tracking. Por eso una landing HTML enseña el
 layout completo del primer pliegue —copy, columnas, fondos y slots nativos— en vez

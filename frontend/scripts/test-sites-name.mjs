@@ -34,3 +34,12 @@ test('expone el cambio de nombre en la biblioteca y antes de la ruta pública', 
   assert.ok(namePosition >= 0, 'Ajustes debe mostrar el nombre interno del sitio')
   assert.ok(routePosition > namePosition, 'El nombre interno debe aparecer antes de la ruta pública')
 })
+
+test('mantiene margen interior en el nombre interno de Ajustes', async () => {
+  const styles = await readFile(new URL('../src/pages/Sites/Sites.module.css', import.meta.url), 'utf8')
+
+  assert.match(
+    styles,
+    /\.editorSettingsField\s*>\s*input\s*\{[^}]*padding-inline:\s*var\(--design-control-padding-x\)/s
+  )
+})

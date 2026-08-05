@@ -15596,6 +15596,10 @@
   text-transform: uppercase;
 }
 
+.editorSettingsField > input {
+  padding-inline: var(--design-control-padding-x);
+}
+
 .editorSettingsField [data-ristak-dropdown-trigger] {
   width: 100%;
   height: 40px;
