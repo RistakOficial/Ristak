@@ -82,7 +82,7 @@ the same server URL; `tools/list` returns the exact tools available to the user
 who authorized that connection.
 
 The MCP is a typed control plane over Ristak's business services, not a generic
-route proxy and not unrestricted SQL. The current registry contains 371 typed
+route proxy and not unrestricted SQL. The current registry contains 373 typed
 tools before authorization filtering. `GET /api/api-access/mcp/status` and
 `tools/list` report only the subset visible to the current user, plan, modules
 and granted scopes. It also removes tools whose provider is not connected in
@@ -139,9 +139,13 @@ select the corresponding mutation before loosely related tools.
 
 ### Payment tools
 
-The `payments` domain contains 59 typed tools and mirrors the supported
+The `payments` domain contains 61 typed tools and mirrors the supported
 operational payment matrix rather than exposing provider routes generically:
 
+- payment automation settings can be read and partially updated for reminders,
+  receipts and failed-payment notices. These tools expose only safe automation
+  fields; checkout configuration, fiscal identity, Gigstack tokens and other
+  secrets stay outside the MCP;
 - offline plans create the complete local installment schedule without a
   gateway. Due installments are picked up by the durable payment-automation job,
   sent through the channels configured in Payment Settings and remain pending
@@ -166,8 +170,10 @@ Mercado Pago is deliberately not advertised for new installment plans because
 that backend capability is disabled; it remains available for one-time links and
 subscriptions. CLIP supports one-time links, not plans. Configuration secrets,
 webhooks and public checkout actions that accept card tokens are not MCP tools.
-An AI must hand configuration to `integrations_connection_handoff` and let the
-customer complete it inside Ristak.
+Provider connection and credential setup still use
+`integrations_connection_handoff`; ordinary payment-automation preferences use
+`payments_get_automation_settings` and
+`payments_update_automation_settings`.
 
 Every provider-specific tool declares the exact local connection prerequisite,
 commercial feature and OAuth scope. Payment mutations require an

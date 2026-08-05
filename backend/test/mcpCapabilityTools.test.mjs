@@ -11,7 +11,7 @@ function tool(name) {
 }
 
 test('el catálogo de capacidades altas es único, acotado y no agrega campañas de Meta', () => {
-  assert.equal(capabilityToolSpecs.length, 130)
+  assert.equal(capabilityToolSpecs.length, 132)
   assert.equal(new Set(capabilityToolSpecs.map(entry => entry.name)).size, capabilityToolSpecs.length)
 
   for (const entry of capabilityToolSpecs) {

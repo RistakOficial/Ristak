@@ -3,6 +3,7 @@ import {
   getPaymentSettings,
   mergeGigstackFiscalProfileTaxes,
   normalizePaymentSettings,
+  pickPaymentAutomationSettings,
   resolvePaymentSettingsBusinessProfile,
   savePaymentSettings
 } from '../services/paymentSettingsService.js'
@@ -117,6 +118,39 @@ export async function savePaymentSettingsView(req, res) {
   } catch (error) {
     logger.error(`Error guardando configuración de pagos: ${error.message}`)
     sendPaymentSettingsError(res, error)
+  }
+}
+
+export async function getPaymentAutomationSettingsView(_req, res) {
+  try {
+    const settings = await getPaymentSettings({ resolveBusinessProfile: false })
+    res.json({
+      success: true,
+      data: { automations: pickPaymentAutomationSettings(settings) }
+    })
+  } catch (error) {
+    logger.error(`Error obteniendo automatizaciones de pagos: ${error.message}`)
+    sendPaymentSettingsError(res, error, 'No se pudieron obtener las automatizaciones de pagos')
+  }
+}
+
+export async function savePaymentAutomationSettingsView(req, res) {
+  try {
+    const automations = pickPaymentAutomationSettings(req.body?.automations || req.body || {})
+    if (!Object.keys(automations).length) {
+      const error = new Error('Indica al menos un ajuste de automatización de pagos.')
+      error.status = 400
+      throw error
+    }
+
+    const settings = await savePaymentSettings({ automations })
+    res.json({
+      success: true,
+      data: { automations: pickPaymentAutomationSettings(settings) }
+    })
+  } catch (error) {
+    logger.error(`Error guardando automatizaciones de pagos: ${error.message}`)
+    sendPaymentSettingsError(res, error, 'No se pudieron guardar las automatizaciones de pagos')
   }
 }
 

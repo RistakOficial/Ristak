@@ -6,6 +6,7 @@ import * as mercadoPagoPaymentsController from '../controllers/mercadoPagoPaymen
 import * as rebillPaymentsController from '../controllers/rebillPaymentsController.js'
 import * as clipPaymentsController from '../controllers/clipPaymentsController.js'
 import * as highlevelController from '../controllers/highlevelController.js'
+import * as paymentSettingsController from '../controllers/paymentSettingsController.js'
 
 const MAX_ARGUMENT_BYTES = 768 * 1024
 const ID = { type: 'string', minLength: 1, maxLength: 300 }
@@ -130,6 +131,16 @@ function executeTool(definition) {
   })
 }
 
+function writeTool(definition) {
+  return controllerTool({
+    access: 'write',
+    scope: 'ristak.write',
+    risk: 'medium',
+    method: 'POST',
+    ...definition
+  })
+}
+
 function destructiveTool(definition) {
   return controllerTool({
     access: 'write',
@@ -240,6 +251,42 @@ const SAVED_CARD_PROPERTIES = {
   source: SHORT_TEXT
 }
 
+const PAYMENT_AUTOMATION_PROPERTIES = {
+  remindersEnabled: { type: 'boolean' },
+  reminderDaysBefore: { type: 'integer', minimum: 1, maximum: 60 },
+  reminderChannel: { type: 'string', enum: ['whatsapp', 'whatsapp_qr', 'email', 'both'] },
+  reminderQrFallbackEnabled: { type: 'boolean' },
+  reminderContentMode: { type: 'string', enum: ['template', 'direct'] },
+  reminderMessageText: { type: 'string', maxLength: 3000 },
+  reminderTemplateId: { type: 'string', maxLength: 180 },
+  reminderTemplateName: { type: 'string', maxLength: 180 },
+  reminderTemplateLanguage: { type: 'string', maxLength: 20 },
+  receiptDeliveryEnabled: { type: 'boolean' },
+  receiptDeliveryChannel: { type: 'string', enum: ['whatsapp', 'whatsapp_qr', 'email', 'both'] },
+  receiptQrFallbackEnabled: { type: 'boolean' },
+  receiptContentMode: { type: 'string', enum: ['template', 'direct'] },
+  receiptMessageText: { type: 'string', maxLength: 3000 },
+  receiptTemplateId: { type: 'string', maxLength: 180 },
+  receiptTemplateName: { type: 'string', maxLength: 180 },
+  receiptTemplateLanguage: { type: 'string', maxLength: 20 },
+  afterPaymentAction: { type: 'string', enum: ['none', 'send_receipt', 'start_automation', 'tag_contact'] },
+  afterPaymentMessage: { type: 'string', maxLength: 1000 },
+  failedPaymentEnabled: { type: 'boolean' },
+  failedPaymentChannel: { type: 'string', enum: ['whatsapp', 'whatsapp_qr', 'email', 'both'] },
+  failedPaymentQrFallbackEnabled: { type: 'boolean' },
+  failedPaymentContentMode: { type: 'string', enum: ['template', 'direct'] },
+  failedPaymentMessageText: { type: 'string', maxLength: 3000 },
+  failedPaymentTemplateId: { type: 'string', maxLength: 180 },
+  failedPaymentTemplateName: { type: 'string', maxLength: 180 },
+  failedPaymentTemplateLanguage: { type: 'string', maxLength: 20 },
+  failedPaymentDelayHours: { type: 'integer', minimum: 1, maximum: 168 }
+}
+
+const PAYMENT_AUTOMATION_UPDATE_SCHEMA = {
+  ...schema(PAYMENT_AUTOMATION_PROPERTIES),
+  anyOf: Object.keys(PAYMENT_AUTOMATION_PROPERTIES).map(key => ({ required: [key] }))
+}
+
 function planTool({ name, provider, handler, description }) {
   return executeTool({
     name,
@@ -344,6 +391,25 @@ const transactionInsightTools = [
     handler: transactionsController.deleteTransaction,
     inputSchema: schema({ paymentId: ID }, ['paymentId']),
     params: args => ({ id: args.paymentId })
+  })
+]
+
+const paymentAutomationSettingsTools = [
+  readTool({
+    name: 'payments_get_automation_settings',
+    description: 'Consulta los ajustes seguros de recordatorios, comprobantes y avisos de pagos fallidos sin exponer configuración fiscal ni credenciales.',
+    module: 'payments',
+    additionalModules: ['settings_payments'],
+    handler: paymentSettingsController.getPaymentAutomationSettingsView
+  }),
+  writeTool({
+    name: 'payments_update_automation_settings',
+    description: 'Activa, desactiva o cambia canales y mensajes de recordatorios, comprobantes y avisos de pagos fallidos.',
+    module: 'payments',
+    additionalModules: [{ module: 'settings_payments', access: 'write' }],
+    handler: paymentSettingsController.savePaymentAutomationSettingsView,
+    inputSchema: PAYMENT_AUTOMATION_UPDATE_SCHEMA,
+    body: args => cleanControls(args)
   })
 ]
 
@@ -486,6 +552,7 @@ const highLevelPaymentTools = [
 ]
 
 export const paymentCapabilityToolSpecs = Object.freeze([
+  ...paymentAutomationSettingsTools,
   ...transactionInsightTools,
   ...planTools,
   ...linkTools,

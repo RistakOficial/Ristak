@@ -136,6 +136,47 @@ const DEFAULT_PAYMENT_SETTINGS = {
   }
 }
 
+export const PAYMENT_AUTOMATION_SETTING_KEYS = Object.freeze([
+  'remindersEnabled',
+  'reminderDaysBefore',
+  'reminderChannel',
+  'reminderQrFallbackEnabled',
+  'reminderContentMode',
+  'reminderMessageText',
+  'reminderTemplateId',
+  'reminderTemplateName',
+  'reminderTemplateLanguage',
+  'receiptDeliveryEnabled',
+  'receiptDeliveryChannel',
+  'receiptQrFallbackEnabled',
+  'receiptContentMode',
+  'receiptMessageText',
+  'receiptTemplateId',
+  'receiptTemplateName',
+  'receiptTemplateLanguage',
+  'afterPaymentAction',
+  'afterPaymentMessage',
+  'failedPaymentEnabled',
+  'failedPaymentChannel',
+  'failedPaymentQrFallbackEnabled',
+  'failedPaymentContentMode',
+  'failedPaymentMessageText',
+  'failedPaymentTemplateId',
+  'failedPaymentTemplateName',
+  'failedPaymentTemplateLanguage',
+  'failedPaymentDelayHours'
+])
+
+export function pickPaymentAutomationSettings(input = {}) {
+  const source = input?.automations && typeof input.automations === 'object'
+    ? input.automations
+    : input
+
+  return Object.fromEntries(PAYMENT_AUTOMATION_SETTING_KEYS
+    .filter(key => Object.prototype.hasOwnProperty.call(source || {}, key))
+    .map(key => [key, source[key]]))
+}
+
 const AUTOMATIC_TAX_RATES_BY_COUNTRY = {
   MX: 16,
   CO: 19,

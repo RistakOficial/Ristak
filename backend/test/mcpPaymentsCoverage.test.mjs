@@ -2,8 +2,9 @@ import test, { before } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
-import { databaseReady, db } from '../src/config/database.js'
+import { databaseReady, db, setAppConfig } from '../src/config/database.js'
 import { paymentCapabilityToolSpecs } from '../src/mcp/paymentCapabilityTools.js'
+import { pickPaymentAutomationSettings } from '../src/services/paymentSettingsService.js'
 import {
   callRegisteredMcpTool,
   getMcpRegistrySummary
@@ -27,6 +28,8 @@ function paymentTool(name) {
 
 test('MCP expone la matriz operativa de pagos sin endpoints de secretos ni checkout público', () => {
   const expectedNames = [
+    'payments_get_automation_settings',
+    'payments_update_automation_settings',
     'payments_get_stats',
     'payments_get_summary',
     'payments_get_facets',
@@ -63,8 +66,108 @@ test('MCP expone la matriz operativa de pagos sin endpoints de secretos ni check
   assert.ok(paymentCapabilityToolSpecs.every(tool => !/config|secret|webhook|public_card|intent/i.test(tool.name)))
 
   const registry = getMcpRegistrySummary()
-  assert.ok(registry.toolCount >= 369)
-  assert.ok(registry.toolsByDomain.payments >= 59)
+  assert.ok(registry.toolCount >= 373)
+  assert.ok(registry.toolsByDomain.payments >= 61)
+})
+
+test('ajustes MCP de automatizaciones de pago son parciales y no exponen configuración sensible', async () => {
+  const read = paymentTool('payments_get_automation_settings')
+  assert.equal(read.scope, 'ristak.read')
+  assert.deepEqual(read.additionalModules, ['settings_payments'])
+
+  const update = paymentTool('payments_update_automation_settings')
+  assert.equal(update.scope, 'ristak.write')
+  assert.deepEqual(update.additionalModules, [{ module: 'settings_payments', access: 'write' }])
+  assert.ok(update.inputSchema.anyOf.some(option => option.required.includes('remindersEnabled')))
+  assert.ok(update.inputSchema.anyOf.some(option => option.required.includes('reminderChannel')))
+  assert.equal(update.inputSchema.properties.paymentMode, undefined)
+  assert.equal(update.inputSchema.properties.taxes, undefined)
+  assert.equal(update.inputSchema.properties.checkout, undefined)
+  assert.equal(update.inputSchema.properties.gigstackApiToken, undefined)
+
+  const calls = []
+  await update.execute({
+    invoke: async (_handler, request) => {
+      calls.push(request)
+      return { success: true }
+    }
+  }, {
+    remindersEnabled: true,
+    reminderChannel: 'whatsapp',
+    reminderContentMode: 'direct',
+    idempotencyKey: 'payment-reminders-whatsapp-001'
+  })
+
+  assert.deepEqual(calls[0].body, {
+    remindersEnabled: true,
+    reminderChannel: 'whatsapp',
+    reminderContentMode: 'direct'
+  })
+  assert.deepEqual(calls[0].headers, { 'idempotency-key': 'payment-reminders-whatsapp-001' })
+
+  assert.deepEqual(pickPaymentAutomationSettings({
+    automations: {
+      remindersEnabled: true,
+      reminderChannel: 'whatsapp',
+      unknownSetting: 'omitido'
+    },
+    taxes: { fiscalId: 'dato-que-no-debe-salir' },
+    checkout: { supportEmail: 'privado@example.test' }
+  }), {
+    remindersEnabled: true,
+    reminderChannel: 'whatsapp'
+  })
+})
+
+test('MCP guarda y relee recordatorios de pago sin devolver impuestos ni checkout', async () => {
+  const context = {
+    invoke: async (handler, request) => {
+      let payload = null
+      let statusCode = 200
+      const response = {
+        status(code) {
+          statusCode = code
+          return this
+        },
+        json(value) {
+          payload = value
+          return this
+        }
+      }
+      await handler({
+        ...request,
+        body: request.body || {},
+        params: request.params || {},
+        query: request.query || {},
+        headers: request.headers || {}
+      }, response)
+      assert.ok(statusCode < 400, payload?.error || `HTTP ${statusCode}`)
+      return payload
+    }
+  }
+
+  try {
+    const updated = await paymentTool('payments_update_automation_settings').execute(context, {
+      remindersEnabled: true,
+      reminderChannel: 'whatsapp',
+      reminderContentMode: 'direct',
+      reminderMessageText: 'Recordatorio seguro {{payment.amount}}',
+      idempotencyKey: 'payment-settings-real-save-001'
+    })
+
+    assert.equal(updated.data.automations.remindersEnabled, true)
+    assert.equal(updated.data.automations.reminderChannel, 'whatsapp')
+    assert.equal(updated.data.automations.reminderContentMode, 'direct')
+    assert.equal(updated.data.taxes, undefined)
+    assert.equal(updated.data.checkout, undefined)
+
+    const read = await paymentTool('payments_get_automation_settings').execute(context, {})
+    assert.equal(read.data.automations.reminderMessageText, 'Recordatorio seguro {{payment.amount}}')
+    assert.equal(read.data.taxes, undefined)
+    assert.equal(read.data.checkout, undefined)
+  } finally {
+    await setAppConfig('payments_settings', null)
+  }
 })
 
 test('planes MCP son tipados, respetan licencia y verifican el proveedor exacto', () => {
@@ -180,4 +283,28 @@ test('la búsqueda MCP entiende planes offline y recordatorios en español', asy
 
   assert.ok(result.tools.length > 0)
   assert.equal(result.tools[0].name, 'payments_create_offline_plan')
+})
+
+test('la búsqueda MCP prioriza el ajuste correcto al activar recordatorios de pago', async () => {
+  const result = await callRegisteredMcpTool({
+    scopes: MCP_SCOPE_VALUES,
+    user: {
+      role: 'admin',
+      permissions: {
+        payments: 'write',
+        settings_payments: 'write',
+        settings_api_access: 'read'
+      }
+    },
+    baseUrl: 'https://ristak.example.test'
+  }, 'mcp_search_capabilities', {
+    query: 'activar recordatorios de pago por whatsapp',
+    domain: 'payments',
+    access: 'write',
+    risk: 'write',
+    limit: 10
+  })
+
+  assert.ok(result.tools.length > 0)
+  assert.equal(result.tools[0].name, 'payments_update_automation_settings')
 })

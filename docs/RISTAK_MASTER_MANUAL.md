@@ -9884,7 +9884,7 @@ Incluye:
 - MCP para clientes compatibles.
 
 El MCP externo es un plano de control tipado sobre los servicios de negocio de
-Ristak. El registro actual contiene 347 tools antes del filtrado de autorizacion
+Ristak. El registro actual contiene 373 tools antes del filtrado de autorizacion
 y cubre CRM/contactos, tags, campos personalizados, trigger links, inbox y envio
 de mensajes, chatbot, citas, calendarios, automatizaciones, pagos, productos,
 precios, suscripciones, dashboard, reportes, analytics/tracking, campañas ya
@@ -9949,6 +9949,18 @@ siguiente aunque el token aún no haya vencido.
 La edición genérica de pagos no acepta `status`: registrar un pago requiere
 `ristak.execute`; anular, reembolsar o cancelar/eliminar un plan exige
 `ristak.destructive`.
+
+El dominio `payments` incluye 61 tools. Además de planes offline y de pasarela,
+links, tarjetas guardadas, invoices y conciliación, puede consultar y modificar
+parcialmente las automatizaciones de pagos mediante
+`payments_get_automation_settings` y
+`payments_update_automation_settings`. El ajuste cubre recordatorios,
+comprobantes y avisos de cobro fallido con sus canales y mensajes. La tool de
+escritura usa `ristak.write`, exige acceso de escritura a `settings_payments` e
+idempotencia, y nunca devuelve ni acepta configuración de checkout, identidad
+fiscal, tokens Gigstack, webhooks o credenciales de pasarela. Así un agente puede
+activar el prerrequisito de un plan offline sin entrar por la base ni ampliar su
+acceso a secretos.
 
 Las conexiones se inician mediante handoffs seguros hacia Configuración de
 Ristak o el OAuth normal de Google; el MCP no recibe ni devuelve credenciales.
