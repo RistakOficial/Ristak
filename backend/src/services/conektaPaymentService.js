@@ -13,7 +13,7 @@ import { dispatchProductPostWebhooksForPaymentInBackground } from './productPost
 import { resolvePaymentContactForGatewayPayment } from './paymentContactLinkService.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
 import { publishPaymentChangedEvent, publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
-import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
+import { getPaymentPlanAuditSummary, hardDeleteRemovablePaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
   assertExactPaymentPlanTotal,
@@ -4336,8 +4336,13 @@ export async function applyConektaPaymentPlanAction(flowId, action, options = {}
 
   if (normalizedAction === 'delete') {
     const audit = await getPaymentPlanAuditSummary(cleanFlowId)
-    if (audit.isTestMode || (audit.isDeletedRecord && !audit.hasLedgerActivity)) {
-      await hardDeleteTestPaymentPlan(cleanFlowId)
+    if (audit.isTestMode || !audit.hasLedgerActivity) {
+      const deletion = await hardDeleteRemovablePaymentPlan(cleanFlowId)
+      if (!deletion.deleted) {
+        const error = new Error('El plan registró actividad financiera mientras se intentaba eliminar. Se conservó el historial.')
+        error.status = 409
+        throw error
+      }
       return {
         id: cleanFlowId,
         status: CONEKTA_PLAN_STATES.DELETED,

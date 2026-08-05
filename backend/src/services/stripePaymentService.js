@@ -5,7 +5,7 @@ import { logger } from '../utils/logger.js'
 import { isPaymentPlanScheduleFullyPaid } from '../utils/paymentPlanStatus.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
-import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
+import { getPaymentPlanAuditSummary, hardDeleteRemovablePaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
 import { calculatePaymentTax, getPaymentGatewayMode, getPaymentSettings, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
@@ -5071,8 +5071,13 @@ export async function applyStripePaymentPlanAction(flowId, action, options = {})
 
   if (normalizedAction === 'delete') {
     const audit = await getPaymentPlanAuditSummary(cleanFlowId)
-    if (audit.isTestMode || (audit.isDeletedRecord && !audit.hasLedgerActivity)) {
-      await hardDeleteTestPaymentPlan(cleanFlowId)
+    if (audit.isTestMode || !audit.hasLedgerActivity) {
+      const deletion = await hardDeleteRemovablePaymentPlan(cleanFlowId)
+      if (!deletion.deleted) {
+        const error = new Error('El plan registró actividad financiera mientras se intentaba eliminar. Se conservó el historial.')
+        error.status = 409
+        throw error
+      }
       return {
         id: cleanFlowId,
         status: STRIPE_PLAN_STATES.DELETED,

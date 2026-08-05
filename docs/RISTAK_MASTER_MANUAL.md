@@ -5194,6 +5194,17 @@ Blindajes obligatorios del reloj de cobros:
 - Pausar, cancelar, eliminar o editar falla con conflicto si una parcialidad ya
   está `processing`. El claim del cron vuelve a comprobar dentro del mismo
   `UPDATE` que el plan continúa activo.
+- Un plan live puede eliminarse físicamente mientras no exista actividad
+  financiera real. Las filas `scheduled`/`pending` creadas para representar
+  cobros futuros todavía no cuentan como transacciones y se limpian junto con
+  el plan. En cuanto existe un pago, intento, anulación, reembolso, identificador
+  de pasarela o factura generada por HighLevel, el borrado queda bloqueado y el
+  usuario debe cancelar el plan para conservar el historial.
+- Si HighLevel ya eliminó un schedule sin facturas pero Ristak todavía conserva
+  su espejo local como `deleted`, volver a elegir **Eliminar** purga ese espejo
+  sin repetir la llamada remota. Un `404 Invoice schedule not found` también se
+  trata como ausencia remota confirmada y permite completar la limpieza local,
+  siempre que la auditoría siga sin encontrar actividad financiera.
 - Mientras se edita, el flujo usa el estado interno `editing`, que impide nuevos
   claims. Si la mutación falla después de haber comenzado, el plan queda
   `paused` por seguridad hasta que el usuario revise y vuelva a activarlo.

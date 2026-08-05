@@ -70,6 +70,10 @@ import {
 import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js';
 import { resolveOutboundChatMediaReference } from '../services/outboundMediaReferenceService.js';
 import { getCachedPaymentListSummary } from '../services/paymentListSummaryCacheService.js';
+import {
+  getPaymentPlanAuditSummary,
+  hardDeleteRemovablePaymentPlan
+} from '../services/paymentRecordSafetyService.js';
 import { isHighLevelConversationContactNotFoundError } from '../utils/highLevelConversationErrors.js';
 import { getCrmLabels, setCrmLabels } from '../services/crmLabelsService.js';
 import { setHighLevelConversationalChannelPreference } from '../services/highLevelConversationalChannelRoutingService.js';
@@ -4503,6 +4507,30 @@ export const actionInvoiceSchedule = async (req, res) => {
       return res.json({ success: true, data: updatedLocalSchedule || actionResult, source: 'local_rebill' });
     }
 
+    if (action === 'delete') {
+      const audit = await getPaymentPlanAuditSummary(scheduleId);
+      if (!audit.isTestMode && audit.hasLedgerActivity) {
+        const error = new Error('Este plan ya tiene cobros o facturas generadas. No se puede eliminar; cancélalo para conservar el historial.');
+        error.status = 422;
+        throw error;
+      }
+
+      if (audit.isDeletedRecord) {
+        const deletion = await hardDeleteRemovablePaymentPlan(scheduleId);
+        if (!deletion.deleted) {
+          const error = new Error('El plan registró actividad financiera mientras se intentaba eliminar. Se conservó el historial.');
+          error.status = 409;
+          throw error;
+        }
+
+        return res.json({
+          success: true,
+          data: { id: scheduleId, status: 'deleted', deleted: true },
+          source: 'local_highlevel'
+        });
+      }
+    }
+
     const ghlClient = await getGHLClient();
     let response;
     let data;
@@ -4535,10 +4563,29 @@ export const actionInvoiceSchedule = async (req, res) => {
         status: 'cancelled'
       });
     } else if (action === 'delete') {
-      response = await ghlClient.deleteInvoiceSchedule(scheduleId);
-      data = await markLocalInvoiceScheduleStatus(scheduleId, 'deleted', {
-        deletedAt: new Date().toISOString()
-      });
+      try {
+        response = await ghlClient.deleteInvoiceSchedule(scheduleId);
+      } catch (deleteError) {
+        const remoteStatus = Number(deleteError?.status || deleteError?.statusCode || 0);
+        const remoteAlreadyMissing = remoteStatus === 404 || /invoice schedule not found/i.test(String(deleteError?.message || ''));
+        if (!remoteAlreadyMissing) throw deleteError;
+
+        logger.info(`El plan ${scheduleId} ya no existe en HighLevel; se limpiará su espejo local.`);
+        response = { deleted: true, alreadyMissing: true };
+      }
+
+      const deletion = await hardDeleteRemovablePaymentPlan(scheduleId);
+      if (!deletion.deleted) {
+        const error = new Error('El plan registró actividad financiera mientras se intentaba eliminar. Se conservó el historial.');
+        error.status = 409;
+        throw error;
+      }
+
+      data = {
+        id: scheduleId,
+        status: 'deleted',
+        deleted: true
+      };
     } else if (action === 'auto-payment') {
       response = await ghlClient.manageInvoiceScheduleAutoPayment(scheduleId, payload);
       data = await normalizePersistedInvoiceScheduleAction(ghlClient, scheduleId, response, null, payload);

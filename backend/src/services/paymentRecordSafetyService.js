@@ -5,6 +5,9 @@ const TEST_PAYMENT_MODES = new Set(['test', 'sandbox'])
 const DELETED_RECORD_STATUSES = new Set(['deleted'])
 const LEDGER_PAYMENT_STATUSES = new Set([
   ...SUCCESS_PAYMENT_STATUSES,
+  'registered',
+  'authorized',
+  'card_authorized',
   'partial',
   'partially_paid',
   'refunded',
@@ -17,6 +20,24 @@ const LEDGER_PAYMENT_STATUSES = new Set([
   'declined',
   'requires_action',
   'processing'
+])
+
+const NON_FINANCIAL_PLAN_PAYMENT_STATUSES = new Set([
+  '',
+  'pending',
+  'scheduled',
+  'sent',
+  'draft',
+  'inactive',
+  'waiting_card_authorization',
+  'pending_card',
+  'pending_card_authorization',
+  'link_generated',
+  'overdue',
+  'overdue_review',
+  'cancelled',
+  'canceled',
+  'deleted'
 ])
 
 const cleanString = (value) => String(value || '').trim()
@@ -131,6 +152,41 @@ export function paymentHasLedgerActivity(payment = {}) {
     cleanString(metadata.clipPaymentId) ||
     cleanString(metadata.clip?.paymentId)
   )
+}
+
+function planPaymentStatusHasFinancialActivity(status) {
+  const normalized = normalizePaymentStatus(status)
+  // Fallamos cerrado ante estados futuros o desconocidos: sólo una lista
+  // explícita de estados sin movimiento puede autorizar un borrado irreversible.
+  return Boolean(normalized && !NON_FINANCIAL_PLAN_PAYMENT_STATUSES.has(normalized))
+}
+
+function installmentHasFinancialActivity(installment = {}) {
+  return Boolean(
+    planPaymentStatusHasFinancialActivity(installment.status) ||
+    cleanString(installment.ghl_invoice_id) ||
+    cleanString(installment.stripe_payment_intent_id) ||
+    cleanString(installment.mercadopago_payment_id) ||
+    cleanString(installment.mercadopago_preference_id) ||
+    cleanString(installment.conekta_order_id) ||
+    cleanString(installment.conekta_charge_id) ||
+    cleanString(installment.clip_payment_id) ||
+    cleanString(installment.rebill_payment_id)
+  )
+}
+
+function getProviderPaymentPlanTransactions(mirror = {}) {
+  const raw = parseJson(mirror?.raw_json, {})
+  const candidates = [
+    raw.invoices,
+    raw.invoiceSchedule?.invoices,
+    raw.invoice_schedule?.invoices,
+    raw.data?.invoices,
+    raw.data?.invoiceSchedule?.invoices,
+    raw.data?.invoice_schedule?.invoices
+  ]
+
+  return candidates.find(Array.isArray) || []
 }
 
 export function paymentHasExternalArtifact(payment = {}) {
@@ -287,17 +343,26 @@ export async function getPaymentDeletionGuard(payment = {}) {
   }
 }
 
-export async function getPaymentPlanAuditSummary(flowId) {
+export async function getPaymentPlanAuditSummary(flowId, database = db) {
   const cleanFlowId = cleanString(flowId)
-  if (!cleanFlowId) return { payments: [], hasLedgerActivity: false, isTestMode: false, isDeletedRecord: false }
+  if (!cleanFlowId) {
+    return {
+      payments: [],
+      installments: [],
+      providerTransactions: [],
+      hasLedgerActivity: false,
+      isTestMode: false,
+      isDeletedRecord: false
+    }
+  }
 
-  const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
-  const mirror = await db.get(
+  const flow = await database.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+  const mirror = await database.get(
     'SELECT * FROM payment_plans WHERE id = ? OR ghl_schedule_id = ? LIMIT 1',
     [cleanFlowId, cleanFlowId]
   )
 
-  const payments = await db.all(
+  const payments = await database.all(
     `SELECT DISTINCT p.*
      FROM payments p
      WHERE p.id IN (
@@ -318,10 +383,16 @@ export async function getPaymentPlanAuditSummary(flowId) {
      )`,
     [cleanFlowId, cleanFlowId, cleanFlowId]
   )
+  const installments = await database.all(
+    'SELECT * FROM installment_payments WHERE flow_id = ?',
+    [cleanFlowId]
+  )
   const protectedPayments = (payments || []).filter(paymentHasLedgerActivity)
+  const protectedInstallments = (installments || []).filter(installmentHasFinancialActivity)
   const metadata = parseJson(flow?.metadata, {})
   const mirrorSchedule = parseJson(mirror?.schedule_json, {})
   const mirrorRaw = parseJson(mirror?.raw_json, {})
+  const providerTransactions = getProviderPaymentPlanTransactions(mirror)
   const hasLinkedPayments = (payments || []).length > 0
   const isDeletedRecord = Boolean(
     cleanString(flow?.current_state).toLowerCase() === 'deleted' ||
@@ -333,13 +404,22 @@ export async function getPaymentPlanAuditSummary(flowId) {
     hasTestModeSignal(mirrorRaw) ||
     (hasLinkedPayments && (payments || []).every(isTestPaymentRecord))
   )
+  const hasLedgerActivity = Boolean(
+    protectedPayments.length ||
+    protectedInstallments.length ||
+    planPaymentStatusHasFinancialActivity(flow?.first_payment_status) ||
+    providerTransactions.length
+  )
 
   return {
     flow,
     mirror,
     payments: payments || [],
+    installments: installments || [],
+    providerTransactions,
     protectedPayments,
-    hasLedgerActivity: protectedPayments.length > 0,
+    protectedInstallments,
+    hasLedgerActivity,
     isTestMode,
     isDeletedRecord
   }
@@ -456,16 +536,25 @@ export async function scrubTestPaymentRecordForCleanup(paymentId, {
   }
 }
 
-export async function hardDeleteTestPaymentPlan(flowId) {
+export async function hardDeleteRemovablePaymentPlan(flowId) {
   const cleanFlowId = cleanString(flowId)
   if (!cleanFlowId) return { deleted: false, paymentIds: [] }
 
-  const audit = await getPaymentPlanAuditSummary(cleanFlowId)
-  if (!audit.isTestMode && !(audit.isDeletedRecord && !audit.hasLedgerActivity)) {
-    return { deleted: false, paymentIds: [] }
-  }
-
   return db.transaction(async (tx) => {
+    // La decisión irreversible se vuelve a tomar dentro de la misma transacción
+    // que borra el plan. Así un cobro que aparezca durante la confirmación no se
+    // cuela entre la auditoría del controller y la limpieza definitiva.
+    const audit = await getPaymentPlanAuditSummary(cleanFlowId, tx)
+    if (!audit.isTestMode && audit.hasLedgerActivity) {
+      return { deleted: false, paymentIds: [], reason: 'financial_activity' }
+    }
+
+    const creationRequests = await tx.all(
+      `SELECT provider, idempotency_key
+       FROM payment_plan_creation_requests
+       WHERE flow_id = ?`,
+      [cleanFlowId]
+    ).catch(() => [])
     const linkedPayments = await tx.all(
       `SELECT DISTINCT payment_id AS id
        FROM installment_payments
@@ -493,6 +582,15 @@ export async function hardDeleteTestPaymentPlan(flowId) {
     await tx.run('DELETE FROM installment_payments WHERE flow_id = ?', [cleanFlowId])
     await tx.run('DELETE FROM payment_flows WHERE id = ?', [cleanFlowId])
 
+    for (const request of creationRequests || []) {
+      await tx.run(
+        `DELETE FROM payment_plan_creation_hash_guards
+         WHERE provider = ? AND idempotency_key = ?`,
+        [request.provider, request.idempotency_key]
+      ).catch(() => undefined)
+    }
+    await tx.run('DELETE FROM payment_plan_creation_requests WHERE flow_id = ?', [cleanFlowId]).catch(() => undefined)
+
     for (const paymentId of paymentIds) {
       await tx.run('DELETE FROM payments WHERE id = ?', [paymentId])
     }
@@ -503,6 +601,11 @@ export async function hardDeleteTestPaymentPlan(flowId) {
     }
   })
 }
+
+// Compatibilidad para limpiezas de pruebas existentes. La regla canónica vive
+// en hardDeleteRemovablePaymentPlan: un plan live sólo se borra si nunca produjo
+// actividad financiera; un plan test puede seguir limpiándose por completo.
+export const hardDeleteTestPaymentPlan = hardDeleteRemovablePaymentPlan
 
 export async function getSubscriptionAuditSummary(subscriptionId) {
   const cleanSubscriptionId = cleanString(subscriptionId)

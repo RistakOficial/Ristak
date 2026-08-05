@@ -24,7 +24,7 @@ import {
   buildMetaPublicPurchasePixelEvent,
   triggerMetaPaymentPurchaseEvent
 } from './metaConversionEventsService.js'
-import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
+import { getPaymentPlanAuditSummary, hardDeleteRemovablePaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
 import {
   assertPlanCanChangeState,
   markOverduePaymentPlanChargesForReview,
@@ -2328,8 +2328,13 @@ export async function applyMercadoPagoPaymentPlanAction(flowId, action) {
 
   if (normalizedAction === 'delete') {
     const audit = await getPaymentPlanAuditSummary(cleanFlowId)
-    if (audit.isTestMode || (audit.isDeletedRecord && !audit.hasLedgerActivity)) {
-      await hardDeleteTestPaymentPlan(cleanFlowId)
+    if (audit.isTestMode || !audit.hasLedgerActivity) {
+      const deletion = await hardDeleteRemovablePaymentPlan(cleanFlowId)
+      if (!deletion.deleted) {
+        const error = new Error('El plan registró actividad financiera mientras se intentaba eliminar. Se conservó el historial.')
+        error.status = 409
+        throw error
+      }
       return {
         id: cleanFlowId,
         status: MP_PLAN_STATES.DELETED,
