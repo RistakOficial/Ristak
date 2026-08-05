@@ -3,6 +3,18 @@ import apiClient from './apiClient'
 export type SubscriptionStatus = 'draft' | 'active' | 'trialing' | 'past_due' | 'paused' | 'cancelled' | 'incomplete'
 export type SubscriptionInterval = 'daily' | 'weekly' | 'monthly' | 'yearly'
 
+export interface SubscriptionTaxDetails {
+  enabled: true
+  taxName: string
+  rateType: 'percentage' | 'fixed'
+  rateValue: number
+  rateSource?: string
+  calculationMode: 'exclusive' | 'inclusive'
+  subtotalAmount: number
+  taxAmount: number
+  totalAmount: number
+}
+
 export interface PaymentSubscription {
   id: string
   contactId?: string | null
@@ -13,6 +25,8 @@ export interface PaymentSubscription {
   description?: string | null
   status: SubscriptionStatus | string
   amount: number
+  configuredAmount?: number
+  tax?: SubscriptionTaxDetails | null
   currency: string
   intervalType: SubscriptionInterval | string
   intervalCount: number
@@ -101,6 +115,8 @@ export interface SubscriptionPayload {
   status?: SubscriptionStatus | string
   amount: number
   currency: string
+  applyTax?: boolean
+  taxCalculationMode?: SubscriptionTaxDetails['calculationMode']
   intervalType: SubscriptionInterval | string
   intervalCount: number
   startDate?: string | null
