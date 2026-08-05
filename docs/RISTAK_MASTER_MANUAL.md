@@ -7268,20 +7268,43 @@ anteriores que todavía declaran `destinationType/saveMode = standard` con
 personalizado durante el submit, antes de guardar el contacto. Así la respuesta
 no queda solamente en `public_site_submissions` ni desaparece de la ficha del
 contacto. El editor ya no ofrece **Mensaje o nota** entre los campos del sistema.
-Una sincronización posterior desde HighLevel, un webhook de contacto o la API
-externa tampoco puede reemplazar el arreglo completo de `contacts.custom_fields`.
-Esos ingresos fusionan sus campos por identidad sobre la versión más reciente del
-contacto y conservan las respuestas locales de Sites —incluidos texto, radio,
-dropdown, checkbox y multiselección— para que sigan seleccionadas o visibles en
-la ficha. Un proveedor externo sólo actualiza el campo que realmente envía; que
-su payload no conozca un campo local nunca significa que deba borrarlo.
+Ningún escritor aditivo puede reemplazar el arreglo completo de
+`contacts.custom_fields`. Formularios nativos, formularios embebidos en Sites,
+HTML importado, edición manual, acciones de automatización, sincronización de
+HighLevel, webhooks y API externa pasan por la misma mezcla transaccional: toman
+lock del contacto, releen su versión más reciente y actualizan sólo las
+identidades recibidas. La identidad se resuelve por todos sus aliases conocidos
+(`id`, `definitionId`, `key` y `fieldKey`), de modo que el formato legacy
+`id = fieldKey` y la definición materializada no creen dos filas para la misma
+respuesta. Si ya existen duplicados compatibles, la siguiente escritura los
+colapsa sin perder el valor ni los metadatos de la definición. La fusión de dos
+contactos toma el mismo lock de fila antes de recomponer el arreglo, y eliminar
+una definición quita únicamente sus aliases mediante el mutador transaccional;
+ninguna de esas operaciones puede restaurar un snapshot viejo sobre una
+respuesta recién capturada.
+
+Así se conservan las respuestas locales —incluidos texto, radio, dropdown,
+checkbox y multiselección— aunque dos procesos escriban casi al mismo tiempo.
+Un proveedor externo o una automatización sólo actualiza el campo que realmente
+envía; que su payload no conozca un campo local nunca significa que deba borrarlo.
+Después de desplegar una versión que incluya una nueva recuperación, el job
+versionado `contact-form-custom-fields-recovery` revisa en segundo plano
+`public_site_submissions`, toma la respuesta no vacía más reciente de cada campo
+y rellena únicamente identidades ausentes en el contacto. Nunca reemplaza un
+valor que el contacto ya tenga. El marcador
+`contact_form_custom_fields_recovery_version` en `app_config` evita repetir el
+recorrido completo en cada arranque; el trabajo comparte el coordinador y lock
+global de backfills para no duplicarse durante rolling deploys.
 La captura y consulta de estas respuestas es nativa de Ristak y no depende de
 HighLevel: `/api/sites/public/submit` crea o actualiza el contacto y persiste el
 campo personalizado en la base local aunque `highlevel_config` no exista. Al
 desconectar HighLevel se eliminan sus credenciales y se apagan sus procesos, pero
 no se eliminan las respuestas ya guardadas ni se deshabilitan los formularios de
-Sites. Este contrato cubre tanto preguntas de texto como radio buttons y queda
-protegido por `backend/test/sitesImportedHtmlFormsProxy.test.mjs`.
+Sites. Este contrato cubre texto, radio buttons, checkboxes, dropdowns y
+multiselección en Forms, formularios embebidos y HTML importado. Lo protegen las
+pruebas `sitesNativeSystemFields.test.mjs`, `sitesEmbeddedStepform.test.mjs`,
+`sitesImportedHtmlFormsProxy.test.mjs`, `contactCustomFieldsInboundMerge.test.mjs`
+y `contactFormCustomFieldsRecovery.test.mjs`.
 Si una llave ya existe con un tipo incompatible, Ristak no pisa la definición:
 crea o reutiliza una llave tipada estable. Reescribir o resubir el mismo campo
 conserva su definición y no la duplica.

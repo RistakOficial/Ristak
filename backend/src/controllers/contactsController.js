@@ -73,10 +73,10 @@ import {
 } from '../services/crmListProjectionService.js'
 import {
   buildHighLevelCustomFieldsPayload,
-  mergeContactCustomFields,
   parseContactCustomFields,
   serializeContactCustomFieldsForDb
 } from '../utils/contactCustomFields.js'
+import { mergeAndPersistContactCustomFields } from '../services/contactCustomFieldsPersistenceService.js'
 import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizePhoneForAccount } from '../utils/accountLocale.js'
 import {
@@ -5811,7 +5811,6 @@ export const updateContact = async (req, res) => {
 
     // Actualizar en HighLevel usando el ID ligado en ghl_contact_id
     // (los contactos solo-locales sin vínculo no se mandan a GHL)
-    let mergedCustomFields = null
     try {
       const ghlContactId = await getGhlContactIdForLocalContact(id)
       const ghlClient = ghlContactId ? await getGHLClient() : null
@@ -5846,15 +5845,6 @@ export const updateContact = async (req, res) => {
       // Continuar con la actualización local aunque falle en GHL
     }
 
-    if (hasCustomFieldsUpdate) {
-      mergedCustomFields = mergeContactCustomFields(
-        parseContactCustomFields(existing.custom_fields),
-        preparedCustomFields
-      )
-      updates.push(`custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'}`)
-      params.push(serializeContactCustomFieldsForDb(mergedCustomFields))
-    }
-
     // Etiquetas locales: persistir IDs y detectar añadidas/eliminadas
     let tagEvents = []
     if (normalizedTags !== undefined) {
@@ -5885,6 +5875,13 @@ export const updateContact = async (req, res) => {
 
       const query = `UPDATE contacts SET ${updates.join(', ')} WHERE id = ?`
       await db.run(query, params)
+    }
+
+    if (hasCustomFieldsUpdate) {
+      await mergeAndPersistContactCustomFields({
+        contactId: id,
+        updates: preparedCustomFields
+      })
     }
 
     if (phone !== undefined) {
@@ -6141,16 +6138,11 @@ export const bulkUpdateContactCustomFields = async (req, res) => {
 
     let updated = 0
     for (const row of rows) {
-      const mergedCustomFields = mergeContactCustomFields(
-        parseContactCustomFields(row.custom_fields),
-        preparedCustomFields
-      )
-
-      await db.run(
-        `UPDATE contacts SET custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        [serializeContactCustomFieldsForDb(mergedCustomFields), row.id]
-      )
-      updated += 1
+      const persisted = await mergeAndPersistContactCustomFields({
+        contactId: row.id,
+        updates: preparedCustomFields
+      })
+      if (persisted) updated += 1
     }
 
     if (updated > 0 && changedFields.length > 0) {

@@ -59,6 +59,7 @@ import { startMetaOAuthIntegrationCleanupScheduler } from './services/metaOAuthI
 import { scheduleAutomationTriggerIndexBootstrap } from './services/automationTriggerIndexService.js'
 import { scheduleTrackingVisitorProjectionBackfill } from './services/trackingVisitorProjectionService.js'
 import { scheduleCrmListProjectionBackfill } from './services/crmListProjectionService.js'
+import { scheduleContactFormCustomFieldsRecovery } from './services/contactFormCustomFieldsRecoveryService.js'
 import { startWhatsAppStatusProjectionScheduler } from './services/whatsappStatusProjectionService.js'
 import { reconcileStripeWebhookConfiguration } from './services/stripePaymentService.js'
 
@@ -966,6 +967,7 @@ async function startRuntimeServices() {
   // un solo job de I/O intensivo a la vez.
   scheduleCrmListProjectionBackfill()
   scheduleTrackingVisitorProjectionBackfill()
+  scheduleContactFormCustomFieldsRecovery()
   // Chat, first-seen, metricas del agente e identidad se agendan desde sus
   // singletons durables. Un restart caliente no vuelve a encolar ni a sondear
   // historicos que ya fueron certificados como ready.

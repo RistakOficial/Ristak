@@ -213,42 +213,96 @@ export function serializeContactCustomFieldsForDb(customFields = []) {
   return JSON.stringify(normalizeContactCustomFields({ customFields }))
 }
 
-function getCustomFieldIdentity(field = {}) {
-  return cleanString(field.id || field.key || field.fieldKey || field.label || field.name)
+const normalizeCustomFieldIdentityAlias = (value) => cleanString(value).toLowerCase()
+
+/**
+ * Devuelve todas las identidades estables conocidas de un campo.
+ *
+ * Los formularios legacy podían guardar `id = field_key` y los formularios
+ * materializados guardan el ID de la definición. Comparar únicamente el primer
+ * valor disponible crea duplicados y hace que una respuesta parezca vacía en la
+ * ficha aunque siga dentro del JSON.
+ */
+export function getContactCustomFieldIdentityAliases(field = {}) {
+  const aliases = [
+    field.id,
+    field.definitionId,
+    field.definition_id,
+    field.key,
+    field.fieldKey,
+    field.field_key
+  ]
+    .map(normalizeCustomFieldIdentityAlias)
+    .filter(Boolean)
+
+  if (aliases.length === 0) {
+    const labelFallback = normalizeCustomFieldIdentityAlias(field.label || field.name)
+    if (labelFallback) aliases.push(`label:${labelFallback}`)
+  }
+
+  return [...new Set(aliases)]
+}
+
+function mergeNormalizedCustomField(current = {}, update = {}) {
+  const hasHumanUpdateLabel = update.label &&
+    update.label !== update.key &&
+    update.label !== update.fieldKey &&
+    update.label !== update.id
+
+  return {
+    ...current,
+    ...update,
+    label: hasHumanUpdateLabel ? update.label : current.label || update.label || update.key || update.id,
+    name: hasHumanUpdateLabel ? update.name || update.label : current.name || current.label || update.name || update.label,
+    dataType: update.dataType || current.dataType || null,
+    options: update.options?.length ? update.options : current.options || [],
+    value: update.value ?? null
+  }
 }
 
 export function mergeContactCustomFields(existingFields = [], updates = [], definitions = []) {
   const existing = normalizeContactCustomFields({ customFields: existingFields }, definitions)
   const normalizedUpdates = normalizeContactCustomFields({ customFields: updates }, definitions)
-  const byIdentity = new Map()
+  const merged = []
+  const indexByAlias = new Map()
 
-  for (const field of existing) {
-    const identity = getCustomFieldIdentity(field)
-    if (identity) byIdentity.set(identity, field)
+  const upsert = (field) => {
+    const aliases = getContactCustomFieldIdentityAliases(field)
+    if (aliases.length === 0) return
+
+    const matchingIndexes = [...new Set(
+      aliases.map(alias => indexByAlias.get(alias)).filter(index => index !== undefined)
+    )]
+    const targetIndex = matchingIndexes.length ? Math.min(...matchingIndexes) : undefined
+
+    if (targetIndex === undefined) {
+      const nextIndex = merged.length
+      merged.push(field)
+      aliases.forEach(alias => indexByAlias.set(alias, nextIndex))
+      return
+    }
+
+    let nextField = mergeNormalizedCustomField(merged[targetIndex], field)
+
+    // Colapsa duplicados legacy conectados de forma transitiva por fieldKey,
+    // definitionId o ID. El registro más reciente conserva el valor y la
+    // definición materializada conserva sus metadatos.
+    for (const duplicateIndex of matchingIndexes.filter(index => index !== targetIndex).sort((a, b) => b - a)) {
+      nextField = mergeNormalizedCustomField(merged[duplicateIndex], nextField)
+      merged.splice(duplicateIndex, 1)
+      for (const [alias, index] of indexByAlias.entries()) {
+        if (index === duplicateIndex) indexByAlias.set(alias, targetIndex)
+        else if (index > duplicateIndex) indexByAlias.set(alias, index - 1)
+      }
+    }
+
+    merged[targetIndex] = nextField
+    getContactCustomFieldIdentityAliases(nextField).forEach(alias => indexByAlias.set(alias, targetIndex))
   }
 
-  for (const update of normalizedUpdates) {
-    const identity = getCustomFieldIdentity(update)
-    if (!identity) continue
-
-    const current = byIdentity.get(identity) || {}
-    const hasHumanUpdateLabel = update.label &&
-      update.label !== update.key &&
-      update.label !== update.fieldKey &&
-      update.label !== update.id
-
-    byIdentity.set(identity, {
-      ...current,
-      ...update,
-      label: hasHumanUpdateLabel ? update.label : current.label || update.label || update.key || update.id,
-      name: hasHumanUpdateLabel ? update.name || update.label : current.name || current.label || update.name || update.label,
-      dataType: update.dataType || current.dataType || null,
-      options: update.options?.length ? update.options : current.options || [],
-      value: update.value ?? null
-    })
-  }
-
-  return Array.from(byIdentity.values())
+  existing.forEach(upsert)
+  normalizedUpdates.forEach(upsert)
+  return merged
 }
 
 export function buildHighLevelCustomFieldsPayload(customFields = []) {

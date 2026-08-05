@@ -4,6 +4,7 @@ import {
   parseJsonSafe
 } from '../utils/contactCustomFields.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { mutateAndPersistContactCustomFields } from './contactCustomFieldsPersistenceService.js'
 
 const STANDARD_CONTACT_FIELD_KEYS = new Set([
   'full_name',
@@ -842,8 +843,7 @@ async function removeCustomFieldValuesFromContacts(definition) {
   )
   if (!identifiers.size) return 0
 
-  const usePostgres = !!process.env.DATABASE_URL
-  const column = usePostgres ? 'custom_fields::text' : 'custom_fields'
+  const column = process.env.DATABASE_URL ? 'custom_fields::text' : 'custom_fields'
   const likeParams = Array.from(identifiers).map((ident) => `%${ident}%`)
   const rows = await db.all(`
     SELECT id, custom_fields
@@ -852,35 +852,14 @@ async function removeCustomFieldValuesFromContacts(definition) {
       AND (${likeParams.map(() => `${column} LIKE ?`).join(' OR ')})
   `, likeParams)
 
-  const matchesDefinition = (field, fallbackKey = '') => {
-    const keys = [
-      field?.id, field?.fieldId, field?.customFieldId,
-      field?.definitionId, field?.definition_id,
-      field?.key, field?.fieldKey, field?.field_key,
-      fallbackKey
-    ].map(cleanString)
-    return keys.some((key) => key && identifiers.has(key))
-  }
-
   let updatedContacts = 0
   for (const row of rows) {
-    const parsed = parseJsonSafe(row.custom_fields, [])
-    let next = null
-
-    if (Array.isArray(parsed)) {
-      const filtered = parsed.filter((field) => !matchesDefinition(field))
-      if (filtered.length !== parsed.length) next = filtered
-    } else if (parsed && typeof parsed === 'object') {
-      const entries = Object.entries(parsed).filter(([key, value]) => !matchesDefinition(value, key))
-      if (entries.length !== Object.keys(parsed).length) next = Object.fromEntries(entries)
-    }
-
-    if (next === null) continue
-    await db.run(
-      `UPDATE contacts SET custom_fields = ${usePostgres ? '?::jsonb' : '?'}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [JSON.stringify(next), row.id]
-    )
-    updatedContacts += 1
+    const result = await mutateAndPersistContactCustomFields({
+      contactId: row.id,
+      removeIdentities: [...identifiers],
+      normalizeExisting: true
+    })
+    if (result?.changed) updatedContacts += 1
   }
 
   return updatedContacts

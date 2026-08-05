@@ -45,6 +45,10 @@ import {
   setContactReplyChannelPreference
 } from './contactReplyChannelPreferenceService.js'
 import { renderTemplateVariablesInValue } from './templateVariablesService.js'
+import {
+  mergeAndPersistContactCustomFields,
+  mutateAndPersistContactCustomFields
+} from './contactCustomFieldsPersistenceService.js'
 
 /**
  * Motor de ejecución de automatizaciones.
@@ -4093,14 +4097,12 @@ async function upsertContactFromConfig(config, ctx, overrides = {}) {
 
   const preparedPhone = await prepareContactPhoneUpsert({ contactId, phone })
   const resolvedPhone = preparedPhone.phone || null
-  const existingCustom = objectFromCustomFields(existing?.custom_fields)
-  const nextCustom = { ...existingCustom, ...customFields }
+  const customFieldUpdates = { ...customFields }
   const assignedUser = str(config.assignedUser)
   if (assignedUser) {
-    nextCustom.assignedUser = assignedUser
-    if (str(config.assignedUserName)) nextCustom.assignedUserName = str(config.assignedUserName)
+    customFieldUpdates.assignedUser = assignedUser
+    if (str(config.assignedUserName)) customFieldUpdates.assignedUserName = str(config.assignedUserName)
   }
-  const customJson = JSON.stringify(nextCustom)
   const customFieldsPlaceholder = process.env.DATABASE_URL ? '?::jsonb' : '?'
 
   if (existing) {
@@ -4112,7 +4114,6 @@ async function upsertContactFromConfig(config, ctx, overrides = {}) {
            first_name = COALESCE(?, first_name),
            last_name = COALESCE(?, last_name),
            source = COALESCE(?, source),
-           custom_fields = ${customFieldsPlaceholder},
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [
@@ -4122,7 +4123,6 @@ async function upsertContactFromConfig(config, ctx, overrides = {}) {
         firstName || null,
         lastName || null,
         source || null,
-        customJson,
         contactId
       ]
     )
@@ -4139,9 +4139,16 @@ async function upsertContactFromConfig(config, ctx, overrides = {}) {
         firstName || null,
         lastName || null,
         source || null,
-        customJson
+        JSON.stringify([])
       ]
     )
+  }
+
+  if (Object.keys(customFieldUpdates).length > 0) {
+    await mergeAndPersistContactCustomFields({
+      contactId,
+      updates: customFieldUpdates
+    })
   }
 
   contactId = await finalizePreparedPhoneUpsert(preparedPhone, contactId)
@@ -4449,19 +4456,20 @@ async function applyContactUserAction(node, ctx) {
   const userId = str(config.user)
   if (!remove && !userId) return 'Usuario no asignado (falta seleccionar usuario)'
 
-  const row = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [ctx.contact.id])
-  const customFields = objectFromCustomFields(row?.custom_fields)
   if (remove) {
-    delete customFields.assignedUser
-    delete customFields.assignedUserName
+    await mutateAndPersistContactCustomFields({
+      contactId: ctx.contact.id,
+      removeIdentities: ['assignedUser', 'assignedUserName']
+    })
   } else {
-    customFields.assignedUser = userId
-    if (str(config.userName)) customFields.assignedUserName = str(config.userName)
+    await mergeAndPersistContactCustomFields({
+      contactId: ctx.contact.id,
+      updates: {
+        assignedUser: userId,
+        ...(str(config.userName) ? { assignedUserName: str(config.userName) } : {})
+      }
+    })
   }
-  await db.run(`UPDATE contacts SET custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [
-    JSON.stringify(customFields),
-    ctx.contact.id
-  ])
   ctx.contact = await loadContact(ctx.contact.id, ctx.contact)
   // (AUTO-008) Propaga profundidad de cascada para acotar re-disparos en cadena.
   const nextCascadeDepthUser = (Number(ctx.__cascadeDepth) || 0) + 1

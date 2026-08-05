@@ -440,9 +440,13 @@ export async function restoreSoftDeletedContactForNewInbound({
 async function mergeContactIdsUnderCommitLocks({ fromId, toId, canonicalPhone = null }) {
   if (!fromId || !toId || fromId === toId) return toId
 
+  // El lock operativo evita que dos merges de identidad se crucen; el lock de
+  // fila coordina además este reemplazo completo con los escritores aditivos de
+  // custom_fields (formularios, sincronizaciones y automatizaciones).
+  const rowLockSuffix = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
   const [fromContact, toContact] = await Promise.all([
-    db.get('SELECT * FROM contacts WHERE id = ?', [fromId]),
-    db.get('SELECT * FROM contacts WHERE id = ?', [toId])
+    db.get(`SELECT * FROM contacts WHERE id = ?${rowLockSuffix}`, [fromId]),
+    db.get(`SELECT * FROM contacts WHERE id = ?${rowLockSuffix}`, [toId])
   ])
 
   if (!fromContact || !toContact) return toId

@@ -37,6 +37,7 @@ import { setAppNotificationPayloadSenderForTest } from '../src/services/pushNoti
 import { createVariableField } from '../src/services/variableFieldsService.js'
 import { upsertSystemTriggerLink } from '../src/services/triggerLinksService.js'
 import { readTriggerLinkRecipientToken } from '../src/services/triggerLinkRecipientTokenService.js'
+import { parseContactCustomFields } from '../src/utils/contactCustomFields.js'
 
 const EMAIL_CONFIG_KEY = 'email_smtp_config'
 const EMAIL_PASSWORD_KEY = 'email_smtp_password'
@@ -2518,9 +2519,11 @@ test('webhook encuentra contacto por valor mapeado y asigna usuario', async () =
     })
 
     const contact = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
-    const customFields = JSON.parse(contact.custom_fields)
-    assert.equal(customFields.assignedUser, assignedUser)
-    assert.equal(customFields.assignedUserName, 'Ventas')
+    const customFields = new Map(
+      parseContactCustomFields(contact.custom_fields).map(field => [field.fieldKey, field.value])
+    )
+    assert.equal(customFields.get('assignedUser'), assignedUser)
+    assert.equal(customFields.get('assignedUserName'), 'Ventas')
 
     const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE automation_id = ?', [automationId])
     assert.equal(enrollment.status, 'completed')

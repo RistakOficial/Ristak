@@ -175,7 +175,7 @@ test('native form system fields save to contact and locked system fields', async
   }
 })
 
-test('native multiselect saves several choices as one list-valued custom field', async () => {
+test('native form saves text, radio, checkboxes, dropdown and multiselect as typed custom fields', async () => {
   const previousConfig = {
     domain: await getAppConfig(DOMAIN_KEYS.domain),
     verified: await getAppConfig(DOMAIN_KEYS.verified),
@@ -184,7 +184,14 @@ test('native multiselect saves several choices as one list-valued custom field',
   }
   const suffix = crypto.randomUUID()
   const email = `multiselect-${suffix}@example.test`
-  const fieldKey = `canales_${suffix.replaceAll('-', '_')}`
+  const keySuffix = suffix.replaceAll('-', '_')
+  const fieldKeys = {
+    text: `contexto_${keySuffix}`,
+    radio: `plan_${keySuffix}`,
+    checkboxes: `intereses_${keySuffix}`,
+    dropdown: `prioridad_${keySuffix}`,
+    multiselect: `canales_${keySuffix}`
+  }
   let site
 
   try {
@@ -208,13 +215,69 @@ test('native multiselect saves several choices as one list-valued custom field',
       settings: { systemFieldKey: 'email', internalName: 'email', validation: 'email' }
     })
     siteWithBlocks = await createBlock(site.id, {
+      blockType: 'short_text',
+      label: 'Contexto',
+      required: true,
+      settings: {
+        internalName: fieldKeys.text,
+        customFieldKey: fieldKeys.text,
+        customFieldLabel: 'Contexto',
+        customFieldDataType: 'text'
+      }
+    })
+    siteWithBlocks = await createBlock(site.id, {
+      blockType: 'radio',
+      label: 'Plan',
+      required: true,
+      settings: {
+        internalName: fieldKeys.radio,
+        customFieldKey: fieldKeys.radio,
+        customFieldLabel: 'Plan',
+        customFieldDataType: 'radio'
+      },
+      options: [
+        { id: 'starter', label: 'Starter', value: 'starter', action: 'continue' },
+        { id: 'pro', label: 'Pro', value: 'pro', action: 'continue' }
+      ]
+    })
+    siteWithBlocks = await createBlock(site.id, {
+      blockType: 'checkboxes',
+      label: 'Intereses',
+      required: true,
+      settings: {
+        internalName: fieldKeys.checkboxes,
+        customFieldKey: fieldKeys.checkboxes,
+        customFieldLabel: 'Intereses',
+        customFieldDataType: 'checkboxes'
+      },
+      options: [
+        { id: 'ventas', label: 'Ventas', value: 'ventas', action: 'continue' },
+        { id: 'soporte', label: 'Soporte', value: 'soporte', action: 'continue' }
+      ]
+    })
+    siteWithBlocks = await createBlock(site.id, {
+      blockType: 'dropdown',
+      label: 'Prioridad',
+      required: true,
+      settings: {
+        internalName: fieldKeys.dropdown,
+        customFieldKey: fieldKeys.dropdown,
+        customFieldLabel: 'Prioridad',
+        customFieldDataType: 'dropdown'
+      },
+      options: [
+        { id: 'normal', label: 'Normal', value: 'normal', action: 'continue' },
+        { id: 'urgente', label: 'Urgente', value: 'urgente', action: 'continue' }
+      ]
+    })
+    siteWithBlocks = await createBlock(site.id, {
       blockType: 'multiselect',
       label: 'Canales de contacto',
       placeholder: 'Selecciona canales',
       required: true,
       settings: {
-        internalName: fieldKey,
-        customFieldKey: fieldKey,
+        internalName: fieldKeys.multiselect,
+        customFieldKey: fieldKeys.multiselect,
         customFieldLabel: 'Canales de contacto',
         customFieldDataType: 'multiselect'
       },
@@ -226,8 +289,16 @@ test('native multiselect saves several choices as one list-valued custom field',
     })
 
     const emailBlock = siteWithBlocks.blocks.find(block => block.blockType === 'email')
+    const textBlock = siteWithBlocks.blocks.find(block => block.blockType === 'short_text')
+    const radioBlock = siteWithBlocks.blocks.find(block => block.blockType === 'radio')
+    const checkboxesBlock = siteWithBlocks.blocks.find(block => block.blockType === 'checkboxes')
+    const dropdownBlock = siteWithBlocks.blocks.find(block => block.blockType === 'dropdown')
     const multiselectBlock = siteWithBlocks.blocks.find(block => block.blockType === 'multiselect')
     assert.ok(emailBlock)
+    assert.ok(textBlock)
+    assert.ok(radioBlock)
+    assert.ok(checkboxesBlock)
+    assert.ok(dropdownBlock)
     assert.ok(multiselectBlock)
 
     const html = await renderPublicSiteHtml(siteWithBlocks, { preview: true, trackingEnabled: false })
@@ -248,17 +319,43 @@ test('native multiselect saves several choices as one list-valued custom field',
         finalSubmit: true,
         responses: {
           [emailBlock.id]: email,
+          [textBlock.id]: 'Necesito mejorar seguimiento',
+          [radioBlock.id]: 'pro',
+          [checkboxesBlock.id]: ['ventas', 'soporte'],
+          [dropdownBlock.id]: 'urgente',
           [multiselectBlock.id]: ['email', 'whatsapp']
         }
       }
     )
 
-    assert.deepEqual(result.mappedFields.custom[fieldKey], ['email', 'whatsapp'])
+    assert.deepEqual(result.mappedFields.custom, {
+      [fieldKeys.text]: 'Necesito mejorar seguimiento',
+      [fieldKeys.radio]: 'pro',
+      [fieldKeys.checkboxes]: ['ventas', 'soporte'],
+      [fieldKeys.dropdown]: 'urgente',
+      [fieldKeys.multiselect]: ['email', 'whatsapp']
+    })
     const contact = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [result.contactId])
-    const customField = parseContactCustomFields(contact.custom_fields).find(field => field.fieldKey === fieldKey)
-    assert.equal(customField?.dataType, 'multiselect')
-    assert.deepEqual(customField?.value, ['email', 'whatsapp'])
-    assert.deepEqual(customField?.options.map(option => option.value), ['email', 'whatsapp', 'phone'])
+    const customFields = new Map(
+      parseContactCustomFields(contact.custom_fields).map(field => [field.fieldKey, field])
+    )
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(fieldKeys).map(([type, key]) => [type, {
+        dataType: customFields.get(key)?.dataType,
+        value: customFields.get(key)?.value
+      }])),
+      {
+        text: { dataType: 'text', value: 'Necesito mejorar seguimiento' },
+        radio: { dataType: 'radio', value: 'pro' },
+        checkboxes: { dataType: 'checkboxes', value: ['ventas', 'soporte'] },
+        dropdown: { dataType: 'dropdown', value: 'urgente' },
+        multiselect: { dataType: 'multiselect', value: ['email', 'whatsapp'] }
+      }
+    )
+    assert.deepEqual(customFields.get(fieldKeys.radio)?.options.map(option => option.value), ['starter', 'pro'])
+    assert.deepEqual(customFields.get(fieldKeys.checkboxes)?.options.map(option => option.value), ['ventas', 'soporte'])
+    assert.deepEqual(customFields.get(fieldKeys.dropdown)?.options.map(option => option.value), ['normal', 'urgente'])
+    assert.deepEqual(customFields.get(fieldKeys.multiselect)?.options.map(option => option.value), ['email', 'whatsapp', 'phone'])
 
     await assert.rejects(
       () => createSubmissionFromRequest(
@@ -274,6 +371,10 @@ test('native multiselect saves several choices as one list-valued custom field',
           finalSubmit: true,
           responses: {
             [emailBlock.id]: email,
+            [textBlock.id]: 'Necesito mejorar seguimiento',
+            [radioBlock.id]: 'pro',
+            [checkboxesBlock.id]: ['ventas', 'soporte'],
+            [dropdownBlock.id]: 'urgente',
             [multiselectBlock.id]: ['email', 'telegram']
           }
         }
@@ -282,11 +383,12 @@ test('native multiselect saves several choices as one list-valued custom field',
     )
   } finally {
     await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
-    const definition = await db.get(
-      'SELECT id FROM contact_custom_field_definitions WHERE field_key = ? LIMIT 1',
-      [fieldKey]
-    ).catch(() => null)
-    if (definition?.id) {
+    for (const fieldKey of Object.values(fieldKeys)) {
+      const definition = await db.get(
+        'SELECT id FROM contact_custom_field_definitions WHERE field_key = ? LIMIT 1',
+        [fieldKey]
+      ).catch(() => null)
+      if (!definition?.id) continue
       await db.run('DELETE FROM contact_custom_field_definition_sources WHERE definition_id = ?', [definition.id]).catch(() => undefined)
       await db.run('DELETE FROM contact_custom_field_definitions WHERE id = ?', [definition.id]).catch(() => undefined)
     }

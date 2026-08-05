@@ -15,10 +15,9 @@ import { NO_TRACK_REASON, shouldSkipTracking } from '../utils/noTracking.js'
 import { describeMetaCapiResponseError, safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 import { getActiveMetaTestEventCode, isMetaTestModeActive } from '../utils/metaTestCode.js'
 import {
-  mergeContactCustomFields,
-  parseContactCustomFields,
-  serializeContactCustomFieldsForDb
+  parseContactCustomFields
 } from '../utils/contactCustomFields.js'
+import { mergeAndPersistContactCustomFields } from './contactCustomFieldsPersistenceService.js'
 import { composePhoneWithDialCode } from '../utils/phoneUtils.js'
 import {
   COUNTRY_OPTIONS,
@@ -38691,21 +38690,7 @@ async function upsertNativeContactCustomFields({ site, contactId, blocks, respon
     syncTarget: 'local',
     allowSystemContactCustomFields: true
   })
-  const existing = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
-  const merged = mergeContactCustomFields(
-    parseContactCustomFields(existing?.custom_fields),
-    preparedFields
-  )
-
-  await db.run(`
-    UPDATE contacts SET
-      custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'},
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `, [
-    serializeContactCustomFieldsForDb(merged),
-    contactId
-  ])
+  await mergeAndPersistContactCustomFields({ contactId, updates: preparedFields })
 
   return preparedFields
 }
@@ -40561,21 +40546,7 @@ async function upsertImportedContactFromSubmission({ site, contact, customFields
       : [])
   ]
   if (!preparedFields.length) return contactResult
-  const existing = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
-  const merged = mergeContactCustomFields(
-    parseContactCustomFields(existing?.custom_fields),
-    preparedFields
-  )
-
-  await db.run(`
-    UPDATE contacts SET
-      custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'},
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `, [
-    serializeContactCustomFieldsForDb(merged),
-    contactId
-  ])
+  await mergeAndPersistContactCustomFields({ contactId, updates: preparedFields })
 
   return {
     ...contactResult,

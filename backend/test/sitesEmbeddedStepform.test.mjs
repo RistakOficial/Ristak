@@ -19,6 +19,7 @@ import {
   businessTodayDateOnly,
   getAccountTimezone
 } from '../src/utils/dateUtils.js'
+import { parseContactCustomFields } from '../src/utils/contactCustomFields.js'
 
 function findFormEmbedBlock(site) {
   return site.blocks.find(block => block.blockType === 'form_embed')
@@ -236,6 +237,15 @@ test('linked forms keep their disqualification rules when submitted from a landi
       [checkpoint.submissionId]
     )
     assert.equal(conversionRow, null)
+    assert.equal(checkpoint.mappedFields.custom.calificas, 'Sí')
+    const checkpointContact = await db.get(
+      'SELECT custom_fields FROM contacts WHERE id = ?',
+      [checkpoint.contactId]
+    )
+    const qualificationField = parseContactCustomFields(checkpointContact.custom_fields)
+      .find(field => field.fieldKey === 'calificas')
+    assert.equal(qualificationField?.dataType, 'radio')
+    assert.equal(qualificationField?.value, 'Sí')
   } finally {
     if (landing?.id) await deleteSite(landing.id).catch(() => undefined)
     if (sourceForm?.id) await deleteSite(sourceForm.id).catch(() => undefined)
