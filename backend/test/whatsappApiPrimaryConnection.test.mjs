@@ -7,6 +7,7 @@ import { initializeMasterKey } from '../src/utils/encryption.js'
 import {
   completeMetaDirectConnection,
   connectWhatsAppApi,
+  getMetaDirectConnectionReadiness,
   getWhatsAppApiConfigKeys,
   promoteConnectedWhatsAppApiPhoneNumber,
   setMetaDirectFetchForTest,
@@ -208,6 +209,7 @@ test('conectar Meta Direct después de QR deja Meta principal y conserva el QR c
   const phoneNumberId = 'meta_direct_after_qr'
   const wabaId = 'waba_meta_after_qr'
   const nonce = `meta-primary-${crypto.randomUUID()}`
+  const readinessNonce = `meta-readiness-${crypto.randomUUID()}`
   let requestedPhoneFields = ''
   const configKeys = [
     ...Object.values(keys),
@@ -275,12 +277,32 @@ test('conectar Meta Direct después de QR deja Meta principal y conserva el QR c
       assert.equal(qrRow?.qr_send_enabled, 1)
       assert.equal(qrRow?.qr_status, 'connected')
       assert.equal(await getAppConfig(keys.provider), 'meta_direct')
+      assert.equal(await getAppConfig(keys.enabled), '1')
       assert.equal(await getAppConfig(keys.phoneNumberId), phoneNumberId)
       assert.equal(await getAppConfig(keys.senderPhone), phone)
       assert.equal(await getAppConfig(keys.wabaId), wabaId)
       assert.match(requestedPhoneFields, /quality_rating/)
       assert.match(requestedPhoneFields, /whatsapp_business_manager_messaging_limit/)
       assert.doesNotMatch(requestedPhoneFields, /messaging_limit_tier/)
+
+      const readinessPayload = { wabaId, phoneNumberId }
+      const readinessSigned = signedMetaConnection({
+        payload: readinessPayload,
+        secret,
+        installationId,
+        nonce: readinessNonce
+      })
+      assert.deepEqual(await getMetaDirectConnectionReadiness({
+        payload: readinessPayload,
+        rawBody: readinessSigned.rawBody,
+        headers: readinessSigned.headers
+      }), {
+        ready: true,
+        provider: 'meta_direct',
+        wabaId,
+        phoneNumberId,
+        webhookMode: 'installer_relay'
+      })
 
       await db.run(`
         UPDATE whatsapp_api_phone_numbers
@@ -301,6 +323,7 @@ test('conectar Meta Direct después de QR deja Meta principal y conserva el QR c
   } finally {
     setMetaDirectFetchForTest(null)
     await db.run('DELETE FROM whatsapp_meta_direct_nonces WHERE nonce = ?', [nonce]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_meta_direct_nonces WHERE nonce = ?', [readinessNonce]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id IN (?, ?)', [phoneNumberId, qrId])
   }
 })

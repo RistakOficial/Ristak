@@ -4,6 +4,7 @@ import {
   createWhatsAppQrPhoneNumber,
   deleteWhatsAppQrPhoneNumber,
   completeMetaDirectConnection,
+  getMetaDirectConnectionReadiness,
   completeMetaDirectEmbeddedSignup,
   createMetaDirectConnectUrl,
   prepareMetaDirectEmbeddedSignup,
@@ -437,6 +438,24 @@ export async function completeMetaDirectConnectionView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo completar la conexión con Meta'
+    })
+  }
+}
+
+export async function getMetaDirectConnectionReadinessView(req, res) {
+  try {
+    const data = await getMetaDirectConnectionReadiness({
+      payload: req.body || {},
+      rawBody: req.rawBody || JSON.stringify(req.body || {}),
+      headers: getInstallerSignatureHeaders(req)
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error confirmando la conexión de Meta directo: ${error.message}`)
+    const statusCode = error.statusCode || (/firma|nonce|encabezados/i.test(error.message || '') ? 401 : 400)
+    res.status(statusCode).json({
+      success: false,
+      error: error.message || 'No se pudo confirmar la conexión con Meta'
     })
   }
 }

@@ -119,9 +119,11 @@ test('los callbacks HMAC quedan antes de auth y las rutas humanas siguen protegi
     'WhatsApp debe montarse antes del router catch-all de costos'
   )
   const callbackIndex = routesSource.indexOf("router.post('/meta/connect/complete'")
+  const readinessIndex = routesSource.indexOf("router.post('/meta/connect/readiness'")
   const authIndex = routesSource.indexOf('router.use(requireAuth)')
   const statusIndex = routesSource.indexOf("router.get('/status'")
   assert.ok(callbackIndex >= 0 && callbackIndex < authIndex)
+  assert.ok(readinessIndex >= 0 && readinessIndex < authIndex)
   assert.ok(statusIndex > authIndex)
   assert.doesNotMatch(settingsSource, /window\.FB\.login\(/)
   assert.doesNotMatch(settingsSource, /window\.open\([^\n]*ristak-whatsapp-meta/)

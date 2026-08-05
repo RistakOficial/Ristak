@@ -13,6 +13,7 @@ import {
   deleteWhatsAppQrPhoneNumberView,
   getWhatsAppApiConnectionStatus,
   getMetaDirectConnectUrlView,
+  getMetaDirectConnectionReadinessView,
   prepareMetaDirectEmbeddedSignupView,
   getMetaDirectSetupPrefillView,
   getWhatsAppMetaBusinessAccountView,
@@ -91,6 +92,7 @@ function requireScheduledChatMessageAccess(req, res, next) {
 }
 
 router.post('/meta/connect/complete', requireWhatsAppApiAccess, completeMetaDirectConnectionView)
+router.post('/meta/connect/readiness', requireWhatsAppApiAccess, getMetaDirectConnectionReadinessView)
 router.post('/meta/setup-prefill', requireWhatsAppApiAccess, getMetaDirectSetupPrefillView)
 router.post('/meta/webhook-relay', requireWhatsAppApiAccess, handleMetaDirectWebhookRelayView)
 

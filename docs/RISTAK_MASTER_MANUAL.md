@@ -2741,7 +2741,11 @@ la base de esa instalación y activa
 YCloud ni con las sesiones QR/Baileys. Si la entrega final al tenant falla,
 Installer conserva temporalmente el resultado cifrado y una sesión nueva de la
 misma instalación lo retoma sin volver a autorizar ni exponer el token al
-navegador.
+navegador. Conectar Meta reactiva también la bandera general de WhatsApp API,
+aunque YCloud se hubiera desconectado antes. Si se pierde la respuesta final,
+Installer no deja una conexión a medias: consulta un callback HMAC de readiness
+y sólo activa la ruta cuando el WABA, Phone Number ID, proveedor, modo relay y
+número oficial coinciden exactamente.
 
 La tabla de números separa las métricas oficiales de los estados QR. Para Meta
 directo, **Calidad** muestra la calificación actual del número y **Límite

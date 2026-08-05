@@ -555,8 +555,10 @@ Coexistence. Recibe el `code` y los IDs de la sesión, y el backend central:
 2. canjea el `code` y valida `app_id`, permisos, WABA y Phone Number contra Graph;
 3. entrega el token en tránsito al endpoint firmado
    `/api/whatsapp-api/meta/connect/complete` de esa instalación;
-4. activa una ruta exclusiva `waba_id -> installation_id`;
-5. retransmite `object=whatsapp_business_account` por la cola durable existente
+4. confirma, con otro callback HMAC y los IDs exactos, que el tenant dejó
+   habilitados `meta_direct`, el número oficial y `installer_relay`;
+5. activa una ruta exclusiva `waba_id -> installation_id`;
+6. retransmite `object=whatsapp_business_account` por la cola durable existente
    hacia `/api/whatsapp-api/meta/webhook-relay`.
 
 El sitio web es obligatorio por defecto en el portfolio comercial. La casilla
@@ -622,13 +624,24 @@ flujo.
 
 El callback firmado `/meta/connect/complete` responde el ACK inmediatamente
 después de validar Meta, guardar el token cifrado, activar el número y elegirlo
-como remitente principal. La creación/revisión de plantillas default y la
+como remitente principal. Esa escritura reactiva también
+`whatsapp_api_enabled=1`: una desconexión anterior de YCloud no puede dejar la
+conexión Meta en verde mientras el detector genérico permanece apagado. Los
+valores críticos se guardan en un solo lote para no convertir la latencia de la
+base en un falso timeout. La creación/revisión de plantillas default y la
 sincronización de tareas de la integración se ejecutan después, en segundo
 plano: son importantes, pero no pueden retrasar el ACK ni hacer que Installer
 muestre una entrega fallida cuando la conexión crítica ya quedó operativa.
 
+Si la respuesta del ACK se pierde o vence el timeout después de que el tenant ya
+terminó, Installer consulta el callback firmado
+`/meta/connect/readiness`. Sólo acepta `ready=true` cuando coinciden WABA y Phone
+Number ID, el token sigue configurado, el proveedor activo es `meta_direct`, la
+API general está habilitada, el número permite envío oficial y el modo es
+`installer_relay`. Una respuesta HTTP aislada nunca basta para activar el ruteo.
+
 Los callbacks Installer -> tenant (`/meta/connect/complete`,
-`/meta/setup-prefill` y `/meta/webhook-relay`) están antes de la autenticación
+`/meta/connect/readiness`, `/meta/setup-prefill` y `/meta/webhook-relay`) están antes de la autenticación
 humana del router porque usan HMAC, timestamp, nonce e installation ID. Todas las
 rutas operadas por una persona están después de `router.use(requireAuth)`. No se
 debe volver a montar `requireAuth` sobre todo `/api/whatsapp-api`, porque eso

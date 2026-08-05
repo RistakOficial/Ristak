@@ -2251,6 +2251,22 @@ async function setEncryptedConfig(key, value) {
   await setAppConfig(key, encrypt(cleanValue))
 }
 
+async function setAppConfigBatch(entries = []) {
+  const normalizedEntries = entries
+    .map(([key, value]) => [cleanString(key), value === null || value === undefined ? null : String(value)])
+    .filter(([key]) => Boolean(key))
+  if (!normalizedEntries.length) return
+
+  const valuesSql = normalizedEntries.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(', ')
+  await db.run(`
+    INSERT INTO app_config (config_key, config_value, updated_at)
+    VALUES ${valuesSql}
+    ON CONFLICT(config_key) DO UPDATE SET
+      config_value = excluded.config_value,
+      updated_at = CURRENT_TIMESTAMP
+  `, normalizedEntries.flat())
+}
+
 async function clearYCloudConnectionConfig() {
   await clearWhatsAppApiIntegrationCredentials()
 }
@@ -10841,28 +10857,31 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
     provider: META_DIRECT_PROVIDER_NAME
   })
   await subscribeMetaDirectWaba({ wabaId, token: systemUserToken })
-  await setAppConfig(CONFIG_KEYS.metaLastSubscriptionRefreshAt, nowIso())
-
-  await setAppConfig(CONFIG_KEYS.metaStatus, 'connected')
-  await setAppConfig(CONFIG_KEYS.metaAppId, appId)
-  await setAppConfig(CONFIG_KEYS.metaBusinessId, businessId)
-  await setAppConfig(CONFIG_KEYS.metaWabaId, wabaId)
-  await setAppConfig(CONFIG_KEYS.metaPhoneNumberId, phoneNumberId)
-  await setAppConfig(CONFIG_KEYS.metaDisplayPhoneNumber, displayPhoneNumber)
-  await setAppConfig(
-    CONFIG_KEYS.metaCoexistenceEnabled,
-    payload.coexistenceEnabled === true ? '1' : payload.coexistenceEnabled === false ? '0' : ''
-  )
-  await setAppConfig(CONFIG_KEYS.metaWebhookMode, 'installer_relay')
-  await setAppConfig(CONFIG_KEYS.metaInstallerWebhookUrl, cleanString(payload.installerWebhookUrl || payload.installer_webhook_url))
-  await setAppConfig(CONFIG_KEYS.metaInstallerOAuthCallbackUrl, cleanString(payload.installerOAuthCallbackUrl || payload.installer_oauth_callback_url))
-  await setAppConfig(CONFIG_KEYS.metaDatasetId, cleanString(payload.datasetId || payload.dataset_id))
-  await setAppConfig(CONFIG_KEYS.metaAdAccountId, cleanString(payload.adAccountId || payload.ad_account_id))
-  await setAppConfig(CONFIG_KEYS.metaConnectedAt, nowIso())
-  await setAppConfig(CONFIG_KEYS.metaDisconnectedAt, '')
-  await setAppConfig(CONFIG_KEYS.metaLastError, '')
-  await setEncryptedConfig(CONFIG_KEYS.metaSystemUserToken, systemUserToken)
-  await setAppConfig(CONFIG_KEYS.provider, META_DIRECT_PROVIDER_NAME)
+  const connectedAt = nowIso()
+  await setAppConfigBatch([
+    [CONFIG_KEYS.enabled, '1'],
+    [CONFIG_KEYS.provider, META_DIRECT_PROVIDER_NAME],
+    [CONFIG_KEYS.metaStatus, 'connected'],
+    [CONFIG_KEYS.metaAppId, appId],
+    [CONFIG_KEYS.metaBusinessId, businessId],
+    [CONFIG_KEYS.metaWabaId, wabaId],
+    [CONFIG_KEYS.metaPhoneNumberId, phoneNumberId],
+    [CONFIG_KEYS.metaDisplayPhoneNumber, displayPhoneNumber],
+    [
+      CONFIG_KEYS.metaCoexistenceEnabled,
+      payload.coexistenceEnabled === true ? '1' : payload.coexistenceEnabled === false ? '0' : ''
+    ],
+    [CONFIG_KEYS.metaWebhookMode, 'installer_relay'],
+    [CONFIG_KEYS.metaInstallerWebhookUrl, cleanString(payload.installerWebhookUrl || payload.installer_webhook_url)],
+    [CONFIG_KEYS.metaInstallerOAuthCallbackUrl, cleanString(payload.installerOAuthCallbackUrl || payload.installer_oauth_callback_url)],
+    [CONFIG_KEYS.metaDatasetId, cleanString(payload.datasetId || payload.dataset_id)],
+    [CONFIG_KEYS.metaAdAccountId, cleanString(payload.adAccountId || payload.ad_account_id)],
+    [CONFIG_KEYS.metaConnectedAt, connectedAt],
+    [CONFIG_KEYS.metaDisconnectedAt, ''],
+    [CONFIG_KEYS.metaLastSubscriptionRefreshAt, connectedAt],
+    [CONFIG_KEYS.metaLastError, ''],
+    [CONFIG_KEYS.metaSystemUserToken, encrypt(systemUserToken)]
+  ])
 
   await db.run(`
     INSERT INTO whatsapp_api_phone_numbers (
@@ -10907,6 +10926,48 @@ export async function completeMetaDirectConnection({ payload = {}, rawBody = '',
   })
 
   return getWhatsAppApiStatus()
+}
+
+export async function getMetaDirectConnectionReadiness({ payload = {}, rawBody = '', headers = {} } = {}) {
+  await verifyInstallerSignedRequest({ rawBody, headers, purpose: 'meta_connect_readiness' })
+
+  const expectedWabaId = cleanString(payload.wabaId || payload.waba_id)
+  const expectedPhoneNumberId = cleanString(payload.phoneNumberId || payload.phone_number_id)
+  if (!expectedWabaId || !expectedPhoneNumberId) {
+    throw new Error('Faltan los identificadores de WhatsApp que se deben confirmar')
+  }
+
+  const [config, enabled, provider, phone] = await Promise.all([
+    loadMetaDirectConfig(),
+    getAppConfig(CONFIG_KEYS.enabled),
+    getAppConfig(CONFIG_KEYS.provider),
+    db.get(`
+      SELECT id, provider, waba_id, status, api_send_enabled
+      FROM whatsapp_api_phone_numbers
+      WHERE id = ?
+    `, [expectedPhoneNumberId])
+  ])
+  const exactAssets = config.wabaId === expectedWabaId && config.phoneNumberId === expectedPhoneNumberId
+  const ready = Boolean(
+    enabled === '1' &&
+    provider === META_DIRECT_PROVIDER_NAME &&
+    config.connected &&
+    config.webhookMode === 'installer_relay' &&
+    exactAssets &&
+    phone?.id === expectedPhoneNumberId &&
+    cleanString(phone?.provider) === META_DIRECT_PROVIDER_NAME &&
+    cleanString(phone?.waba_id) === expectedWabaId &&
+    cleanString(phone?.status).toUpperCase() === 'CONNECTED' &&
+    Number(phone?.api_send_enabled) === 1
+  )
+
+  return {
+    ready,
+    provider: config.provider,
+    wabaId: config.wabaId,
+    phoneNumberId: config.phoneNumberId,
+    webhookMode: config.webhookMode
+  }
 }
 
 export async function disconnectMetaDirectConnection() {
