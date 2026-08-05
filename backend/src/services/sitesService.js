@@ -8231,6 +8231,7 @@ ${buildImportedHtmlCustomSocialProfileRulesText()}
 - En botones, cuando sepas la acción, agrega data-rstk-button-actions como JSON. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
 - Acciones permitidas: submit, next_page, specific_page, url, automation, none. La acción automation puede quedar como demo.
 - Mantén también data-rstk-button-action con la primera acción para compatibilidad. Si el botón abre enlace, agrega data-rstk-button-url. Si va a una página interna, agrega data-rstk-button-page-id cuando exista un id claro.
+- Para copiar texto al portapapeles sin JavaScript propio, usa <button type="button" data-rstk-copy-value="VALOR_EXACTO" aria-label="Copiar ..."><span data-rstk-copy-label>Copiar</span></button>. Ristak cambia temporalmente la etiqueta a "Copiado" y conserva el markup seguro; nunca simules este comportamiento con un botón sin data-rstk-copy-value.
 - En radio buttons, checkboxes y <option> de select, usa data-rstk-choice-actions cuando una respuesta cambie el resultado. Para descartar candidatos usa action="disqualify"; no uses specific_page o url solos porque navegan pero no marcan la submission como descalificada.
 - El descarte admite tres resultados en el mismo objeto: disqualifyOutcome="message" con buttonMessage, disqualifyOutcome="specific_page" con buttonPageId, o disqualifyOutcome="url" con buttonUrl.
 - Ejemplo de descarte a página: <input type="radio" name="candidato" value="no" data-rstk-choice-actions='[{"id":"no-califica","action":"disqualify","disqualifyOutcome":"specific_page","buttonPageId":"no-califica"}]'>.
@@ -8348,7 +8349,7 @@ Modo edición:
 - Si recibes visualContext, úsalo como referencia visual de la página actual: ubica logos, imágenes, botones, formularios, colores, textos visibles y la página activa antes de editar.
 - Devuelve el HTML completo actualizado, no solo un fragmento.
 - Si recibes importedPages con varias páginas, conserva el embudo multipágina y responde con page.pages incluyendo todas las páginas completas. Mantén ids, title y filename de cada página salvo que el usuario pida renombrar, agregar, quitar o reordenar páginas.
-- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-section, data-rstk-asset-id, data-rstk-background-asset-id, data-rstk-native-*, data-rstk-element-*, data-rstk-video-rules, data-rstk-video-action-target, data-rstk-video-gate-*, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions, data-rstk-conversion-*, data-rstk-appointment-*, data-rstk-calendar-*, data-rstk-payment-* y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
+- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-section, data-rstk-asset-id, data-rstk-background-asset-id, data-rstk-native-*, data-rstk-element-*, data-rstk-video-rules, data-rstk-video-action-target, data-rstk-video-gate-*, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-copy-value, data-rstk-copy-label, data-rstk-copy-success-label, data-rstk-copy-error-label, data-rstk-choice-actions, data-rstk-conversion-*, data-rstk-appointment-*, data-rstk-calendar-*, data-rstk-payment-* y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
 - Si cambias campos, deja convenciones claras para que Ristak pueda redetectar y mapear.
 - Puedes cambiar título, imágenes, videos, orden de secciones, colores, layout, copy y campos segun lo que pida el usuario.
 - En ediciones de una zona seleccionada, las instrucciones de posición, orden o alineación como "centra el titular", "pon el video debajo" o "mueve el botón abajo" ya son suficientes. No respondas needs_more_info por no tener ids exactos; identifica título, video/player y CTA por jerarquía visual dentro de la zona y aplica el cambio.
@@ -31655,6 +31656,98 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
         message.textContent = text;
         message.style.color = state === 'error' ? '#b91c1c' : '#166534';
       };
+      const COPY_BUTTON_SELECTOR = [
+        '[data-rstk-copy-value]',
+        '[data-ristak-copy-value]',
+        '[data-ristack-copy-value]'
+      ].join(', ');
+      const COPY_LABEL_SELECTOR = [
+        '[data-rstk-copy-label]',
+        '[data-ristak-copy-label]',
+        '[data-ristack-copy-label]'
+      ].join(', ');
+      const readFirstAttribute = (element, names) => {
+        if (!element || !element.getAttribute) return '';
+        for (const name of names) {
+          if (element.hasAttribute(name)) return element.getAttribute(name) || '';
+        }
+        return '';
+      };
+      const legacyCopyText = (value) => {
+        let input = null;
+        try {
+          input = document.createElement('textarea');
+          input.value = value;
+          input.setAttribute('readonly', 'readonly');
+          input.setAttribute('aria-hidden', 'true');
+          input.style.position = 'fixed';
+          input.style.left = '-9999px';
+          input.style.top = '0';
+          input.style.opacity = '0';
+          document.body.appendChild(input);
+          try { input.focus({ preventScroll: true }); } catch (_) { input.focus(); }
+          input.select();
+          input.setSelectionRange(0, input.value.length);
+          return Boolean(document.execCommand && document.execCommand('copy'));
+        } catch (_) {
+          return false;
+        } finally {
+          if (input && input.parentNode) input.parentNode.removeChild(input);
+        }
+      };
+      const copyText = (value) => {
+        const cleanValue = String(value || '');
+        if (!cleanValue) return Promise.resolve(false);
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          return navigator.clipboard.writeText(cleanValue)
+            .then(() => true)
+            .catch(() => legacyCopyText(cleanValue));
+        }
+        return Promise.resolve(legacyCopyText(cleanValue));
+      };
+      const setCopyButtonState = (button, copied) => {
+        const label = button.querySelector(COPY_LABEL_SELECTOR) || button;
+        const originalLabel = button.getAttribute('data-rstk-copy-original-label') || label.textContent || 'Copiar';
+        if (!button.hasAttribute('data-rstk-copy-original-label')) {
+          button.setAttribute('data-rstk-copy-original-label', originalLabel);
+        }
+        if (!button.hasAttribute('data-rstk-copy-original-aria-label')) {
+          button.setAttribute('data-rstk-copy-original-aria-label', button.getAttribute('aria-label') || '');
+        }
+        const originalAriaLabel = button.getAttribute('data-rstk-copy-original-aria-label') || '';
+        const state = copied ? 'copied' : 'error';
+        const feedback = copied
+          ? readFirstAttribute(button, ['data-rstk-copy-success-label', 'data-ristak-copy-success-label', 'data-ristack-copy-success-label']) || 'Copiado'
+          : readFirstAttribute(button, ['data-rstk-copy-error-label', 'data-ristak-copy-error-label', 'data-ristack-copy-error-label']) || 'No se pudo copiar';
+        label.setAttribute('aria-live', 'polite');
+        label.textContent = feedback;
+        button.setAttribute('data-rstk-copy-state', state);
+        button.setAttribute('aria-label', feedback);
+        if (button.rstkCopyResetTimer) window.clearTimeout(button.rstkCopyResetTimer);
+        button.rstkCopyResetTimer = window.setTimeout(() => {
+          label.textContent = originalLabel;
+          button.removeAttribute('data-rstk-copy-state');
+          if (originalAriaLabel) button.setAttribute('aria-label', originalAriaLabel);
+          else button.removeAttribute('aria-label');
+          delete button.rstkCopyResetTimer;
+        }, 1600);
+      };
+      const handleCopyButton = (button) => {
+        const value = readFirstAttribute(button, [
+          'data-rstk-copy-value',
+          'data-ristak-copy-value',
+          'data-ristack-copy-value'
+        ]);
+        copyText(value).then(copied => {
+          setCopyButtonState(button, copied);
+          if (copied) {
+            button.dispatchEvent(new CustomEvent('ristak:copied', {
+              bubbles: true,
+              detail: { source: 'copy_button' }
+            }));
+          }
+        });
+      };
       const parseActions = (raw) => {
         if (!raw) return [];
         try {
@@ -31857,6 +31950,15 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
       window.ristakRunImportedActions = runImportedActions;
 
       document.addEventListener('click', (event) => {
+        const copyButton = event.target && event.target.closest
+          ? event.target.closest(COPY_BUTTON_SELECTOR)
+          : null;
+        if (copyButton) {
+          event.preventDefault();
+          handleCopyButton(copyButton);
+          return;
+        }
+
         const button = event.target && event.target.closest
           ? event.target.closest('[data-rstk-button-action], [data-rstk-button-actions], [data-ristak-button-action], [data-ristak-button-actions], [data-ristack-button-action], [data-ristack-button-actions]')
           : null;

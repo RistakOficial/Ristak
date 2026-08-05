@@ -903,6 +903,8 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /En sitios multipágina usa el mismo favicon en todas las páginas/)
   assert.match(instructions, /data-rstk-asset-id="inicio-imagen-01"/)
   assert.match(instructions, /data-rstk-background-asset-id="inicio-fondo-01"/)
+  assert.match(instructions, /data-rstk-copy-value="VALOR_EXACTO"/)
+  assert.match(instructions, /data-rstk-copy-label/)
   assert.match(instructions, /data-rstk-asset-id="inicio-audio-01"/)
   assert.match(instructions, /data-rstk-asset-id="inicio-descarga-01"/)
   assert.match(instructions, /claves multimedia son globales al sitio/)
