@@ -41,6 +41,12 @@ import { formatCurrency as formatMxCurrency } from '@/utils/format'
 import { buildPaymentTimestamp } from '@/utils/paymentDate'
 import { todayDateOnlyInTimezone } from '@/utils/timezone'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
+import {
+  calculateConfiguredTax,
+  DEFAULT_CHARGE_TAX_CALCULATION_MODE,
+  getConfiguredTaxName,
+  getConfiguredTaxRate
+} from '@/utils/paymentTax'
 import { highLevelService } from '@/services/highLevelService'
 import { transactionsService } from '@/services/transactionsService'
 import { conektaPaymentsService, type ConektaSavedPaymentSource } from '@/services/conektaPaymentsService'
@@ -96,52 +102,6 @@ const normalizeAmount = (value: string | number): number => {
   const parsed = parseFloat(String(value).replace(/[^0-9.-]/g, ''))
   if (Number.isNaN(parsed)) return 0
   return Math.round(parsed * 100) / 100
-}
-
-const getConfiguredTaxRate = (taxes: PaymentTaxSettings) => {
-  const rateValue = Number(taxes.rateValue)
-  return Number.isFinite(rateValue) ? rateValue : 0
-}
-
-const getConfiguredTaxName = (taxes: PaymentTaxSettings) => taxes.taxName?.trim() || 'Impuesto'
-
-const calculateConfiguredTax = (
-  amount: number,
-  taxes: PaymentTaxSettings,
-  applyTax: boolean,
-  calculationMode: PaymentTaxSettings['calculationMode']
-) => {
-  const rateValue = getConfiguredTaxRate(taxes)
-
-  if (!taxes.enabled || !applyTax || amount <= 0 || rateValue <= 0) {
-    return {
-      subtotalAmount: amount,
-      taxAmount: 0,
-      totalAmount: amount,
-      includesTax: false,
-      calculationMode
-    }
-  }
-
-  if (calculationMode === 'inclusive') {
-    const taxAmount = normalizeAmount(amount - (amount / (1 + rateValue / 100)))
-    return {
-      subtotalAmount: normalizeAmount(amount - taxAmount),
-      taxAmount,
-      totalAmount: amount,
-      includesTax: true,
-      calculationMode
-    }
-  }
-
-  const taxAmount = normalizeAmount(amount * (rateValue / 100))
-  return {
-    subtotalAmount: amount,
-    taxAmount,
-    totalAmount: normalizeAmount(amount + taxAmount),
-    includesTax: true,
-    calculationMode
-  }
 }
 
 type PaymentOption = 'send' | 'manual' | 'offline' | 'stripe' | 'stripe_saved_card' | 'mercadopago' | 'conekta' | 'conekta_saved_card' | 'clip' | 'rebill' | 'rebill_saved_card'
@@ -769,7 +729,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [description, setDescription] = useState('')
   const [currency, setCurrency] = useState('MXN')
   const [includeIVA, setIncludeIVA] = useState(false)
-  const [taxCalculationMode, setTaxCalculationMode] = useState<PaymentTaxSettings['calculationMode']>(defaultPaymentSettings.taxes.calculationMode)
+  const [taxCalculationMode, setTaxCalculationMode] = useState<PaymentTaxSettings['calculationMode']>(DEFAULT_CHARGE_TAX_CALCULATION_MODE)
   const [paymentTaxes, setPaymentTaxes] = useState<PaymentTaxSettings>(defaultPaymentSettings.taxes)
   const [paymentAutomations, setPaymentAutomations] = useState<PaymentAutomationSettings>(defaultPaymentSettings.automations)
 
@@ -1452,7 +1412,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setDescription('')
     setCurrency(accountCurrency)
     setIncludeIVA(Boolean(paymentTaxes.enabled))
-    setTaxCalculationMode(paymentTaxes.calculationMode || defaultPaymentSettings.taxes.calculationMode)
+    setTaxCalculationMode(DEFAULT_CHARGE_TAX_CALCULATION_MODE)
     setPaymentMode(initialPaymentMode)
     // El plan abre por defecto con "Cobrar inmediato" (primer pago con tarjeta),
     // misma interacción en escritorio y celular.
@@ -1537,12 +1497,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const nextTaxes = paymentSettings.taxes || defaultPaymentSettings.taxes
       setPaymentAutomations(paymentSettings.automations || defaultPaymentSettings.automations)
       setPaymentTaxes(nextTaxes)
-      setTaxCalculationMode(nextTaxes.calculationMode || defaultPaymentSettings.taxes.calculationMode)
+      setTaxCalculationMode(DEFAULT_CHARGE_TAX_CALCULATION_MODE)
       setIncludeIVA(Boolean(nextTaxes.enabled))
     } catch {
       setPaymentAutomations(defaultPaymentSettings.automations)
       setPaymentTaxes(defaultPaymentSettings.taxes)
-      setTaxCalculationMode(defaultPaymentSettings.taxes.calculationMode)
+      setTaxCalculationMode(DEFAULT_CHARGE_TAX_CALCULATION_MODE)
       setIncludeIVA(false)
     }
   }

@@ -10,12 +10,24 @@ import {
   type PaymentSubscription,
   type SubscriptionInterval
 } from '@/services/subscriptionsService'
+import {
+  defaultPaymentSettings,
+  paymentSettingsService,
+  type PaymentTaxSettings
+} from '@/services/paymentSettingsService'
 import type { Contact } from '@/types'
 import { DEFAULT_CRM_LABELS, formatCrmLabelWithDefiniteArticle } from '@/utils/crmLabels'
+import {
+  calculateConfiguredTax,
+  DEFAULT_CHARGE_TAX_CALCULATION_MODE,
+  getConfiguredTaxName,
+  getConfiguredTaxRate
+} from '@/utils/paymentTax'
 import { PhonePaymentFormShell } from './PhonePaymentFormShell'
 import {
   PhoneButton,
   PhoneDateField,
+  PhoneSegmentedTabs,
   PhoneSelect,
   PhoneTextArea,
   PhoneTextField,
@@ -39,6 +51,8 @@ interface SubscriptionDraft {
   intervalType: SubscriptionInterval
   intervalCount: string
   startDate: string
+  applyTax: boolean
+  taxCalculationMode: PaymentTaxSettings['calculationMode']
 }
 
 type SubscriptionGatewayProvider = Exclude<PaymentGatewayProvider, 'clip'>
@@ -79,7 +93,9 @@ function createDraft(): SubscriptionDraft {
     amount: '',
     intervalType: 'monthly',
     intervalCount: '1',
-    startDate: getTodayInputValue()
+    startDate: getTodayInputValue(),
+    applyTax: true,
+    taxCalculationMode: DEFAULT_CHARGE_TAX_CALCULATION_MODE
   }
 }
 
@@ -175,6 +191,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
   const [provider, setProvider] = useState<SubscriptionGatewayProvider>(() => subscriptionProviders[0] || 'stripe')
   const [providerStepOpen, setProviderStepOpen] = useState(false)
   const [draft, setDraft] = useState<SubscriptionDraft>(() => createDraft())
+  const [paymentTaxes, setPaymentTaxes] = useState<PaymentTaxSettings>(defaultPaymentSettings.taxes)
   const [saving, setSaving] = useState(false)
   const [savedSubscription, setSavedSubscription] = useState<PaymentSubscription | null>(null)
   const [authorizationLink, setAuthorizationLink] = useState('')
@@ -189,13 +206,40 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
   const providerNeedsStoredContact = providerStepOpen && (selectedProvider === 'stripe' || selectedProvider === 'conekta')
   const knownProviderForDetails = providerOptions.length === 1 ? subscriptionProviders[0] : providerStepOpen ? selectedProvider : null
   const amount = normalizeAmount(draft.amount)
+  const taxBreakdown = calculateConfiguredTax(
+    amount,
+    paymentTaxes,
+    draft.applyTax,
+    draft.taxCalculationMode
+  )
+  const taxName = getConfiguredTaxName(paymentTaxes)
+  const taxRate = getConfiguredTaxRate(paymentTaxes)
+  const taxRateLabel = paymentTaxes.rateType === 'percentage'
+    ? `${taxRate}%`
+    : formatCurrency(taxRate, currency)
   const providerLabel = providerStepOpen ? PROVIDER_LABELS[selectedProvider] || 'Pasarela' : 'Sin pasarela'
   const intervalSummary = getIntervalSummary(draft.intervalType, draft.intervalCount)
   const formSummary = {
     label: 'Cobro recurrente',
     detail: providerStepOpen ? `${providerLabel} · ${intervalSummary}` : intervalSummary,
-    amount: formatCurrency(amount, currency)
+    amount: formatCurrency(taxBreakdown.totalAmount, currency)
   }
+
+  useEffect(() => {
+    let cancelled = false
+
+    paymentSettingsService.getSettings()
+      .then((settings) => {
+        if (!cancelled) setPaymentTaxes(settings.taxes || defaultPaymentSettings.taxes)
+      })
+      .catch(() => {
+        if (!cancelled) setPaymentTaxes(defaultPaymentSettings.taxes)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (subscriptionProviders.length > 0 && !subscriptionProviders.includes(provider)) {
@@ -343,6 +387,8 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
         status: ['mercadopago', 'rebill'].includes(targetProvider) ? 'incomplete' : 'active',
         amount,
         currency,
+        applyTax: Boolean(paymentTaxes.enabled && draft.applyTax),
+        taxCalculationMode: draft.taxCalculationMode,
         intervalType: draft.intervalType,
         intervalCount: Math.max(1, Number(draft.intervalCount) || 1),
         startDate: draft.startDate || getTodayInputValue(),
@@ -637,6 +683,44 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
         leading={<span aria-hidden="true">$</span>}
         className={styles.textField}
       />
+
+      {paymentTaxes.enabled && (
+        <>
+          <div className={styles.fieldGroup}>
+            <span className={styles.fieldLabel}>{taxName}</span>
+            <PhoneSegmentedTabs
+              ariaLabel={taxName}
+              options={[
+                { value: 'sin', label: `Sin ${taxName}` },
+                { value: 'con', label: `Aplicar ${taxRateLabel}` }
+              ]}
+              value={draft.applyTax ? 'con' : 'sin'}
+              onChange={(value) => updateDraft('applyTax', value === 'con')}
+            />
+          </div>
+
+          {draft.applyTax && (
+            <div className={styles.fieldGroup}>
+              <span className={styles.fieldLabel}>Cálculo del impuesto</span>
+              <PhoneSegmentedTabs
+                ariaLabel="Cálculo del impuesto"
+                options={[
+                  { value: 'exclusive', label: 'Se suma al total' },
+                  { value: 'inclusive', label: 'Ya incluido' }
+                ]}
+                value={draft.taxCalculationMode}
+                onChange={(value) => updateDraft(
+                  'taxCalculationMode',
+                  value as PaymentTaxSettings['calculationMode']
+                )}
+              />
+              <small className={styles.hint}>
+                {taxName}: {formatCurrency(taxBreakdown.taxAmount, currency)} · Total recurrente: {formatCurrency(taxBreakdown.totalAmount, currency)}
+              </small>
+            </div>
+          )}
+        </>
+      )}
 
       <div className={styles.formGrid}>
         <label className={styles.selectField}>

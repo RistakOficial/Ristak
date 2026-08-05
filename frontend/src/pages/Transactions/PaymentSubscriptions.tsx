@@ -38,6 +38,7 @@ import {
   PageHeader,
   PaymentLinkReadyPanel,
   PaymentPlatformLogo,
+  TabList,
   Table,
   TableSelectionToolbar
 } from '@/components/common'
@@ -50,11 +51,22 @@ import { useAccountCurrency } from '@/hooks'
 import type { Contact } from '@/types'
 import { formatCurrency } from '@/utils/format'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
+import {
+  calculateConfiguredTax,
+  DEFAULT_CHARGE_TAX_CALCULATION_MODE,
+  getConfiguredTaxName,
+  getConfiguredTaxRate
+} from '@/utils/paymentTax'
 import { toDateTimeLocalInputValue, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import { subscribeToPaymentLiveEvents, type PaymentLiveEvent } from '@/services/paymentLiveEventsService'
 import { conektaPaymentsService, type ConektaSavedPaymentSource } from '@/services/conektaPaymentsService'
 import { stripePaymentsService, type StripeSavedPaymentMethod } from '@/services/stripePaymentsService'
+import {
+  defaultPaymentSettings,
+  paymentSettingsService,
+  type PaymentTaxSettings
+} from '@/services/paymentSettingsService'
 import {
   subscriptionsService,
   type PaymentSubscription,
@@ -88,6 +100,8 @@ interface SubscriptionFormState {
   startMode: SubscriptionStartMode
   paymentMethod: SubscriptionPaymentMethod
   paymentProvider: PaymentGatewayProvider
+  applyTax: boolean
+  taxCalculationMode: PaymentTaxSettings['calculationMode']
 }
 
 const EMPTY_SUMMARY: SubscriptionSummary = {
@@ -270,7 +284,9 @@ function createEmptyForm(timezone: string): SubscriptionFormState {
     status: 'active',
     startMode: '',
     paymentMethod: 'stripe_saved_card',
-    paymentProvider: 'stripe'
+    paymentProvider: 'stripe',
+    applyTax: true,
+    taxCalculationMode: DEFAULT_CHARGE_TAX_CALCULATION_MODE
   }
 }
 
@@ -604,6 +620,7 @@ export const PaymentSubscriptions: React.FC = () => {
   const [editingSubscription, setEditingSubscription] = useState<PaymentSubscription | null>(null)
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
   const [form, setForm] = useState<SubscriptionFormState>(() => createEmptyForm(timezone))
+  const [paymentTaxes, setPaymentTaxes] = useState<PaymentTaxSettings>(defaultPaymentSettings.taxes)
   const [stripeConnected, setStripeConnected] = useState(false)
   const [conektaConnected, setConektaConnected] = useState(false)
   const [mercadoPagoConnected, setMercadoPagoConnected] = useState(false)
@@ -757,6 +774,22 @@ export const PaymentSubscriptions: React.FC = () => {
       }
     })()
   }, [location.search, navigate, showToast])
+
+  useEffect(() => {
+    let cancelled = false
+
+    paymentSettingsService.getSettings()
+      .then((settings) => {
+        if (!cancelled) setPaymentTaxes(settings.taxes || defaultPaymentSettings.taxes)
+      })
+      .catch(() => {
+        if (!cancelled) setPaymentTaxes(defaultPaymentSettings.taxes)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -986,7 +1019,9 @@ export const PaymentSubscriptions: React.FC = () => {
     setForm({
       name: subscription.name || '',
       description: subscription.description || '',
-      amount: subscription.amount ? String(subscription.amount) : '',
+      amount: (subscription.configuredAmount ?? subscription.amount)
+        ? String(subscription.configuredAmount ?? subscription.amount)
+        : '',
       intervalType: (subscription.intervalType as SubscriptionInterval) || 'monthly',
       intervalCount: String(subscription.intervalCount || 1),
       startDate: clampDateToToday(toDateInputValue(subscription.startDate, timezone), timezone),
@@ -996,7 +1031,9 @@ export const PaymentSubscriptions: React.FC = () => {
       status: (subscription.status as SubscriptionStatus) || 'active',
       startMode: getStartModeForPaymentMethod(subscription.paymentMethod),
       paymentMethod: (subscription.paymentMethod as SubscriptionPaymentMethod) || 'stripe_saved_card',
-      paymentProvider: resolvePaymentProvider(subscription.paymentProvider)
+      paymentProvider: resolvePaymentProvider(subscription.paymentProvider),
+      applyTax: Boolean(subscription.tax?.enabled),
+      taxCalculationMode: subscription.tax?.calculationMode || DEFAULT_CHARGE_TAX_CALCULATION_MODE
     })
     setFormStep('details')
     setFormMode('edit')
@@ -1045,6 +1082,31 @@ export const PaymentSubscriptions: React.FC = () => {
         : value
       }))
   }
+
+  const formTaxSettings = useMemo<PaymentTaxSettings>(() => {
+    if (!editingSubscription?.tax?.enabled) return paymentTaxes
+
+    return {
+      ...paymentTaxes,
+      enabled: true,
+      taxName: editingSubscription.tax.taxName || paymentTaxes.taxName,
+      rateType: editingSubscription.tax.rateType || paymentTaxes.rateType,
+      rateValue: editingSubscription.tax.rateValue,
+      calculationMode: editingSubscription.tax.calculationMode
+    }
+  }, [editingSubscription?.tax, paymentTaxes])
+  const configuredSubscriptionAmount = Number(form.amount) || 0
+  const subscriptionTaxBreakdown = calculateConfiguredTax(
+    configuredSubscriptionAmount,
+    formTaxSettings,
+    form.applyTax,
+    form.taxCalculationMode
+  )
+  const subscriptionTaxName = getConfiguredTaxName(formTaxSettings)
+  const subscriptionTaxRate = getConfiguredTaxRate(formTaxSettings)
+  const subscriptionTaxRateLabel = formTaxSettings.rateType === 'percentage'
+    ? `${subscriptionTaxRate}%`
+    : formatCurrency(subscriptionTaxRate, accountCurrency)
 
   const applyPaymentMethod = (option: { value: SubscriptionPaymentMethod; provider: PaymentGatewayProvider }) => {
     setForm((current) => ({
@@ -1287,6 +1349,8 @@ export const PaymentSubscriptions: React.FC = () => {
       status: formMode === 'edit' ? currentForm.status : startByLink ? 'incomplete' : 'active',
       amount,
       currency: accountCurrency,
+      applyTax: Boolean(formTaxSettings.enabled && currentForm.applyTax),
+      taxCalculationMode: currentForm.taxCalculationMode,
       intervalType: currentForm.intervalType,
       intervalCount,
       startDate: currentForm.startDate || null,
@@ -2142,6 +2206,46 @@ export const PaymentSubscriptions: React.FC = () => {
                   required
                 />
               </div>
+
+              {formTaxSettings.enabled && (
+                <>
+                  <div className={`${styles.formGroup} ${styles.fullWidth}`}>
+                    <label>{subscriptionTaxName}</label>
+                    <TabList
+                      tabs={[
+                        { value: 'sin', label: `Sin ${subscriptionTaxName}` },
+                        { value: 'con', label: `Aplicar ${subscriptionTaxRateLabel}` }
+                      ]}
+                      activeTab={form.applyTax ? 'con' : 'sin'}
+                      onTabChange={(value) => setForm((current) => ({ ...current, applyTax: value === 'con' }))}
+                      variant="compact"
+                      fullWidth
+                    />
+                  </div>
+
+                  {form.applyTax && (
+                    <div className={`${styles.formGroup} ${styles.fullWidth}`}>
+                      <label>Cálculo del impuesto</label>
+                      <TabList
+                        tabs={[
+                          { value: 'exclusive', label: 'Se suma al total' },
+                          { value: 'inclusive', label: 'Ya incluido' }
+                        ]}
+                        activeTab={form.taxCalculationMode}
+                        onTabChange={(value) => setForm((current) => ({
+                          ...current,
+                          taxCalculationMode: value as PaymentTaxSettings['calculationMode']
+                        }))}
+                        variant="compact"
+                        fullWidth
+                      />
+                      <p className={styles.formHint}>
+                        {subscriptionTaxName}: {formatCurrency(subscriptionTaxBreakdown.taxAmount, accountCurrency)} · Total recurrente: {formatCurrency(subscriptionTaxBreakdown.totalAmount, accountCurrency)}
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
 
               <div className={styles.formGroup}>
                 <label>Frecuencia</label>

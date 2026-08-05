@@ -4386,6 +4386,24 @@ El modo de pasarelas puede ser `test` o `live`. Ese modo debe viajar con el pago
 en `payment_mode` o metadata equivalente para evitar mezclar pruebas con dinero
 real.
 
+Cuando Impuestos está activo, los formularios de cobro nuevo aplican el impuesto
+por defecto y abren el cálculo en **Se suma al total**. Esto cubre pagos únicos,
+productos cobrados desde el modal, planes de pago y suscripciones en escritorio y
+en el flujo móvil integrado. **Ya incluido** sigue disponible como elección por
+cobro mediante el `TabList`/segmentado; cambiarlo no modifica la configuración
+fiscal global de la cuenta.
+
+Las suscripciones guardan en `metadata_json.tax` el desglose fiscal autoritativo
+del alta y persisten en `amount` el total recurrente que recibe la pasarela. El
+importe configurado se expone por separado como `configuredAmount` para reabrir el
+formulario sin sumar el impuesto otra vez. Si una creación por API/MCP omite
+`applyTax` y la cuenta tiene Impuestos activo, backend aplica el impuesto en modo
+`exclusive`; `taxCalculationMode='inclusive'` conserva el importe como total y
+`applyTax=false` lo excluye. Al editar una suscripción existente sin tocar estos
+campos se conserva su tasa, modo y moneda históricos aunque después cambie la
+configuración de la cuenta. El pago inicial y los planes recurrentes usan el total
+ya calculado y nunca vuelven a aplicar el impuesto en la pasarela.
+
 ### Gigstack y facturación fiscal
 
 Gigstack no procesa el cobro. Ristak lo llama únicamente después de que el pago

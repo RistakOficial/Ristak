@@ -47,12 +47,14 @@ import {
 } from '../utils/dateUtils.js'
 import { publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
 import { getCachedPaymentListSummary } from './paymentListSummaryCacheService.js'
+import { calculatePaymentTax, getPublicPaymentSettings } from './paymentSettingsService.js'
 
 const SUBSCRIPTION_PREFIX = 'rstk_sub'
 const DEFAULT_CURRENCY = 'MXN'
 const DEFAULT_INTERVAL = 'monthly'
 const DEFAULT_STATUS = 'active'
 const DEFAULT_PAYMENT_TIMEZONE = ACCOUNT_DEFAULT_TIMEZONE
+const DEFAULT_SUBSCRIPTION_TAX_CALCULATION_MODE = 'exclusive'
 
 const PUBLIC_PAYMENT_LINK_METHODS = new Set(['stripe_link', 'stripe_payment_link', 'conekta_link', 'conekta_payment_link'])
 const UNSUPPORTED_CLIP_SUBSCRIPTION_METHODS = new Set(['clip', 'clip_link', 'clip_payment_link', 'clip_card'])
@@ -204,6 +206,75 @@ function parseJson(value, fallback = null) {
   }
 }
 
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object, key)
+}
+
+function normalizeTaxCalculationMode(value, fallback = DEFAULT_SUBSCRIPTION_TAX_CALCULATION_MODE) {
+  const normalized = cleanString(value).toLowerCase()
+  return ['exclusive', 'inclusive'].includes(normalized) ? normalized : fallback
+}
+
+function normalizeApplyTax(value, fallback = true) {
+  if (value === undefined || value === null || value === '') return fallback
+  if (value === false || value === 0) return false
+  return !['false', '0', 'off', 'no'].includes(cleanString(value).toLowerCase())
+}
+
+function getStoredSubscriptionTax(metadata = {}) {
+  const tax = metadata?.tax
+  return tax && typeof tax === 'object' && tax.enabled === true ? tax : null
+}
+
+function getConfiguredSubscriptionAmount(totalAmount, tax = null) {
+  if (!tax) return normalizeAmount(totalAmount)
+  if (tax.calculationMode === 'inclusive') {
+    return normalizeAmount(tax.totalAmount ?? totalAmount)
+  }
+  return normalizeAmount(tax.subtotalAmount ?? totalAmount)
+}
+
+async function resolveSubscriptionPricing(payload = {}, existing = {}) {
+  const existingMetadata = parseJson(existing.metadata_json, {}) || {}
+  const requestedMetadata = parseJson(payload.metadata ?? payload.metadata_json, {}) || {}
+  const metadata = {
+    ...(typeof existingMetadata === 'object' ? existingMetadata : {}),
+    ...(typeof requestedMetadata === 'object' ? requestedMetadata : {})
+  }
+  const previousTax = getStoredSubscriptionTax(existingMetadata)
+  const hasAmountInput = hasOwn(payload, 'amount')
+  const configuredAmount = hasAmountInput
+    ? normalizeAmount(payload.amount)
+    : getConfiguredSubscriptionAmount(existing.amount, previousTax)
+  const hasCalculationModeInput = hasOwn(payload, 'taxCalculationMode') || hasOwn(payload, 'tax_calculation_mode')
+  const applyTaxValue = payload.applyTax ?? payload.apply_tax
+  const requestedCalculationMode = payload.taxCalculationMode ?? payload.tax_calculation_mode
+  const applyTax = normalizeApplyTax(
+    applyTaxValue,
+    existing.id ? Boolean(previousTax) : true
+  )
+  const calculationMode = normalizeTaxCalculationMode(
+    hasCalculationModeInput ? requestedCalculationMode : previousTax?.calculationMode,
+    DEFAULT_SUBSCRIPTION_TAX_CALCULATION_MODE
+  )
+  const accountTaxes = previousTax || (await getPublicPaymentSettings()).taxes
+  const tax = calculatePaymentTax(configuredAmount, {
+    ...accountTaxes,
+    enabled: Boolean(accountTaxes?.enabled && applyTax),
+    calculationMode
+  })
+
+  // El desglose es autoritativo del backend. Nunca aceptamos un objeto tax
+  // fabricado por el cliente ni recalculamos dos veces el total recurrente.
+  if (tax) metadata.tax = tax
+  else delete metadata.tax
+
+  return {
+    amount: tax?.totalAmount || configuredAmount,
+    metadataJson: jsonOrNull(metadata)
+  }
+}
+
 function getSubscriptionStartPayment(metadata = {}) {
   const payment = metadata?.subscriptionStartPayment && typeof metadata.subscriptionStartPayment === 'object'
     ? metadata.subscriptionStartPayment
@@ -310,6 +381,7 @@ async function getContactSnapshot(contactId) {
 
 function rowToApi(row = {}) {
   const metadata = parseJson(row.metadata_json, null)
+  const tax = getStoredSubscriptionTax(metadata || {})
   const raw = parseJson(row.raw_json, null)
   const stripeCheckout = metadata?.stripeCheckout && typeof metadata.stripeCheckout === 'object'
     ? metadata.stripeCheckout
@@ -339,6 +411,8 @@ function rowToApi(row = {}) {
     description: row.description || '',
     status: row.status || DEFAULT_STATUS,
     amount: normalizeAmount(row.amount),
+    configuredAmount: getConfiguredSubscriptionAmount(row.amount, tax),
+    tax,
     currency: row.currency || DEFAULT_CURRENCY,
     intervalType: row.interval_type || DEFAULT_INTERVAL,
     intervalCount: normalizeIntervalCount(row.interval_count),
@@ -414,6 +488,10 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
     payload.paymentMethod ?? payload.payment_method ?? existing.payment_method,
     paymentProvider
   ) || 'stripe_saved_card'
+  const pricing = await resolveSubscriptionPricing(payload, existing)
+  const currency = existing.id
+    ? normalizeCurrency(existing.currency || accountCurrency)
+    : accountCurrency
 
   return {
     id: nullableString(existing.id) || nullableString(payload.id) || makeId(),
@@ -424,8 +502,8 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
     name: cleanString(payload.name ?? existing.name) || 'Suscripción',
     description: cleanString(payload.description ?? existing.description),
     status: normalizeStatus(payload.status ?? existing.status),
-    amount: normalizeAmount(payload.amount ?? existing.amount),
-    currency: accountCurrency,
+    amount: pricing.amount,
+    currency,
     interval_type: intervalType,
     interval_count: intervalCount,
     start_date: startDate,
@@ -469,7 +547,7 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
     rebill_card_id: nullableString(payload.rebillCardId ?? payload.rebill_card_id ?? existing.rebill_card_id),
     rebill_next_charge_at: nullableDate(payload.rebillNextChargeAt ?? payload.rebill_next_charge_at ?? existing.rebill_next_charge_at, accountTimezone),
     rebill_last_charge_at: nullableDate(payload.rebillLastChargeAt ?? payload.rebill_last_charge_at ?? existing.rebill_last_charge_at, accountTimezone),
-    metadata_json: jsonOrNull(payload.metadata ?? payload.metadata_json ?? existing.metadata_json),
+    metadata_json: pricing.metadataJson,
     raw_json: jsonOrNull(payload.raw ?? payload.raw_json ?? existing.raw_json)
   }
 }
@@ -532,6 +610,8 @@ function mergeRawJson(currentRaw, providerKey, value) {
 
 function buildSubscriptionStartPaymentInput(row) {
   const rowMetadata = parseJson(row.metadata_json, {})
+  const tax = getStoredSubscriptionTax(rowMetadata)
+  const configuredAmount = getConfiguredSubscriptionAmount(row.amount, tax)
   const rowSource = cleanString(row.source)
   const source = rowSource && rowSource !== 'ristak' ? rowSource : 'subscription_start_link'
   return {
@@ -549,6 +629,8 @@ function buildSubscriptionStartPaymentInput(row) {
     intervalCount: row.interval_count,
     startDate: row.start_date,
     cancelAt: row.cancel_at,
+    // row.amount ya es el total fiscal congelado de la suscripción. La pasarela
+    // debe recibirlo tal cual para no volver a sumar el impuesto.
     applyTax: false,
     title: `Inicio de ${row.name || 'suscripción'}`,
     description: row.description || row.name || 'Pago inicial de suscripción',
@@ -559,8 +641,8 @@ function buildSubscriptionStartPaymentInput(row) {
         name: row.name || 'Suscripción',
         description: row.description || '',
         quantity: 1,
-        unitPrice: row.amount,
-        amount: row.amount
+        unitPrice: configuredAmount,
+        amount: configuredAmount
       }
     ],
     metadata: {
