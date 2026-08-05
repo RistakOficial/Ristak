@@ -9,7 +9,7 @@ import {
   type StripeElementsOptions,
   type StripePaymentElementOptions
 } from '@stripe/stripe-js'
-import { AlertCircle, CheckCircle2, ChevronDown, Copy, CreditCard, Download, ExternalLink, Info, Loader2, ShieldCheck } from 'lucide-react'
+import { AlertCircle, Bell, CheckCircle2, ChevronDown, Copy, CreditCard, Download, ExternalLink, Info, Loader2, ShieldCheck } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { Badge, Button, type BadgeVariant } from '@/components/common'
 import { PaymentPlatformLogo, type PaymentPlatformLogoId } from '@/components/common/PaymentPlatformLogo'
@@ -39,6 +39,10 @@ import {
   type StripeInstallmentPlan,
   type StripePaymentIntentResponse
 } from '@/services/stripePaymentsService'
+import {
+  offlinePaymentsService,
+  type PublicOfflinePayment
+} from '@/services/offlinePaymentsService'
 import { formatCurrency, formatDate as formatBusinessDate } from '@/utils/format'
 import {
   buildInvoiceStyleVars,
@@ -50,7 +54,7 @@ import { DEFAULT_TIMEZONE } from '@/utils/timezone'
 import styles from './PublicPayment.module.css'
 
 type StripePromise = ReturnType<typeof loadStripe>
-type PublicPaymentData = PublicStripePayment | PublicMercadoPagoPayment | PublicConektaPayment | PublicClipPayment | PublicRebillPayment
+type PublicPaymentData = PublicStripePayment | PublicMercadoPagoPayment | PublicConektaPayment | PublicClipPayment | PublicRebillPayment | PublicOfflinePayment
 type DocumentThemeMode = 'light' | 'dark'
 type MercadoPagoBrickController = { unmount?: () => void }
 type MetaPixelFn = ((...args: unknown[]) => void) & {
@@ -138,7 +142,7 @@ type SuccessDetailRow = {
   value: React.ReactNode
 }
 type PaymentSuccessExperienceProps = {
-  providerLogo: PaymentPlatformLogoId
+  providerLogo?: PaymentPlatformLogoId
   providerLabel: string
   title: string
   description: string
@@ -343,6 +347,9 @@ function getStatusCopy(status: string) {
   }
   if (normalized === 'scheduled') {
     return { label: 'Programado', variant: 'info' as BadgeVariant }
+  }
+  if (normalized === 'sent') {
+    return { label: 'Enviado', variant: 'info' as BadgeVariant }
   }
   return { label: 'Pendiente', variant: 'info' as BadgeVariant }
 }
@@ -589,6 +596,7 @@ function getPlanInstallmentStatusCopy(status?: string | null) {
   const normalized = String(status || '').toLowerCase()
   if (['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'registered'].includes(normalized)) return 'Pagado'
   if (['scheduled', 'active'].includes(normalized)) return 'Programado'
+  if (normalized === 'sent') return 'Enviado'
   if (['waiting_card_authorization', 'requires_payment_method'].includes(normalized)) return 'Espera tarjeta'
   if (['deleted', 'cancelled', 'canceled', 'void'].includes(normalized)) return 'Cancelado'
   return 'Pendiente'
@@ -596,6 +604,7 @@ function getPlanInstallmentStatusCopy(status?: string | null) {
 
 function getPlanPaymentMethodCopy(method?: string | null) {
   const normalized = String(method || '').toLowerCase()
+  if (normalized === 'offline') return 'Pago offline'
   if (normalized.includes('stripe') || normalized.includes('card') || normalized.includes('tarjeta')) return 'Tarjeta domiciliada'
   if (normalized.includes('cash') || normalized.includes('efectivo')) return 'Manual'
   if (normalized.includes('transfer')) return 'Transferencia'
@@ -1426,7 +1435,7 @@ const PaymentSuccessExperience: React.FC<PaymentSuccessExperienceProps> = ({
           <span>{amountLabel || 'Total pagado'}</span>
           <strong>{amountValue}</strong>
           <div className={styles.successProvider}>
-            <PaymentPlatformLogo platform={providerLogo} size="sm" decorative />
+            {providerLogo ? <PaymentPlatformLogo platform={providerLogo} size="sm" decorative /> : <Bell size={18} />}
             <span>{providerLabel}</span>
           </div>
         </div>
@@ -3008,18 +3017,19 @@ export const PublicPayment: React.FC = () => {
   const isMercadoPagoPayment = payment?.provider === 'mercadopago'
   const isConektaPayment = payment?.provider === 'conekta'
   const isClipPayment = payment?.provider === 'clip'
+  const isOfflinePayment = payment?.provider === 'offline'
   const rebillPayment = payment?.provider === 'rebill' ? payment : null
   const isRebillPayment = Boolean(rebillPayment)
   const isRebillHostedPayment = Boolean(rebillPayment?.hostedPaymentUrl || rebillPayment?.rebillHostedPaymentLink?.url)
   const returnedFromRebill = Boolean(rebillPayment && searchParams.has('rebill_return'))
   const stripePayment = payment?.provider === 'stripe' ? payment : null
-  const paymentPlan = stripePayment?.paymentPlan || null
+  const paymentPlan = payment && 'paymentPlan' in payment ? payment.paymentPlan || null : null
   const subscriptionStart = payment && 'subscriptionStart' in payment ? payment.subscriptionStart : null
   const isSubscriptionStart = Boolean(subscriptionStart?.subscriptionId)
   const shouldSavePaymentMethod = Boolean(stripePayment?.contact?.id || paymentPlan?.cardSetupRequired)
   const isControlledStripeInstallments = Boolean(stripePayment && stripeControlledInstallmentsEnabled(stripePayment) && !isSubscriptionStart && !paymentPlan?.cardSetupRequired)
-  const providerLabel = isMercadoPagoPayment ? 'Mercado Pago' : isConektaPayment ? 'Conekta' : isClipPayment ? 'CLIP' : isRebillPayment ? 'Rebill' : 'Stripe'
-  const providerLogo: PaymentPlatformLogoId = isMercadoPagoPayment ? 'mercadopago' : isConektaPayment ? 'conekta' : isClipPayment ? 'clip' : isRebillPayment ? 'rebill' : 'stripe'
+  const providerLabel = isOfflinePayment ? 'Pago offline' : isMercadoPagoPayment ? 'Mercado Pago' : isConektaPayment ? 'Conekta' : isClipPayment ? 'CLIP' : isRebillPayment ? 'Rebill' : 'Stripe'
+  const providerLogo: PaymentPlatformLogoId | undefined = isOfflinePayment ? undefined : isMercadoPagoPayment ? 'mercadopago' : isConektaPayment ? 'conekta' : isClipPayment ? 'clip' : isRebillPayment ? 'rebill' : 'stripe'
 
   const stripePromise = useMemo<StripePromise | null>(() => {
     if (!stripePayment) return null
@@ -3070,7 +3080,11 @@ export const PublicPayment: React.FC = () => {
             try {
               return await rebillPaymentsService.getPublicPayment(id)
             } catch {
-              throw stripeError
+              try {
+                return await offlinePaymentsService.getPublicPayment(id)
+              } catch {
+                throw stripeError
+              }
             }
           }
         }
@@ -3330,14 +3344,18 @@ export const PublicPayment: React.FC = () => {
     ? (isSubscriptionStart ? 'Suscripción autorizada' : 'Pago confirmado')
     : isSubscriptionStart
       ? 'Autoriza tu suscripción'
-    : checkoutSettings?.headline || payment.title || 'Pago pendiente'
+    : isOfflinePayment
+      ? payment.title || 'Recordatorio de pago'
+      : checkoutSettings?.headline || payment.title || 'Pago pendiente'
   const description = isPaid
     ? (isSubscriptionStart
         ? 'La suscripción fue autorizada correctamente.'
         : 'Tu pago fue recibido correctamente. Puedes descargar tu comprobante en PDF cuando lo necesites.')
     : isSubscriptionStart
       ? `Revisa los datos de la suscripción y autoriza el cobro recurrente con ${providerLabel}.`
-    : checkoutSettings?.description || `Revisa los datos del cobro y paga de forma segura con ${providerLabel}. Ristak no ve ni guarda el número de tu tarjeta.`
+    : isOfflinePayment
+      ? 'Revisa el monto y realiza la transferencia o el pago acordado con el negocio. Este aviso no cobra ninguna tarjeta.'
+      : checkoutSettings?.description || `Revisa los datos del cobro y paga de forma segura con ${providerLabel}. Ristak no ve ni guarda el número de tu tarjeta.`
   const planInstallments = paymentPlan?.installments || []
   const firstPlanPayment = paymentPlan?.firstPayment || null
   const scheduledPlanCount = planInstallments.length
@@ -3389,11 +3407,11 @@ export const PublicPayment: React.FC = () => {
             )}
             <div>
               <span className={styles.eyebrow}>Ristak Payments</span>
-              <strong>{receiptSettings?.businessName || 'Pago seguro'}</strong>
+              <strong>{receiptSettings?.businessName || (isOfflinePayment ? 'Aviso de pago' : 'Pago seguro')}</strong>
             </div>
           </div>
           <Badge variant={status.variant} className={styles.statusBadge}>
-            {isPaid ? <CheckCircle2 size={15} /> : <ShieldCheck size={15} />}
+            {isPaid ? <CheckCircle2 size={15} /> : isOfflinePayment ? <Bell size={15} /> : <ShieldCheck size={15} />}
             {status.label}
           </Badge>
         </header>
@@ -3433,7 +3451,7 @@ export const PublicPayment: React.FC = () => {
         <section className={[styles.checkoutLayout, isRebillPayment ? styles.rebillCheckoutLayout : ''].filter(Boolean).join(' ')}>
           <section className={styles.summaryPane} aria-label="Resumen del pago">
             <div className={styles.summaryIntro}>
-              <span className={styles.eyebrow}>{isPaid ? 'Comprobante listo' : hasPlanSummary ? 'Plan de pagos' : 'Checkout seguro'}</span>
+              <span className={styles.eyebrow}>{isPaid ? 'Comprobante listo' : isOfflinePayment ? 'Aviso de pago' : hasPlanSummary ? 'Plan de pagos' : 'Checkout seguro'}</span>
               <h1 className={styles.title}>{headline}</h1>
               <p className={styles.subtitle}>{description}</p>
             </div>
@@ -3601,21 +3619,27 @@ export const PublicPayment: React.FC = () => {
           <section className={[styles.payPanel, isRebillPayment ? styles.rebillPayPanel : ''].filter(Boolean).join(' ')} aria-label="Formulario de pago">
             <div className={styles.payHeader}>
               <div className={styles.payHeaderTop}>
-                {isRebillPayment ? (
+                {isOfflinePayment ? (
+                  <span className={styles.payHeaderIcon} aria-hidden="true">
+                    <Bell size={18} />
+                  </span>
+                ) : isRebillPayment ? (
                   <span className={styles.payHeaderIcon} aria-hidden="true">
                     <CreditCard size={18} />
                   </span>
                 ) : (
-                  <PaymentPlatformLogo platform={providerLogo} size="lg" decorative />
+                  providerLogo && <PaymentPlatformLogo platform={providerLogo} size="lg" decorative />
                 )}
                 <div>
-                  <span className={styles.payKicker}>{isPaid ? 'Estado final' : isScheduled ? 'Aún no disponible' : 'Método de pago'}</span>
-                  <h2>{isPaid ? (isSubscriptionStart ? 'Suscripción autorizada' : 'Pago confirmado') : isScheduled ? 'Pago programado' : isSubscriptionStart ? 'Autorizar suscripción' : isCardSetupPlan ? 'Autorizar tarjeta' : 'Pagar con tarjeta'}</h2>
+                  <span className={styles.payKicker}>{isPaid ? 'Estado final' : isOfflinePayment ? 'Pago fuera de Ristak' : isScheduled ? 'Aún no disponible' : 'Método de pago'}</span>
+                  <h2>{isPaid ? (isSubscriptionStart ? 'Suscripción autorizada' : 'Pago confirmado') : isOfflinePayment ? 'Realiza tu pago' : isScheduled ? 'Pago programado' : isSubscriptionStart ? 'Autorizar suscripción' : isCardSetupPlan ? 'Autorizar tarjeta' : 'Pagar con tarjeta'}</h2>
                 </div>
               </div>
               <p>
                 {isPaid
                   ? (isSubscriptionStart ? 'Esta suscripción ya quedó autorizada.' : 'Este pago ya aparece como pagado en Ristak.')
+                  : isOfflinePayment
+                    ? 'Haz la transferencia o el pago acordado directamente con el negocio. Ellos lo registrarán en Ristak cuando lo reciban.'
                   : isScheduled
                     ? 'Este cobro todavía no está disponible. Ristak habilitará el checkout cuando llegue la fecha programada.'
                   : isMercadoPagoPayment
@@ -3651,6 +3675,11 @@ export const PublicPayment: React.FC = () => {
               <p className={`${styles.message} ${styles.messageError}`}>
                 <AlertCircle size={16} />
                 <span>Este link ya no está disponible para cobrar.</span>
+              </p>
+            ) : isOfflinePayment ? (
+              <p className={styles.message}>
+                <Info size={16} />
+                <span>Este aviso sólo recuerda el vencimiento y no procesa cobros. Si ya pagaste, no necesitas hacer nada más aquí.</span>
               </p>
             ) : isScheduled ? (
               <p className={styles.message}>
@@ -3779,9 +3808,9 @@ export const PublicPayment: React.FC = () => {
                 <strong>{formatDate(payment.dueDate, publicTimezone)}</strong>
               </div>
               <div>
-                <span>Pasarela</span>
+                <span>{isOfflinePayment ? 'Modalidad' : 'Pasarela'}</span>
                 <strong className={styles.providerValue}>
-                  <PaymentPlatformLogo platform={providerLogo} size="sm" decorative />
+                  {providerLogo ? <PaymentPlatformLogo platform={providerLogo} size="sm" decorative /> : <Bell size={16} />}
                   <span>{providerLabel} · {paymentModeLabel}</span>
                 </strong>
               </div>

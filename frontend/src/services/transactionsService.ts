@@ -13,7 +13,7 @@ export interface Transaction {
   phone?: string
   amount: number
   currency?: string
-  method: 'card' | 'transfer' | 'cash' | 'paypal' | 'other' | 'bank_transfer' | 'check' | 'payment_link' | 'direct_card' | 'saved_card' | 'stripe' | 'stripe_saved_card' | 'stripe_link' | 'stripe_payment_link' | 'conekta' | 'conekta_saved_card' | 'conekta_subscription' | 'mercadopago' | 'mercadopago_checkout' | 'mercadopago_subscription' | 'clip' | 'clip_card' | 'clip_link' | 'clip_payment_link' | 'rebill' | 'rebill_checkout'
+  method: 'card' | 'transfer' | 'cash' | 'paypal' | 'other' | 'offline' | 'bank_transfer' | 'check' | 'payment_link' | 'direct_card' | 'saved_card' | 'stripe' | 'stripe_saved_card' | 'stripe_link' | 'stripe_payment_link' | 'conekta' | 'conekta_saved_card' | 'conekta_subscription' | 'mercadopago' | 'mercadopago_checkout' | 'mercadopago_subscription' | 'clip' | 'clip_card' | 'clip_link' | 'clip_payment_link' | 'rebill' | 'rebill_checkout'
   status: 'draft' | 'sent' | 'paid' | 'pending' | 'pending_review' | 'rejected' | 'overdue' | 'partial' | 'void' | 'refunded' | 'failed' | 'deleted'
   paymentMode?: 'live' | 'test'
   paymentProvider?: 'manual' | 'highlevel' | 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill' | 'gigstack' | string

@@ -25,7 +25,14 @@ import {
   sendPaymentAutomationMessage
 } from '../src/services/paymentAutomationsService.js'
 import {
+  createOfflinePaymentPlan,
+  getPublicOfflinePayment,
+  syncOfflinePaymentPlanFromLocalPayment,
+  updateOfflinePaymentPlanSchedule
+} from '../src/services/offlinePaymentPlanService.js'
+import {
   ACCOUNT_TIMEZONE_CONFIG_KEY,
+  businessTodayDateOnly,
   invalidateTimezoneCache
 } from '../src/utils/dateUtils.js'
 
@@ -1208,5 +1215,157 @@ test('consulta recordatorios sin aplicar TRIM a due_date timestamp', async () =>
     assert.ok(reminderQuery)
     assert.match(reminderQuery, /due_date IS NOT NULL/)
     assert.doesNotMatch(reminderQuery, /TRIM\s*\(\s*due_date\s*\)/i)
+  })
+})
+
+test('plan offline avisa justo al vencimiento, marca enviado y se completa al registrar los pagos', async () => {
+  await snapshotAppConfig(['account_currency'], async () => {
+    await setAppConfig('account_currency', 'USD')
+    await withAccountTimezoneForTest('America/Ciudad_Juarez', async () => {
+      await withEmailCapture(async (captures) => {
+        const suffix = randomUUID().slice(0, 10)
+        const contactId = `contact_offline_plan_${suffix}`
+        let flowId = ''
+
+        try {
+          await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+            paymentMode: 'live',
+            receipt: {
+              businessName: 'Negocio Offline'
+            },
+            automations: {
+              remindersEnabled: true,
+              reminderDaysBefore: 9,
+              reminderChannel: 'email',
+              reminderContentMode: 'template',
+              failedPaymentEnabled: false
+            }
+          })
+          await db.run(
+            `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+             VALUES (?, 'Cliente Offline', ?, '+526561234567', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            [contactId, `${contactId}@example.test`]
+          )
+
+          await assert.rejects(
+            createOfflinePaymentPlan({
+              contact: { id: contactId },
+              totalAmount: 125,
+              title: 'Plan que no debe fingir un cobro',
+              firstPayment: {
+                enabled: true,
+                amount: 25,
+                date: businessTodayDateOnly('America/Ciudad_Juarez'),
+                method: 'card'
+              },
+              remainingPayments: [{ amount: 100, dueDate: '2099-05-10' }]
+            }),
+            /no puede registrar una tarjeta que no cobró/i
+          )
+
+          const result = await createOfflinePaymentPlan({
+            contact: {
+              id: contactId,
+              name: 'Cliente Offline',
+              email: `${contactId}@example.test`,
+              phone: '+526561234567'
+            },
+            totalAmount: 125,
+            currency: 'MXN',
+            title: 'Plan por transferencia',
+            description: 'Plan por transferencia',
+            firstPayment: { enabled: false, amount: 0, method: 'none' },
+            remainingFrequency: 'custom',
+            remainingPayments: [
+              { amount: 50, dueDate: '2099-05-10', frequency: 'custom' },
+              { amount: 75, dueDate: '2099-05-11', frequency: 'custom' }
+            ]
+          }, { baseUrl: PUBLIC_BASE_URL })
+          flowId = result.flowId
+
+          assert.equal(result.reminderChannel, 'email')
+          assert.equal(result.scheduledPayments.length, 2)
+          const payments = await db.all(
+            'SELECT id, amount, currency, status, due_date, payment_provider FROM payments WHERE metadata_json LIKE ? ORDER BY due_date',
+            [`%${flowId}%`]
+          )
+          assert.equal(payments.length, 2)
+          assert.deepEqual(payments.map((payment) => payment.currency), ['USD', 'USD'])
+          assert.deepEqual(payments.map((payment) => payment.status), ['pending', 'pending'])
+
+          const dueToday = payments[0]
+          const dueTomorrow = payments[1]
+          const automationResults = await processDuePaymentAutomations({
+            now: new Date('2099-05-10T18:00:00.000Z'),
+            limit: 10,
+            paymentIds: [dueToday.id, dueTomorrow.id]
+          })
+          assert.equal(automationResults.filter((item) => item.sent).length, 1)
+          assert.equal(captures.length, 1)
+          assert.match(captures[0].subject, /Recordatorio de pago/)
+          assert.match(captures[0].html, /no cobra ninguna tarjeta/)
+
+          const sentPayment = await db.get('SELECT status, sent_at FROM payments WHERE id = ?', [dueToday.id])
+          const futurePayment = await db.get('SELECT status FROM payments WHERE id = ?', [dueTomorrow.id])
+          const sentInstallment = await db.get('SELECT status FROM installment_payments WHERE payment_id = ?', [dueToday.id])
+          assert.equal(sentPayment.status, 'sent')
+          assert.ok(sentPayment.sent_at)
+          assert.equal(sentInstallment.status, 'sent')
+          assert.equal(futurePayment.status, 'pending')
+
+          await assert.rejects(
+            updateOfflinePaymentPlanSchedule(flowId, {
+              title: 'Plan por transferencia',
+              remainingFrequency: 'custom',
+              installments: [{
+                id: result.scheduledPayments[1].installmentId,
+                amount: dueTomorrow.amount,
+                dueDate: dueTomorrow.due_date
+              }]
+            }),
+            (error) => error?.status === 409 && /enviados o registrados/i.test(error.message)
+          )
+
+          await db.run("UPDATE payment_plans SET updated_at = '2000-01-01 00:00:00' WHERE id = ?", [flowId])
+          const publicPayment = await getPublicOfflinePayment(result.scheduledPayments[0].publicPaymentId, {
+            baseUrl: PUBLIC_BASE_URL
+          })
+          const publicMirror = await db.get('SELECT updated_at FROM payment_plans WHERE id = ?', [flowId])
+          assert.equal(publicPayment.provider, 'offline')
+          assert.equal(publicPayment.status, 'sent')
+          assert.equal(publicPayment.paymentPlan.reminderChannel, 'email')
+          assert.equal(publicMirror.updated_at, '2000-01-01 00:00:00')
+
+          await processDuePaymentAutomations({
+            now: new Date('2099-05-10T20:00:00.000Z'),
+            limit: 10,
+            paymentIds: [dueToday.id, dueTomorrow.id]
+          })
+          assert.equal(captures.length, 1)
+
+          for (const payment of payments) {
+            await db.run("UPDATE payments SET status = 'paid', paid_at = CURRENT_TIMESTAMP WHERE id = ?", [payment.id])
+            await syncOfflinePaymentPlanFromLocalPayment(payment.id)
+          }
+          const mirror = await db.get('SELECT status FROM payment_plans WHERE id = ?', [flowId])
+          assert.equal(mirror.status, 'completed')
+        } finally {
+          if (flowId) {
+            const paymentRows = await db.all('SELECT id FROM payments WHERE metadata_json LIKE ?', [`%${flowId}%`])
+            const paymentIds = paymentRows.map((row) => row.id)
+            if (paymentIds.length) {
+              const placeholders = paymentIds.map(() => '?').join(', ')
+              await db.run(`DELETE FROM email_messages WHERE contact_id = ?`, [contactId])
+              await db.run(`DELETE FROM payment_automation_dispatches WHERE payment_id IN (${placeholders})`, paymentIds)
+              await db.run(`DELETE FROM payments WHERE id IN (${placeholders})`, paymentIds)
+            }
+            await db.run('DELETE FROM payment_plans WHERE id = ?', [flowId])
+            await db.run('DELETE FROM installment_payments WHERE flow_id = ?', [flowId])
+            await db.run('DELETE FROM payment_flows WHERE id = ?', [flowId])
+          }
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+        }
+      })
+    })
   })
 })

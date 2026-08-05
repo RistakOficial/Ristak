@@ -4520,10 +4520,12 @@ sola lista numerada (`Pago 1`, `Pago 2`, `Pago 3`, etc.); `Pago 1` contiene el
 metodo y momento de cobro. El reparto automatico ocurre al capturar el monto
 total o cambiar la cantidad de pagos mientras no se hayan editado montos
 manualmente; en cuanto el usuario cambia un monto de una cajita, Ristak deja de
-mover los demas hasta que el usuario pulse `Distribuir`. Al continuar, el ultimo paso solo resuelve la
-pasarela o tarjeta: si el primer pago es efectivo o transferencia, pide pasarela
-para enviar domiciliacion; si el primer pago es tarjeta, pide pasarela y tarjeta
-guardada de esa pasarela. Los links de pago vuelven al chat del contacto con
+mover los demas hasta que el usuario pulse `Distribuir`. Al continuar, el ultimo
+paso resuelve como se atenderan los vencimientos: puede elegir una pasarela o
+tarjeta para cobro domiciliado, o el modo offline para enviar recordatorios el
+dia de cada vencimiento y registrar despues el pago manualmente. Si el primer
+pago es tarjeta, la ruta domiciliada pide pasarela y tarjeta guardada de esa
+pasarela. Los links de pago vuelven al chat del contacto con
 previsualizacion lista y caja de texto vacia; al enviarse, el globo del chat
 intenta cargar la previsualizacion real de la URL con metadata Open Graph
 (`og:image`, titulo y descripcion) en vez de pintar un componente generico de la
@@ -4756,6 +4758,19 @@ Esta sección y todo su despacho en segundo plano requieren
   estan dentro de la ventana, Ristak solo envia el recordatorio de la siguiente
   parcialidad abierta; los pagos unicos y pagos de otros flujos siguen
   evaluandose de forma independiente.
+- Los planes con `payment_provider='offline'` son la excepcion intencional a
+  `reminderDaysBefore`: cada parcialidad se prepara exactamente en su fecha de
+  vencimiento segun la zona horaria del negocio. Usan el canal configurado en
+  `payments_settings.automations.reminderChannel` y requieren que recordatorios
+  este activo y que el contacto tenga el correo o telefono necesario para ese
+  canal. La parcialidad cambia de `pending` a `sent` solo cuando al menos un canal
+  confirma el despacho; si todos fallan, conserva `pending` para que el siguiente
+  barrido reintente sin inventar una entrega.
+- La pagina publica de un pago offline funciona como aviso o invoice: muestra el
+  concepto, importe, vencimiento y datos publicos de pago configurados, pero deja
+  claro que Ristak no cargara una tarjeta. Cuando el negocio confirma la
+  transferencia, efectivo u otro medio externo con **Marcar como pagado**, el pago,
+  su parcialidad y el avance del plan se actualizan juntos.
 - Los avisos de cobro fallido solo se disparan para fallos recientes: despues del
   `failedPaymentDelayHours` configurado y dentro de una tolerancia maxima de 24h
   adicionales. Esto evita revivir pagos historicos cuando se prende, repara o
@@ -5149,11 +5164,24 @@ recordatorio queda fuera de la cola sin error visible.
 
 ### Planes de pago locales
 
-En Stripe, Conekta, Rebill y Mercado Pago, el calendario editable muestra y guarda cada
-pago como `Pago N/M`, donde `N` es la posicion visible del pago y `M` es el total
-actual del plan. Si el calendario se edita, por ejemplo de 3 a 6 pagos, Ristak
-actualiza tambien los `title`/`description` de pagos existentes de `1/3` a `1/6`
-sin cambiar importes, fechas ni estados ya registrados.
+En Stripe, Conekta, Rebill, Mercado Pago y offline, el calendario editable
+muestra y guarda cada pago como `Pago N/M`, donde `N` es la posicion visible del
+pago y `M` es el total actual del plan. Si el calendario se edita, por ejemplo de
+3 a 6 pagos, Ristak actualiza tambien los `title`/`description` de pagos
+existentes de `1/3` a `1/6` sin cambiar importes, fechas ni estados ya
+registrados. Las parcialidades offline ya enviadas se consideran auditables y no
+pueden cambiar de importe o fecha; pausar detiene recordatorios futuros y
+cancelar o eliminar conserva los pagos enviados o pagados para no borrar el
+historial.
+
+El alta offline se guarda completamente en Ristak: no requiere una pasarela
+conectada, no crea cargos externos y no agrega secrets ni variables de entorno.
+La moneda del payload se reemplaza por `account_currency`, el primer pago
+inmediato se registra como recibido solo si su metodo es efectivo, transferencia
+o deposito; nunca se acepta `card` porque Ristak no debe fingir un cobro que no
+procesó. Los vencimientos posteriores nacen en `pending`. El mismo cron de
+sistema `payment_automations` que procesa los demas avisos recoge estas filas; no
+es un cron de integracion y no depende de conectar o desconectar un proveedor.
 
 Los cobros automaticos de planes con tarjeta guardada deben reclamar localmente
 la cuota o primer pago a `processing` antes de llamar a la pasarela. Stripe,

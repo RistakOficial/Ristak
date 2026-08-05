@@ -19,6 +19,10 @@ import { getGHLClient } from '../services/ghlClient.js'
 import { getHighLevelConfig } from '../config/database.js'
 import { syncAllInvoices, syncLocalPaymentsToHighLevel } from '../services/invoicesSyncService.js'
 import { syncStripePaymentPlanFromLocalPayment } from '../services/stripePaymentService.js'
+import {
+  isOfflinePaymentPlanPayment,
+  syncOfflinePaymentPlanFromLocalPayment
+} from '../services/offlinePaymentPlanService.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { triggerMetaPaymentPurchaseEvent } from '../services/metaConversionEventsService.js'
@@ -277,11 +281,22 @@ const buildTransactionAutomationPayload = (transaction = {}, req, overrides = {}
 }
 
 const isStripeBackedTransaction = (transaction = {}) => {
+  if (isOfflinePaymentPlanPayment(transaction)) return false
   if (cleanString(transaction.payment_provider).toLowerCase() === 'stripe') return true
   if (cleanString(transaction.payment_method).toLowerCase().startsWith('stripe')) return true
   if (cleanString(transaction.public_payment_id) || cleanString(transaction.payment_url) || cleanString(transaction.stripe_payment_intent_id)) return true
   const metadata = parseJson(transaction.metadata_json, {})
   return Boolean(metadata?.paymentPlan?.flowId)
+}
+
+const syncPaymentPlanFromLocalTransaction = async (transaction, paymentId) => {
+  if (isOfflinePaymentPlanPayment(transaction)) {
+    return syncOfflinePaymentPlanFromLocalPayment(paymentId)
+  }
+  if (isStripeBackedTransaction(transaction)) {
+    return syncStripePaymentPlanFromLocalPayment(paymentId)
+  }
+  return null
 }
 
 const isStripePlanAuthorizationTransaction = (transaction = {}) => {
@@ -1697,9 +1712,7 @@ export const updateTransaction = async (req, res) => {
       ]
     )
 
-    if (isStripeBackedTransaction(transaction)) {
-      await syncStripePaymentPlanFromLocalPayment(id)
-    }
+    await syncPaymentPlanFromLocalTransaction(transaction, id)
 
     const statsContacts = new Set([transaction.contact_id, finalContactId].filter(Boolean))
     await Promise.all([...statsContacts].map(contact => updateSingleContactStats(contact)))
@@ -1814,9 +1827,7 @@ export const deleteTransaction = async (req, res) => {
       sendPaymentNotification({ ...notificationPayment, status: archiveStatus, previousStatus: transaction.status || '' }).catch((pushError) => {
         logger.warn(`No se pudo enviar aviso de pago ${id}: ${pushError.message}`)
       })
-      if (isStripeBackedTransaction(transaction)) {
-        await syncStripePaymentPlanFromLocalPayment(id)
-      }
+      await syncPaymentPlanFromLocalTransaction(transaction, id)
     } else {
       await db.run('DELETE FROM payments WHERE id = ?', [id])
     }
@@ -1976,9 +1987,7 @@ export const voidTransaction = async (req, res) => {
     sendPaymentNotification({ ...notificationPayment, status: 'void', previousStatus: transaction.status || '' }).catch((pushError) => {
       logger.warn(`No se pudo enviar aviso de pago ${id}: ${pushError.message}`)
     })
-    if (isStripeBackedTransaction(transaction)) {
-      await syncStripePaymentPlanFromLocalPayment(id)
-    }
+    await syncPaymentPlanFromLocalTransaction(transaction, id)
     if (transaction.contact_id) {
       await updateSingleContactStats(transaction.contact_id)
       import('../services/automationEngine.js')
@@ -2230,12 +2239,14 @@ export const recordPayment = async (req, res) => {
     const paymentMode = hasHighLevelInvoice
       ? (liveMode ? 'live' : 'test')
       : normalizePaymentMode(transaction.payment_mode)
+    const accountCurrency = cleanString(await getAccountCurrency()).toUpperCase() || 'MXN'
+    const transactionCurrency = cleanString(transaction.currency).toUpperCase() || accountCurrency
 
     if (hasHighLevelInvoice) {
       const ghlClient = await getGHLClient()
       await ghlClient.recordPayment(transaction.ghl_invoice_id, {
         amount: amount || transaction.amount,
-        currency: transaction.currency || 'MXN',
+        currency: transactionCurrency,
         fulfilledAt: resolvedPaymentDate,
         mode: paymentMethod || 'cash',
         note: paymentMode === 'test' ? 'Pago registrado manualmente\nModo: prueba' : 'Pago registrado manualmente',
@@ -2245,23 +2256,21 @@ export const recordPayment = async (req, res) => {
 
     // Actualizar estado en BD
     await db.run(
-      'UPDATE payments SET status = ?, amount = ?, payment_method = ?, payment_mode = ?, date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      ['paid', amount || transaction.amount, paymentMethod || transaction.payment_method, paymentMode, resolvedPaymentDate, id]
+      'UPDATE payments SET status = ?, amount = ?, payment_method = ?, payment_mode = ?, date = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      ['paid', amount || transaction.amount, paymentMethod || transaction.payment_method, paymentMode, resolvedPaymentDate, resolvedPaymentDate, id]
     )
-    if (isStripeBackedTransaction(transaction)) {
-      await syncStripePaymentPlanFromLocalPayment(id)
-    }
+    await syncPaymentPlanFromLocalTransaction(transaction, id)
     if (transaction.contact_id) {
       await updateSingleContactStats(transaction.contact_id)
       await triggerMetaPaymentPurchaseEvent(transaction.contact_id, {
         id,
         amount: amount || transaction.amount,
-        currency: transaction.currency || 'MXN',
+        currency: transactionCurrency,
         paymentMode
       })
     }
 
-    if (!transaction.ghl_invoice_id && !isStripeBackedTransaction(transaction)) {
+    if (!transaction.ghl_invoice_id && !isStripeBackedTransaction(transaction) && !isOfflinePaymentPlanPayment(transaction)) {
       try {
         const localExport = await syncLocalPaymentsToHighLevel({ paymentId: id, limit: 1 })
         if (localExport.exported > 0) {

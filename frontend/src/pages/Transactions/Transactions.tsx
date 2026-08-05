@@ -36,7 +36,8 @@ import {
   Copy,
   ExternalLink,
   FileArchive,
-  FileText
+  FileText,
+  Bell
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -208,19 +209,21 @@ const isStripePaymentPlan = (plan: PaymentPlan) => plan.source === 'stripe' || p
 const isConektaPaymentPlan = (plan: PaymentPlan) => plan.source === 'conekta' || plan.raw?.provider === 'conekta' || plan.raw?.schedule?.provider === 'conekta'
 const isMercadoPagoPaymentPlan = (plan: PaymentPlan) => plan.source === 'mercadopago' || plan.raw?.provider === 'mercadopago' || plan.raw?.schedule?.provider === 'mercadopago'
 const isRebillPaymentPlan = (plan: PaymentPlan) => plan.source === 'rebill' || plan.raw?.provider === 'rebill' || plan.raw?.schedule?.provider === 'rebill'
-const isLocalCheckoutPaymentPlan = (plan: PaymentPlan) => isStripePaymentPlan(plan) || isConektaPaymentPlan(plan) || isMercadoPagoPaymentPlan(plan) || isRebillPaymentPlan(plan)
-type LocalCheckoutPlanProvider = 'stripe' | 'conekta' | 'mercadopago' | 'rebill'
+const isOfflinePaymentPlan = (plan: PaymentPlan) => plan.source === 'offline' || plan.raw?.provider === 'offline' || plan.raw?.schedule?.provider === 'offline'
+const isLocalCheckoutPaymentPlan = (plan: PaymentPlan) => isStripePaymentPlan(plan) || isConektaPaymentPlan(plan) || isMercadoPagoPaymentPlan(plan) || isRebillPaymentPlan(plan) || isOfflinePaymentPlan(plan)
+type LocalCheckoutPlanProvider = 'stripe' | 'conekta' | 'mercadopago' | 'rebill' | 'offline'
 const getLocalCheckoutPlanProvider = (plan: PaymentPlan | null): LocalCheckoutPlanProvider => (
-  plan && isRebillPaymentPlan(plan) ? 'rebill' : plan && isMercadoPagoPaymentPlan(plan) ? 'mercadopago' : plan && isConektaPaymentPlan(plan) ? 'conekta' : 'stripe'
+  plan && isOfflinePaymentPlan(plan) ? 'offline' : plan && isRebillPaymentPlan(plan) ? 'rebill' : plan && isMercadoPagoPaymentPlan(plan) ? 'mercadopago' : plan && isConektaPaymentPlan(plan) ? 'conekta' : 'stripe'
 )
 const getPaymentPlanProviderLabel = (plan: PaymentPlan) => {
+  if (isOfflinePaymentPlan(plan)) return 'Pago offline'
   if (isRebillPaymentPlan(plan)) return 'Rebill'
   if (isMercadoPagoPaymentPlan(plan)) return 'Mercado Pago'
   if (isConektaPaymentPlan(plan)) return 'Conekta'
   if (isStripePaymentPlan(plan)) return 'Stripe'
   return 'HighLevel'
 }
-const STRIPE_PLAN_LOCKED_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'cancelled', 'canceled', 'registered'])
+const STRIPE_PLAN_LOCKED_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'cancelled', 'canceled', 'registered', 'sent'])
 const STRIPE_PLAN_PAYMENT_METHOD_OPTIONS = [
   { value: 'stripe_auto', label: 'Tarjeta automática' },
   { value: 'bank_transfer', label: 'Transferencia' },
@@ -252,6 +255,9 @@ const REBILL_PLAN_PAYMENT_METHOD_OPTIONS = [
   { value: 'deposit', label: 'Depósito' },
   { value: 'check', label: 'Cheque' },
   { value: 'other', label: 'Otro' }
+]
+const OFFLINE_PLAN_PAYMENT_METHOD_OPTIONS = [
+  { value: 'offline', label: 'Recordatorio offline' }
 ]
 const OFFLINE_PLAN_PAYMENT_METHODS = new Set(['cash', 'bank_transfer', 'transfer', 'deposit', 'check', 'other', 'manual', 'offline'])
 const STRIPE_PLAN_FREQUENCY_OPTIONS = [
@@ -358,6 +364,7 @@ const getEditableRebillMethod = (method?: string | null) => {
 }
 
 const getEditablePlanMethod = (method: string | null | undefined, provider: LocalCheckoutPlanProvider) => {
+  if (provider === 'offline') return 'offline'
   if (provider === 'rebill') return getEditableRebillMethod(method)
   if (provider === 'mercadopago') return getEditableMercadoPagoMethod(method)
   if (provider === 'conekta') return getEditableConektaMethod(method)
@@ -365,6 +372,7 @@ const getEditablePlanMethod = (method: string | null | undefined, provider: Loca
 }
 
 const getPlanMethodOptions = (provider: LocalCheckoutPlanProvider) => {
+  if (provider === 'offline') return OFFLINE_PLAN_PAYMENT_METHOD_OPTIONS
   if (provider === 'rebill') return REBILL_PLAN_PAYMENT_METHOD_OPTIONS
   if (provider === 'mercadopago') return MERCADOPAGO_PLAN_PAYMENT_METHOD_OPTIONS
   if (provider === 'conekta') return CONEKTA_PLAN_PAYMENT_METHOD_OPTIONS
@@ -372,6 +380,7 @@ const getPlanMethodOptions = (provider: LocalCheckoutPlanProvider) => {
 }
 
 const getDefaultPlanMethod = (provider: LocalCheckoutPlanProvider) => {
+  if (provider === 'offline') return 'offline'
   if (provider === 'rebill') return 'rebill_auto'
   if (provider === 'mercadopago') return 'mercadopago'
   if (provider === 'conekta') return 'conekta_auto'
@@ -400,10 +409,11 @@ const getStripePlanPaymentStatusBadgeConfig = (status?: string | null): { label:
     return { label: 'Pagado', variant: 'success' }
   }
   if (normalized === 'scheduled') return { label: 'Programado', variant: 'info' }
-  if (['waiting_card_authorization', 'pending_card', 'pending_card_authorization', 'link_generated', 'sent'].includes(normalized)) {
+  if (normalized === 'sent') return { label: 'Enviado', variant: 'info' }
+  if (['waiting_card_authorization', 'pending_card', 'pending_card_authorization', 'link_generated'].includes(normalized)) {
     return { label: 'Pendiente de tarjeta', variant: 'warning' }
   }
-  if (['pending', 'draft', 'sent'].includes(normalized)) return { label: 'Pendiente', variant: 'warning' }
+  if (['pending', 'draft'].includes(normalized)) return { label: 'Pendiente', variant: 'warning' }
   if (['failed', 'requires_action', 'overdue'].includes(normalized)) return { label: 'Revisar', variant: 'error' }
   if (['cancelled', 'canceled', 'void', 'deleted'].includes(normalized)) return { label: 'Cancelado', variant: 'neutral' }
   return { label: normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'Pendiente', variant: 'neutral' }
@@ -1872,7 +1882,9 @@ export const Transactions: React.FC = () => {
       const providerLabel = getPaymentPlanProviderLabel(plan)
       showConfirm(
         'Cancelar plan de pago',
-        `¿Seguro que quieres cancelar ${planName}? ${providerLabel} dejará de cobrar este plan. Esta acción no se puede deshacer.`,
+        isOfflinePaymentPlan(plan)
+          ? `¿Seguro que quieres cancelar ${planName}? Ristak dejará de enviar sus recordatorios. Esta acción no se puede deshacer.`
+          : `¿Seguro que quieres cancelar ${planName}? ${providerLabel} dejará de cobrar este plan. Esta acción no se puede deshacer.`,
         () => runPaymentPlanAction(plan, action, 'Plan cancelado', 'El plan quedó cancelado y se actualizó la lista.'),
         'Cancelar plan',
         'Cancelar',
@@ -2665,6 +2677,7 @@ export const Transactions: React.FC = () => {
       case 'cash': return <Banknote size={16} />
       case 'deposit': return <Banknote size={16} />
       case 'check': return <Receipt size={16} />
+      case 'offline': return <Bell size={16} />
       case 'wallet':
       case 'account_money':
       case 'paypal': return <DollarSign size={16} />
@@ -2713,6 +2726,7 @@ export const Transactions: React.FC = () => {
       case 'cash': return 'Efectivo'
       case 'deposit': return 'Depósito'
       case 'check': return 'Cheque'
+      case 'offline': return 'Pago offline'
       case 'paypal': return 'PayPal'
       case 'wallet': return 'Billetera digital'
       case 'account_money': return 'Saldo Mercado Pago'
@@ -2739,6 +2753,7 @@ export const Transactions: React.FC = () => {
     if (provider === 'mercadopago') return 'Mercado Pago'
     if (provider === 'clip') return 'CLIP'
     if (provider === 'rebill') return 'Rebill'
+    if (provider === 'offline') return 'Pago offline'
     if (provider === 'gigstack') return 'Gigstack'
     if (provider === 'highlevel' || provider === 'ghl' || provider === 'gohighlevel') return 'HighLevel'
     return 'Ristak'
@@ -3449,7 +3464,7 @@ export const Transactions: React.FC = () => {
         </div>
 
         <div className={styles.stripePlanAddRow}>
-          {!stripePlanFirstPaymentDraft && (
+          {provider !== 'offline' && !stripePlanFirstPaymentDraft && (
             <Button type="button" variant="secondary" size="sm" onClick={addStripeFirstPaymentDraft}>
               <Plus size={16} />
               Agregar primer pago

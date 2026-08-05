@@ -20,6 +20,7 @@ import {
   Link as LinkIcon,
   Check,
   AlertCircle,
+  Bell,
   Send,
   Percent,
   Plus,
@@ -47,11 +48,13 @@ import { clipPaymentsService } from '@/services/clipPaymentsService'
 import { mercadoPagoPaymentsService } from '@/services/mercadoPagoPaymentsService'
 import { rebillPaymentsService, type RebillSavedPaymentSource } from '@/services/rebillPaymentsService'
 import { stripePaymentsService, type StripeSavedPaymentMethod } from '@/services/stripePaymentsService'
+import { offlinePaymentsService } from '@/services/offlinePaymentsService'
 import { suppressContactAutofill } from '@/utils/browserAutofill'
 import { resolveStableRequestIntent, type StableRequestIntent } from '@/utils/requestIntent'
 import {
   defaultPaymentSettings,
   paymentSettingsService,
+  type PaymentAutomationSettings,
   type PaymentTaxSettings
 } from '@/services/paymentSettingsService'
 import {
@@ -141,7 +144,7 @@ const calculateConfiguredTax = (
   }
 }
 
-type PaymentOption = 'send' | 'manual' | 'stripe' | 'stripe_saved_card' | 'mercadopago' | 'conekta' | 'conekta_saved_card' | 'clip' | 'rebill' | 'rebill_saved_card'
+type PaymentOption = 'send' | 'manual' | 'offline' | 'stripe' | 'stripe_saved_card' | 'mercadopago' | 'conekta' | 'conekta_saved_card' | 'clip' | 'rebill' | 'rebill_saved_card'
 type PaymentMode = 'single' | 'partial'
 type SinglePaymentAction = 'payment_link' | 'saved_card' | 'manual'
 type SinglePaymentOptionsStage = 'method' | 'saved_cards' | 'gateway' | 'gateway_config' | 'confirm'
@@ -768,6 +771,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [includeIVA, setIncludeIVA] = useState(false)
   const [taxCalculationMode, setTaxCalculationMode] = useState<PaymentTaxSettings['calculationMode']>(defaultPaymentSettings.taxes.calculationMode)
   const [paymentTaxes, setPaymentTaxes] = useState<PaymentTaxSettings>(defaultPaymentSettings.taxes)
+  const [paymentAutomations, setPaymentAutomations] = useState<PaymentAutomationSettings>(defaultPaymentSettings.automations)
 
   // Partial payments
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('single')
@@ -902,8 +906,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const canUsePaymentLinks = hasPaymentLinksAccess(user)
   const canUsePaymentPlans = hasPaymentPlansAccess(user)
   const canUseSavedPaymentMethods = hasSavedPaymentMethodsAccess(user)
-  const hasPaymentPlanProviders = highLevelConnected || stripeConnected || conektaConnected || rebillConnected
-  const canChoosePaymentMode = canUsePaymentPlans && hasPaymentPlanProviders && (chargeType === 'direct' || Boolean(selectedProduct && selectedPrice))
+  const canChoosePaymentMode = canUsePaymentPlans && (chargeType === 'direct' || Boolean(selectedProduct && selectedPrice))
   const activePaymentMode: PaymentMode = lockPaymentMode
     ? paymentMode
     : canChoosePaymentMode
@@ -957,6 +960,32 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     !firstPaymentEnabled || isOfflineFirstPaymentMethod(firstPaymentMethod)
   )
   const sendMethodOptions = useMemo(() => getSendMethodOptions(selectedContact), [selectedContact?.email, selectedContact?.phone])
+  const offlineReminderChannel = paymentAutomations.reminderChannel || 'whatsapp'
+  const offlineReminderChannelLabel = offlineReminderChannel === 'both'
+    ? 'WhatsApp y correo'
+    : offlineReminderChannel === 'email'
+      ? 'correo'
+      : offlineReminderChannel === 'whatsapp_qr'
+        ? 'WhatsApp QR'
+        : 'WhatsApp'
+  const offlineReminderContactReady = offlineReminderChannel === 'email'
+    ? Boolean(selectedContact?.email)
+    : offlineReminderChannel === 'both'
+      ? Boolean(selectedContact?.email || selectedContact?.phone)
+      : Boolean(selectedContact?.phone)
+  const offlineFirstPaymentReady = !firstPaymentActive || isOfflineFirstPaymentMethod(firstPaymentMethod)
+  const offlineRemindersReady = paymentAutomations.remindersEnabled && offlineReminderContactReady && offlineFirstPaymentReady
+  const offlineReminderUnavailableReason = !paymentAutomations.remindersEnabled
+    ? 'Activa Recordatorios en Ajustes > Pagos.'
+    : !offlineReminderContactReady
+      ? offlineReminderChannel === 'email'
+        ? `Este ${customerLowerLabel} necesita correo.`
+        : offlineReminderChannel === 'both'
+          ? `Este ${customerLowerLabel} necesita teléfono o correo.`
+          : `Este ${customerLowerLabel} necesita teléfono.`
+      : !offlineFirstPaymentReady
+        ? 'Cambia el primer pago a efectivo, transferencia o depósito; esta modalidad no cobra tarjetas.'
+      : ''
   const selectedSendMethodOption = sendMethodOptions.find(option => option.value === sendMethod)
   const savedPaymentMethodOptions = useMemo(() => (
     savedPaymentMethods.flatMap((method) => {
@@ -1076,7 +1105,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const hasPaymentPlanSavedCards = hasStripeSavedCards || hasConektaSavedCards || hasRebillSavedCards
   const partialAuthorizationNotice = (() => {
     if (!hasPaymentPlanGateways) {
-      return 'El plan se preparará con la pasarela conectada que elijas en el siguiente paso.'
+      return `Puedes crear recordatorios offline por ${offlineReminderChannelLabel}; no necesitas conectar una pasarela.`
     }
 
     if (hasPaymentPlanSavedCards) {
@@ -1506,10 +1535,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     try {
       const paymentSettings = await paymentSettingsService.getSettings()
       const nextTaxes = paymentSettings.taxes || defaultPaymentSettings.taxes
+      setPaymentAutomations(paymentSettings.automations || defaultPaymentSettings.automations)
       setPaymentTaxes(nextTaxes)
       setTaxCalculationMode(nextTaxes.calculationMode || defaultPaymentSettings.taxes.calculationMode)
       setIncludeIVA(Boolean(nextTaxes.enabled))
     } catch {
+      setPaymentAutomations(defaultPaymentSettings.automations)
       setPaymentTaxes(defaultPaymentSettings.taxes)
       setTaxCalculationMode(defaultPaymentSettings.taxes.calculationMode)
       setIncludeIVA(false)
@@ -1545,17 +1576,16 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
   }
 
-  // En modo local completo (sin pasarela) forzamos pago único manual.
-  // Stripe, Conekta, Rebill y la integración opcional de HighLevel pueden manejar planes desde Ristak.
-  // Mercado Pago maneja links y suscripciones, no parcialidades.
+  // Los planes offline pertenecen a Ristak y no dependen de una pasarela. Sólo
+  // forzamos pago único cuando la licencia no incluye planes de pago.
   useEffect(() => {
-    if (!highLevelConnected && !stripeConnected && !conektaConnected && !mercadoPagoConnected && !clipConnected && !rebillConnected) {
+    if (!canUsePaymentPlans) {
       setPaymentMode('single')
       setSinglePaymentAction('manual')
       setSinglePaymentOptionsStage('method')
       setPaymentOption('manual')
     }
-  }, [clipConnected, conektaConnected, highLevelConnected, mercadoPagoConnected, rebillConnected, stripeConnected])
+  }, [canUsePaymentPlans])
 
   useEffect(() => {
     // El método del primer pago vive en la fila #1 y su default visible es
@@ -2313,7 +2343,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     channels
   })
 
-  const buildGatewayPaymentPlanPayload = (payload: Record<string, any>, summary: InvoiceSummary, provider: 'stripe' | 'conekta' | 'rebill') => ({
+  const buildGatewayPaymentPlanPayload = (payload: Record<string, any>, summary: InvoiceSummary, provider: 'stripe' | 'conekta' | 'rebill' | 'offline') => ({
     contact: {
       id: selectedContact?.id || '',
       name: summary.contactName || selectedContact?.name || '',
@@ -2348,7 +2378,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         ? rebillPlanSavedPaymentSource?.rebillCardId || ''
         : stripePlanSavedPaymentMethod?.stripePaymentMethodId || '',
     cardSetupAmount,
-    source: provider === 'rebill'
+    source: provider === 'offline'
+      ? 'record_payment_modal_offline_plan'
+      : provider === 'rebill'
       ? 'record_payment_modal_rebill_plan'
       : provider === 'conekta'
         ? 'record_payment_modal_conekta_plan'
@@ -2620,7 +2652,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setInvoiceSummary(summary)
 
       if (activePaymentMode === 'partial') {
-        setPaymentOption(defaultPaymentPlanGatewayOption || 'manual')
+        setPaymentOption(defaultPaymentPlanGatewayOption || 'offline')
         setStripePlanCardSource('new_card')
         setSinglePaymentAction('payment_link')
         setSinglePaymentOptionsStage('method')
@@ -2833,6 +2865,39 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         onClose()
       } catch (rebillError: any) {
         showToast('error', 'No se pudo cobrar la tarjeta', rebillError.message || 'Revisa la tarjeta guardada o envía un link de Rebill.')
+        setStep('options')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
+    if (paymentOption === 'offline' && activePaymentMode === 'partial') {
+      if (!selectedContact) {
+        showToast('error', 'Selecciona un contacto')
+        setStep('options')
+        setLoading(false)
+        return
+      }
+
+      try {
+        paymentPlanRequestKeyRef.current ||= createPaymentPlanRequestKey()
+        const result = await offlinePaymentsService.createPaymentPlan({
+          ...buildGatewayPaymentPlanPayload(invoicePayload, invoiceSummary, 'offline'),
+          idempotencyKey: paymentPlanRequestKeyRef.current
+        })
+        const firstPaymentCopy = result.firstPaymentPaymentId
+          ? ' El primer pago inmediato quedó registrado como recibido.'
+          : ''
+        showToast(
+          'success',
+          'Plan offline creado',
+          `${result.scheduledPayments.length} recordatorios se enviarán el día de cada vencimiento por ${result.reminderChannelLabel}.${firstPaymentCopy}`
+        )
+        await onSuccess?.(PAYMENT_PLAN_CHANGED_SUCCESS_CONTEXT)
+        onClose()
+      } catch (offlinePlanError: any) {
+        showToast('error', 'No se pudo crear el plan offline', offlinePlanError.message || 'Revisa los recordatorios configurados en Ajustes > Pagos.')
         setStep('options')
       } finally {
         setLoading(false)
@@ -4473,7 +4538,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           ? `Después eliges la tarjeta guardada de ${savedCardGatewayLabels[0]}.`
           : `Este ${customerLowerLabel} todavía no tiene tarjetas guardadas.`
       const authorizationLabel = singlePaymentOptionsStage === 'method'
-        ? stripePlanCardSource === 'saved_card'
+        ? paymentOption === 'offline'
+          ? `Ristak avisará por ${offlineReminderChannelLabel} el día de cada vencimiento; tú registrarás el pago cuando lo recibas.`
+        : stripePlanCardSource === 'saved_card'
           ? paymentPlanSavedCardActionDescription
           : paymentPlanNewCardActionDescription
         : paymentOption === 'stripe'
@@ -4726,6 +4793,30 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     <ChevronRight size={18} className={styles.optionCheck} />
                   </button>
                 )}
+
+                <button
+                  type="button"
+                  className={`${styles.optionButton} ${paymentOption === 'offline' ? styles.optionButtonActive : ''}`}
+                  onClick={() => {
+                    setSinglePaymentAction('manual')
+                    setPaymentOption('offline')
+                    setStripePlanCardSource('new_card')
+                  }}
+                  disabled={!offlineRemindersReady}
+                >
+                  <div className={styles.optionInfo}>
+                    <div className={styles.optionIcon}>
+                      <Bell size={18} />
+                    </div>
+                    <div>
+                      <p>Recordatorios de pago offline</p>
+                      <span>
+                        {offlineReminderUnavailableReason || `Avisará por ${offlineReminderChannelLabel} justo el día del vencimiento. No cobra tarjetas.`}
+                      </span>
+                    </div>
+                  </div>
+                  {paymentOption === 'offline' && <Check size={18} className={styles.optionCheck} />}
+                </button>
               </>
             ) : null}
           </div>
@@ -5593,8 +5684,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         singlePaymentOptionsStage !== 'gateway_config' &&
         paymentLinkOptionNeedsConfiguration(paymentOption)
       const needsPaymentPlanMethodChoice = activePaymentMode === 'partial' &&
-        singlePaymentOptionsStage === 'method'
+        singlePaymentOptionsStage === 'method' &&
+        paymentOption !== 'offline'
       const lacksPaymentPlanGateway = activePaymentMode === 'partial' &&
+        paymentOption !== 'offline' &&
         stripePlanCardSource === 'new_card' &&
         !hasPaymentPlanGateways
       const lacksPaymentPlanSavedCards = activePaymentMode === 'partial' &&
@@ -5604,6 +5697,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         !needsGatewayChoice &&
         !needsPaymentPlanMethodChoice
       const lacksDeliveryChannel = requiresDeliveryChannel && !selectedContact?.email && !selectedContact?.phone
+      const lacksOfflineReminderConfiguration = activePaymentMode === 'partial' &&
+        paymentOption === 'offline' &&
+        !offlineRemindersReady
       const lacksSavedCard = (
         (paymentOption === 'stripe_saved_card' && !selectedSavedPaymentMethodId) ||
         (paymentOption === 'conekta_saved_card' && !selectedConektaPaymentSourceId) ||
@@ -5634,7 +5730,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const lacksClipContact = validatingClipGateway && !clipContactReady
       const lacksClipCurrency = validatingClipGateway && !clipCurrencyAvailable
       const stripePlanWillRegisterOfflineFirstPayment = firstPaymentEnabled && isOfflineFirstPaymentMethod(firstPaymentMethod)
-      const confirmLabel = needsPaymentPlanMethodChoice
+      const confirmLabel = paymentOption === 'offline' && activePaymentMode === 'partial'
+        ? 'Crear recordatorios offline'
+        : needsPaymentPlanMethodChoice
         ? 'Continuar'
         : activePaymentMode === 'partial' && singlePaymentOptionsStage === 'saved_cards'
         ? 'Programar con tarjeta'
@@ -5721,6 +5819,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 lacksPaymentPlanGateway ||
                 lacksPaymentPlanSavedCards ||
                 lacksDeliveryChannel ||
+                lacksOfflineReminderConfiguration ||
                 lacksSavedCard ||
                 lacksStripePlanSavedCard ||
                 lacksStripePlanAuthorization ||
@@ -5737,6 +5836,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               title={
                 lacksDeliveryChannel
                   ? 'El contacto no tiene email ni teléfono para enviar el enlace'
+                  : lacksOfflineReminderConfiguration
+                    ? offlineReminderUnavailableReason
                   : lacksPaymentPlanGateway
                     ? 'Conecta una pasarela para enviar el link de autorización'
                   : lacksPaymentPlanSavedCards
@@ -5782,6 +5883,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               <div className={styles.tooltipInfo}>
                 <AlertCircle size={14} />
                 <span>El contacto necesita email o teléfono para enviar</span>
+              </div>
+            )}
+            {lacksOfflineReminderConfiguration && (
+              <div className={styles.tooltipInfo}>
+                <AlertCircle size={14} />
+                <span>{offlineReminderUnavailableReason}</span>
               </div>
             )}
             {lacksSavedCard && (

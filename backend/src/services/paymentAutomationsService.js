@@ -18,6 +18,10 @@ import {
   sendWhatsAppApiTextMessage
 } from './whatsappApiService.js'
 import { sendEmailToContact } from './emailService.js'
+import {
+  isOfflinePaymentPlanPayment,
+  markOfflinePaymentReminderSent
+} from './offlinePaymentPlanService.js'
 
 const HOUR_MS = 60 * 60 * 1000
 const DEFAULT_LANGUAGE = 'es_MX'
@@ -556,6 +560,7 @@ function buildPaymentAutomationEmail(type, payment = {}, variables = {}, setting
   const intro = cleanString(receipt.intro || '', 500)
   const terms = receipt.showTerms === false ? '' : cleanString(receipt.terms || '', 1200)
   const footer = cleanString(receipt.footer || '', 500)
+  const offlineReminder = type === 'reminder' && isOfflinePaymentPlanPayment(payment)
 
   const contentByType = {
     receipt: {
@@ -570,11 +575,15 @@ function buildPaymentAutomationEmail(type, payment = {}, variables = {}, setting
     reminder: {
       badge: 'Recordatorio de pago',
       subject: `Recordatorio de pago - ${product}`,
-      title: 'Tienes un pago por vencer',
-      lead: 'Te compartimos el enlace para revisar el detalle y completar tu pago antes del vencimiento.',
-      cta: 'Abrir enlace de pago',
+      title: offlineReminder ? 'Tu pago vence hoy' : 'Tienes un pago por vencer',
+      lead: offlineReminder
+        ? 'Este es el recordatorio de tu pago offline. Realiza la transferencia o el pago acordado con el negocio; aquí puedes revisar el importe y la referencia.'
+        : 'Te compartimos el enlace para revisar el detalle y completar tu pago antes del vencimiento.',
+      cta: offlineReminder ? 'Ver aviso de pago' : 'Abrir enlace de pago',
       url: paymentUrl,
-      note: 'Si ya realizaste este pago, puedes ignorar este correo.'
+      note: offlineReminder
+        ? 'Este enlace no cobra ninguna tarjeta. Si ya realizaste el pago, puedes ignorar este correo.'
+        : 'Si ya realizaste este pago, puedes ignorar este correo.'
     },
     failed: {
       badge: 'Pago no procesado',
@@ -1016,7 +1025,9 @@ async function getReminderCandidates(settings, now, limit, paymentIds = [], time
     SELECT
       p.*,
       ip.flow_id AS installment_flow_id,
-      ip.sequence AS installment_sequence
+      ip.sequence AS installment_sequence,
+      pf.payment_provider AS installment_flow_provider,
+      pf.current_state AS installment_flow_state
     FROM payments p
     LEFT JOIN (
       SELECT payment_id, MIN(flow_id) AS flow_id, MIN(sequence) AS sequence
@@ -1024,6 +1035,7 @@ async function getReminderCandidates(settings, now, limit, paymentIds = [], time
       WHERE payment_id IS NOT NULL
       GROUP BY payment_id
     ) ip ON ip.payment_id = p.id
+    LEFT JOIN payment_flows pf ON pf.id = ip.flow_id
     WHERE p.due_date IS NOT NULL
       AND LOWER(COALESCE(p.status, 'pending')) NOT IN (${placeholders})
       ${paymentIdFilter}
@@ -1037,6 +1049,13 @@ async function getReminderCandidates(settings, now, limit, paymentIds = [], time
     // Si el backend se reinició o estuvo temporalmente fuera, recuperamos el
     // recordatorio mientras el pago siga sin vencer. Los despachos persistentes
     // mantienen la idempotencia y evitan reenviar los que ya salieron.
+    const offlineReminder = isOfflinePaymentPlanPayment(row)
+    if (offlineReminder) {
+      return dueDate === todayDate &&
+        cleanString(row.status, 40).toLowerCase() !== 'sent' &&
+        cleanString(row.installment_flow_provider, 40).toLowerCase() === 'offline' &&
+        cleanString(row.installment_flow_state, 80).toLowerCase() === 'offline_plan_active'
+    }
     return dueDate !== null && dueDate >= todayDate && dueDate <= targetDate
   })
 
@@ -1077,7 +1096,11 @@ export async function processDuePaymentAutomations({ now = new Date(), limit = 1
   if (reminderDefinition?.enabled && (channelUsesWhatsApp(reminderDefinition.channel) || channelUsesEmail(reminderDefinition.channel))) {
     const reminders = await getReminderCandidates(settings, now, limit, paymentIds, timezone)
     for (const payment of reminders) {
-      results.push(await sendPaymentAutomationMessage('reminder', payment, { settings, timezone }))
+      const result = await sendPaymentAutomationMessage('reminder', payment, { settings, timezone })
+      if (result.sent && isOfflinePaymentPlanPayment(payment)) {
+        await markOfflinePaymentReminderSent(payment.id, now.toISOString())
+      }
+      results.push(result)
     }
   }
 

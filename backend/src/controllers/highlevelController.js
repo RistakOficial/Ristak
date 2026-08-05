@@ -61,6 +61,7 @@ import { applyStripePaymentPlanAction, updateStripePaymentPlanSchedule } from '.
 import { applyConektaPaymentPlanAction, updateConektaPaymentPlanSchedule } from '../services/conektaPaymentService.js';
 import { applyRebillPaymentPlanAction, updateRebillPaymentPlanSchedule } from '../services/rebillPaymentService.js';
 import { applyMercadoPagoPaymentPlanAction, updateMercadoPagoPaymentPlanSchedule } from '../services/mercadoPagoPaymentService.js';
+import { applyOfflinePaymentPlanAction, updateOfflinePaymentPlanSchedule } from '../services/offlinePaymentPlanService.js';
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
 import {
   parseSortableTimestamp,
@@ -3876,7 +3877,7 @@ async function listLocalInvoiceSchedules(query = {}, { signal } = {}) {
          ${sortCursorProjection} AS cursor_sort_value,
          ${fallbackCursorProjection} AS cursor_fallback_value,
          CASE
-           WHEN LOWER(COALESCE(payment_plans.source, 'ghl')) IN ('stripe', 'conekta', 'rebill', 'mercadopago')
+           WHEN LOWER(COALESCE(payment_plans.source, 'ghl')) IN ('stripe', 'conekta', 'rebill', 'mercadopago', 'offline')
              THEN CASE
                WHEN ${normalizedStatus} = 'completed' THEN COALESCE(payment_plans.item_count, 0)
                ELSE
@@ -3971,6 +3972,12 @@ function isRebillLocalInvoiceSchedule(schedule) {
   return schedule?.source === 'rebill'
     || schedule?.raw?.provider === 'rebill'
     || schedule?.raw?.schedule?.provider === 'rebill';
+}
+
+function isOfflineLocalInvoiceSchedule(schedule) {
+  return schedule?.source === 'offline'
+    || schedule?.raw?.provider === 'offline'
+    || schedule?.raw?.schedule?.provider === 'offline';
 }
 
 async function markLocalInvoiceScheduleStatus(scheduleId, status, rawPatch = {}) {
@@ -4288,6 +4295,12 @@ export const updateInvoiceSchedule = async (req, res) => {
     assertInvoiceScheduleDateNotPast(payload, context.timezone);
 
     const localSchedule = await getLocalInvoiceSchedule(scheduleId);
+    if (isOfflineLocalInvoiceSchedule(localSchedule)) {
+      await updateOfflinePaymentPlanSchedule(scheduleId, payload);
+      const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
+      return res.json({ success: true, data: updatedLocalSchedule, source: 'local_offline' });
+    }
+
     if (isStripeLocalInvoiceSchedule(localSchedule)) {
       await updateStripePaymentPlanSchedule(scheduleId, payload);
       const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
@@ -4415,6 +4428,17 @@ export const actionInvoiceSchedule = async (req, res) => {
     }
 
     const localSchedule = await getLocalInvoiceSchedule(scheduleId);
+    if (isOfflineLocalInvoiceSchedule(localSchedule)) {
+      const actionMap = { activate: 'activate', pause: 'pause', cancel: 'cancel', delete: 'delete' };
+      const offlineAction = actionMap[action];
+      if (!offlineAction) {
+        return res.status(409).json({ success: false, error: 'Esta acción no aplica para planes offline.' });
+      }
+      const actionResult = await applyOfflinePaymentPlanAction(scheduleId, offlineAction);
+      const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
+      return res.json({ success: true, data: updatedLocalSchedule || actionResult, source: 'local_offline' });
+    }
+
     if (isStripeLocalInvoiceSchedule(localSchedule)) {
       const actionMap = {
         activate: 'activate',

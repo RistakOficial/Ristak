@@ -85,6 +85,7 @@ import webhookConfigRoutes from './routes/webhookConfig.routes.js'
 import contactsRoutes from './routes/contacts.routes.js'
 import contactTagsRoutes from './routes/contactTags.routes.js'
 import transactionsRoutes from './routes/transactions.routes.js'
+import offlineRoutes from './routes/offline.routes.js'
 import integrationsRoutes from './routes/integrations.routes.js'
 import attributionRoutes from './routes/attribution.routes.js'
 import settingsRoutes from './routes/settings.routes.js'
@@ -620,6 +621,7 @@ app.use('/api/highlevel', highlevelRoutes)
 app.use('/api/products', productsRoutes)
 app.use('/api/subscriptions', subscriptionsRoutes)
 app.use('/api/stripe', stripeRoutes)
+app.use('/api/offline', offlineRoutes)
 app.use('/api/mercadopago', mercadoPagoRoutes)
 app.use('/api/conekta', conektaRoutes)
 app.use('/api/clip', clipRoutes)
