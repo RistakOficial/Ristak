@@ -4071,7 +4071,9 @@ Reglas base:
   ese estado como activo; una lista con IDs es una selección explícita.
 - La cabecera de Configuración > Calendarios refleja el estado real de Google:
   cuando la integración está activa muestra un check y `Conectado a Google
-  Calendar` sobre un botón verde; cuando no está activa muestra `Conectar con
+  Calendar` sobre un botón verde con icono y texto de alto contraste; en modo
+  claro ambos usan el tono claro de superficie sobre un verde reforzado y el
+  hover lo oscurece ligeramente. Cuando no está activa muestra `Conectar con
   Google Calendar` y conserva la acción para abrir la conexión.
 - Cada hora del editor semanal se elige en un menú de tres columnas
   (hora, minuto y AM/PM). El campo y el resumen `Horario seleccionado` componen

@@ -45,5 +45,15 @@ assert.match(
   /\.calendarWizardFooter\s*\{[^}]*flex:\s*0\s+0\s+auto[^}]*border-top:[^}]*background:\s*var\(--surface-2\)/,
   'el footer debe conservarse visible y distinguirse como panel de acciones'
 )
+assert.match(
+  calendarSettingsStyles,
+  /:global\(body\.light\)\s+\.googleHeaderButtonConnected\s*\{[^}]*color:\s*var\(--surface-solid,\s*var\(--surface\)\)[^}]*border-color:\s*color-mix\(in srgb,\s*var\(--pos\)\s*75%,\s*var\(--text\)\s*25%\)[^}]*background:\s*color-mix\(in srgb,\s*var\(--pos\)\s*75%,\s*var\(--text\)\s*25%\)/,
+  'el estado conectado de Google debe usar texto e icono claros sobre un verde con contraste en modo claro'
+)
+assert.match(
+  calendarSettingsStyles,
+  /:global\(body\.light\)\s+\.googleHeaderButtonConnected:hover\s*\{[^}]*color:\s*var\(--surface-solid,\s*var\(--surface\)\)[^}]*filter:\s*brightness\(0\.94\)/,
+  'el hover conectado debe conservar el contraste y oscurecer ligeramente el verde'
+)
 
-console.log('Calendar settings modal layout contract OK')
+console.log('Calendar settings visual contract OK')

@@ -109,7 +109,9 @@
 }
 
 :global(body.light) .googleHeaderButtonConnected {
-  color: var(--text);
+  color: var(--surface-solid, var(--surface));
+  border-color: color-mix(in srgb, var(--pos) 75%, var(--text) 25%);
+  background: color-mix(in srgb, var(--pos) 75%, var(--text) 25%);
 }
 
 .googleHeaderButtonConnected:hover {
@@ -120,7 +122,8 @@
 }
 
 :global(body.light) .googleHeaderButtonConnected:hover {
-  color: var(--text);
+  color: var(--surface-solid, var(--surface));
+  filter: brightness(0.94);
 }
 
 .googleCalendarMark {
