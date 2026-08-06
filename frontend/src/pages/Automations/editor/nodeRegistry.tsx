@@ -2554,7 +2554,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       mode: '',
       // periodo establecido
       amount: 1,
-      unit: 'days',
+      unit: 'minutes',
       // fecha específica (la zona horaria viene de la configuración del flujo)
       untilDate: '',
       // cita

@@ -1503,6 +1503,9 @@ explicita `immediate` puede consultar el estado acumulado actual del contacto.
 
 El contrato por ejecucion aplica a:
 
+- Al agregar un bloque nuevo `Esperar`, el periodo establecido inicia en
+  **1 minuto**. Los bloques ya guardados conservan su cantidad y unidad; abrir
+  una automatizacion existente no modifica sus tiempos silenciosamente.
 - `Esperar` una respuesta o una accion: clic de disparo, formulario, pago,
   reserva de cita, respuesta de mensaje o webhook/evento personalizado.
 - `Esperar` condiciones: se revisa al entrar y con cada evento nuevo del
