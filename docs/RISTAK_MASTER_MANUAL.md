@@ -4054,6 +4054,10 @@ Reglas base:
   `Eventos` y `Estilos y diseños`. `Disponibilidad` contiene primero el editor
   semanal y debajo duración, cadencia, reglas y espacios entre citas. `URL y
   Datos` reúne el enlace público, formulario y acción posterior al agendado.
+- El modal de edición mantiene siempre visibles su encabezado, navegación y panel
+  inferior de acciones. Solo el contenido del paso activo se desplaza, de modo
+  que `Anterior`, `Siguiente` y `Guardar cambios` permanecen accesibles aunque la
+  configuración sea larga o la ventana tenga poca altura.
 - En `Detalles`, `Incluir en reportes comerciales` nace encendido para todos los
   calendarios. Una lista vacía en `app_config.attribution_calendar_ids` significa
   todos —incluidos los que se creen o sincronicen después— y la UI debe mostrar

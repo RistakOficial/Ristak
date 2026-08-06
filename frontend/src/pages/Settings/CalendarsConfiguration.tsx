@@ -3111,6 +3111,7 @@ export const CalendarsConfiguration: React.FC = () => {
         size="xl"
         flushContent
         className={pageStyles.calendarWizardModal}
+        contentClassName={pageStyles.calendarWizardModalContent}
       >
         <div className={pageStyles.calendarWizardShell}>
           <aside className={pageStyles.calendarWizardSteps} aria-label="Pasos de configuración">
@@ -4301,7 +4302,7 @@ export const CalendarsConfiguration: React.FC = () => {
                 </section>
               )}
             </div>
-            <div className={pageStyles.calendarWizardFooter}>
+            <div className={pageStyles.calendarWizardFooter} data-modal-footer="">
               <Button
                 variant="secondary"
                 onClick={() => goToRelativeStep(-1)}

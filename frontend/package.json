@@ -40,6 +40,7 @@
     "test:contact-custom-field-group-label": "node --experimental-strip-types --test scripts/test-contact-custom-field-group-label.mjs",
     "test:appointment-reminder-ordering": "node --experimental-strip-types --test scripts/test-appointment-reminder-ordering.mjs",
     "test:calendar-commercial-reports": "node scripts/test-calendar-commercial-reports.mjs",
+    "test:calendar-settings-modal-layout": "node scripts/test-calendar-settings-modal-layout.mjs",
     "test:calendar-offline-contract": "node scripts/test-calendar-offline-contract.mjs",
     "test:table-pagination": "node --experimental-strip-types --test scripts/test-table-pagination.mjs",
     "test:reports-column-visibility": "node --experimental-strip-types --test scripts/test-reports-column-visibility.mjs",
