@@ -3,7 +3,9 @@ import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireAdmin, requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import {
   acceptCentralAccountRetentionOffer,
+  applyCentralDatabasePerformancePlan,
   decideCentralDatabaseStorage,
+  getCentralDatabasePerformanceStatus,
   getCentralDatabaseStorageStatus,
   getCentralAccountCancellationStatus,
   getLicenseState,
@@ -11,6 +13,7 @@ import {
   requestCentralAccountCancellation
 } from '../services/licenseService.js'
 import { getStorageStatus as getDatabaseStorageStatus } from '../services/notificationsService.js'
+import { getAccountCurrency } from '../utils/accountLocale.js'
 
 const router = express.Router()
 
@@ -133,6 +136,72 @@ router.post('/database-storage/decision', ...requireDatabaseStorageAccess, async
       return res.status(Number(error.status || 400)).json({
         success: false,
         code: error.code || 'database_storage_decision_failed',
+        message: error.message
+      })
+    }
+    next(error)
+  }
+})
+
+function unmanagedDatabasePerformance(message) {
+  return {
+    success: true,
+    managed: false,
+    management_available: false,
+    management_message: message,
+    plans: [],
+    operation: null
+  }
+}
+
+router.post('/database-performance/status', ...requireDatabaseStorageAccess, async (req, res, next) => {
+  try {
+    if (!isLicenseEnforced()) {
+      return res.json(unmanagedDatabasePerformance(
+        'Esta instalación no está administrada por Ristak Installer. Cambia la instancia desde Render.'
+      ))
+    }
+
+    const currency = await getAccountCurrency()
+    const central = await getCentralDatabasePerformanceStatus({
+      currency,
+      forceRefresh: req.body?.force_refresh === true
+    })
+    res.json(central)
+  } catch (error) {
+    if (error?.status || error?.code) {
+      return res.status(Number(error.status || 400)).json({
+        success: false,
+        code: error.code || 'database_performance_status_failed',
+        message: error.message
+      })
+    }
+    next(error)
+  }
+})
+
+router.post('/database-performance/apply', ...requireDatabaseStorageAccess, async (req, res, next) => {
+  try {
+    if (!isLicenseEnforced()) {
+      return res.status(409).json({
+        success: false,
+        code: 'database_performance_management_unavailable',
+        message: 'Esta instalación no está administrada por Ristak Installer. Cambia la instancia desde Render.'
+      })
+    }
+
+    const currency = await getAccountCurrency()
+    const central = await applyCentralDatabasePerformancePlan({
+      targetPlan: req.body?.target_plan,
+      currency,
+      requestedByEmail: req.user?.email || req.user?.username || ''
+    })
+    res.json(central)
+  } catch (error) {
+    if (error?.status || error?.code) {
+      return res.status(Number(error.status || 400)).json({
+        success: false,
+        code: error.code || 'database_performance_apply_failed',
         message: error.message
       })
     }

@@ -87,6 +87,38 @@ Este flujo depende de que el Installer conserve cifrada la Render API Key y el I
 de la base. Si la instalación no es administrable, Ristak muestra el riesgo pero no
 ofrece botones que prometan un cambio que no puede ejecutar.
 
+### Memoria y rendimiento de PostgreSQL
+
+Una instalación administrada también puede aumentar RAM y CPU desde
+**Configuración → Avanzado → Memoria y rendimiento**. La pantalla aparece debajo
+de Developers, sólo para administradores con acceso a la cuenta, y cubre los 22
+tipos flexibles publicados por Render en las familias Basic, Pro y Accelerated.
+El almacenamiento no forma parte de este selector y conserva el flujo de
+consentimiento anterior.
+
+Installer consulta la página oficial de precios de Render y convierte la cuota
+mensual desde USD a la moneda canónica de la cuenta usando la tasa USD más
+reciente de Exchange Rate API. Ristak presenta primero el equivalente en la
+moneda de la cuenta, conserva la referencia USD y advierte que Render factura en
+USD, por lo que el banco puede aplicar otra tasa o comisión. Si no puede confirmar
+ambas fuentes actuales, muestra la última referencia pero bloquea **Aplicar
+cambios** para no autorizar un cargo ambiguo.
+
+Todas las opciones permanecen visibles. Sólo se pueden seleccionar tipos que no
+reduzcan RAM ni CPU y que aumenten al menos uno de esos recursos; esto evita que
+un nombre de familia aparentemente superior degrade la instancia. Si PostgreSQL
+tiene alta disponibilidad, Basic también queda bloqueado.
+
+Al confirmar escribiendo `APLICAR`, Installer registra la cotización y envía el
+`PATCH plan` a Render con la API Key que ya conserva cifrada. La operación queda
+en `database_performance_changes` como `processing`, `completed` o `failed` y la
+app consulta el estado cada seis segundos. PostgreSQL puede quedar fuera de
+servicio unos minutos durante el cambio, así que la confirmación no depende de
+mantener una petición HTTP abierta ni de que el tenant permanezca disponible.
+Una consulta posterior reconcilia el plan y el estado `available`, incluso si
+Installer se reinició durante la operación. Este flujo no agrega secrets ni
+expone la credencial de Render al tenant o al navegador.
+
 Los jobs automáticos viven dentro del backend. No hay cron services separados en
 Render.
 
@@ -198,4 +230,5 @@ Eso hace que el frontend llame al mismo servicio Render donde corre el backend.
 - [Environment variables and secrets](https://render.com/docs/configure-environment-variables/)
 - [Deploys](https://render.com/docs/deploys/)
 - [PostgreSQL pricing](https://render.com/docs/postgresql-refresh)
+- [PostgreSQL compute plans](https://render.com/docs/compute-plans)
 - [PostgreSQL disk autoscaling and full-disk behavior](https://render.com/docs/postgresql-creating-connecting)

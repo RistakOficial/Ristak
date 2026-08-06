@@ -1331,6 +1331,29 @@ export async function decideCentralDatabaseStorage({
   })
 }
 
+export async function getCentralDatabasePerformanceStatus({ currency, forceRefresh = false } = {}) {
+  return callLicenseServer('/api/license/database-performance/status', {
+    currency,
+    force_refresh: forceRefresh === true
+  }, {
+    timeoutMs: 60_000
+  })
+}
+
+export async function applyCentralDatabasePerformancePlan({
+  targetPlan,
+  currency,
+  requestedByEmail = ''
+} = {}) {
+  return callLicenseServer('/api/license/database-performance/apply', {
+    target_plan: targetPlan,
+    currency,
+    requested_by_email: String(requestedByEmail || '').trim().toLowerCase()
+  }, {
+    timeoutMs: 60_000
+  })
+}
+
 /**
  * Verifica credenciales contra el portal central. Puede devolver el hash vigente
  * del dueño para sincronizar la copia local o `support_access: true` cuando la

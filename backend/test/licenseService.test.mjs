@@ -216,6 +216,38 @@ function startMockServer() {
           return
         }
 
+        if (req.url === '/api/license/database-performance/status') {
+          res.end(JSON.stringify({
+            success: true,
+            managed: true,
+            management_available: true,
+            account_currency: lastRequestBody?.currency,
+            quote_current: true,
+            postgres: { current_plan: 'basic_256mb', status: 'available' },
+            plans: [{ id: 'basic_1gb', monthly_account_currency: 342 }],
+            operation: null
+          }))
+          return
+        }
+
+        if (req.url === '/api/license/database-performance/apply') {
+          res.end(JSON.stringify({
+            success: true,
+            managed: true,
+            management_available: true,
+            account_currency: lastRequestBody?.currency,
+            quote_current: true,
+            postgres: { current_plan: 'basic_256mb', status: 'updating' },
+            plans: [],
+            operation: {
+              id: 'performance_change_1',
+              status: 'processing',
+              target_plan: lastRequestBody?.target_plan
+            }
+          }))
+          return
+        }
+
         if (req.url === '/api/setup-token/verify' || req.url === '/api/setup-token/consume') {
           setupTokenRequestCount += 1
           const { token } = lastRequestBody || {}
@@ -566,6 +598,33 @@ test('estado y decisión de storage viajan al Installer con las credenciales de 
   assert.equal(decision.autoscaling_enabled, true)
   assert.equal(lastRequestBody.current_disk_size_gb, 1)
   assert.equal(lastRequestBody.target_disk_size_gb, 5)
+  assert.equal(lastRequestBody.requested_by_email, 'dueno@clinica.com')
+})
+
+test('rendimiento de PostgreSQL conserva moneda, plan y credenciales al pasar por Installer', async () => {
+  const status = await licenseService.getCentralDatabasePerformanceStatus({
+    currency: 'MXN',
+    forceRefresh: true
+  })
+
+  assert.equal(status.account_currency, 'MXN')
+  assert.equal(status.plans[0].monthly_account_currency, 342)
+  assert.equal(lastRequestBody.client_id, 'cli_1')
+  assert.equal(lastRequestBody.license_key, 'RSTK-TEST-0000')
+  assert.equal(lastRequestBody.installation_id, 'inst_1')
+  assert.equal(lastRequestBody.currency, 'MXN')
+  assert.equal(lastRequestBody.force_refresh, true)
+
+  const applied = await licenseService.applyCentralDatabasePerformancePlan({
+    targetPlan: 'basic_1gb',
+    currency: 'MXN',
+    requestedByEmail: 'DUENO@CLINICA.COM'
+  })
+
+  assert.equal(applied.operation.status, 'processing')
+  assert.equal(applied.operation.target_plan, 'basic_1gb')
+  assert.equal(lastRequestBody.target_plan, 'basic_1gb')
+  assert.equal(lastRequestBody.currency, 'MXN')
   assert.equal(lastRequestBody.requested_by_email, 'dueno@clinica.com')
 })
 

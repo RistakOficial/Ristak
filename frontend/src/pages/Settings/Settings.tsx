@@ -9,6 +9,7 @@ import {
   Cloud,
   Code2,
   CreditCard,
+  Cpu,
   Database,
   FileCode2,
   Globe2,
@@ -88,6 +89,7 @@ const customFieldsPage = createLazySettingsPage(() => import('./CustomFields'), 
 const variableFieldsPage = createLazySettingsPage(() => import('./VariableFields'), 'VariableFields')
 const triggerLinksPage = createLazySettingsPage(() => import('./TriggerLinks'), 'TriggerLinks')
 const tagsSettingsPage = createLazySettingsPage(() => import('./TagsSettings'), 'TagsSettings')
+const databasePerformanceSettingsPage = createLazySettingsPage(() => import('./DatabasePerformanceSettings'), 'DatabasePerformanceSettings')
 
 const HighLevelIntegration = highLevelIntegrationPage.Component
 const Costs = costsPage.Component
@@ -112,6 +114,7 @@ const CustomFields = customFieldsPage.Component
 const VariableFields = variableFieldsPage.Component
 const TriggerLinks = triggerLinksPage.Component
 const TagsSettings = tagsSettingsPage.Component
+const DatabasePerformanceSettings = databasePerformanceSettingsPage.Component
 
 const settingsPageRegistry = [
   { path: '/settings/highlevel', preload: highLevelIntegrationPage.preload },
@@ -127,6 +130,7 @@ const settingsPageRegistry = [
   { path: '/settings/account', preload: businessAccountSettingsPage.preload },
   { path: '/settings/users-access', preload: userAccessSettingsPage.preload },
   { path: '/settings/developers', preload: apiAccessSettingsPage.preload },
+  { path: '/settings/database-performance', preload: databasePerformanceSettingsPage.preload },
   { path: '/settings/domains', preload: domainsPage.preload },
   { path: '/settings/mobile-app', preload: mobileAppSettingsPage.preload },
   { path: '/settings/notifications', preload: notificationSettingsPage.preload },
@@ -193,7 +197,8 @@ const settingsIcons: Record<string, SettingsIcon> = {
   '/settings/variable-fields': Code2,
   '/settings/trigger-links': MousePointerClick,
   '/settings/tags': Tags,
-  '/settings/developers': Code2
+  '/settings/developers': Code2,
+  '/settings/database-performance': Cpu
 }
 
 const isSettingsNavItemActive = (pathname: string, to: string) => pathname === to || pathname.startsWith(`${to}/`)
@@ -285,6 +290,7 @@ export const Settings: React.FC = () => {
                 <Route path="ai-agent/conversational" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/conversational" replace /></SettingsAccessGate>} />
                 <Route path="ai-agent/*" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/conversational" replace /></SettingsAccessGate>} />
                 <Route path="developers" element={<SettingsAccessGate moduleKey="settings_api_access"><APIAccessSettings /></SettingsAccessGate>} />
+                <Route path="database-performance" element={<SettingsAccessGate moduleKey="settings_account" adminOnly><DatabasePerformanceSettings /></SettingsAccessGate>} />
                 <Route path="api-access" element={<SettingsAccessGate moduleKey="settings_api_access"><Navigate to="../developers" replace /></SettingsAccessGate>} />
                 <Route path="notifications" element={<SettingsAccessGate moduleKey="settings_account"><NotificationSettings /></SettingsAccessGate>} />
                 <Route path="mobile-app" element={<SettingsAccessGate moduleKey="settings_mobile"><MobileAppSettings /></SettingsAccessGate>} />

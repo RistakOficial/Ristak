@@ -53,7 +53,8 @@ export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/variable-fields', label: 'Campos variables', group: 'Personalización', permissionKey: 'settings_custom_fields' },
   { to: '/settings/trigger-links', label: 'Enlaces de disparo', group: 'Personalización', permissionKey: 'settings_custom_fields', featureKeys: ['trigger_links'] },
   { to: '/settings/tags', label: 'Etiquetas', group: 'Personalización', permissionKey: 'settings_custom_fields' },
-  { to: '/settings/developers', label: 'Developers', group: 'Avanzado', permissionKey: 'settings_api_access' }
+  { to: '/settings/developers', label: 'Developers', group: 'Avanzado', permissionKey: 'settings_api_access' },
+  { to: '/settings/database-performance', label: 'Memoria y rendimiento', group: 'Avanzado', permissionKey: 'settings_account', adminOnly: true }
 ]
 
 export const settingsGroupOrder: SettingsNavGroup[] = [

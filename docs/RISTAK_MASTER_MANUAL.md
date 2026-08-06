@@ -1912,7 +1912,8 @@ Configuracion se organiza en:
   Account API Key.
 - Datos y rastreo: rastreo web, dominios, costos, media.
 - Personalizacion: campos, variables, trigger links, etiquetas.
-- Avanzado: Developers. La entrada principal es **Conectar con MCP**: muestra
+- Avanzado: Developers y **Memoria y rendimiento**. La entrada principal de
+  Developers es **Conectar con MCP**: muestra
   salud/capacidades del servidor remoto, instrucciones para Codex, ChatGPT,
   Claude y clientes compatibles, conexiones OAuth revocables y acceso a la
   auditoria autenticada en `GET /api/api-access/mcp/audit`. Credenciales API,
@@ -1924,7 +1925,9 @@ Configuracion se organiza en:
   del servidor aparece como un resumen unico y su etiqueta conserva el ancho
   natural del contenido; las areas disponibles se leen como una lista compacta
   en vez de una nube de etiquetas y los campos con acciones se apilan sin
-  desbordarse en ventanas chicas.
+  desbordarse en ventanas chicas. Debajo, Memoria y rendimiento permite a un
+  administrador aumentar RAM y CPU de PostgreSQL con el catálogo flexible de
+  Render, sin mezclar ese cambio con la capacidad de disco.
 
 Las tablas de Configuracion que permiten seleccion multiple usan el patron
 compartido de `Table` con acciones integradas en una sola barra dentro del
@@ -10443,6 +10446,33 @@ que todavía marque lleno/suspendido o un error transitorio reinician el conteo;
 se evita un bucle de reinicios mientras la base apenas está reanudándose. Las
 instalaciones sin credencial cifrada de Render sólo reciben el aviso de riesgo y
 nunca acciones falsas.
+
+El rendimiento de PostgreSQL se administra por separado en **Configuración →
+Avanzado → Memoria y rendimiento**. La pantalla lista los 22 tipos flexibles
+actuales de Render agrupados como Basic, Pro y Acelerada, con RAM, CPU,
+conexiones, precio mensual de Render en USD y equivalente en la moneda canónica
+de la cuenta. El backend obtiene esa moneda con `getAccountCurrency()`; no acepta
+una moneda elegida por el navegador. Installer refresca los precios desde la
+página pública oficial de Render y la tasa USD desde Exchange Rate API. Si una
+de las dos referencias no está vigente, conserva la lectura informativa pero
+bloquea cualquier cambio con costo.
+
+Todas las opciones siguen visibles para comparar, pero sólo se habilita una que
+mantenga o aumente ambos recursos y aumente al menos RAM o CPU. Por ejemplo,
+`Basic-4gb` no puede cambiarse a `Pro-4gb` porque perdería CPU. Alta
+disponibilidad bloquea Basic. La confirmación exige escribir `APLICAR`, registra
+el precio USD, el equivalente mostrado, la tasa, el usuario solicitante y los
+planes anterior/nuevo en Installer; la API Key de Render nunca sale de ese
+servicio.
+
+El `PATCH plan` de Render es asíncrono y puede interrumpir PostgreSQL durante
+unos minutos. `database_performance_changes` guarda la operación como
+`processing`, `completed` o `failed`; la pantalla consulta cada seis segundos y
+la siguiente lectura reconcilia plan + estado `available`, aun si Ristak o
+Installer reiniciaron durante el cambio. Render factura en USD y el equivalente
+de la cuenta es sólo una referencia: la tasa o comisión final del banco puede
+variar. El almacenamiento conserva su flujo independiente y no se modifica desde
+esta sección.
 
 Documento: `docs/LICENSING.md`.
 

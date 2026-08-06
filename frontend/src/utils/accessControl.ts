@@ -474,6 +474,7 @@ export const ROUTE_ACCESS: Array<{ prefix: string; moduleKey: PermissionKey }> =
   { prefix: '/settings/variable-fields', moduleKey: 'settings_custom_fields' },
   { prefix: '/settings/trigger-links', moduleKey: 'settings_custom_fields' },
   { prefix: '/settings/tags', moduleKey: 'settings_custom_fields' },
+  { prefix: '/settings/database-performance', moduleKey: 'settings_account' },
   { prefix: '/settings/developers', moduleKey: 'settings_api_access' },
   { prefix: '/settings/api-access', moduleKey: 'settings_api_access' },
   { prefix: '/api-docs', moduleKey: 'settings_api_access' },

@@ -144,6 +144,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Filtros tipo chip en móvil | `<PhoneFilterChips>` desde `components/phone/ui` | repetir `.filterChips`, `.aiAgentHubFilterChip` o carriles scrollables a mano |
 | Tabs segmentados (en card) | `<TabList>` | rgba hardcodeados |
 | Tabs de sub-sección (underline) | `<SegmentTabs>` (recipe `[data-segdir]`) | un nav a mano |
+| Selector de opciones ricas | `<SelectionGrid>`; usa radios reales y admite título, estado, métricas, precio y motivo de bloqueo | repetir tarjetas seleccionables, radios invisibles o catálogos de planes dentro de cada página |
 | Switch / toggle | `<Switch>` (recipe `[data-sw]`) | un checkbox estilizado a mano |
 | Select enriquecido | `<CustomSelect>` | — |
 | Select múltiple con checks | `<CheckboxMultiSelect>`; usa `disabled` en opciones obligatorias | un dropdown local con checkboxes propios |

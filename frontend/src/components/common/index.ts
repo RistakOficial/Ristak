@@ -133,6 +133,8 @@ export type { NumberInputProps } from './NumberInput'
 export { Switch } from './Switch'
 export { SegmentTabs } from './SegmentTabs'
 export type { SegmentTab } from './SegmentTabs'
+export { SelectionGrid } from './SelectionGrid'
+export type { SelectionGridOption, SelectionGridProps } from './SelectionGrid'
 export {
   PaymentGateControls,
   normalizePaymentGateConfig,
