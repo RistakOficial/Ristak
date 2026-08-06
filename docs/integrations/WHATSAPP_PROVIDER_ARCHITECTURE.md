@@ -1,6 +1,6 @@
 # Arquitectura de proveedores WhatsApp
 
-Ultima actualizacion: 2026-08-02.
+Ultima actualizacion: 2026-08-06.
 
 ## Proposito
 
@@ -444,6 +444,12 @@ Es transporte QR y fallback; no es un proveedor de Cloud API, no usa las
 credenciales de Meta/YCloud y no debe consumir sus webhooks. Mientras la API
 oficial del mismo número esté operativa, `captureQrChatMessage` omite todo el
 tráfico vivo inbound/outbound. Sólo HistorySync puede importarse en paralelo.
+La disponibilidad oficial se resuelve con el contrato neutral de la fila
+seleccionada: YCloud exige su API key y Meta directo exige su conexión/token
+propios. Nunca se puede declarar Meta directo inactivo por no tener una API key
+de YCloud. Si HistorySync trae un WAMID que ya pertenece a una fila API oficial,
+la importación se omite y conserva `provider`, `source_adapter`, `transport` y
+`origin` oficiales.
 
 El botón manual de conexión también es la autoridad sobre el backoff de pairing.
 Si existe un timer de reconexión sin socket activo, el clic conserva el lease, el
@@ -514,7 +520,11 @@ nuevo sigue el flujo estándar de Cloud API.
     estados `accepted`, `sent`, `delivered` y `read` la actualizan. La fusión por
     `protocol_message_key_id` sólo repara/importa históricos exactos. No se
     permite resolver ningún caso por texto, hora, teléfono aproximado ni
-    deduplicación visual.
+    deduplicación visual. El mantenimiento de arranque también restaura una
+    plantilla Meta que una versión anterior hubiera etiquetado como QR sólo
+    cuando `whatsapp_api_template_sends` prueba el envío oficial y no existe un
+    claim en `whatsapp_api_qr_fallback_attempts`; un fallback QR real nunca se
+    reescribe como API.
 12. `(provider, provider_message_id)` es una identidad única. El mantenimiento
     de arranque fusiona duplicados históricos demostrables antes de crear el
     índice único parcial; si encuentra un conflicto entre conversaciones

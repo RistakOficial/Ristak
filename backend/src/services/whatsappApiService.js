@@ -116,7 +116,7 @@ const META_DIRECT_PHONE_STATUS_FIELDS = [
 const WEBHOOK_DESCRIPTION = 'Ristak WhatsApp API'
 const GENERIC_CONTACT_NAME = GENERIC_WHATSAPP_API_CONTACT_NAME
 const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY = 'whatsapp_protocol_identity_repair_version'
-const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION = '2026-07-12-v2'
+const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION = '2026-08-06-v3'
 const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-images')
 let ycloudFetch = nodeFetch
 let metaDirectFetch = nodeFetch
@@ -8293,8 +8293,53 @@ export async function repairWhatsAppProtocolMessageIdentities({ force = false } 
   return db.withAdvisoryLock('whatsapp-protocol-message-identities', async () => {
     const appliedVersion = await getAppConfig(WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY).catch(() => '')
     if (!force && appliedVersion === WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION) {
-      return { skipped: true, version: WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION, backfilled: 0, merged: 0, providerMerged: 0 }
+      return {
+        skipped: true,
+        version: WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION,
+        backfilled: 0,
+        merged: 0,
+        providerMerged: 0,
+        officialRestored: 0
+      }
     }
+
+    // Versiones anteriores podían tratar Meta Direct como inactivo porque la
+    // captura QR comprobaba únicamente la API key de YCloud. El eco de Baileys
+    // encontraba el mismo WAMID y convertía la fila oficial en `transport=qr`.
+    // La relación con template_sends prueba el envío Meta; la ausencia de un
+    // claim de fallback prueba que Baileys no fue quien lo entregó.
+    const restoredOfficialMessages = await db.run(`
+      UPDATE whatsapp_api_messages
+      SET provider = 'meta_direct',
+          source_adapter = 'meta_direct',
+          origin = 'whatsapp.message.updated',
+          provider_message_id = COALESCE(NULLIF(meta_message_id, ''), NULLIF(provider_message_id, ''), NULLIF(wamid, '')),
+          meta_message_id = COALESCE(NULLIF(meta_message_id, ''), NULLIF(provider_message_id, ''), NULLIF(wamid, '')),
+          ycloud_message_id = CASE
+            WHEN ycloud_message_id = meta_message_id OR ycloud_message_id = wamid THEN NULL
+            ELSE ycloud_message_id
+          END,
+          transport = 'api',
+          routing_reason = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE LOWER(COALESCE(transport, '')) = 'qr'
+        AND LOWER(COALESCE(source_adapter, '')) = 'baileys'
+        AND LOWER(COALESCE(direction, '')) = 'outbound'
+        AND COALESCE(meta_message_id, '') != ''
+        AND EXISTS (
+          SELECT 1
+          FROM whatsapp_api_template_sends template_send
+          WHERE LOWER(COALESCE(template_send.provider, '')) = 'meta_direct'
+            AND COALESCE(NULLIF(template_send.provider_message_id, ''), NULLIF(template_send.wamid, '')) =
+                COALESCE(NULLIF(whatsapp_api_messages.meta_message_id, ''), NULLIF(whatsapp_api_messages.wamid, ''))
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM whatsapp_api_qr_fallback_attempts fallback_attempt
+          WHERE fallback_attempt.api_message_id = whatsapp_api_messages.id
+        )
+    `)
+    const officialRestored = Number(restoredOfficialMessages?.changes || restoredOfficialMessages?.rowCount || 0)
 
     let lastId = ''
     let backfilled = 0
@@ -8435,10 +8480,17 @@ export async function repairWhatsAppProtocolMessageIdentities({ force = false } 
 
     await setAppConfig(WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY, WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION)
     const totalMerged = merged + providerMerged
-    if (backfilled || totalMerged) {
-      logger.info(`[WhatsApp] Identidades exactas: ${backfilled} filas preparadas, ${providerMerged} estados oficiales y ${merged} ecos históricos fusionados.`)
+    if (backfilled || totalMerged || officialRestored) {
+      logger.info(`[WhatsApp] Identidades exactas: ${backfilled} filas preparadas, ${providerMerged} estados oficiales, ${merged} ecos históricos fusionados y ${officialRestored} envíos Meta restaurados.`)
     }
-    return { skipped: false, version: WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION, backfilled, merged: totalMerged, providerMerged }
+    return {
+      skipped: false,
+      version: WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION,
+      backfilled,
+      merged: totalMerged,
+      providerMerged,
+      officialRestored
+    }
   }, { pinConnection: false })
 }
 
@@ -9418,22 +9470,42 @@ export async function captureQrChatMessage({
     return { skipped: true, reason: 'missing_identity' }
   }
 
-  const config = await loadConfig({ includeSecrets: true })
-  const phoneRow = await findBusinessPhoneRowForSender({ phoneNumberId, fromPhone: cleanBusinessPhone })
+  const routingConfig = await loadWhatsAppOutboundConfig({
+    phoneNumberId,
+    fromPhone: cleanBusinessPhone
+  })
+  const phoneRow = routingConfig.requestedPhoneRow
   const messageText = cleanString(text)
   const cleanMessageType = cleanString(messageType).toLowerCase()
   const messageTimestamp = toDateTime(timestamp) || nowIso()
 
-  const officialApiOperational = Boolean(config.enabled && config.apiKey) &&
-    Boolean(phoneRow?.id) &&
-    Number(phoneRow.api_send_enabled ?? 1) === 1 &&
-    !(await getOfficialApiRestrictionReason({ phoneRow, config }))
+  const officialPhoneRow = routingConfig.selectedPhoneRow
+  const officialApiOperational = routingConfig.enabled !== false &&
+    Boolean(routingConfig.officialApiAvailable && officialPhoneRow?.id) &&
+    !(await getOfficialApiRestrictionReason({ phoneRow: officialPhoneRow, config: routingConfig }))
   // En vivo, la API oficial es la única fuente mientras esté operativa. Durante un HistorySync QR
   // sí importamos el pasado porque puede ser anterior a la conexión oficial.
   // Durante un HistorySync QR no podemos asumir que la API ya tenga ese pasado:
   // se importa y la identidad exacta de WhatsApp decide si ya existía.
   if (officialApiOperational && !historyImport) {
     return { skipped: true, reason: 'official_api_active' }
+  }
+  if (officialApiOperational && historyImport) {
+    const existingOfficialMessage = await db.get(`
+      SELECT id
+      FROM whatsapp_api_messages
+      WHERE wamid = ?
+        AND LOWER(COALESCE(transport, '')) = 'api'
+        AND LOWER(COALESCE(source_adapter, '')) != 'baileys'
+      LIMIT 1
+    `, [cleanWamid]).catch(() => null)
+    if (existingOfficialMessage?.id) {
+      return {
+        skipped: true,
+        reason: 'official_api_message_exists',
+        messageId: existingOfficialMessage.id
+      }
+    }
   }
 
   // Llegados aquí el número vive de la sesión QR (Baileys): el proveedor no guarda la

@@ -2584,6 +2584,15 @@ Todo registro WhatsApp debe distinguir `provider` (`ycloud`, `meta_direct` o
 endpoints, nombres de webhook ni columnas de ID específicas. Baileys nunca debe
 presentarse como proveedor de API oficial.
 
+La captura de Baileys comprueba la disponibilidad oficial con la fila elegida y
+su proveedor real. Meta directo se considera operativo por su estado y token
+propios; la ausencia de una API key YCloud no autoriza capturar su tráfico vivo
+como QR. Si WhatsApp Web refleja el mismo WAMID de un envío oficial, el eco se
+omite, incluido un HistorySync que encuentre esa fila API ya creada. Al arrancar,
+la reparación de identidades restaura plantillas Meta antiguas que quedaron
+falsamente etiquetadas como QR sólo cuando existe el envío oficial y no existe
+un claim de fallback QR; los respaldos reales permanecen intactos.
+
 Al enviar, el `phoneNumberId` elegido manda. El backend toma `provider`, teléfono
 emisor, WABA y disponibilidad desde esa fila; la preferencia global histórica
 `whatsapp_api_provider` no puede convertir un envío YCloud en Meta ni viceversa.

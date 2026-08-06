@@ -8,12 +8,15 @@ import { getDeployDrainSnapshot } from '../src/utils/deployDrainTracker.js'
 import { getContactConversation } from '../src/controllers/contactsController.js'
 import { markLatestInboundWhatsAppQrMessageReadForContact } from '../src/services/whatsappQrService.js'
 import {
+  captureQrChatMessage,
   getWhatsAppApiConfigKeys,
   markLatestInboundWhatsAppApiMessageReadForContact,
   processMetaDirectWebhookPayload,
   processMetaDirectWebhookRelay,
   processMetaDirectInboundEnrichmentJob,
+  repairWhatsAppProtocolMessageIdentities,
   sendWhatsAppApiReactionMessage,
+  sendWhatsAppApiTemplateMessage,
   sendWhatsAppApiTextMessage,
   setMetaDirectInboundMediaHydratorForTest,
   setMetaDirectInboundSideEffectsForTest,
@@ -150,6 +153,188 @@ async function withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, ca
     resetMetaDirectChatDeliveryHandlersForTest()
   }
 }
+
+test('Meta direct activo ignora el eco vivo de Baileys y conserva la plantilla como API', async () => {
+  const suffix = randomUUID()
+  const phoneNumberId = `meta_qr_echo_phone_${suffix}`
+  const wabaId = `meta_qr_echo_waba_${suffix}`
+  const businessPhone = `+1588${Date.now().toString().slice(-7)}`
+  const customerPhone = `+5288${Date.now().toString().slice(-8)}`
+  const contactId = `rstk_contact_meta_qr_echo_${suffix}`
+  const templateId = `rstk_template_meta_qr_echo_${suffix}`
+  const templateName = `meta_qr_echo_${suffix.replaceAll('-', '_')}`
+  const wamid = `wamid.meta.template.qr.echo.${suffix}`
+  const renderedText = 'Hola Abner, esta plantilla salió por Meta.'
+
+  try {
+    await withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, async () => {
+      await db.run(`
+        UPDATE whatsapp_api_phone_numbers
+        SET qr_send_enabled = 1,
+            qr_status = 'connected',
+            qr_connected_phone = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [businessPhone, phoneNumberId])
+      await db.run(`
+        INSERT INTO contacts (
+          id, phone, full_name, first_name, source, created_at, updated_at
+        ) VALUES (?, ?, 'Abner Prueba', 'Abner', 'WhatsApp_API', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [contactId, customerPhone])
+      await db.run(`
+        INSERT INTO whatsapp_api_templates (
+          id, provider, source_adapter, provider_template_id, official_template_id,
+          waba_id, name, language, category, status, components_json, raw_payload_json,
+          created_at, updated_at
+        ) VALUES (?, 'meta_direct', 'meta_direct', ?, ?, ?, ?, 'es_MX', 'MARKETING',
+          'APPROVED', ?, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        templateId,
+        `meta_template_${suffix}`,
+        `meta_template_${suffix}`,
+        wabaId,
+        templateName,
+        JSON.stringify([{ type: 'BODY', text: 'Hola {{1}}, esta plantilla salió por Meta.' }])
+      ])
+
+      setMetaDirectFetchForTest(async () => graphResponse({
+        messaging_product: 'whatsapp',
+        contacts: [{ input: customerPhone, wa_id: customerPhone.replace(/\D/g, '') }],
+        messages: [{ id: wamid, message_status: 'accepted' }]
+      }))
+
+      const sent = await sendWhatsAppApiTemplateMessage({
+        to: customerPhone,
+        from: businessPhone,
+        templateId,
+        variables: { 1: 'Abner' },
+        contactId,
+        phoneNumberId,
+        allowQrFallback: true
+      })
+      assert.equal(sent.wamid, wamid)
+
+      const qrEcho = await captureQrChatMessage({
+        phoneNumberId,
+        businessPhone,
+        direction: 'outbound',
+        wamid,
+        messageType: 'template',
+        text: renderedText,
+        contactPhone: customerPhone,
+        timestamp: new Date().toISOString()
+      })
+
+      assert.deepEqual(qrEcho, {
+        skipped: true,
+        reason: 'official_api_active'
+      })
+
+      const historyEcho = await captureQrChatMessage({
+        phoneNumberId,
+        businessPhone,
+        direction: 'outbound',
+        wamid,
+        messageType: 'template',
+        text: renderedText,
+        contactPhone: customerPhone,
+        timestamp: new Date().toISOString(),
+        historyImport: true
+      })
+      assert.deepEqual(historyEcho, {
+        skipped: true,
+        reason: 'official_api_message_exists',
+        messageId: sent.localMessageId
+      })
+
+      const stored = await db.get(`
+        SELECT provider, source_adapter, transport, routing_reason,
+               meta_message_id, ycloud_message_id, message_type, message_text
+        FROM whatsapp_api_messages
+        WHERE wamid = ?
+      `, [wamid])
+      assert.equal(stored.provider, 'meta_direct')
+      assert.equal(stored.source_adapter, 'meta_direct')
+      assert.equal(stored.transport, 'api')
+      assert.equal(stored.routing_reason, null)
+      assert.equal(stored.meta_message_id, wamid)
+      assert.equal(stored.ycloud_message_id, null)
+      assert.equal(stored.message_type, 'template')
+      assert.equal(stored.message_text, renderedText)
+
+      const fallbackAttempts = await db.get(`
+        SELECT COUNT(*) AS total
+        FROM whatsapp_api_qr_fallback_attempts
+        WHERE api_message_id = (SELECT id FROM whatsapp_api_messages WHERE wamid = ?)
+      `, [wamid])
+      assert.equal(Number(fallbackAttempts.total), 0)
+
+      await db.run(`
+        UPDATE whatsapp_api_messages
+        SET provider = 'ycloud',
+            source_adapter = 'baileys',
+            origin = 'whatsapp.qr.message.synced',
+            transport = 'qr',
+            routing_reason = 'Capturado desde la sesión de WhatsApp Web.'
+        WHERE wamid = ?
+      `, [wamid])
+
+      const repair = await repairWhatsAppProtocolMessageIdentities({ force: true })
+      assert.equal(repair.officialRestored, 1)
+
+      const restored = await db.get(`
+        SELECT provider, source_adapter, origin, transport, routing_reason,
+               provider_message_id, meta_message_id, ycloud_message_id
+        FROM whatsapp_api_messages
+        WHERE wamid = ?
+      `, [wamid])
+      assert.deepEqual(restored, {
+        provider: 'meta_direct',
+        source_adapter: 'meta_direct',
+        origin: 'whatsapp.message.updated',
+        transport: 'api',
+        routing_reason: null,
+        provider_message_id: wamid,
+        meta_message_id: wamid,
+        ycloud_message_id: null
+      })
+
+      await db.run(`
+        UPDATE whatsapp_api_messages
+        SET provider = 'meta_direct',
+            source_adapter = 'baileys',
+            origin = 'whatsapp.qr.message.fallback_sent',
+            transport = 'qr',
+            routing_reason = 'Fallback QR real y auditado.'
+        WHERE wamid = ?
+      `, [wamid])
+      await db.run(`
+        INSERT INTO whatsapp_api_qr_fallback_attempts (
+          api_message_id, provider, provider_message_id, fallback_reason, status
+        ) VALUES (?, 'meta_direct', ?, 'Fallback QR real y auditado.', 'sent')
+      `, [sent.localMessageId, wamid])
+
+      const protectedFallbackRepair = await repairWhatsAppProtocolMessageIdentities({ force: true })
+      assert.equal(protectedFallbackRepair.officialRestored, 0)
+      const protectedFallback = await db.get(`
+        SELECT source_adapter, transport, routing_reason
+        FROM whatsapp_api_messages
+        WHERE wamid = ?
+      `, [wamid])
+      assert.deepEqual(protectedFallback, {
+        source_adapter: 'baileys',
+        transport: 'qr',
+        routing_reason: 'Fallback QR real y auditado.'
+      })
+    })
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_qr_fallback_attempts WHERE api_message_id IN (SELECT id FROM whatsapp_api_messages WHERE wamid = ?)', [wamid]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_template_sends WHERE template_id = ?', [templateId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE wamid = ?', [wamid]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_templates WHERE id = ?', [templateId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
 
 test('Meta direct persists one text bubble, reconciles status ACKs, and saves CTWA attribution', async () => {
   const suffix = randomUUID()
