@@ -2160,7 +2160,7 @@ function replyContradictsVerifiedAppointment(value = '') {
   return [
     /\b(?:no|aun no|todavia no)\s+(?:me\s+)?(?:aparece|figura|esta|quedo|se encuentra|veo|encuentro|tengo)\b.{0,90}\b(?:confirmad|agendad|registrad|reservad|programad)\w*\b/,
     /\b(?:cita|citas|turno|turnos|reserva|reservas)\b.{0,100}\b(?:no|aun no|todavia no)\b.{0,70}\b(?:confirmad|agendad|registrad|reservad|programad|aparece|figura)\w*\b/,
-    /\bno\s+(?:encontre|encuentro|veo|hay|existe|aparece|figura)\b.{0,70}\b(?:cita|citas|turno|turnos|reserva|reservas)\b/
+    /\bno\s+(?:(?:me|te|le|nos|les)\s+)?(?:encontre|encuentro|veo|hay|existe|aparece|figura)\b.{0,70}\b(?:cita|citas|turno|turnos|reserva|reservas)\b/
   ].some((pattern) => pattern.test(text))
 }
 

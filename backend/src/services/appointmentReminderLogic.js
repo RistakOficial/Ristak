@@ -1,11 +1,12 @@
 import { DateTime } from 'luxon'
 import { DEFAULT_APPOINTMENT_NOTICE_TEXT } from './appointmentMessageDefaults.js'
+import { parseStoredUtcDateTime } from '../utils/storedUtcDateTime.js'
 
 // Lógica pura de los mensajes automáticos de citas (sin base de datos) para
 // poder probarla de forma aislada: cálculo de horario inteligente, render de
 // variables y detección de respuestas afirmativas.
 
-export { DEFAULT_APPOINTMENT_NOTICE_TEXT }
+export { DEFAULT_APPOINTMENT_NOTICE_TEXT, parseStoredUtcDateTime }
 
 export const DEFAULT_REMINDER_TEXT =
   'Hola {{contact.first_name}}, te recordamos que tienes una cita el {{cita.fecha}} a las {{cita.hora}}. Recuerda estar al pendiente. 😄\n\nEsto es un mensaje automático'
@@ -23,29 +24,6 @@ export const OFFSET_UNIT_MS = {
 function cleanString(value) {
   if (value === null || value === undefined) return ''
   return String(value).trim()
-}
-
-/**
- * Las fechas guardadas por citas y recordatorios son instantes UTC. El
- * adaptador PostgreSQL ya interpreta `timestamp without time zone` como UTC en
- * el borde de base de datos, así que un Date se trata con su semántica normal:
- * un instante absoluto. SQLite entrega strings y se leen explícitamente en UTC.
- */
-export function parseStoredUtcDateTime(value) {
-  if (DateTime.isDateTime(value)) {
-    return value.isValid ? value.toUTC() : null
-  }
-
-  if (value instanceof Date) {
-    if (Number.isNaN(value.getTime())) return null
-    return DateTime.fromJSDate(value, { zone: 'utc' })
-  }
-
-  const text = cleanString(value)
-  if (!text) return null
-  const normalized = text.includes('T') ? text : text.replace(' ', 'T')
-  const parsed = DateTime.fromISO(normalized, { zone: 'utc' })
-  return parsed.isValid ? parsed : null
 }
 
 export function parseHHMM(value, fallback) {

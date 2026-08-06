@@ -4901,7 +4901,11 @@ cita". Internamente eso guarda `message_type='confirmation'`, habilita las
 opciones de IA/acciones de confirmacion y hace que las respuestas del contacto
 abran una ventana en `appointment_confirmation_windows`. Si el switch esta
 apagado, el mensaje queda como `message_type='reminder'` aunque su ancla sea
-`after_booking`.
+`after_booking`. Sólo una fila `confirmation` puede guardar `ai_enabled=1` o
+`bypass_automations=1`; el backend fuerza ambas banderas a cero en recordatorios
+comunes y el arranque repara de forma idempotente las configuraciones históricas
+que quedaron en ese estado híbrido. Así una respuesta a un recordatorio normal
+no se presenta falsamente como una confirmación administrada por IA.
 
 El estado operativo `appointments.appointment_status='confirmed'` no suprime
 estos mensajes ni cierra sus respuestas. Ese valor puede venir de la
@@ -5230,7 +5234,13 @@ En PostgreSQL, las columnas de citas y envios siguen siendo
 backend debe rehidratar los componentes guardados como UTC porque
 `node-postgres` puede entregarlas como objetos `Date` interpretados en la zona
 del proceso. Si se convierten directamente a texto y se pasan a Luxon, el
-recordatorio queda fuera de la cola sin error visible.
+recordatorio queda fuera de la cola sin error visible. La misma regla protege la
+agenda consultada por el agente conversacional: acepta el `Date` de PostgreSQL y
+el texto UTC de SQLite, devuelve siempre un ISO UTC canónico y, si una fila trae
+un timestamp inválido, falla la verificación en vez de convertir una cita real
+en una lista vacía. Antes de responder, el runtime conserva además un snapshot
+canónico; cualquier negativa como "no me aparece una cita activa" se reemplaza
+si ese snapshot o la lectura de agenda ya verificaron una cita vigente.
 
 ### Planes de pago locales
 

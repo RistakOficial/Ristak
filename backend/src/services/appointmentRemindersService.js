@@ -516,7 +516,7 @@ function normalizeReminderRow(row = {}) {
     LEGACY_CONFIRMATION_SUCCESS_ACTIONS
   )
   const messageType = MESSAGE_TYPES.has(cleanString(row.message_type)) ? cleanString(row.message_type) : 'reminder'
-  const aiEnabled = Number(row.ai_enabled || 0) === 1
+  const aiEnabled = messageType === 'confirmation' && Number(row.ai_enabled || 0) === 1
   const rawNoConfirmAction = cleanString(row.no_confirm_action)
   const noConfirmAction = normalizeNoConfirmAction(rawNoConfirmAction)
   const defaultConfirmationTimeout = getDefaultConfirmationTimeout(
@@ -576,7 +576,7 @@ function normalizeReminderRow(row = {}) {
     // Compatibilidad temporal para clientes anteriores que todavía esperan un
     // único valor. El backend nuevo usa siempre confirmationSuccessActions.
     confirmationSuccessAction: confirmationSuccessActions.find(action => action !== 'mark_confirmed') || 'mark_confirmed',
-    bypassAutomations: Number(row.bypass_automations || 0) === 1,
+    bypassAutomations: messageType === 'confirmation' && Number(row.bypass_automations || 0) === 1,
     // Compatibilidad de API: el respaldo ya no es una preferencia manual. La
     // capa central lo habilita sólo para un QR conectado al mismo número.
     qrFallbackEnabled: channel === 'whatsapp',
@@ -701,6 +701,16 @@ async function resolveReminderTemplateSelection(data = {}) {
 
 async function backfillMissingReminderTemplates() {
   await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
+  // Versiones anteriores podían guardar un recordatorio común con la IA de
+  // confirmación encendida. Ese estado híbrido no confirma citas y deja que la
+  // respuesta caiga al agente general. Lo apagamos de forma idempotente; sólo
+  // message_type=confirmation puede habilitar estas dos banderas.
+  await db.run(`
+    UPDATE appointment_reminders
+    SET ai_enabled = 0, bypass_automations = 0, updated_at = CURRENT_TIMESTAMP
+    WHERE COALESCE(message_type, 'reminder') <> 'confirmation'
+      AND (COALESCE(ai_enabled, 0) <> 0 OR COALESCE(bypass_automations, 0) <> 0)
+  `)
   await db.run(`
     UPDATE appointment_reminders
     SET message_text = ?, updated_at = CURRENT_TIMESTAMP
@@ -1214,7 +1224,7 @@ function sanitizeReminderInput(input = {}, base = {}) {
     name: cleanString(merged.name) || formatOffsetLabel(offsetValue, offsetUnit, timingAnchor),
     enabled: merged.enabled === false ? 0 : 1,
     messageType,
-    aiEnabled: merged.aiEnabled === false ? 0 : 1,
+    aiEnabled: confirmationEnabled && merged.aiEnabled !== false ? 1 : 0,
     channel,
     senderMode: whatsappChannel && SENDER_MODES.has(cleanString(merged.senderMode)) ? cleanString(merged.senderMode) : 'contact',
     senderPhoneNumberId: whatsappChannel ? cleanString(merged.senderPhoneNumberId) || null : null,
@@ -1238,7 +1248,7 @@ function sanitizeReminderInput(input = {}, base = {}) {
       confirmationSuccessActions,
       DEFAULT_CONFIRMATION_SUCCESS_ACTIONS
     ),
-    bypassAutomations: merged.bypassAutomations === true ? 1 : 0,
+    bypassAutomations: confirmationEnabled && merged.bypassAutomations === true ? 1 : 0,
     // Se conserva la columna para clientes anteriores, pero el ruteo real es
     // automático y siempre queda autorizado para WhatsApp API. La capa central
     // sólo usa un QR del mismo número y por indisponibilidad real de la API.

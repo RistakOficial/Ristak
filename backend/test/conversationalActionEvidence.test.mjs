@@ -4,7 +4,35 @@ import { randomUUID } from 'node:crypto'
 
 import { db } from '../src/config/database.js'
 import { createConversationalTools } from '../src/agents/conversational/tools.js'
-import { revalidateAppointmentSlot } from '../src/agents/conversational/actionEvidence.js'
+import {
+  buildCanonicalAppointmentSlotOption,
+  revalidateAppointmentSlot
+} from '../src/agents/conversational/actionEvidence.js'
+
+test('la cita PostgreSQL conserva su instante cuando start_time llega como Date', () => {
+  const postgresStartTime = new Date('2026-08-05T23:15:00.000Z')
+  const canonical = buildCanonicalAppointmentSlotOption(
+    postgresStartTime,
+    'America/Mexico_City'
+  )
+
+  assert.ok(canonical)
+  assert.equal(canonical.startTime, '2026-08-05T23:15:00.000Z')
+  assert.equal(canonical.localDate, '2026-08-05')
+  assert.equal(canonical.localTime, '17:15')
+  assert.match(canonical.localLabel, /miércoles 5 de agosto de 2026 a las 5:15 p\.\s*m\./i)
+})
+
+test('la cita SQLite sin sufijo se interpreta como UTC, no como hora del servidor', () => {
+  const canonical = buildCanonicalAppointmentSlotOption(
+    '2026-08-05 23:15:00',
+    'America/Mexico_City'
+  )
+
+  assert.ok(canonical)
+  assert.equal(canonical.startTime, '2026-08-05T23:15:00.000Z')
+  assert.equal(canonical.localTime, '17:15')
+})
 
 test('revalidación de slots falla cerrado y pide transferencia si el calendario no responde', async () => {
   const result = await revalidateAppointmentSlot({

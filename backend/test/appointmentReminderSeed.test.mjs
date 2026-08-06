@@ -112,6 +112,81 @@ test('un recordatorio nuevo de una hora elige el copy simple y no expone el tít
   )
 })
 
+test('un recordatorio común nunca guarda encendida la IA de confirmación', async () => {
+  await db.run('DELETE FROM appointment_reminders')
+
+  const reminder = await createAppointmentReminder({
+    name: 'Recordatorio sin confirmación',
+    messageType: 'reminder',
+    aiEnabled: true,
+    bypassAutomations: true,
+    timingAnchor: 'before_appointment',
+    offsetValue: 2,
+    offsetUnit: 'hours'
+  })
+  const stored = await db.get(
+    'SELECT message_type, ai_enabled, bypass_automations FROM appointment_reminders WHERE id = ?',
+    [reminder.id]
+  )
+
+  assert.equal(reminder.messageType, 'reminder')
+  assert.equal(reminder.aiEnabled, false)
+  assert.equal(reminder.bypassAutomations, false)
+  assert.equal(stored.ai_enabled, 0)
+  assert.equal(stored.bypass_automations, 0)
+})
+
+test('una confirmación conserva la decisión explícita de apagar su IA', async () => {
+  await db.run('DELETE FROM appointment_reminders')
+
+  const reminder = await createAppointmentReminder({
+    name: 'Confirmación administrada manualmente',
+    messageType: 'confirmation',
+    aiEnabled: false,
+    timingAnchor: 'before_appointment',
+    offsetValue: 1,
+    offsetUnit: 'days'
+  })
+  const stored = await db.get(
+    'SELECT message_type, ai_enabled FROM appointment_reminders WHERE id = ?',
+    [reminder.id]
+  )
+
+  assert.equal(reminder.messageType, 'confirmation')
+  assert.equal(reminder.aiEnabled, false)
+  assert.equal(stored.ai_enabled, 0)
+})
+
+test('el arranque limpia recordatorios legacy que quedaron en modo híbrido', async () => {
+  await db.run('DELETE FROM appointment_reminders')
+  const reminder = await createAppointmentReminder({
+    name: 'Recordatorio legacy',
+    messageType: 'reminder',
+    timingAnchor: 'before_appointment',
+    offsetValue: 3,
+    offsetUnit: 'hours'
+  })
+  await db.run(
+    'UPDATE appointment_reminders SET ai_enabled = 1, bypass_automations = 1 WHERE id = ?',
+    [reminder.id]
+  )
+  await db.run(`
+    INSERT INTO app_config (config_key, config_value, updated_at)
+    VALUES ('appointment_reminders_seeded', '1', CURRENT_TIMESTAMP)
+    ON CONFLICT(config_key) DO UPDATE SET config_value = '1', updated_at = CURRENT_TIMESTAMP
+  `)
+
+  await ensureDefaultAppointmentReminder()
+
+  const stored = await db.get(
+    'SELECT message_type, ai_enabled, bypass_automations FROM appointment_reminders WHERE id = ?',
+    [reminder.id]
+  )
+  assert.equal(stored.message_type, 'reminder')
+  assert.equal(stored.ai_enabled, 0)
+  assert.equal(stored.bypass_automations, 0)
+})
+
 test('actualiza solo el texto directo legacy del aviso al agendar', async () => {
   const legacyText =
     'Hola {{contact.first_name}}, tu cita quedó agendada para el {{cita.fecha}} a las {{cita.hora}}. Te esperamos.\n\nEsto es un mensaje automático'

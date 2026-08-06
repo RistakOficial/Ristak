@@ -2197,17 +2197,29 @@ async function listOwnedConversationalAppointments({
         totalQuery.catch(() => ({ total: 0 })),
         rowsQuery.catch(() => [])
       ])
-  const appointments = (rows || []).flatMap((row) => {
+  const appointments = (rows || []).map((row) => {
     const canonical = buildCanonicalAppointmentSlotOption(row.start_time, timezone)
-    if (!canonical) return []
-    return [{
+    if (!canonical) {
+      const error = new Error(`La cita ${String(row.id || '').trim() || '(sin id)'} tiene start_time inválido.`)
+      error.code = 'INVALID_APPOINTMENT_TIMESTAMP'
+      throw error
+    }
+    const canonicalEnd = row.end_time
+      ? buildCanonicalAppointmentSlotOption(row.end_time, timezone)
+      : null
+    if (row.end_time && !canonicalEnd) {
+      const error = new Error(`La cita ${String(row.id || '').trim() || '(sin id)'} tiene end_time inválido.`)
+      error.code = 'INVALID_APPOINTMENT_TIMESTAMP'
+      throw error
+    }
+    return {
       appointmentId: String(row.id),
       title: cleanAppointmentText(row.title || 'Cita', 180),
       startTime: canonical.startTime,
-      endTime: row.end_time ? new Date(row.end_time).toISOString() : null,
+      endTime: canonicalEnd?.startTime || null,
       localLabel: canonical.localLabel,
       status: nativeAppointmentStatus(row) || 'confirmed'
-    }]
+    }
   })
   return {
     appointments,

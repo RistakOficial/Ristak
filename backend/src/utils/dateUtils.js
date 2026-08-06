@@ -1,6 +1,8 @@
 import { DateTime } from 'luxon'
 import { db } from '../config/database.js'
 
+export { parseStoredUtcDateTime } from './storedUtcDateTime.js'
+
 // Utilidades para manejo de fechas
 
 export const DEFAULT_TIMEZONE = 'America/Mexico_City'

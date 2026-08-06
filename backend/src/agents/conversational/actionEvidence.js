@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon'
 import { canRecoverConversationalAppointmentDepositReservation } from '../../services/conversationalAgentService.js'
-import { resolveTimezone } from '../../utils/dateUtils.js'
+import { parseStoredUtcDateTime, resolveTimezone } from '../../utils/dateUtils.js'
 import {
   NON_LIVE_PAYMENT_MODES,
   SUCCESS_PAYMENT_STATUSES
@@ -96,16 +96,17 @@ function extractCanonicalAppointmentLabels(text = '') {
 
 export function buildCanonicalAppointmentSlotOption(startTime = '', timezone = '') {
   const dayTimezone = resolveTimezone(timezone)
-  const local = DateTime.fromISO(String(startTime || ''), { setZone: true })
+  const instant = parseStoredUtcDateTime(startTime)
+  if (!instant) return null
+  const local = instant
     .setZone(dayTimezone)
     .setLocale('es-MX')
-  if (!local.isValid) return null
   const localKey = local.toFormat('yyyy-MM-dd HH:mm')
   const repeatedLocalTime = [local.minus({ minutes: 60 }), local.plus({ minutes: 60 })]
     .some((candidate) => candidate.toFormat('yyyy-MM-dd HH:mm') === localKey && candidate.offset !== local.offset)
   const baseLabel = local.toFormat("cccc d 'de' LLLL 'de' yyyy 'a las' h:mm a")
   return {
-    startTime: String(startTime),
+    startTime: instant.toISO({ suppressMilliseconds: false }),
     localDate: local.toISODate(),
     localTime: local.toFormat('HH:mm'),
     localLabel: repeatedLocalTime ? `${baseLabel} (UTC${local.toFormat('ZZ')})` : baseLabel,

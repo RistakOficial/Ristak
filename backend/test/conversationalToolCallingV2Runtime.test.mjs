@@ -309,6 +309,18 @@ test('una lectura positiva de get_contact_appointments también impide negar la 
   assert.equal(guarded.prevented, true)
   assert.equal(guarded.reason, 'verified_appointment_contradiction_replaced')
   assert.match(guarded.reply, /sigue confirmada/i)
+
+  const marcoCase = guardConversationalAppointmentReplyAgainstState({
+    reply: 'Gracias por confirmar. Revisé el calendario y no me aparece una cita activa para el miércoles a las 5:15 p. m.',
+    ctx: {
+      actions: [],
+      appointmentReadActions,
+      verifiedAppointmentContext: null
+    }
+  })
+  assert.equal(marcoCase.prevented, true)
+  assert.equal(marcoCase.reason, 'verified_appointment_contradiction_replaced')
+  assert.match(marcoCase.reply, /sigue confirmada/i)
 })
 
 test('un fallo al consultar agenda nunca se convierte en una negativa inventada', () => {

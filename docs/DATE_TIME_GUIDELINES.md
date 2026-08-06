@@ -26,6 +26,12 @@ Backend:
   opciones, ejemplos o tests.
 - Si un valor no trae zona horaria explícita, interprétalo con la zona del
   negocio antes de convertirlo a UTC.
+- Excepción para valores ya leídos de columnas UTC: usa
+  `parseStoredUtcDateTime()` desde `backend/src/utils/dateUtils.js`. El adaptador
+  PostgreSQL puede entregarlos como `Date` y SQLite como texto SQL sin sufijo;
+  ambos deben conservar el mismo instante UTC. Nunca conviertas primero ese
+  `Date` a texto para pasarlo a Luxon ni descartes silenciosamente una fila
+  canónica cuando el timestamp sea inválido.
 - Los rangos semanales de calendario (`openHours`) son horas de pared en la zona
   del negocio. Calcula primero ahí el día y el rango válido y después conviértelo
   a un instante UTC. Una zona del visitante puede reformatear ese instante, pero
@@ -181,7 +187,8 @@ new Date('2026-06-29') // interpreta UTC y puede mover el día mostrado
 
 Usa `businessTodayDateOnly(timezone)`, `normalizeDateOnlyInTimezone()`,
 `normalizeToUtcIso(value, timezone)`, `assertDateOnlyNotInPast()` y
-`assertLocalDateTimeNotInPast()` desde `dateUtils.js`.
+`assertLocalDateTimeNotInPast()` desde `dateUtils.js`. Para instantes UTC que ya
+vienen de la base usa `parseStoredUtcDateTime()`.
 
 ## Integraciones
 
