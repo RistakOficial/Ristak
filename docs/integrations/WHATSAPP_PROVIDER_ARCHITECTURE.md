@@ -543,7 +543,9 @@ nuevo sigue el flujo estándar de Cloud API.
     plantilla Meta que una versión anterior hubiera etiquetado como QR sólo
     cuando `whatsapp_api_template_sends` prueba el envío oficial y no existe un
     claim en `whatsapp_api_qr_fallback_attempts`; un fallback QR real nunca se
-    reescribe como API.
+    reescribe como API. Si el índice único ya posee una identidad de protocolo,
+    el backfill deja cualquier fila histórica conflictiva sin materializar y la
+    reporta para auditoría; esa condición nunca debe impedir el arranque.
 12. `(provider, provider_message_id)` es una identidad única. El mantenimiento
     de arranque fusiona duplicados históricos demostrables antes de crear el
     índice único parcial; si encuentra un conflicto entre conversaciones

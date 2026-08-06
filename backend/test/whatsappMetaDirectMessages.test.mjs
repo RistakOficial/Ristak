@@ -165,6 +165,9 @@ test('Meta direct activo ignora el eco vivo de Baileys y conserva la plantilla c
   const templateName = `meta_qr_echo_${suffix.replaceAll('-', '_')}`
   const wamid = `wamid.meta.template.qr.echo.${suffix}`
   const renderedText = 'Hola Abner, esta plantilla salió por Meta.'
+  const collisionProtocolKey = `AB${suffix.replaceAll('-', '').toUpperCase().slice(0, 30)}`
+  const collisionOwnerId = `meta_protocol_owner_${suffix}`
+  const collisionCandidateId = `qr_protocol_collision_${suffix}`
 
   try {
     await withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, async () => {
@@ -278,9 +281,59 @@ test('Meta direct activo ignora el eco vivo de Baileys y conserva la plantilla c
             routing_reason = 'Capturado desde la sesión de WhatsApp Web.'
         WHERE wamid = ?
       `, [wamid])
+      await db.run(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_api_messages_protocol_key_unique
+        ON whatsapp_api_messages (protocol_message_key_id)
+        WHERE protocol_message_key_id IS NOT NULL AND protocol_message_key_id <> ''
+      `)
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, source_adapter, origin, wamid, protocol_message_key_id,
+          contact_id, phone, from_phone, to_phone, business_phone, transport,
+          direction, message_type, message_text, status,
+          message_timestamp, created_at, updated_at
+        ) VALUES (?, 'meta_direct', 'meta_direct', 'whatsapp.message.updated', ?, ?,
+          ?, ?, ?, ?, ?, 'api', 'outbound', 'text', 'Dueño de identidad', 'sent',
+          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        collisionOwnerId,
+        `wamid.meta.protocol.owner.${suffix}`,
+        collisionProtocolKey,
+        contactId,
+        customerPhone,
+        businessPhone,
+        customerPhone,
+        businessPhone
+      ])
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, source_adapter, origin, wamid,
+          contact_id, phone, from_phone, to_phone, business_phone, transport,
+          direction, message_type, message_text, status,
+          message_timestamp, created_at, updated_at
+        ) VALUES (?, 'ycloud', 'baileys', 'whatsapp.qr.message.synced', ?,
+          ?, ?, ?, ?, ?, 'qr', 'outbound', 'text', 'Conflicto histórico', 'sent',
+          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        collisionCandidateId,
+        collisionProtocolKey,
+        contactId,
+        customerPhone,
+        businessPhone,
+        customerPhone,
+        businessPhone
+      ])
 
       const repair = await repairWhatsAppProtocolMessageIdentities({ force: true })
       assert.equal(repair.officialRestored, 1)
+      assert.ok(repair.protocolConflictsSkipped >= 1)
+
+      const skippedProtocolCollision = await db.get(`
+        SELECT protocol_message_key_id
+        FROM whatsapp_api_messages
+        WHERE id = ?
+      `, [collisionCandidateId])
+      assert.equal(skippedProtocolCollision.protocol_message_key_id, null)
 
       const restored = await db.get(`
         SELECT provider, source_adapter, origin, transport, routing_reason,
@@ -330,6 +383,7 @@ test('Meta direct activo ignora el eco vivo de Baileys y conserva la plantilla c
   } finally {
     await db.run('DELETE FROM whatsapp_api_qr_fallback_attempts WHERE api_message_id IN (SELECT id FROM whatsapp_api_messages WHERE wamid = ?)', [wamid]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_template_sends WHERE template_id = ?', [templateId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE id IN (?, ?)', [collisionOwnerId, collisionCandidateId]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_messages WHERE wamid = ?', [wamid]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_templates WHERE id = ?', [templateId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)

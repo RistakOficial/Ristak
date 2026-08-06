@@ -2594,7 +2594,9 @@ como QR. Si WhatsApp Web refleja el mismo WAMID de un envío oficial, el eco se
 omite, incluido un HistorySync que encuentre esa fila API ya creada. Al arrancar,
 la reparación de identidades restaura plantillas Meta antiguas que quedaron
 falsamente etiquetadas como QR sólo cuando existe el envío oficial y no existe
-un claim de fallback QR; los respaldos reales permanecen intactos.
+un claim de fallback QR; los respaldos reales permanecen intactos. Un conflicto
+histórico contra la identidad única ya materializada se conserva para auditoría
+sin derribar el arranque de la cuenta.
 
 Al enviar, el `phoneNumberId` elegido manda. El backend toma `provider`, teléfono
 emisor, WABA y disponibilidad desde esa fila; la preferencia global histórica

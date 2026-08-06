@@ -6,7 +6,7 @@ import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import nodeFetch from 'node-fetch'
 import sharp from 'sharp'
-import { db, getAppConfig, repairWhatsAppApiContactIdentityFromMessages, setAppConfig } from '../config/database.js'
+import { databaseDialect, db, getAppConfig, repairWhatsAppApiContactIdentityFromMessages, setAppConfig } from '../config/database.js'
 import { getMetaApiVersion } from '../config/constants.js'
 import {
   findContactByPhoneCandidates,
@@ -121,7 +121,7 @@ const META_DIRECT_PHONE_STATUS_FIELDS = [
 const WEBHOOK_DESCRIPTION = 'Ristak WhatsApp API'
 const GENERIC_CONTACT_NAME = GENERIC_WHATSAPP_API_CONTACT_NAME
 const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY = 'whatsapp_protocol_identity_repair_version'
-const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION = '2026-08-06-v3'
+const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION = '2026-08-06-v4'
 const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-images')
 let ycloudFetch = nodeFetch
 let metaDirectFetch = nodeFetch
@@ -8306,7 +8306,8 @@ export async function repairWhatsAppProtocolMessageIdentities({ force = false } 
         backfilled: 0,
         merged: 0,
         providerMerged: 0,
-        officialRestored: 0
+        officialRestored: 0,
+        protocolConflictsSkipped: 0
       }
     }
 
@@ -8347,9 +8348,26 @@ export async function repairWhatsAppProtocolMessageIdentities({ force = false } 
         )
     `)
     const officialRestored = Number(restoredOfficialMessages?.changes || restoredOfficialMessages?.rowCount || 0)
+    const protocolIdentityIndex = databaseDialect === 'postgres'
+      ? await db.get(`
+          SELECT 1 AS present
+          FROM pg_indexes
+          WHERE schemaname = current_schema()
+            AND indexname = 'idx_whatsapp_api_messages_protocol_key_unique'
+          LIMIT 1
+        `).catch(() => null)
+      : await db.get(`
+          SELECT 1 AS present
+          FROM sqlite_master
+          WHERE type = 'index'
+            AND name = 'idx_whatsapp_api_messages_protocol_key_unique'
+          LIMIT 1
+        `).catch(() => null)
+    const protocolIdentityIndexExists = Boolean(protocolIdentityIndex?.present)
 
     let lastId = ''
     let backfilled = 0
+    let protocolConflictsSkipped = 0
     while (true) {
       const rows = await db.all(`
         SELECT id, transport, wamid
@@ -8368,12 +8386,42 @@ export async function repairWhatsAppProtocolMessageIdentities({ force = false } 
           wamid: row.wamid
         })
         if (!protocolKey) continue
+        // El índice único puede existir desde una reparación anterior. Si una
+        // fila histórica nueva deriva una identidad ya ocupada, se conserva sin
+        // protocol key para que el mantenimiento posterior pueda auditarla; el
+        // arranque jamás debe caer por intentar materializar ese duplicado.
+        const protocolConflictGuard = protocolIdentityIndexExists
+          ? `AND NOT EXISTS (
+              SELECT 1
+              FROM whatsapp_api_messages existing
+              WHERE existing.protocol_message_key_id = ?
+                AND existing.id != ?
+            )`
+          : ''
         const result = await db.run(`
           UPDATE whatsapp_api_messages
           SET protocol_message_key_id = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE id = ? AND COALESCE(protocol_message_key_id, '') = ''
-        `, [protocolKey, row.id])
+          WHERE id = ?
+            AND COALESCE(protocol_message_key_id, '') = ''
+            ${protocolConflictGuard}
+        `, protocolIdentityIndexExists
+          ? [protocolKey, row.id, protocolKey, row.id]
+          : [protocolKey, row.id]).catch(error => {
+          const duplicateProtocolKey = cleanString(error?.message)
+            .includes('idx_whatsapp_api_messages_protocol_key_unique')
+          if (duplicateProtocolKey) return { changes: 0, rowCount: 0, protocolConflict: true }
+          throw error
+        })
         backfilled += Number(result?.changes || 0)
+        if (!Number(result?.changes || result?.rowCount || 0)) {
+          const conflictOwner = await db.get(`
+            SELECT id
+            FROM whatsapp_api_messages
+            WHERE protocol_message_key_id = ? AND id != ?
+            LIMIT 1
+          `, [protocolKey, row.id]).catch(() => null)
+          if (result?.protocolConflict || conflictOwner?.id) protocolConflictsSkipped += 1
+        }
       }
 
       lastId = cleanString(rows.at(-1)?.id) || lastId
@@ -8487,8 +8535,8 @@ export async function repairWhatsAppProtocolMessageIdentities({ force = false } 
 
     await setAppConfig(WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY, WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION)
     const totalMerged = merged + providerMerged
-    if (backfilled || totalMerged || officialRestored) {
-      logger.info(`[WhatsApp] Identidades exactas: ${backfilled} filas preparadas, ${providerMerged} estados oficiales, ${merged} ecos históricos fusionados y ${officialRestored} envíos Meta restaurados.`)
+    if (backfilled || totalMerged || officialRestored || protocolConflictsSkipped) {
+      logger.info(`[WhatsApp] Identidades exactas: ${backfilled} filas preparadas, ${providerMerged} estados oficiales, ${merged} ecos históricos fusionados, ${officialRestored} envíos Meta restaurados y ${protocolConflictsSkipped} conflictos ya materializados omitidos.`)
     }
     return {
       skipped: false,
@@ -8496,7 +8544,8 @@ export async function repairWhatsAppProtocolMessageIdentities({ force = false } 
       backfilled,
       merged: totalMerged,
       providerMerged,
-      officialRestored
+      officialRestored,
+      protocolConflictsSkipped
     }
   }, { pinConnection: false })
 }
