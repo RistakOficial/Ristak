@@ -180,6 +180,12 @@ URL opaca individual únicamente cuando la ejecución trae la cita, el calendari
 y el contacto exactos; fuera de ese contexto queda vacía para no enviar el
 enlace de otra reserva. La URL de Zoom/Meet no aparece en el catálogo de enlaces
 de disparo.
+
+No importa si el usuario conecta WhatsApp antes o después de crear el calendario
+en línea: el alta del calendario o la reparación posterior de la conexión envía
+esta plantilla a revisión en la cuenta de WhatsApp del negocio. Cada negocio
+conserva su propia aprobación del proveedor.
+
 Si la plantilla oficial todavía está en revisión, el panel de salud conserva el
 motivo y el cron reintenta después de que el proveedor la apruebe; WhatsApp QR
 puede usar el texto renderizado bajo sus reglas existentes.

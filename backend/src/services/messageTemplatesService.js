@@ -308,7 +308,8 @@ const ONLINE_MEETING_MESSAGE_TEMPLATE = APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS
 const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS.filter(
   template => template !== ONLINE_MEETING_MESSAGE_TEMPLATE
 )
-const DEFAULT_APPOINTMENT_TEMPLATE_NAMES = new Set(DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES.map(template => template.name))
+const DEFAULT_APPOINTMENT_TEMPLATE_NAMES = new Set(APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS.map(template => template.name))
+const ONLINE_MEETING_REMINDER_SYSTEM_KEY = 'online_meeting_join_link_10m'
 const DEFAULT_APPOINTMENT_REVIEW_RETRY_TIMEOUT_MS = 6 * 60 * 60 * 1000
 const DEFAULT_APPOINTMENT_REVIEW_MAX_RETRIES = 2
 const DEFAULT_APPOINTMENT_REVIEW_RETRY_ALERT_TYPE = 'template_review_retry_exhausted'
@@ -1861,7 +1862,23 @@ function isDefaultAppointmentTemplate(template = {}) {
 
 function getDefaultAppointmentDefinition(name) {
   const cleanName = cleanString(name)
-  return DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES.find((definition) => definition.name === cleanName) || null
+  return APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS.find((definition) => definition.name === cleanName) || null
+}
+
+async function getManagedAppointmentTemplateDefinitions() {
+  if (!ONLINE_MEETING_MESSAGE_TEMPLATE) return DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES
+
+  const onlineReminder = await db.get(`
+    SELECT id
+    FROM appointment_reminders
+    WHERE system_key = ?
+      AND enabled = 1
+    LIMIT 1
+  `, [ONLINE_MEETING_REMINDER_SYSTEM_KEY])
+
+  return onlineReminder
+    ? [...DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES, ONLINE_MEETING_MESSAGE_TEMPLATE]
+    : DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES
 }
 
 function getDefaultTemplateProviderRevisionKey(definition = {}, provider = '') {
@@ -2096,8 +2113,9 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToActiveP
   const folder = await ensureDefaultTemplateFolder()
   const provider = await getActiveTemplateProvider()
   const ensuredTemplates = []
+  const definitions = await getManagedAppointmentTemplateDefinitions()
 
-  for (const definition of DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES) {
+  for (const definition of definitions) {
     ensuredTemplates.push(await ensureDefaultMessageTemplate(definition, folder.id, {
       provider: submitToActiveProvider ? provider : undefined
     }))
@@ -2107,7 +2125,7 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToActiveP
   for (let index = 0; index < templates.length; index += 1) {
     let template = templates[index]
     const ensured = ensuredTemplates[index]
-    const definition = DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES[index]
+    const definition = definitions[index]
     const providerRevision = submitToActiveProvider
       ? await getDefaultTemplateProviderRevision(definition, provider)
       : { key: null, desired: 0, stored: 0 }

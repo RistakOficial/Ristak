@@ -2228,6 +2228,12 @@ que los tres IDs coincidan, marca la cita `showed` y crea la señal idempotente 
 asistencia. Un token reenviado conserva la identidad original y los clics
 repetidos no duplican la transición ni la notificación.
 
+El orden de alta es idempotente: con WhatsApp conectado, activar el modo en línea
+envía la plantilla al proveedor; si el calendario en línea existía antes de la
+conexión, la preparación posterior de plantillas detecta el recordatorio
+administrado activo y la envía entonces. La identidad y aprobación pertenecen al
+WABA de cada negocio y nunca se reutiliza la aprobación de otra cuenta.
+
 La regla administrada sólo fija su configuración inicial. Después de creada, la
 plantilla, el remitente y los demás ajustes visibles pertenecen al usuario:
 guardar otra vez el calendario o apagar y volver a encender el modo en línea sólo

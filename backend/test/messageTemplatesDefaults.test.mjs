@@ -8,9 +8,12 @@ import {
   ensureDefaultAppointmentMessageTemplates,
   ensureDefaultPaymentMessageTemplates,
   ensureDefaultWhatsAppApiMessageTemplates,
+  ensureOnlineMeetingMessageTemplate,
   getMessageTemplateBundle,
   repairDefaultAppointmentMessageTemplatesForCurrentConnection
 } from '../src/services/messageTemplatesService.js'
+import { createLocalCalendar } from '../src/services/localCalendarService.js'
+import { syncCalendarMeetingResources } from '../src/services/calendarMeetingService.js'
 import {
   getWhatsAppApiConfigKeys,
   setMetaDirectFetchForTest,
@@ -34,12 +37,22 @@ const SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS = [
   'whatsapp_default_template_provider_revision_ycloud_cita_programada_es_MX',
   'whatsapp_default_template_provider_revision_meta_direct_cita_programada_es_MX'
 ]
+const ONLINE_MEETING_PROVIDER_REVISION_KEYS = [
+  'whatsapp_default_template_provider_revision_ycloud_acceso_videollamada_10_minutos_v2_es_MX',
+  'whatsapp_default_template_provider_revision_meta_direct_acceso_videollamada_10_minutos_v2_es_MX'
+]
+const APPOINTMENT_PROVIDER_REVISION_KEYS = [
+  ...SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS,
+  ...ONLINE_MEETING_PROVIDER_REVISION_KEYS
+]
 const SCHEDULED_APPOINTMENT_HEADER = '🗓️ Cita programada para el {{1}}'
 const SCHEDULED_APPOINTMENT_BODY = '🔔 *Importante:* Te llegarán varios recordatorios para *NO* olvidar que tienes una cita programada.\n\nTe pedimos de la manera más atenta que *respondas* los mensajes cuando se te solicite, para mantener una comunicación clara y evitar cualquier confusión con las citas.\n\n¡Gracias!'
 const SCHEDULED_APPOINTMENT_FOOTER = 'Este es un mensaje AUTOMÁTICO'
 const ONE_DAY_REMINDER_BODY = '*Recordatorio de cita* ⏰\nHola {{1}}, te recordamos que tienes una cita el {{2}} a las {{3}}. Recuerda estar al pendiente. 😄'
 const ONE_HOUR_REMINDER_BODY = 'Hola {{1}}, solo es un recordatorio de que tu cita es dentro de una hora, para que estés al pendiente.'
 const APPOINTMENT_CONFIRMATION_BODY = 'Hola {{1}}, queremos confirmar tu asistencia a la cita del {{2}} a las {{3}}. ¿Nos confirmas, por favor?'
+const ONLINE_MEETING_TEMPLATE_NAME = 'acceso_videollamada_10_minutos_v2'
+const ONLINE_MEETING_TEMPLATE_BODY = 'Aquí te paso el enlace para conectarnos:\n{{1}}\n\nYo me conecto en diez minutos. También te envié el enlace por correo electrónico, por si no puedes ingresar desde aquí.\n\nUn favor, ¿puedes ir ingresando para verificar que sí puedes entrar? Gracias.'
 const DEFAULT_PAYMENT_TEMPLATE_NAMES = [
   'recordatorio_pago_pendiente',
   'comprobante_pago_recibido',
@@ -96,10 +109,11 @@ async function snapshotAppConfig(keys = [], callback) {
 }
 
 async function deleteDefaultTemplates() {
-  const placeholders = DEFAULT_TEMPLATE_NAMES.map(() => '?').join(', ')
-  const retryLikeClauses = DEFAULT_TEMPLATE_NAMES.map(() => 'name LIKE ?').join(' OR ')
-  const retryLikeParams = DEFAULT_TEMPLATE_NAMES.map((name) => `${name}_r%`)
-  const rows = await db.all(`SELECT id FROM whatsapp_message_templates WHERE name IN (${placeholders})`, DEFAULT_TEMPLATE_NAMES)
+  const cleanupNames = [...DEFAULT_TEMPLATE_NAMES, ONLINE_MEETING_TEMPLATE_NAME]
+  const cleanupPlaceholders = cleanupNames.map(() => '?').join(', ')
+  const retryLikeClauses = cleanupNames.map(() => 'name LIKE ?').join(' OR ')
+  const retryLikeParams = cleanupNames.map((name) => `${name}_r%`)
+  const rows = await db.all(`SELECT id FROM whatsapp_message_templates WHERE name IN (${cleanupPlaceholders})`, cleanupNames)
   const ids = rows.map(row => row.id).filter(Boolean)
   if (ids.length) {
     await db.run(
@@ -107,16 +121,16 @@ async function deleteDefaultTemplates() {
       ids
     )
   }
-  await db.run(`DELETE FROM whatsapp_message_templates WHERE name IN (${placeholders})`, DEFAULT_TEMPLATE_NAMES)
+  await db.run(`DELETE FROM whatsapp_message_templates WHERE name IN (${cleanupPlaceholders})`, cleanupNames)
   await db.run(`
     DELETE FROM whatsapp_api_templates
-    WHERE name IN (${placeholders})
+    WHERE name IN (${cleanupPlaceholders})
       ${retryLikeClauses ? `OR ${retryLikeClauses}` : ''}
-  `, [...DEFAULT_TEMPLATE_NAMES, ...retryLikeParams])
+  `, [...cleanupNames, ...retryLikeParams])
   await db.run('DELETE FROM whatsapp_template_folders WHERE id = ?', [DEFAULT_FOLDER_ID])
   await db.run(
-    `DELETE FROM app_config WHERE config_key IN (${SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS.map(() => '?').join(', ')})`,
-    SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS
+    `DELETE FROM app_config WHERE config_key IN (${APPOINTMENT_PROVIDER_REVISION_KEYS.map(() => '?').join(', ')})`,
+    APPOINTMENT_PROVIDER_REVISION_KEYS
   )
 }
 
@@ -473,6 +487,97 @@ test('Meta directo envía las siete plantillas aunque exista identidad previa de
       assert.ok(stored.every(template => String(template.ycloud_template_id || '').startsWith('ycloud_')))
     } finally {
       setMetaDirectFetchForTest(null)
+      await deleteAllDefaultTemplates()
+    }
+  })
+})
+
+test('un calendario en línea creado antes de conectar WhatsApp envía su plantilla al conectar después', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const suffix = randomUUID().replace(/-/g, '')
+  const calendarId = `calendar_online_before_whatsapp_${suffix}`
+  const wabaId = `waba_online_after_calendar_${suffix}`
+  const captures = []
+
+  await snapshotAppConfig([
+    keys.enabled,
+    keys.apiKey,
+    keys.wabaId,
+    keys.provider,
+    keys.metaStatus,
+    keys.metaWabaId,
+    keys.metaPhoneNumberId,
+    keys.metaSystemUserToken
+  ], async () => {
+    await deleteAllDefaultTemplates()
+
+    try {
+      const calendar = await createLocalCalendar({
+        id: calendarId,
+        name: 'Videollamada antes de WhatsApp',
+        meetingMode: 'online',
+        meetingUrl: 'https://meet.google.com/abc-defg-hij'
+      })
+      await syncCalendarMeetingResources(calendar)
+
+      const localTemplate = await ensureOnlineMeetingMessageTemplate()
+      assert.equal(localTemplate.name, ONLINE_MEETING_TEMPLATE_NAME)
+      assert.equal(localTemplate.providerTemplateId, null)
+
+      await setAppConfig(keys.provider, 'meta_direct')
+      await setAppConfig(keys.metaStatus, 'connected')
+      await setAppConfig(keys.metaWabaId, wabaId)
+      await setAppConfig(keys.metaPhoneNumberId, `phone_online_after_calendar_${suffix}`)
+      await setAppConfig(keys.metaSystemUserToken, encrypt('meta_direct_online_after_calendar_test_token'))
+
+      setMetaDirectFetchForTest(async (url, options = {}) => {
+        const requestUrl = new URL(url)
+        const method = String(options.method || 'GET').toUpperCase()
+        const body = options.body ? JSON.parse(options.body) : null
+        captures.push({ method, path: requestUrl.pathname, body })
+        return graphJsonResponse({
+          id: `meta_${body?.name || captures.length}`,
+          status: 'PENDING',
+          category: body?.category || 'UTILITY'
+        })
+      })
+
+      const firstRun = await ensureDefaultWhatsAppApiMessageTemplates({
+        submitToActiveProvider: true,
+        publicBaseUrl: 'https://app.ristak.test'
+      })
+
+      assert.equal(firstRun.total, 8)
+      assert.equal(firstRun.submitted, 8)
+      assert.equal(firstRun.errors, 0)
+      const onlineCapture = captures.find(({ body }) => body?.name === ONLINE_MEETING_TEMPLATE_NAME)
+      assert.ok(onlineCapture)
+      assert.equal(onlineCapture.method, 'POST')
+      assert.ok(onlineCapture.path.endsWith(`/${wabaId}/message_templates`))
+      assert.equal(onlineCapture.body.components[0].text, ONLINE_MEETING_TEMPLATE_BODY)
+      assert.deepEqual(onlineCapture.body.components[0].example.body_text, [
+        ['https://app.ristak.com/pce1_enlace_seguro']
+      ])
+
+      const secondRun = await ensureDefaultWhatsAppApiMessageTemplates({
+        submitToActiveProvider: true,
+        publicBaseUrl: 'https://app.ristak.test'
+      })
+      assert.equal(secondRun.submitted, 0)
+      assert.equal(captures.filter(({ body }) => body?.name === ONLINE_MEETING_TEMPLATE_NAME).length, 1)
+    } finally {
+      setMetaDirectFetchForTest(null)
+      await db.run('DELETE FROM appointment_reminders WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+      const links = await db.all(
+        "SELECT id FROM trigger_links WHERE system_scope = 'calendar_meeting' AND owner_id = ?",
+        [calendarId]
+      ).catch(() => [])
+      for (const link of links) {
+        await db.run('DELETE FROM trigger_link_events WHERE trigger_link_id = ?', [link.id]).catch(() => undefined)
+      }
+      await db.run("DELETE FROM trigger_links WHERE system_scope = 'calendar_meeting' AND owner_id = ?", [calendarId]).catch(() => undefined)
+      await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
       await deleteAllDefaultTemplates()
     }
   })

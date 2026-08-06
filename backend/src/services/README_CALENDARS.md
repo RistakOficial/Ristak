@@ -81,6 +81,13 @@ llamada para cumplir la validación de plantillas de Meta. El nombre versionado
 evita reutilizar una identidad que Meta todavía tenga aprobada, en revisión o en
 periodo de eliminación con el copy anterior.
 
+El orden de configuración no cambia el resultado. Si WhatsApp ya está conectado,
+activar el calendario en línea crea y envía la plantilla al proveedor. Si el
+calendario se creó primero, la conexión o reparación posterior de WhatsApp detecta
+su recordatorio administrado activo e incluye la misma plantilla en el envío a
+revisión. La aprobación sigue perteneciendo a la cuenta de WhatsApp de cada
+negocio; no se comparte la identidad aprobada de otra cuenta.
+
 La variable
 `{{cita.enlace_ingreso}}` se resuelve para la cita y el contacto exactos. Su
 token opaco cifra además `appointment_id`, por lo que el clic puede comprobar
