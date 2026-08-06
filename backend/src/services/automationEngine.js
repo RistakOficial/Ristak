@@ -2012,6 +2012,23 @@ function evaluateLifecycleStageFilter(filter, ctx) {
   return actual === expected
 }
 
+function evaluateFormCandidateFilter(filter, ctx) {
+  const candidates = [...formIdsFromContext(ctx)].map(normalizeText).filter(Boolean)
+  const expected = normalizeText(filter.value)
+  const exactMatch = candidates.includes(expected)
+  const partialMatch = candidates.some((candidate) => candidate.includes(expected))
+  switch (filter.match) {
+    case 'not': return !exactMatch
+    case 'contains': return partialMatch
+    case 'not_contains': return !partialMatch
+    case 'starts_with': return candidates.some((candidate) => candidate.startsWith(expected))
+    case 'ends_with': return candidates.some((candidate) => candidate.endsWith(expected))
+    case 'empty': return candidates.length === 0
+    case 'not_empty': return candidates.length > 0
+    default: return exactMatch
+  }
+}
+
 const PAYMENT_CANDIDATE_FILTER_FIELDS = new Set([
   'product',
   'product_name',
@@ -2050,6 +2067,7 @@ function evaluateFilter(filter, ctx, { requireKnown = false } = {}) {
   if (filter.field === 'changed_detail') return evaluateChangedDetailFilter(filter, ctx)
   if (filter.field === 'tag') return evaluateTagFilter(filter, ctx)
   if (filter.field === 'stage') return evaluateLifecycleStageFilter(filter, ctx)
+  if (filter.field === 'form-specific') return evaluateFormCandidateFilter(filter, ctx)
   if (PAYMENT_CANDIDATE_FILTER_FIELDS.has(filter.field)) {
     return evaluatePaymentCandidateFilter(filter, ctx, { requireKnown })
   }

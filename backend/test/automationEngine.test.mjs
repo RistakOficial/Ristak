@@ -970,6 +970,27 @@ test('filtersMatch: formulario enviado puede ser descalificado o no descalificad
   }), false)
 })
 
+test('filtersMatch: formulario específico reconoce todas las identidades de un formulario importado', () => {
+  const formCtx = {
+    automationFormId: 'landing_123:imported:solicitud_medicos',
+    formId: 'source_form_123',
+    formSiteId: 'source_form_123',
+    siteId: 'landing_123',
+    importedFormId: 'solicitud_medicos',
+    submissionId: 'submission_123'
+  }
+
+  assert.equal(filtersMatch([
+    { field: 'form-specific', match: 'is', value: 'source_form_123' }
+  ], formCtx), true)
+  assert.equal(filtersMatch([
+    { field: 'form-specific', match: 'is', value: 'landing_123:imported:solicitud_medicos' }
+  ], formCtx), true)
+  assert.equal(filtersMatch([
+    { field: 'form-specific', match: 'is', value: 'source_form_otro' }
+  ], formCtx), false)
+})
+
 test('formularios exponen respuestas no guardadas para variables, filtros y condiciones', () => {
   const formCtx = {
     contact: {

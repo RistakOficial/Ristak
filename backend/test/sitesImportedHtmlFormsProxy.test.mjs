@@ -158,7 +158,10 @@ test('imported HTML forms materialize Forms-page source forms and route submissi
           triggers: [{
             id: 'trigger-form-submitted',
             type: 'trigger-form-submitted',
-            config: { form: formId }
+            config: {
+              form: formId,
+              filters: [{ field: 'form-specific', match: 'is', value: formId }]
+            }
           }]
         }
       }],

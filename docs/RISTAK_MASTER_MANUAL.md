@@ -1450,7 +1450,11 @@ no muestra un selector obligatorio separado. Para limitarlo, **Añadir filtro �
 Formulario** ofrece en este orden **Formulario específico**, **Resultado del
 formulario** y **Pregunta del formulario**. Al elegir **Formulario específico**
 aparece directamente el catálogo paginado para buscar y guardar el ID estable;
-el motor solo inscribe contactos de ese formulario. Las configuraciones antiguas
+el motor solo inscribe contactos de ese formulario. En formularios HTML importados,
+el evento puede conservar simultáneamente la identidad canónica del formulario
+fuente y la identidad estable del formulario dentro de la landing; el filtro
+compara todas esas identidades equivalentes para que el orden del contexto no
+rechace un envío válido. Las configuraciones antiguas
 que guardaban el formulario en el disparador se presentan y editan como este
 filtro, sin perder su restricción existente.
 
