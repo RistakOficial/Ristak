@@ -388,6 +388,25 @@ a Graph, se permite guardar temporalmente una fila `message_type=status` sin
 contacto; esa fila es invisible para conversación, bandeja y conteos, y el
 INSERT del envío la convierte en el mensaje real usando el mismo `wamid`.
 
+Los formatos entrantes se normalizan antes de construir el journey. Además de
+texto, media, ubicación, reacción, botones, interactivos y plantillas, el
+extractor compartido debe leer `contacts`, `order`, `system` y el mensaje anidado
+de `edit`. Si una fila histórica tiene `message_text` vacío, el GET de la
+conversación vuelve a extraer esos formatos desde `raw_payload_json`; no exige
+reescribir ni borrar el evento original. Un `edit` que no trae contenido y un
+`status` son controles, no burbujas visibles.
+
+`type=unsupported`/`unknown` y los errores `131051` o `131060` significan que el
+proveedor no entregó el contenido a Ristak. El payload se conserva para soporte,
+pero la interfaz muestra un aviso neutral para consultar la aplicación original;
+no inventa texto, media ni tipo. El `error_message` de una entrada es diagnóstico
+del proveedor y nunca equivale a un fallo de envío del negocio. Los indicadores
+rojos y el detalle de rechazo se reservan para salidas realmente fallidas.
+
+Los controles `edit`/`system` y el contenido no entregado por el proveedor se
+persisten y publican para refrescar el historial, pero no se pasan a citas,
+automatizaciones ni al agente conversacional como una respuesta nueva.
+
 Todo envío de texto aceptado por Graph debe persistirse de inmediato con el texto
 visible, la autorización original de fallback, `provider=meta_direct`,
 `source_adapter=meta_direct`,

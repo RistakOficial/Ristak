@@ -89,6 +89,11 @@ import { resolveCentralBrokerConfig } from './centralBrokerService.js'
 import { resolveFfmpegBinary } from '../utils/ffmpeg.js'
 import { getWhatsAppStatusProjectionSnapshot } from './whatsappStatusProjectionService.js'
 import {
+  extractSupplementalWhatsAppMessageText,
+  isWhatsAppProviderContentUnavailable,
+  shouldTriggerWhatsAppInboundSideEffects
+} from './whatsappMessageContentService.js'
+import {
   buildMetaDirectTemplateCreatePayload,
   buildMetaDirectTemplateEditPayload,
   normalizeMetaDirectTemplateListResponse,
@@ -6224,6 +6229,7 @@ function extractMessageText(message = {}) {
   const text = normalizeMessageTextObject(message.text)
   const interactiveText = extractInteractiveMessageText(message.interactive)
   const templateText = extractTemplateMessageText(message.template)
+  const supplementalText = extractSupplementalWhatsAppMessageText(message)
 
   return cleanString(
     text?.body ||
@@ -6241,6 +6247,7 @@ function extractMessageText(message = {}) {
     message.location?.address ||
     (cleanString(message.type).toLowerCase() === 'location' ? 'Ubicación' : '') ||
     message.reaction?.emoji ||
+    supplementalText ||
     ''
   )
 }
@@ -8748,6 +8755,15 @@ async function upsertMessage({
   const errorCode = cleanString(error?.code || normalizedMessage.errorCode)
   const errorMessage = cleanString(error?.message || error?.title || normalizedMessage.errorMessage)
   const messageType = cleanString(normalizedMessage.type) || 'unknown'
+  const providerContentUnavailable = isWhatsAppProviderContentUnavailable({
+    messageType,
+    errorCode,
+    errorMessage
+  })
+  const shouldTriggerInboundSideEffects = shouldTriggerWhatsAppInboundSideEffects({
+    messageType,
+    contentUnavailable: providerContentUnavailable
+  })
   const buttonReply = extractButtonReply(normalizedMessage)
   let media = extractMessageMedia(normalizedMessage)
   if (!deferMetaInboundEnrichment) {
@@ -8983,7 +8999,7 @@ async function upsertMessage({
         messageId,
         contactId: localContact.id,
         messageTimestamp,
-        incrementUnread: !historyImport,
+        incrementUnread: !historyImport && cleanString(messageType).toLowerCase() !== 'edit',
         database: transactionDatabase
       })
       : null
@@ -9237,6 +9253,8 @@ async function upsertMessage({
     profileName,
     messageText,
     messageType,
+    providerContentUnavailable,
+    shouldTriggerInboundSideEffects,
     mediaUrl: media.mediaUrl || '',
     mediaMimeType: media.mediaMimeType || '',
     mediaFilename: media.mediaFilename || '',
@@ -10589,6 +10607,7 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
       result?.isNew !== false &&
       result?.historyImport !== true
     )
+    const actionableInboundResults = inboundResults.filter(result => result?.shouldTriggerInboundSideEffects !== false)
     inboundResults.forEach(result => scheduleInboundWhatsAppContactProfilePictureRefresh(result, 'ycloud_webhook'))
 
     // Entrega primero: citas, automatizaciones y agente pueden usar servicios
@@ -10614,7 +10633,7 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
 
     // Ventanas de confirmación con IA: registrar mensajes y obtener estado de bypass.
     const confirmWindows = new Map()
-    for (const result of inboundResults) {
+    for (const result of actionableInboundResults) {
       try {
         const window = await handleInboundForConfirmation({
           contactId: result.contactId,
@@ -10628,7 +10647,7 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
       }
     }
 
-    await Promise.all(inboundResults
+    await Promise.all(actionableInboundResults
       .map(result => {
         const win = confirmWindows.get(result.contactId)
         if (win?.windowActive) return Promise.resolve()
@@ -10642,7 +10661,7 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
 
     // Motor de automatizaciones: disparar/reanudar flujos con cada mensaje
     // entrante (import dinámico para evitar dependencia circular)
-    Promise.all(inboundResults
+    Promise.all(actionableInboundResults
       .filter(result => {
         const win = confirmWindows.get(result.contactId)
         return !(win?.windowActive && win?.bypassAutomations)
@@ -11739,7 +11758,8 @@ export async function processMetaDirectWebhookRelay({ payload = {}, rawBody = ''
     const inboundResults = messageResults.filter(result =>
       result?.direction === 'inbound' &&
       result?.isNew !== false &&
-      result?.historyImport !== true
+      result?.historyImport !== true &&
+      result?.shouldTriggerInboundSideEffects !== false
     )
     await db.run(`
       UPDATE whatsapp_api_webhook_events

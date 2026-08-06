@@ -1,6 +1,6 @@
 # Manual maestro de Ristak
 
-Ultima consolidacion: 2026-07-31.
+Ultima consolidacion: 2026-08-06.
 
 Este manual junta el funcionamiento general de Ristak en una sola ruta legible.
 Los documentos especializados siguen existiendo cuando tienen reglas obligatorias
@@ -2853,6 +2853,27 @@ controles históricos son deliberadamente visuales: no
 exponen ni ejecutan URLs, teléfonos, códigos o payloads desde el CRM. Así, tocar
 la copia de un botón de videollamada en Ristak no dispara tracking ni registra
 una asistencia falsa; el botón real sigue funcionando solamente en WhatsApp.
+
+Los mensajes entrantes sin texto no se convierten por defecto en una burbuja
+genérica `Mensaje`. Imagen, GIF, sticker, video, audio/voz, documento, ubicación,
+contacto, pedido, sistema, botón/interactivo, reacción y plantilla conservan un
+nombre legible; contactos, pedidos, avisos del sistema y ediciones extraen además
+el contenido que venga dentro del payload. Esta lectura también se aplica al
+payload histórico cuando la columna `message_text` quedó vacía. Un evento
+`edit` sin contenido y un recibo `status` no son mensajes visibles.
+
+Cuando WhatsApp o Meta entrega `unsupported`, `unknown`, `131051`, `131060` o
+una señal equivalente sin el contenido original, Ristak no puede reconstruir lo
+que el proveedor ocultó. En ese caso conserva el evento como evidencia y muestra
+un aviso neutral para abrirlo en la aplicación original. Los errores de proveedor
+en una entrada nunca se presentan con el indicador rojo de fallo de envío; ese
+estado se reserva para mensajes salientes realmente rechazados. El mismo contrato
+de contenido y error se usa en Chat desktop, `/movil` y el chat del detalle del
+contacto.
+
+Los controles `edit`/`system` y el contenido retenido por el proveedor tampoco
+disparan confirmaciones de cita, automatizaciones ni agentes conversacionales
+como si fueran una nueva respuesta del cliente.
 
 El selector de canal del composer desktop muestra cada WhatsApp con su número
 exacto además de la etiqueta o nombre verificado. Dos filas del mismo negocio no

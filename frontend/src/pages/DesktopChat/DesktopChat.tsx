@@ -99,6 +99,12 @@ import {
 } from '@/utils/chatMessageReconciliation'
 import { isChatMessageSendInFlight } from '@/utils/chatMessageDeliveryState'
 import {
+  getChatMessageFallbackText,
+  getVisibleChatMessageError,
+  isOutboundChatMessageFailure,
+  shouldHideEmptyChatControlMessage
+} from '@/utils/chatMessageContent'
+import {
   getChatMessageSourceLabel,
   getChatBubbleColorChannel,
   resolveChatCommentPlatform,
@@ -617,7 +623,6 @@ const VOICE_WAVE_BAR_COUNT = 84
 const VOICE_WAVE_PATTERN = [8, 18, 30, 42, 24, 13, 36, 48, 31, 16, 10, 22, 40, 52, 34, 20, 45, 28]
 const MESSAGE_AUDIO_WAVE_PATTERN = [13, 24, 36, 19, 30, 46, 22, 15, 40, 52, 34, 20, 28, 44, 18, 26, 38, 23]
 const MESSAGE_AUDIO_WAVE_BAR_COUNT = 30
-const FAILED_MESSAGE_STATUSES = new Set(['failed', 'error', 'undelivered', 'rejected', 'cancelled'])
 const OPTIMISTIC_MESSAGE_ID_PREFIXES = ['desktop-chat-', 'desktop-email-', 'desktop-template-']
 const OPTIMISTIC_MESSAGE_MAX_AGE_MS = 10 * 60 * 1000
 const TEMPLATE_DISABLED_STATUSES = new Set(['REJECTED', 'PAUSED', 'DISABLED', 'ARCHIVED', 'DELETED', 'PENDING', 'IN_APPEAL'])
@@ -2487,7 +2492,8 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
     ? emailHtmlToPlainText(rawEmailHtml)
     : ''
   const effectiveText = text || emailBodyText || getCommentFallbackText(messageType, status, postDeleted)
-  const errorReason = String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim()
+  const rawErrorReason = String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim()
+  const errorReason = getVisibleChatMessageError({ direction, errorReason: rawErrorReason })
   const provider = String(data.provider || data.message_provider || data.source_provider || '').trim()
   const transport = String(data.transport || data.channel || '').trim() || provider
   const platform = String(data.social_platform || data.platform || '').trim()
@@ -2518,12 +2524,28 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
         transport
       })
     : undefined
+  if (
+    !effectiveText &&
+    !attachment &&
+    !location &&
+    !adPreview &&
+    !subject &&
+    !hasEmailChatMessageContent(email) &&
+    shouldHideEmptyChatControlMessage(messageType)
+  ) return null
   if (!effectiveText && !attachment && !location && !adPreview && !messageType && !subject && !hasEmailChatMessageContent(email)) return null
   const fallbackText = location
     ? ''
     : attachment
     ? (['audio', 'image', 'video'].includes(attachment.type) ? '' : getMessageTypeLabel(attachment.type, 'Archivo'))
-    : getMessageTypeLabel(messageType)
+    : getChatMessageFallbackText({
+        eventType: event.type,
+        messageType,
+        direction,
+        errorCode: data.error_code || data.errorCode,
+        errorReason: rawErrorReason,
+        contentUnavailable: data.content_unavailable || data.contentUnavailable
+      })
   return {
     id: String(
       data.whatsapp_api_message_id ||
@@ -9093,7 +9115,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
 
   const renderMessageMeta = (message: DesktopChatMessage, transportLabel = '') => {
     const status = String(message.status || '').trim().toLowerCase()
-    const failed = FAILED_MESSAGE_STATUSES.has(status) || Boolean(message.errorReason)
+    const failed = isOutboundChatMessageFailure(message)
     const scheduled = isMessageScheduled(message)
     const sending = message.direction === 'outbound' && isChatMessageSendInFlight(status) && !scheduled && !failed
     return (
@@ -9117,7 +9139,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
   }
 
   const renderMessageErrorBadge = (message: DesktopChatMessage) => {
-    const failed = FAILED_MESSAGE_STATUSES.has(String(message.status || '').trim().toLowerCase()) || Boolean(message.errorReason)
+    const failed = isOutboundChatMessageFailure(message)
     if (!failed) return null
     const errorText = String(message.errorReason || '').trim() || 'No se pudo enviar este mensaje.'
     return <MessageErrorBadge direction={message.direction} errorText={errorText} />

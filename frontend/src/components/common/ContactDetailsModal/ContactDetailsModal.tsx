@@ -53,6 +53,12 @@ import {
 } from '@/services/whatsappApiService'
 import { getContactDetailLabel, getContactDisplayName } from '@/utils/contactAvatar'
 import { isChatMessageSendInFlight } from '@/utils/chatMessageDeliveryState'
+import {
+  getChatMessageFallbackText,
+  getVisibleChatMessageError,
+  isOutboundChatMessageFailure,
+  shouldHideEmptyChatControlMessage
+} from '@/utils/chatMessageContent'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { CONTACT_STAGE_BADGE_VARIANTS, getContactStageBadge } from '@/utils/contactStageBadge'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
@@ -216,7 +222,6 @@ type ContactChatTimelineItem =
   | { type: 'message'; id: string; date: string; message: ContactChatMessage }
   | { type: 'agentCompletion'; id: string; date: string; completion: ConversationalAgentCompletionEvent }
 
-const CONTACT_FAILED_MESSAGE_STATUSES = new Set(['failed', 'error', 'undelivered', 'rejected', 'cancelled'])
 const CONTACT_OPTIMISTIC_MESSAGE_ID_PREFIXES = ['contact-modal-chat-']
 const CONTACT_OPTIMISTIC_MESSAGE_MAX_AGE_MS = 10 * 60 * 1000
 const CONTACT_CHAT_PAGE_LIMIT = 50
@@ -554,7 +559,8 @@ const getJourneyChatMessage = (event: JourneyEvent, index: number): ContactChatM
     : ''
   const effectiveText = text || emailBodyText
   const status = String(data.status || data.message_status || '').trim()
-  const errorReason = String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim()
+  const rawErrorReason = String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim()
+  const errorReason = getVisibleChatMessageError({ direction, errorReason: rawErrorReason })
   const transport = String(data.transport || data.channel || data.provider || inferredChannel || '').trim()
   const email = event.type === 'email_message'
     ? buildEmailChatMessageData(data, {
@@ -565,6 +571,7 @@ const getJourneyChatMessage = (event: JourneyEvent, index: number): ContactChatM
         transport
       })
     : undefined
+  if (!effectiveText && !subject && !hasEmailChatMessageContent(email) && shouldHideEmptyChatControlMessage(messageType)) return null
   if (!effectiveText && !messageType && !subject && !hasEmailChatMessageContent(email)) return null
 
   return {
@@ -583,7 +590,14 @@ const getJourneyChatMessage = (event: JourneyEvent, index: number): ContactChatM
     ),
     cursorDate: event.cursorDate || event.date,
     cursorKey: event.cursorKey,
-    text: effectiveText || getChatMessageTypeLabel(messageType),
+    text: effectiveText || getChatMessageFallbackText({
+      eventType: event.type,
+      messageType,
+      direction,
+      errorCode: data.error_code || data.errorCode,
+      errorReason: rawErrorReason,
+      contentUnavailable: data.content_unavailable || data.contentUnavailable
+    }),
     subject,
     date: pickChatTimestamp(data, ['date', 'timestamp', 'created_at', 'createdAt', 'message_timestamp', 'messageTimestamp']) || event.date,
     direction,
@@ -2324,7 +2338,7 @@ export function ContactDetailsModal({
                   }
                   const message = item.message
                   const status = String(message.status || '').trim().toLowerCase()
-                  const failed = CONTACT_FAILED_MESSAGE_STATUSES.has(status) || Boolean(message.errorReason)
+                  const failed = isOutboundChatMessageFailure(message)
                   const scheduled = isScheduledContactChatMessage(message)
                   const sending = message.direction === 'outbound' && isChatMessageSendInFlight(status) && !scheduled && !failed
 

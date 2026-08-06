@@ -34,6 +34,10 @@ import { parseSortableTimestamp, timestampSortExpression, timestampSortParameter
 import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
 import { loadFirstWhatsAppAttributions, buildContactAttributionFields } from '../services/contactSourceService.js'
 import { findWhatsAppProfilePictureUrl, getWhatsAppApiStatus, markLatestInboundWhatsAppApiMessageReadForContact, warmWhatsAppApiProfilePictures } from '../services/whatsappApiService.js'
+import {
+  extractSupplementalWhatsAppMessageText,
+  isWhatsAppProviderContentUnavailable
+} from '../services/whatsappMessageContentService.js'
 import { markLatestInboundWhatsAppQrMessageReadForContact, warmWhatsAppQrProfilePictures } from '../services/whatsappQrService.js'
 import {
   isMetaSocialMessagingEnabled,
@@ -7115,6 +7119,7 @@ export const getContactJourney = async (req, res) => {
       const payloadMedia = getWhatsAppMediaFromPayload(msg.raw_payload_json, msg.message_type)
       const payloadLocation = getWhatsAppLocationFromPayload(msg.raw_payload_json, msg.message_type)
       const rawPayload = parseJsonObject(msg.raw_payload_json)
+      const supplementalMessageText = extractSupplementalWhatsAppMessageText(rawPayload)
       const agentMetadata = extractConversationalAgentMessageMetadata(rawPayload)
       const context = parseJsonObject(msg.context_json)
       const detectedAttribution = detectWhatsAppAttributionFields({ row: msg, rawPayload, context }, [msg.message_text])
@@ -7149,7 +7154,7 @@ export const getContactJourney = async (req, res) => {
         provider: msg.provider || 'ycloud',
         source_adapter: msg.source_adapter || (msg.transport === 'qr' ? 'baileys' : 'ycloud'),
         routing_reason: msg.routing_reason || null,
-        message_text: stripRistakAdIdMarkersFromText(msg.message_text),
+        message_text: stripRistakAdIdMarkersFromText(msg.message_text || supplementalMessageText),
         message_type: msg.message_type,
         message_presentation: messagePresentation,
         ...media,
@@ -7178,7 +7183,12 @@ export const getContactJourney = async (req, res) => {
         direction: msg.direction || 'inbound',
         status: msg.status || null,
         error_code: msg.error_code || null,
-        error_message: msg.error_message || null
+        error_message: msg.error_message || null,
+        content_unavailable: isWhatsAppProviderContentUnavailable({
+          messageType: msg.message_type,
+          errorCode: msg.error_code,
+          errorMessage: msg.error_message
+        }) ? 1 : 0
       }
       const isAdAttributed = !isOutboundWhatsAppDirection(data.direction) && hasRealWhatsAppAdAttribution(data)
 

@@ -11,6 +11,7 @@
     "test:chat-reconciliation": "node scripts/test-chat-message-reconciliation.mjs",
     "test:chat-delivery-state": "node scripts/test-chat-message-delivery-state.mjs",
     "test:chat-error-popover": "node scripts/test-chat-error-popover.mjs",
+    "test:chat-message-content": "node --experimental-strip-types --test scripts/test-chat-message-content.mjs",
     "test:chat-contact-panel-layout": "node scripts/test-chat-contact-panel-layout.mjs",
     "test:contact-modal-chat-parity": "node scripts/test-contact-modal-chat-parity.mjs",
     "test:desktop-chat-live-first-paint": "node scripts/test-desktop-chat-live-first-paint.mjs",

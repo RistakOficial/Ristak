@@ -105,6 +105,12 @@ import {
   reconcileServerMessageIntoOptimistic
 } from '@/utils/chatMessageReconciliation'
 import { isChatMessageSendInFlight } from '@/utils/chatMessageDeliveryState'
+import {
+  getChatMessageFallbackText,
+  getVisibleChatMessageError,
+  isOutboundChatMessageFailure,
+  shouldHideEmptyChatControlMessage
+} from '@/utils/chatMessageContent'
 import { getChatBubbleColorChannel, getChatMessageSourceLabel, resolveChatMessageChannel } from '@/utils/chatMessageChannel'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -1236,7 +1242,6 @@ interface PhonePullReleasePayload {
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CANCELED_APPOINTMENT_STATUSES = new Set(['cancelled', 'canceled', 'no_show', 'noshow', 'deleted', 'failed', 'invalid'])
-const FAILED_MESSAGE_STATUSES = new Set(['error', 'failed', 'undelivered', 'rejected'])
 const TEMPLATE_DISABLED_STATUSES = new Set(['REJECTED', 'PAUSED', 'DISABLED', 'ARCHIVED', 'DELETED', 'PENDING', 'IN_APPEAL'])
 const EMPTY_TEMPLATE_LOCATION = {
   latitude: '',
@@ -2697,7 +2702,7 @@ function pickMessageTimestamp(data: Record<string, unknown>, keys: string[]) {
 }
 
 function isMessageFailed(message: ChatMessage) {
-  return FAILED_MESSAGE_STATUSES.has(String(message.status || '').trim().toLowerCase()) || Boolean(message.errorReason)
+  return isOutboundChatMessageFailure(message)
 }
 
 function isMessagePending(message: ChatMessage) {
@@ -3575,7 +3580,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
       date: event.date,
       direction,
       status: String(eventData.status || ''),
-      errorReason: getJourneyMessageError(event),
+      errorReason: getVisibleChatMessageError({ direction, errorReason: getJourneyMessageError(event) }),
       sentAt: pickMessageTimestamp(eventData, ['sent_at', 'sentAt', 'created_at', 'createdAt', 'timestamp']) || event.date,
       deliveredAt: pickMessageTimestamp(eventData, ['delivered_at', 'deliveredAt', 'message_timestamp', 'messageTimestamp']),
       readAt: pickMessageTimestamp(eventData, ['read_at', 'readAt', 'seen_at', 'seenAt']),
@@ -3617,9 +3622,11 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     location
   ) || getCommentFallbackText(messageType, status, postDeleted)
 
+  const direction = normalizeWhatsAppBusinessDirection(event.data?.direction)
+  const rawErrorReason = getJourneyMessageError(event)
+  if (!text && !attachment && !location && shouldHideEmptyChatControlMessage(messageType)) return null
   if (!text && !messageType && !attachment && !location) return null
 
-  const direction = normalizeWhatsAppBusinessDirection(event.data?.direction)
   const transport = String(event.data?.transport || (isMetaMessage ? event.data?.social_platform || 'meta' : 'api'))
   const provider = String(eventData.provider || eventData.message_provider || eventData.source_provider || '').trim()
   const platform = String(eventData.social_platform || eventData.platform || '').trim()
@@ -3642,11 +3649,18 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
         : event.data?.whatsapp_api_message_id || event.data?.whatsapp_message_id || event.data?.attribution_record_id || `message-${event.date}-${hashConversationContent(`${text}|${attachment?.url || attachment?.name || ''}|${normalizedMessageType}|${direction}`)}`
     ),
     providerMessageId: String(event.data?.provider_message_id || event.data?.whatsapp_message_id || event.data?.meta_message_id || '').trim() || undefined,
-    text: text || (attachment || location ? '' : getMessageTypeLabel(messageType, isMetaMessage ? 'Mensaje de Meta' : 'Mensaje de WhatsApp')),
+    text: text || (attachment || location ? '' : getChatMessageFallbackText({
+      eventType: event.type,
+      messageType,
+      direction,
+      errorCode: eventData.error_code || eventData.errorCode,
+      errorReason: rawErrorReason,
+      contentUnavailable: eventData.content_unavailable || eventData.contentUnavailable
+    })),
     date: event.date,
     direction,
     status,
-    errorReason: getJourneyMessageError(event),
+    errorReason: getVisibleChatMessageError({ direction, errorReason: rawErrorReason }),
     sentAt: pickMessageTimestamp(eventData, [
       'sent_at',
       'sentAt',
