@@ -210,8 +210,10 @@ async function withYCloudMessageCapture(callback, captureOptions = {}) {
         const customResponse = await captureOptions.onMessage?.({ body, captures })
         if (customResponse) return customResponse
         captures.push(body)
+        const messageId = captureOptions.messageId?.({ body, index: captures.length }) ||
+          `ycloud_appointment_msg_${captures.length}`
         return ycloudJsonResponse({
-          id: `ycloud_appointment_msg_${captures.length}`,
+          id: messageId,
           from: body.from,
           to: body.to,
           type: body.type,
@@ -780,6 +782,7 @@ test('confirmaciones adaptan el contrato legacy aprendido del rechazo 132000', a
 })
 
 test('rechazos asíncronos definitivos reabren el recordatorio y respetan su enfriamiento', async () => {
+  const providerPrefix = `ycloud_async_retry_${randomUUID()}`
   await withYCloudMessageCapture(async (captures) => {
     await withReminderFixture(
       { ycloudStatus: 'APPROVED' },
@@ -795,8 +798,8 @@ test('rechazos asíncronos definitivos reabren el recordatorio y respetan su enf
               error_code = 'BALANCE_INSUFFICIENT',
               error_message = 'Your account balance is insufficient, please top up.',
               updated_at = ?
-          WHERE ycloud_message_id = 'ycloud_appointment_msg_1'
-        `, [failedAt])
+          WHERE ycloud_message_id = ?
+        `, [failedAt, `${providerPrefix}_1`])
 
         const heldResult = await processDueAppointmentReminders({ batchSize: 1 })
         assert.deepEqual(heldResult, { sent: 0, errors: 0, skipped: 0 })
@@ -821,15 +824,29 @@ test('rechazos asíncronos definitivos reabren el recordatorio y respetan su enf
         assert.equal(captures.length, 2)
 
         const retriedSend = await db.get(`
-          SELECT status, sent_message_id, error_message
+          SELECT status, sent_message_id, error_message, attempt_count
           FROM appointment_reminder_sends
           WHERE appointment_id = ?
         `, [appointmentId])
         assert.equal(retriedSend.status, 'sent')
-        assert.equal(retriedSend.sent_message_id, 'ycloud_appointment_msg_2')
+        assert.equal(retriedSend.sent_message_id, `${providerPrefix}_2`)
         assert.equal(retriedSend.error_message, null)
+        assert.equal(retriedSend.attempt_count, 2)
+
+        const messageVisibility = await db.all(`
+          SELECT ycloud_message_id, hidden_from_chat
+          FROM whatsapp_api_messages
+          WHERE ycloud_message_id IN (?, ?)
+          ORDER BY ycloud_message_id
+        `, [`${providerPrefix}_1`, `${providerPrefix}_2`])
+        assert.deepEqual(messageVisibility, [
+          { ycloud_message_id: `${providerPrefix}_1`, hidden_from_chat: 1 },
+          { ycloud_message_id: `${providerPrefix}_2`, hidden_from_chat: 0 }
+        ])
       }
     )
+  }, {
+    messageId: ({ index }) => `${providerPrefix}_${index}`
   })
 })
 
@@ -1323,19 +1340,33 @@ test('recordatorios por canal que agendó no brincan una API activa del mismo n�
 
 test('recordatorios de citas reintentan errores después del enfriamiento sin spamear', async () => {
   let failProvider = true
+  let providerCalls = 0
+  const successfulProviderMessageId = `ycloud_retry_success_${randomUUID()}`
 
   await withYCloudMessageCapture(async (captures) => {
-    await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ appointmentId }) => {
+    await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ appointmentId, contactId }) => {
       const firstRun = await processDueAppointmentReminders({ batchSize: 1 })
 
       assert.equal(firstRun.sent, 0)
       assert.equal(firstRun.errors, 1)
       assert.equal(captures.length, 0)
+      assert.equal(providerCalls, 1)
+
+      const firstFailure = await db.get(`
+        SELECT id, status, hidden_from_chat
+        FROM whatsapp_api_messages
+        WHERE contact_id = ? AND status = 'failed'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `, [contactId])
+      assert.ok(firstFailure?.id)
+      assert.equal(firstFailure.hidden_from_chat, 0)
 
       const immediateRetry = await processDueAppointmentReminders({ batchSize: 1 })
       assert.equal(immediateRetry.sent, 0)
       assert.equal(immediateRetry.errors, 0)
       assert.equal(captures.length, 0)
+      assert.equal(providerCalls, 1)
 
       await db.run(
         `UPDATE appointment_reminder_sends
@@ -1350,20 +1381,105 @@ test('recordatorios de citas reintentan errores después del enfriamiento sin sp
       assert.equal(retryRun.sent, 1)
       assert.equal(retryRun.errors, 0)
       assert.equal(captures.length, 1)
+      assert.equal(providerCalls, 2)
+      assert.match(captures[0].externalId, /:attempt:2$/)
 
       const send = await db.get(
-        'SELECT status, sent_message_id, error_message FROM appointment_reminder_sends WHERE appointment_id = ?',
+        'SELECT status, sent_message_id, error_message, attempt_count FROM appointment_reminder_sends WHERE appointment_id = ?',
         [appointmentId]
       )
       assert.equal(send.status, 'sent')
-      assert.equal(send.sent_message_id, 'ycloud_appointment_msg_1')
+      assert.equal(send.sent_message_id, successfulProviderMessageId)
       assert.equal(send.error_message, null)
+      assert.equal(send.attempt_count, 2)
+
+      const hiddenFailure = await db.get(
+        'SELECT hidden_from_chat FROM whatsapp_api_messages WHERE id = ?',
+        [firstFailure.id]
+      )
+      assert.equal(hiddenFailure.hidden_from_chat, 1)
+      const visibleMessages = await db.get(`
+        SELECT COUNT(*) AS total
+        FROM whatsapp_api_messages
+        WHERE contact_id = (SELECT contact_id FROM appointments WHERE id = ?)
+          AND COALESCE(hidden_from_chat, 0) = 0
+      `, [appointmentId])
+      assert.equal(
+        visibleMessages.total,
+        1,
+        JSON.stringify(await db.all(`
+          SELECT id, contact_id, status, hidden_from_chat, provider_message_id, ycloud_message_id
+          FROM whatsapp_api_messages
+          WHERE contact_id = ?
+          ORDER BY created_at
+        `, [contactId]))
+      )
     })
   }, {
+    messageId: () => successfulProviderMessageId,
     onMessage: async () => {
+      providerCalls += 1
       if (!failProvider) return null
       return ycloudJsonResponse(
         { error: { message: 'YCloud temporalmente no disponible' } },
+        { status: 500, statusText: 'Server Error' }
+      )
+    }
+  })
+})
+
+test('recordatorios de citas hacen como máximo dos intentos y dejan un solo fallo visible', async () => {
+  let providerCalls = 0
+
+  await withYCloudMessageCapture(async () => {
+    await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ appointmentId }) => {
+      const firstRun = await processDueAppointmentReminders({ batchSize: 1 })
+      assert.equal(firstRun.errors, 1)
+      assert.equal(providerCalls, 1)
+
+      await db.run(
+        'UPDATE appointment_reminder_sends SET sent_at = ? WHERE appointment_id = ?',
+        [DateTime.utc().minus({ minutes: 16 }).toISO(), appointmentId]
+      )
+      const secondRun = await processDueAppointmentReminders({ batchSize: 1 })
+      assert.equal(secondRun.errors, 1)
+      assert.equal(providerCalls, 2)
+
+      await db.run(
+        'UPDATE appointment_reminder_sends SET sent_at = ? WHERE appointment_id = ?',
+        [DateTime.utc().minus({ minutes: 16 }).toISO(), appointmentId]
+      )
+      const exhaustedRun = await processDueAppointmentReminders({ batchSize: 1 })
+      assert.deepEqual(exhaustedRun, { sent: 0, errors: 0, skipped: 0 })
+      assert.equal(providerCalls, 2)
+
+      const send = await db.get(`
+        SELECT status, attempt_count, sent_message_id
+        FROM appointment_reminder_sends
+        WHERE appointment_id = ?
+      `, [appointmentId])
+      assert.equal(send.status, 'error')
+      assert.equal(send.attempt_count, 2)
+      assert.ok(send.sent_message_id)
+
+      const messageCounts = await db.get(`
+        SELECT
+          COUNT(*) AS total,
+          SUM(CASE WHEN COALESCE(hidden_from_chat, 0) = 0 THEN 1 ELSE 0 END) AS visible,
+          SUM(CASE WHEN COALESCE(hidden_from_chat, 0) = 1 THEN 1 ELSE 0 END) AS hidden
+        FROM whatsapp_api_messages
+        WHERE contact_id = (SELECT contact_id FROM appointments WHERE id = ?)
+          AND status = 'failed'
+      `, [appointmentId])
+      assert.equal(messageCounts.total, 2)
+      assert.equal(messageCounts.visible, 1)
+      assert.equal(messageCounts.hidden, 1)
+    })
+  }, {
+    onMessage: async () => {
+      providerCalls += 1
+      return ycloudJsonResponse(
+        { error: { message: 'YCloud sigue sin disponible' } },
         { status: 500, statusText: 'Server Error' }
       )
     }

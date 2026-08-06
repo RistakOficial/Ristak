@@ -9484,7 +9484,7 @@ async function persistFailedOutboundApiMessage({ fromPhone, toPhone, type = 'tex
   try {
     const errorMessage = cleanString(error?.message || error)
     const errorCode = cleanString(error?.code || error?.statusCode)
-    await upsertMessage({
+    const persistedMessage = await upsertMessage({
       payload: {
         id: externalId || hashId('waapi_send_failed_event', `${fromPhone}|${toPhone}|${type}|${nowIso()}`),
         type: 'whatsapp.message.failed',
@@ -9506,8 +9506,19 @@ async function persistFailedOutboundApiMessage({ fromPhone, toPhone, type = 'tex
       transport: 'api',
       contactId
     })
+    if (
+      error &&
+      typeof error === 'object' &&
+      Object.isExtensible(error) &&
+      persistedMessage?.messageId &&
+      !cleanString(error.localMessageId)
+    ) {
+      error.localMessageId = persistedMessage.messageId
+    }
+    return persistedMessage
   } catch (persistError) {
     logger.error(`[WhatsApp API] No se pudo persistir el envío saliente fallido: ${persistError.message}`)
+    return null
   }
 }
 

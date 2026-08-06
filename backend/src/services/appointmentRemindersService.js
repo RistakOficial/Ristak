@@ -25,6 +25,7 @@ import {
 } from './templateVariablesService.js'
 import { logger } from '../utils/logger.js'
 import { createInternalNotification } from './notificationsService.js'
+import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import {
   claimAppointmentTestAction,
   completeAppointmentTestAction,
@@ -86,6 +87,9 @@ const SEND_GRACE_MS = 3 * 60 * 60 * 1000
 // Un error de proveedor/configuración no debe bloquear para siempre el recordatorio:
 // si el usuario corrige WhatsApp/plantilla, el cron reintenta sin spamear cada minuto.
 const ERROR_RETRY_MS = 15 * 60 * 1000
+// Un intento inicial y un único reintento automático. Los errores históricos
+// se migran como agotados porque no existe un contador fiable anterior.
+const MAX_SEND_ATTEMPTS = 2
 
 const MESSAGE_TYPES = new Set(['reminder', 'confirmation'])
 // Ancla de envío: 'before_appointment' = X antes del inicio de la cita (clásico);
@@ -1919,7 +1923,12 @@ function renderReminderTemplateText(template, context) {
   return parts.join('\n\n')
 }
 
-async function sendReminderViaQr({ reminder, appointment, sender, template, timezone }) {
+function buildAppointmentReminderExternalId(reminder, appointment, attemptCount = 1) {
+  const attempt = Math.max(1, Math.min(MAX_SEND_ATTEMPTS, Number(attemptCount) || 1))
+  return `appointment-reminder:${reminder.id}:${appointment.id}:attempt:${attempt}`
+}
+
+async function sendReminderViaQr({ reminder, appointment, sender, template, timezone, attemptCount }) {
   if (!sender?.qrReady) {
     throw new Error('Conecta un número de WhatsApp QR para enviar este recordatorio.')
   }
@@ -1931,6 +1940,7 @@ async function sendReminderViaQr({ reminder, appointment, sender, template, time
     from: sender.fromPhone || undefined,
     contactId: appointment.contact_id,
     phoneNumberId: sender.phoneNumberId || undefined,
+    externalId: buildAppointmentReminderExternalId(reminder, appointment, attemptCount),
     transport: 'qr',
     allowQrFallback: false,
     variablesResolved: true
@@ -1956,6 +1966,10 @@ function getSentMessageId(response = {}) {
       response?.messageId ||
       response?.remoteMessageId
   )
+}
+
+function getFailedMessageId(error = {}) {
+  return cleanString(error?.localMessageId || error?.messageId)
 }
 
 function getReminderChannelLabel(reminder = {}) {
@@ -2043,7 +2057,7 @@ function buildAutomaticChannelOrder(mode, preferredChannel = '') {
   return [...new Set(ordered)]
 }
 
-async function sendReminderByResolvedChannel({ reminder, appointment, timezone, channel }) {
+async function sendReminderByResolvedChannel({ reminder, appointment, timezone, channel, attemptCount }) {
   const resolvedChannel = normalizeRealReminderChannel(channel)
   if (!resolvedChannel) throw new Error('Canal de envío inválido.')
   const resolvedReminder = {
@@ -2057,14 +2071,19 @@ async function sendReminderByResolvedChannel({ reminder, appointment, timezone, 
   }
   const missingTarget = getMissingReminderTarget(resolvedReminder, appointment)
   if (missingTarget) throw new Error(missingTarget)
-  const response = await sendAppointmentReminderByChannel({ reminder: resolvedReminder, appointment, timezone })
+  const response = await sendAppointmentReminderByChannel({
+    reminder: resolvedReminder,
+    appointment,
+    timezone,
+    attemptCount
+  })
   return {
     ...response,
     resolvedChannel
   }
 }
 
-async function sendAppointmentReminderByAutomaticChannel({ reminder, appointment, timezone }) {
+async function sendAppointmentReminderByAutomaticChannel({ reminder, appointment, timezone, attemptCount }) {
   const mode = cleanString(reminder.channel)
   const preferredChannel = mode === 'booking_channel'
     ? await resolveAppointmentBookedChannel(appointment)
@@ -2078,21 +2097,25 @@ async function sendAppointmentReminderByAutomaticChannel({ reminder, appointment
     return true
   })
   const failures = []
+  let failedMessageId = ''
 
   for (const channel of channels) {
     try {
-      return await sendReminderByResolvedChannel({ reminder, appointment, timezone, channel })
+      return await sendReminderByResolvedChannel({ reminder, appointment, timezone, channel, attemptCount })
     } catch (error) {
       failures.push(`${CHANNEL_LABELS[channel] || channel}: ${error.message}`)
+      failedMessageId = getFailedMessageId(error) || failedMessageId
     }
   }
 
-  throw new Error(failures.length
+  const deliveryError = new Error(failures.length
     ? `No se pudo enviar por ningún canal disponible. ${failures.join(' | ')}`
     : 'No hay ningún canal disponible para este contacto.')
+  if (failedMessageId) deliveryError.localMessageId = failedMessageId
+  throw deliveryError
 }
 
-async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, timezone }) {
+async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, timezone, attemptCount }) {
   const text = await getReminderPlainText(reminder, appointment, timezone)
   if (!text) throw new Error('Escribe el mensaje directo que se enviará en este recordatorio.')
 
@@ -2103,6 +2126,7 @@ async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, ti
       from: sender.fromPhone || undefined,
       contactId: appointment.contact_id,
       phoneNumberId: sender.phoneNumberId || undefined,
+      externalId: buildAppointmentReminderExternalId(reminder, appointment, attemptCount),
       transport: 'qr',
       allowQrFallback: false,
       variablesResolved: true
@@ -2119,12 +2143,13 @@ async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, ti
     from: sender.fromPhone || undefined,
     contactId: appointment.contact_id,
     phoneNumberId: sender.phoneNumberId || undefined,
+    externalId: buildAppointmentReminderExternalId(reminder, appointment, attemptCount),
     allowQrFallback: true,
     variablesResolved: true
   })
 }
 
-async function sendReminderViaEmail({ reminder, appointment, timezone }) {
+async function sendReminderViaEmail({ reminder, appointment, timezone, attemptCount }) {
   const text = await getReminderPlainText(reminder, appointment, timezone)
   if (!text) throw new Error('Escribe el mensaje que se enviará por correo.')
 
@@ -2133,13 +2158,13 @@ async function sendReminderViaEmail({ reminder, appointment, timezone }) {
     to: appointment.email,
     subject: getAppointmentReminderSubject(reminder),
     text,
-    externalId: `appointment-reminder:${reminder.id}:${appointment.id}`,
+    externalId: buildAppointmentReminderExternalId(reminder, appointment, attemptCount),
     includeSignature: true,
     variablesResolved: true
   })
 }
 
-async function sendReminderViaMetaSocial({ reminder, appointment, timezone }) {
+async function sendReminderViaMetaSocial({ reminder, appointment, timezone, attemptCount }) {
   const channel = cleanString(reminder.channel) === 'instagram' ? 'instagram' : 'messenger'
   const text = await getReminderPlainText(reminder, appointment, timezone)
   if (!text) throw new Error(`Escribe el mensaje que se enviará por ${CHANNEL_LABELS[channel]}.`)
@@ -2148,12 +2173,12 @@ async function sendReminderViaMetaSocial({ reminder, appointment, timezone }) {
     contactId: appointment.contact_id,
     platform: channel,
     message: text,
-    externalId: `appointment-reminder:${reminder.id}:${appointment.id}`,
+    externalId: buildAppointmentReminderExternalId(reminder, appointment, attemptCount),
     variablesResolved: true
   })
 }
 
-async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone }) {
+async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone, attemptCount }) {
   const sender = await resolveSenderPhone(reminder, appointment)
   const template = await getPurposeCompatibleReminderTemplate(reminder)
   if (!template) {
@@ -2168,7 +2193,8 @@ async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone
       appointment,
       sender,
       template,
-      timezone
+      timezone,
+      attemptCount
     })
   }
 
@@ -2227,29 +2253,30 @@ async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone
     ...(components.length ? { components } : {}),
     contactId: appointment.contact_id,
     phoneNumberId: sender.phoneNumberId || undefined,
+    externalId: buildAppointmentReminderExternalId(reminder, appointment, attemptCount),
     renderedTextOverride,
     allowQrFallback: true,
     variablesResolved: true
   })
 }
 
-async function sendAppointmentReminderByChannel({ reminder, appointment, timezone }) {
+async function sendAppointmentReminderByChannel({ reminder, appointment, timezone, attemptCount = 1 }) {
   const channel = cleanString(reminder.channel) || 'whatsapp'
   if (isAutomaticReminderChannel(channel)) {
-    return sendAppointmentReminderByAutomaticChannel({ reminder, appointment, timezone })
+    return sendAppointmentReminderByAutomaticChannel({ reminder, appointment, timezone, attemptCount })
   }
   if (channel === 'email') {
-    return sendReminderViaEmail({ reminder, appointment, timezone })
+    return sendReminderViaEmail({ reminder, appointment, timezone, attemptCount })
   }
   if (channel === 'messenger' || channel === 'instagram') {
-    return sendReminderViaMetaSocial({ reminder, appointment, timezone })
+    return sendReminderViaMetaSocial({ reminder, appointment, timezone, attemptCount })
   }
   if (reminderUsesWhatsAppTemplate(reminder)) {
-    return sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone })
+    return sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone, attemptCount })
   }
 
   const sender = await resolveSenderPhone(reminder, appointment)
-  return sendReminderViaWhatsAppDirect({ reminder, appointment, sender, timezone })
+  return sendReminderViaWhatsAppDirect({ reminder, appointment, sender, timezone, attemptCount })
 }
 
 // (APT-003) Al reprogramar una cita (cambia start_time) hay que olvidar los envíos ya
@@ -2298,15 +2325,28 @@ async function claimSend({ reminder, appointment, sendAt }) {
   const res = await db.run(`
     INSERT INTO appointment_reminder_sends (
       id, reminder_id, appointment_id, contact_id, status, message_type,
-      ai_enabled, sent_message_id, error_message, send_at, sent_at
-    ) VALUES (?, ?, ?, ?, 'sending', ?, ?, NULL, NULL, ?, NULL)
+      ai_enabled, sent_message_id, error_message, send_at, sent_at, attempt_count
+    ) VALUES (?, ?, ?, ?, 'sending', ?, ?, NULL, NULL, ?, NULL, 1)
     ON CONFLICT (reminder_id, appointment_id) DO NOTHING
   `, [
     createSendId(), reminder.id, appointment.id, cleanString(appointment.contact_id) || null,
     reminder.messageType, reminder.aiEnabled ? 1 : 0,
     sendAt ? sendAt.toISO() : null
   ])
-  if (Number(res?.changes || 0) > 0) return true
+  if (Number(res?.changes || 0) > 0) {
+    return { claimed: true, attemptCount: 1, previousMessageId: '' }
+  }
+
+  const previous = await db.get(`
+    SELECT sent_message_id, COALESCE(attempt_count, 1) AS attempt_count
+    FROM appointment_reminder_sends
+    WHERE reminder_id = ? AND appointment_id = ?
+    LIMIT 1
+  `, [reminder.id, appointment.id])
+  const previousAttemptCount = Math.max(1, Number(previous?.attempt_count || 1))
+  if (!previous || previousAttemptCount >= MAX_SEND_ATTEMPTS) {
+    return { claimed: false, attemptCount: previousAttemptCount, previousMessageId: '' }
+  }
 
   // Si el intento anterior terminó en error y ya pasó el enfriamiento, reclamamos
   // la misma fila de forma atómica para reintentar. Los estados sent/skipped/sending
@@ -2319,16 +2359,17 @@ async function claimSend({ reminder, appointment, sendAt }) {
         contact_id = ?,
         message_type = ?,
         ai_enabled = ?,
-        sent_message_id = NULL,
         error_message = NULL,
         send_at = ?,
         sent_at = NULL,
+        attempt_count = COALESCE(attempt_count, 1) + 1,
         confirmation_deadline_at = NULL,
         confirmation_timeout_status = NULL,
         confirmation_timeout_processed_at = NULL
     WHERE reminder_id = ?
       AND appointment_id = ?
       AND status = 'error'
+      AND COALESCE(attempt_count, 1) < ?
       AND ${retryCutoffExpression}
   `, [
     cleanString(appointment.contact_id) || null,
@@ -2337,9 +2378,17 @@ async function claimSend({ reminder, appointment, sendAt }) {
     sendAt ? sendAt.toISO() : null,
     reminder.id,
     appointment.id,
+    MAX_SEND_ATTEMPTS,
     retryCutoff
   ])
-  return Number(retry?.changes || 0) > 0
+  if (Number(retry?.changes || 0) === 0) {
+    return { claimed: false, attemptCount: previousAttemptCount, previousMessageId: '' }
+  }
+  return {
+    claimed: true,
+    attemptCount: previousAttemptCount + 1,
+    previousMessageId: cleanString(previous.sent_message_id)
+  }
 }
 
 function buildConfirmationTimeoutDeliveryState({
@@ -2404,6 +2453,69 @@ function buildConfirmationTimeoutDeliveryState({
   }
 }
 
+const WHATSAPP_MESSAGE_DELIVERY_ID_COLUMNS = Object.freeze([
+  'provider_message_id',
+  'ycloud_message_id',
+  'meta_message_id',
+  'wamid'
+])
+
+async function resolveWhatsAppMessageByDeliveryId(deliveryId, database = db) {
+  const cleanDeliveryId = cleanString(deliveryId)
+  if (!cleanDeliveryId) return null
+
+  const selectColumns = `
+    id, contact_id, provider, transport, direction, message_type,
+    status, message_timestamp, created_at, hidden_from_chat
+  `
+  const byLocalId = await database.get(`
+    SELECT ${selectColumns}
+    FROM whatsapp_api_messages
+    WHERE id = ?
+    LIMIT 1
+  `, [cleanDeliveryId])
+  if (byLocalId) return byLocalId
+
+  // Consultas separadas conservan los índices directos de cada proveedor. Un
+  // OR sobre todo el historial ya provocó timeouts en cuentas grandes.
+  for (const column of WHATSAPP_MESSAGE_DELIVERY_ID_COLUMNS) {
+    const row = await database.get(`
+      SELECT ${selectColumns}
+      FROM whatsapp_api_messages
+      WHERE ${column} = ?
+      LIMIT 1
+    `, [cleanDeliveryId])
+    if (row) return row
+  }
+  return null
+}
+
+async function hideSupersededReminderFailure({
+  previousMessageId,
+  currentMessageId,
+  database = db
+} = {}) {
+  const cleanPreviousMessageId = cleanString(previousMessageId)
+  const cleanCurrentMessageId = cleanString(currentMessageId)
+  if (!cleanPreviousMessageId || !cleanCurrentMessageId) return null
+
+  const previous = await resolveWhatsAppMessageByDeliveryId(cleanPreviousMessageId, database)
+  if (!previous || cleanString(previous.status).toLowerCase() !== 'failed') return null
+
+  const current = await resolveWhatsAppMessageByDeliveryId(cleanCurrentMessageId, database)
+  if (current?.id && cleanString(current.id) === cleanString(previous.id)) return null
+
+  const result = await database.run(`
+    UPDATE whatsapp_api_messages
+    SET hidden_from_chat = 1,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+      AND LOWER(COALESCE(status, '')) = 'failed'
+      AND COALESCE(hidden_from_chat, 0) = 0
+  `, [previous.id])
+  return Number(result?.changes || 0) > 0 ? previous : null
+}
+
 // (NOTI-002/CRON-003) Marca el resultado final del envío sobre la fila ya reclamada.
 async function finalizeSend({
   reminder,
@@ -2411,7 +2523,9 @@ async function finalizeSend({
   status,
   sentMessageId = '',
   errorMessage = '',
-  timezone
+  timezone,
+  attemptCount = 1,
+  previousMessageId = ''
 }) {
   const finishedAt = nowIso()
   const confirmationTimeout = buildConfirmationTimeoutDeliveryState({
@@ -2421,25 +2535,50 @@ async function finalizeSend({
     finishedAt,
     timezone
   })
-  await db.run(`
-    UPDATE appointment_reminder_sends
-    SET status = ?,
-        sent_message_id = ?,
-        error_message = ?,
-        sent_at = CASE WHEN ? IN ('sent', 'error', 'skipped') THEN ? ELSE sent_at END,
-        confirmation_deadline_at = ?,
-        confirmation_timeout_status = ?,
-        confirmation_timeout_processed_at = ?
-    WHERE reminder_id = ? AND appointment_id = ?
-  `, [
-    status, cleanString(sentMessageId) || null, cleanString(errorMessage) || null,
-    status, finishedAt,
-    confirmationTimeout.confirmationDeadlineAt,
-    confirmationTimeout.confirmationTimeoutStatus,
-    confirmationTimeout.confirmationTimeoutProcessedAt,
-    reminder.id,
-    appointment.id
-  ])
+  let hiddenFailure = null
+  await db.transaction(async (transaction) => {
+    await transaction.run(`
+      UPDATE appointment_reminder_sends
+      SET status = ?,
+          sent_message_id = ?,
+          error_message = ?,
+          sent_at = CASE WHEN ? IN ('sent', 'error', 'skipped') THEN ? ELSE sent_at END,
+          confirmation_deadline_at = ?,
+          confirmation_timeout_status = ?,
+          confirmation_timeout_processed_at = ?
+      WHERE reminder_id = ? AND appointment_id = ?
+    `, [
+      status, cleanString(sentMessageId) || null, cleanString(errorMessage) || null,
+      status, finishedAt,
+      confirmationTimeout.confirmationDeadlineAt,
+      confirmationTimeout.confirmationTimeoutStatus,
+      confirmationTimeout.confirmationTimeoutProcessedAt,
+      reminder.id,
+      appointment.id
+    ])
+
+    if (Number(attemptCount) > 1) {
+      hiddenFailure = await hideSupersededReminderFailure({
+        previousMessageId,
+        currentMessageId: sentMessageId,
+        database: transaction
+      })
+    }
+  })
+
+  if (hiddenFailure?.contact_id) {
+    publishChatMessageEvent({
+      contactId: hiddenFailure.contact_id,
+      messageId: hiddenFailure.id,
+      channel: 'whatsapp',
+      provider: hiddenFailure.provider,
+      transport: hiddenFailure.transport,
+      direction: hiddenFailure.direction,
+      messageType: hiddenFailure.message_type,
+      messageTimestamp: hiddenFailure.message_timestamp || hiddenFailure.created_at,
+      isNew: false
+    })
+  }
 }
 
 /**
@@ -2699,7 +2838,7 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
   const sendPlaceholders = appointmentIds.map(() => '?').join(', ')
   const sendRows = appointmentIds.length
     ? await db.all(
-        `SELECT reminder_id, appointment_id, status, sent_at, created_at
+        `SELECT reminder_id, appointment_id, status, sent_at, created_at, attempt_count
          FROM appointment_reminder_sends
          WHERE appointment_id IN (${sendPlaceholders})`,
         appointmentIds
@@ -2709,7 +2848,10 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
   for (const row of sendRows) {
     const key = `${row.reminder_id}|${row.appointment_id}`
     const status = cleanString(row.status).toLowerCase()
-    if (status === 'error' && !shouldHoldErroredSend(row, now)) continue
+    if (status === 'error') {
+      const attemptCount = Math.max(1, Number(row.attempt_count || 1))
+      if (attemptCount < MAX_SEND_ATTEMPTS && !shouldHoldErroredSend(row, now)) continue
+    }
     alreadyHandled.add(key)
   }
 
@@ -2739,8 +2881,8 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
 
       // (NOTI-002/CRON-003) Reclamar ANTES de enviar. Si otra instancia ya reclamó este
       // par (reminder, cita) no enviamos para evitar el doble mensaje al cliente.
-      const claimed = await claimSend({ reminder, appointment, sendAt })
-      if (!claimed) {
+      const claim = await claimSend({ reminder, appointment, sendAt })
+      if (!claim.claimed) {
         alreadyHandled.add(`${reminder.id}|${appointment.id}`)
         continue
       }
@@ -2759,7 +2901,9 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
           appointment,
           status: 'skipped',
           errorMessage: 'La cita se agendó después del momento programado para este recordatorio.',
-          timezone
+          timezone,
+          attemptCount: claim.attemptCount,
+          previousMessageId: claim.previousMessageId
         })
         skipped += 1
         continue
@@ -2771,7 +2915,9 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
           appointment,
           status: 'skipped',
           errorMessage: 'Fuera de la ventana de envío',
-          timezone
+          timezone,
+          attemptCount: claim.attemptCount,
+          previousMessageId: claim.previousMessageId
         })
         skipped += 1
         continue
@@ -2785,20 +2931,29 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
             appointment,
             status: 'skipped',
             errorMessage: missingTarget,
-            timezone
+            timezone,
+            attemptCount: claim.attemptCount,
+            previousMessageId: claim.previousMessageId
           })
           skipped += 1
           continue
         }
 
-        const response = await sendAppointmentReminderByChannel({ reminder, appointment, timezone })
+        const response = await sendAppointmentReminderByChannel({
+          reminder,
+          appointment,
+          timezone,
+          attemptCount: claim.attemptCount
+        })
 
         await finalizeSend({
           reminder,
           appointment,
           status: 'sent',
           sentMessageId: getSentMessageId(response),
-          timezone
+          timezone,
+          attemptCount: claim.attemptCount,
+          previousMessageId: claim.previousMessageId
         })
         sent += 1
         const transport = response?.transport === 'qr'
@@ -2813,8 +2968,11 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
           reminder,
           appointment,
           status: 'error',
+          sentMessageId: getFailedMessageId(error),
           errorMessage: error.message,
-          timezone
+          timezone,
+          attemptCount: claim.attemptCount,
+          previousMessageId: claim.previousMessageId
         })
         errors += 1
         logger.warn(`[Citas] Falló mensaje automático "${reminder.name}" para la cita ${appointment.id}: ${error.message}`)

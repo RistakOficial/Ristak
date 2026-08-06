@@ -15,6 +15,9 @@ import {
   ensureSqliteAppointmentConfirmationTimeoutSchema
 } from '../src/startup/appointmentConfirmationTimeoutSchemaCompatibility.js'
 import {
+  ensureSqliteAppointmentReminderRetrySchema
+} from '../src/startup/appointmentReminderRetrySchemaCompatibility.js'
+import {
   ensureSqliteSitesPublicationDomainSchema
 } from '../src/startup/sitesPublicationDomainSchemaCompatibility.js'
 
@@ -128,6 +131,155 @@ test('la migración PostgreSQL instala public_sites.public_domain en bases exist
     sql,
     /CREATE INDEX IF NOT EXISTS idx_public_sites_public_domain_lower\s+ON public_sites\(LOWER\(public_domain\)\)/i
   )
+})
+
+test('SQLite repara el contador de intentos y la visibilidad del chat antes de migrar', async () => {
+  const database = openMemoryDatabase()
+
+  try {
+    await database.exec(`
+      CREATE TABLE appointment_reminder_sends (id TEXT PRIMARY KEY);
+      CREATE TABLE whatsapp_api_messages (id TEXT PRIMARY KEY);
+    `)
+
+    assert.deepEqual(
+      await ensureSqliteAppointmentReminderRetrySchema({ database, dialect: 'sqlite' }),
+      {
+        addedColumns: [
+          'appointment_reminder_sends.attempt_count',
+          'whatsapp_api_messages.hidden_from_chat'
+        ]
+      }
+    )
+
+    const sendColumns = await database.all('PRAGMA table_info(appointment_reminder_sends)')
+    const messageColumns = await database.all('PRAGMA table_info(whatsapp_api_messages)')
+    assert.equal(sendColumns.find(column => column.name === 'attempt_count')?.dflt_value, '1')
+    assert.equal(messageColumns.find(column => column.name === 'hidden_from_chat')?.dflt_value, '0')
+
+    assert.deepEqual(
+      await ensureSqliteAppointmentReminderRetrySchema({ database, dialect: 'sqlite' }),
+      { addedColumns: [] }
+    )
+  } finally {
+    await database.close()
+  }
+})
+
+test('la migración 156 limita legacy y reproyecta mensajes ocultos en ambos motores', async () => {
+  const [sqliteSql, postgresSql] = await Promise.all([
+    readFile(
+      new URL('../migrations/versioned/156_appointment_reminder_retry_limit.sqlite.sql', import.meta.url),
+      'utf8'
+    ),
+    readFile(
+      new URL('../migrations/versioned/156a_appointment_reminder_retry_limit.postgres.sql', import.meta.url),
+      'utf8'
+    )
+  ])
+
+  assert.match(sqliteSql, /SET attempt_count = 2[\s\S]*status, ''\)\) = 'error'/i)
+  assert.match(sqliteSql, /COALESCE\(msg\.hidden_from_chat, 0\) = 0 AS is_message/i)
+  assert.match(sqliteSql, /AFTER UPDATE OF[\s\S]*hidden_from_chat/i)
+  assert.match(postgresSql, /ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 1/i)
+  assert.match(postgresSql, /ADD COLUMN IF NOT EXISTS hidden_from_chat INTEGER NOT NULL DEFAULT 0/i)
+  assert.match(postgresSql, /COALESCE\(msg\.hidden_from_chat, 0\) = 0 AS is_message/i)
+  assert.match(postgresSql, /UPDATE OF[\s\S]*hidden_from_chat/i)
+})
+
+test('la migración 156 de SQLite agota errores legacy y retira mensajes ocultos del ledger', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-reminder-retry-limit-'))
+  const database = openMemoryDatabase()
+  const migrationName = '156_appointment_reminder_retry_limit.sqlite.sql'
+
+  try {
+    await database.exec(`
+      CREATE TABLE appointment_reminder_sends (
+        id TEXT PRIMARY KEY,
+        status TEXT,
+        attempt_count INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE TABLE contacts (id TEXT PRIMARY KEY, phone TEXT);
+      CREATE TABLE contact_phone_numbers (contact_id TEXT, phone TEXT);
+      CREATE TABLE whatsapp_api_contacts (id TEXT PRIMARY KEY, contact_id TEXT, phone TEXT);
+      CREATE TABLE whatsapp_api_messages (
+        id TEXT PRIMARY KEY,
+        whatsapp_api_contact_id TEXT,
+        contact_id TEXT,
+        phone TEXT,
+        from_phone TEXT,
+        to_phone TEXT,
+        business_phone TEXT,
+        business_phone_number_id TEXT,
+        direction TEXT,
+        message_type TEXT,
+        status TEXT,
+        message_timestamp TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        chat_projection_version INTEGER NOT NULL DEFAULT 0,
+        hidden_from_chat INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE VIEW ristak_chat_business_phone_aliases AS
+      SELECT '' AS id, '' AS canonical_phone WHERE 0;
+      CREATE TABLE chat_message_activity (
+        source_kind TEXT NOT NULL,
+        source_message_id TEXT NOT NULL,
+        projection_version INTEGER NOT NULL DEFAULT 1,
+        included INTEGER NOT NULL DEFAULT 0,
+        contact_id TEXT,
+        scope_key TEXT,
+        direction TEXT,
+        message_sort REAL NOT NULL DEFAULT 0,
+        created_sort REAL NOT NULL DEFAULT 0,
+        message_at TEXT,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (source_kind, source_message_id)
+      );
+      INSERT INTO appointment_reminder_sends (id, status)
+      VALUES ('legacy_error', 'error');
+      INSERT INTO contacts (id, phone) VALUES ('contact_1', '+525555555555');
+      INSERT INTO whatsapp_api_messages (
+        id, contact_id, phone, from_phone, to_phone, business_phone,
+        direction, message_type, status, message_timestamp
+      ) VALUES (
+        'message_1', 'contact_1', '+525555555555', '+526561234567',
+        '+525555555555', '+526561234567', 'outbound', 'template', 'failed',
+        '2026-08-06T20:00:00.000Z'
+      );
+      INSERT INTO chat_message_activity (
+        source_kind, source_message_id, included, contact_id, direction,
+        message_sort, created_sort, message_at
+      ) VALUES (
+        'whatsapp', 'message_1', 1, 'contact_1', 'outbound', 1, 1,
+        '2026-08-06T20:00:00.000Z'
+      );
+    `)
+    await copyFile(
+      new URL(`../migrations/versioned/${migrationName}`, import.meta.url),
+      join(directory, migrationName)
+    )
+
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 1, skipped: 0 }
+    )
+    assert.equal(
+      (await database.all("SELECT attempt_count FROM appointment_reminder_sends WHERE id = 'legacy_error'"))[0].attempt_count,
+      2
+    )
+
+    await database.run("UPDATE whatsapp_api_messages SET hidden_from_chat = 1 WHERE id = 'message_1'")
+    const [projected] = await database.all(`
+      SELECT included, contact_id
+      FROM chat_message_activity
+      WHERE source_kind = 'whatsapp' AND source_message_id = 'message_1'
+    `)
+    assert.equal(projected.included, 0)
+    assert.equal(projected.contact_id, 'contact_1')
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
 })
 
 test('la migración 150 limita horarios y llaves de sistema por calendario en SQLite', async () => {

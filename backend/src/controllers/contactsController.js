@@ -2609,6 +2609,7 @@ const fetchPickerLatestMessageRowsByContact = async (contacts = [], phoneRowsByC
         JOIN picked_contacts pc ON pc.contact_id = ${directWhatsAppContactIdSql}
         WHERE ${directWhatsAppContactIdSql} IS NOT NULL
           AND LOWER(COALESCE(msg.message_type, '')) <> 'status'
+          AND COALESCE(msg.hidden_from_chat, 0) = 0
         UNION ALL
         SELECT
           MIN(picked_contact_phones.contact_id) AS contact_id,
@@ -2628,6 +2629,7 @@ const fetchPickerLatestMessageRowsByContact = async (contacts = [], phoneRowsByC
         WHERE ${directWhatsAppContactIdSql} IS NULL
           AND TRIM(COALESCE(picked_contact_phones.phone, '')) != ''
           AND LOWER(COALESCE(msg.message_type, '')) <> 'status'
+          AND COALESCE(msg.hidden_from_chat, 0) = 0
         GROUP BY
           msg.id,
           msg.message_text,
@@ -3300,6 +3302,7 @@ export const getChatContacts = async (req, res) => {
     if (!chatActivityProjection.available) {
       const fallbackConditions = [...conditions]
       const fallbackParams = [...params]
+      fallbackConditions.push('COALESCE(msg.hidden_from_chat, 0) = 0')
       if (phoneNumberIdFilter) {
         fallbackConditions.push('msg.business_phone_number_id = ?')
         fallbackParams.push(phoneNumberIdFilter)
@@ -7085,6 +7088,7 @@ export const getContactJourney = async (req, res) => {
          END
        WHERE ${whatsappApiMessageContactMatch.condition}
          AND LOWER(COALESCE(msg.message_type, '')) <> 'status'
+         AND COALESCE(msg.hidden_from_chat, 0) = 0
          AND (
            ? = 1
            OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})

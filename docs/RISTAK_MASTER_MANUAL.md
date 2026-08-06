@@ -5186,19 +5186,37 @@ ventana debe usarse plantilla aprobada.
 Cada par `reminder_id + appointment_id` se reclama en
 `appointment_reminder_sends` antes de enviar para evitar duplicados. Estados
 `sent`, `skipped` y `sending` bloquean nuevos envios. Si el intento termina en
-`error`, el cron puede reintentarlo despues de 15 minutos, siempre que la hora de
-envio siga dentro de la ventana util de 3 horas; si ya se paso esa ventana se
-marca como omitido en vez de mandar un WhatsApp tarde. El enfriamiento se compara
-en UTC con SQL nativo del motor activo; PostgreSQL no ejecuta funciones exclusivas
-de SQLite durante este reclamo.
+`error`, el cron puede hacer **un solo reintento** despues de 15 minutos, siempre
+que la hora de envio siga dentro de la ventana util de 3 horas. Son dos intentos
+totales: el inicial y el reintento; `attempt_count=2` vuelve terminal cualquier
+error posterior. Si ya se paso la ventana util, se marca como omitido en vez de
+mandar un mensaje tarde. El enfriamiento se compara en UTC con SQL nativo del
+motor activo; PostgreSQL no ejecuta funciones exclusivas de SQLite durante este
+reclamo. Cada intento usa una identidad externa distinta y estable para impedir
+que el proveedor confunda el reintento con la solicitud original.
+
+Los intentos físicos se conservan en `whatsapp_api_messages` para auditoría,
+pero el chat sólo proyecta la copia vigente. Cuando el segundo intento genera un
+mensaje, Ristak marca la primera copia fallida con `hidden_from_chat=1` dentro de
+la misma transacción que cierra el envío: si el reintento funciona, queda visible
+únicamente el mensaje exitoso; si vuelve a fallar, queda visible únicamente el
+segundo fallo. La fila oculta conserva estado, error e identificadores del
+proveedor y además se retira de `chat_message_activity`; un evento en vivo obliga
+a las conversaciones abiertas a reconciliarse sin esperar a que el operador las
+vuelva a abrir. Si el segundo intento falla antes de crear otra fila de mensaje,
+la primera copia sigue visible porque continúa siendo el único fallo material.
+
+Las filas históricas que ya estaban en `error` antes de introducir el contador
+se migran como `attempt_count=2`. No hay evidencia fiable para reconstruir cuántos
+intentos tuvieron y es más seguro no revivir una cadena antigua de mensajes.
 Un `sent` provisional no es terminal cuando el proveedor reporta después
 cualquier rechazo final. Antes de deduplicar el siguiente tick, Citas reconcilia
 el ID guardado con el estado final de `whatsapp_api_messages`, cambia la fila a
 `error`, conserva el motivo real, limpia cualquier ultimátum que nunca debió
 empezar y aplica el mismo enfriamiento de 15 minutos. Esto cubre tanto errores
 estructurales de plantilla como saldo insuficiente u otros rechazos terminales
-del proveedor. El claim atómico existente decide qué instancia puede reintentar,
-por lo que dos workers no mandan dos copias.
+del proveedor. El claim atómico existente decide qué instancia puede ejecutar el
+único reintento, por lo que dos workers no mandan dos copias.
 La reconciliación y el aprendizaje de contratos legacy resuelven
 `provider_message_id`, `ycloud_message_id` y `wamid` por búsquedas indexadas
 independientes. No deben volver a unir esos tres identificadores con un único

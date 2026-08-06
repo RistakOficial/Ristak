@@ -32,6 +32,9 @@ import {
   ensureSqliteAppointmentConfirmationTimeoutSchema
 } from '../startup/appointmentConfirmationTimeoutSchemaCompatibility.js'
 import {
+  ensureSqliteAppointmentReminderRetrySchema
+} from '../startup/appointmentReminderRetrySchemaCompatibility.js'
+import {
   ensureSqliteSitesPublicationDomainSchema
 } from '../startup/sitesPublicationDomainSchemaCompatibility.js'
 import { ensureSharedReportTableConfig } from '../utils/reportTableConfig.js'
@@ -2557,6 +2560,17 @@ async function initTablesUnlocked() {
       logger.info(
         '[Esquema] Compatibilidad de plazos de confirmación reparada: ' +
         `${appointmentConfirmationTimeoutSchemaRepair.addedColumns.length} columna(s).`
+      )
+    }
+
+    const appointmentReminderRetrySchemaRepair = await ensureSqliteAppointmentReminderRetrySchema({
+      database: db,
+      dialect: databaseDialect
+    })
+    if (appointmentReminderRetrySchemaRepair.addedColumns.length > 0) {
+      logger.info(
+        '[Esquema] Compatibilidad de reintentos de recordatorios reparada: ' +
+        `${appointmentReminderRetrySchemaRepair.addedColumns.length} columna(s).`
       )
     }
 
@@ -5158,6 +5172,7 @@ async function initTablesUnlocked() {
         detected_body TEXT,
         detected_conversion_data TEXT,
         detected_ctwa_payload TEXT,
+        hidden_from_chat INTEGER NOT NULL DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (whatsapp_api_contact_id) REFERENCES whatsapp_api_contacts(id) ON DELETE SET NULL,
@@ -5258,7 +5273,8 @@ async function initTablesUnlocked() {
       ['media_filename', 'TEXT'],
       ['media_duration_ms', 'INTEGER'],
       ['business_echo', 'INTEGER DEFAULT 0'],
-      ['relay_event_id', 'TEXT']
+      ['relay_event_id', 'TEXT'],
+      ['hidden_from_chat', 'INTEGER NOT NULL DEFAULT 0']
     ]) {
       try {
         await db.run(`ALTER TABLE whatsapp_api_messages ADD COLUMN ${columnName} ${columnType}`)
@@ -8344,6 +8360,7 @@ async function initTablesUnlocked() {
         confirmation_timeout_processed_at DATETIME,
         confirmation_reply_sent_at DATETIME,
         confirmation_reply_message_id TEXT,
+        attempt_count INTEGER NOT NULL DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(reminder_id, appointment_id)
       )
@@ -8481,6 +8498,10 @@ async function initTablesUnlocked() {
 
     try {
       await db.run('ALTER TABLE appointment_reminder_sends ADD COLUMN confirmation_reply_message_id TEXT')
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminder_sends ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 1')
     } catch (_) { /* columna ya existe */ }
 
     await db.run(`

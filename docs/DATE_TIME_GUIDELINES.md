@@ -100,6 +100,10 @@ Usa estos formatos de forma intencional:
 - Si falta tarjeta guardada/autorizada, el plan debe esperar autorización de
   tarjeta por la pasarela elegida; no inventes cobro automático.
 - Usa locks/idempotencia al agregar nuevos crones o procesos programados.
+- Los recordatorios de citas con error esperan 15 minutos medidos en UTC y sólo
+  admiten un reintento automático. El intento inicial y el reintento tienen
+  identidades externas distintas; ambos deben conservar la misma ventana útil
+  máxima de tres horas para no entregar un aviso fuera de tiempo.
 - Los plazos de confirmacion de citas pueden contar tiempo corrido o solo tiempo
   dentro de un horario diario de respuesta. Ese horario son horas de pared en la
   zona del negocio, puede cruzar medianoche y se recorre por calendario local
