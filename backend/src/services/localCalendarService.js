@@ -1764,19 +1764,6 @@ async function assertGoogleCalendarLinkPersistenceSafety({ normalized, existing,
     error.code = 'google_calendar_link_requires_sync_route'
     throw error
   }
-  if (!desiredGoogleCalendarId) return
-
-  const rows = await db.all('SELECT id, raw_json FROM calendars')
-  const conflictingOwner = rows.find(row => (
-    cleanString(row.id) !== cleanString(normalized?.id) &&
-    googleCalendarIdFromCalendarRecord(row).toLowerCase() === desiredGoogleCalendarId.toLowerCase()
-  ))
-  if (conflictingOwner?.id) {
-    const error = new Error('Ese calendario de Google ya está ligado a otra agenda de Ristak.')
-    error.status = 409
-    error.code = 'duplicate_google_calendar_owner'
-    throw error
-  }
 }
 
 export async function upsertLocalCalendar(raw = {}, options = {}) {

@@ -539,6 +539,12 @@ function localIdForGoogleOwnershipShadow(eventId, calendarId) {
   return `google_shadow_${hash}`
 }
 
+async function deleteGoogleOwnershipShadow(eventId, calendarId) {
+  const shadowId = localIdForGoogleOwnershipShadow(eventId, calendarId)
+  await db.run('DELETE FROM appointment_participants WHERE appointment_id = ?', [shadowId])
+  await db.run("DELETE FROM appointments WHERE id = ? AND source = 'google_shadow'", [shadowId])
+}
+
 async function resolveLocalCalendarId(preferredCalendarId = null) {
   if (preferredCalendarId) {
     const preferred = await localCalendarService.getLocalCalendar(preferredCalendarId)
@@ -555,13 +561,19 @@ async function resolveLocalCalendarId(preferredCalendarId = null) {
   return calendar.id
 }
 
-export function googleEventToAppointment(event = {}, { calendarId, locationId = null, timezone = 'UTC' } = {}) {
+export function googleEventToAppointment(event = {}, {
+  calendarId,
+  locationId = null,
+  timezone = 'UTC',
+  occupancyOnly = false
+} = {}) {
   const privateProps = event.extendedProperties?.private || {}
   const ristakAppointmentId = cleanString(privateProps.ristakAppointmentId)
   const ristakCalendarId = cleanString(privateProps.ristakCalendarId)
   const targetCalendarId = cleanString(calendarId)
   const embeddedOwnerMismatch = Boolean(targetCalendarId && ristakCalendarId && ristakCalendarId !== targetCalendarId)
-  const embeddedOwnerMatchesTarget = !embeddedOwnerMismatch
+  const materializeAsShadow = Boolean(occupancyOnly || embeddedOwnerMismatch)
+  const embeddedOwnerMatchesTarget = !materializeAsShadow
   const effectiveRistakAppointmentId = embeddedOwnerMatchesTarget ? ristakAppointmentId : ''
   // (GCAL-004) Pasar la zona de la cuenta para anclar correctamente los eventos all-day.
   const startTime = googleEventDateToIso(event.start, null, timezone)
@@ -577,7 +589,7 @@ export function googleEventToAppointment(event = {}, { calendarId, locationId = 
     : null
 
   return {
-    id: effectiveRistakAppointmentId || (embeddedOwnerMismatch
+    id: effectiveRistakAppointmentId || (materializeAsShadow
       ? localIdForGoogleOwnershipShadow(event.id, targetCalendarId)
       : localIdForGoogleEvent(event.id)),
     // (GCAL-006) Datos del invitado para resolver/crear contacto antes del upsert.
@@ -585,7 +597,7 @@ export function googleEventToAppointment(event = {}, { calendarId, locationId = 
     guestName: guest ? cleanString(guest.displayName) : null,
     // En una religa no podemos reutilizar google_event_id: sigue unido a la
     // cita canónica de A. El shadow determinista de B sólo representa ocupación.
-    googleEventId: embeddedOwnerMismatch ? null : event.id,
+    googleEventId: materializeAsShadow ? null : event.id,
     // El vínculo actual Google -> calendario local manda. Un evento puede traer
     // metadata vieja de la agenda A después de que el dueño religó Google a B;
     // nunca movemos la cita canónica de A ni dejamos invisible la ocupación en B.
@@ -600,7 +612,7 @@ export function googleEventToAppointment(event = {}, { calendarId, locationId = 
     endTime,
     dateAdded: event.created || startTime || new Date().toISOString(),
     dateUpdated: event.updated || new Date().toISOString(),
-    source: embeddedOwnerMismatch ? 'google_shadow' : (effectiveRistakAppointmentId ? 'ristak' : 'google')
+    source: materializeAsShadow ? 'google_shadow' : (effectiveRistakAppointmentId ? 'ristak' : 'google')
   }
 }
 
@@ -638,11 +650,8 @@ async function deleteLocalAppointmentForCancelledGoogleEvent(event = {}, {
   const candidateIds = [
     embeddedOwnerMatchesTarget ? cleanString(privateProps.ristakAppointmentId) : '',
     embeddedOwnerMatchesTarget ? cleanString(event.id) : '',
-    cleanString(event.id)
-      ? (embeddedOwnerMismatch
-          ? localIdForGoogleOwnershipShadow(event.id, targetCalendarId)
-          : localIdForGoogleEvent(event.id))
-      : ''
+    cleanString(event.id) ? localIdForGoogleEvent(event.id) : '',
+    cleanString(event.id) ? localIdForGoogleOwnershipShadow(event.id, targetCalendarId) : ''
   ].filter(Boolean)
 
   for (const candidateId of [...new Set(candidateIds)]) {
@@ -692,48 +701,6 @@ function googleCalendarIdFromLocalCalendar(calendar = {}) {
   return cleanString(calendar.googleCalendarId || calendar.rawJson?.googleCalendarId || calendar.raw_json?.googleCalendarId)
 }
 
-function duplicateGoogleCalendarOwnerError(googleCalendarId, ownerIds = []) {
-  const error = new Error(
-    `El calendario de Google ${googleCalendarId} ya está ligado a otra agenda de Ristak. Desvincúlalo de la agenda anterior antes de continuar.`
-  )
-  error.status = 409
-  error.code = 'duplicate_google_calendar_owner'
-  error.ownerIds = ownerIds
-  return error
-}
-
-function assertUniqueGoogleCalendarOwner({ googleCalendarId, localCalendarId, linkedCalendars = [] } = {}) {
-  const normalizedGoogleId = normalizeGoogleCalendarIdInput(googleCalendarId).toLowerCase()
-  if (!normalizedGoogleId) return
-  const owners = (Array.isArray(linkedCalendars) ? linkedCalendars : [])
-    .filter(calendar => googleCalendarIdFromLocalCalendar(calendar).toLowerCase() === normalizedGoogleId)
-    .map(calendar => cleanString(calendar.id))
-    .filter(Boolean)
-  const uniqueOwners = [...new Set(owners)]
-  if (uniqueOwners.some(ownerId => ownerId !== cleanString(localCalendarId)) || uniqueOwners.length > 1) {
-    throw duplicateGoogleCalendarOwnerError(googleCalendarId, uniqueOwners)
-  }
-}
-
-async function assertUniqueGoogleCalendarOwnerBeforeOutboundWrite({
-  googleCalendarId,
-  localCalendarId
-} = {}) {
-  const normalizedGoogleCalendarId = normalizeGoogleCalendarIdInput(googleCalendarId)
-  const normalizedLocalCalendarId = cleanString(localCalendarId)
-  if (!normalizedGoogleCalendarId || !normalizedLocalCalendarId) return
-
-  // Se consulta de nuevo inmediatamente antes de cada escritura remota. Esto
-  // hace que una instalación legacy con dos agendas apuntando al mismo Google
-  // Calendar falle cerrada antes de POST/PATCH/DELETE, aunque haya pasado una
-  // validación anterior o la corrupción exista desde una versión vieja.
-  assertUniqueGoogleCalendarOwner({
-    googleCalendarId: normalizedGoogleCalendarId,
-    localCalendarId: normalizedLocalCalendarId,
-    linkedCalendars: await localCalendarService.listGoogleLinkedLocalCalendars({ includeInactive: true })
-  })
-}
-
 async function findGoogleCalendarOption(googleCalendarId, { config = null } = {}) {
   const normalizedGoogleCalendarId = normalizeGoogleCalendarIdInput(googleCalendarId)
   if (!normalizedGoogleCalendarId) return null
@@ -750,28 +717,23 @@ async function resolveGoogleSyncTargets(config, calendarId = null) {
     const googleCalendarId = googleCalendarIdFromLocalCalendar(localCalendar)
 
     if (googleCalendarId) {
-      assertUniqueGoogleCalendarOwner({
-        googleCalendarId,
-        localCalendarId: localCalendar.id,
-        linkedCalendars: await localCalendarService.listGoogleLinkedLocalCalendars({ includeInactive: true })
-      })
-      return [{
-        googleCalendarId,
-        localCalendarId: localCalendar.id
-      }]
+      const normalizedGoogleCalendarId = googleCalendarId.toLowerCase()
+      const siblings = (await localCalendarService.listGoogleLinkedLocalCalendars())
+        .filter(calendar => googleCalendarIdFromLocalCalendar(calendar).toLowerCase() === normalizedGoogleCalendarId)
+        .map(calendar => ({
+          googleCalendarId,
+          localCalendarId: calendar.id
+        }))
+      if (!siblings.some(target => target.localCalendarId === localCalendar.id)) {
+        siblings.push({ googleCalendarId, localCalendarId: localCalendar.id })
+      }
+      return siblings
     }
 
     return []
   }
 
   const linkedCalendars = await localCalendarService.listGoogleLinkedLocalCalendars()
-  for (const calendar of linkedCalendars) {
-    assertUniqueGoogleCalendarOwner({
-      googleCalendarId: googleCalendarIdFromLocalCalendar(calendar),
-      localCalendarId: calendar.id,
-      linkedCalendars
-    })
-  }
   const targets = linkedCalendars
     .map(calendar => ({
       googleCalendarId: googleCalendarIdFromLocalCalendar(calendar),
@@ -782,6 +744,54 @@ async function resolveGoogleSyncTargets(config, calendarId = null) {
   if (targets.length) return targets
 
   return []
+}
+
+function groupGoogleSyncTargetsByProvider(targets = []) {
+  const groups = new Map()
+  for (const target of Array.isArray(targets) ? targets : []) {
+    const googleCalendarId = normalizeGoogleCalendarIdInput(target?.googleCalendarId)
+    const localCalendarId = cleanString(target?.localCalendarId)
+    if (!googleCalendarId || !localCalendarId) continue
+    const key = googleCalendarId.toLowerCase()
+    const group = groups.get(key) || { googleCalendarId, localCalendarIds: [] }
+    if (!group.localCalendarIds.includes(localCalendarId)) {
+      group.localCalendarIds.push(localCalendarId)
+    }
+    groups.set(key, group)
+  }
+  return [...groups.values()]
+}
+
+async function resolveGoogleEventCanonicalCalendarId(event = {}, localCalendarIds = []) {
+  const targetIds = new Set((Array.isArray(localCalendarIds) ? localCalendarIds : []).map(cleanString).filter(Boolean))
+  if (!targetIds.size) return ''
+
+  const privateProps = event.extendedProperties?.private || {}
+  const embeddedCalendarId = cleanString(privateProps.ristakCalendarId)
+  if (embeddedCalendarId) {
+    return targetIds.has(embeddedCalendarId) ? embeddedCalendarId : ''
+  }
+
+  const embeddedAppointmentId = cleanString(privateProps.ristakAppointmentId)
+  if (embeddedAppointmentId) {
+    const canonical = await localCalendarService.getLocalAppointment(embeddedAppointmentId).catch(() => null)
+    const canonicalCalendarId = cleanString(canonical?.calendarId)
+    return targetIds.has(canonicalCalendarId) ? canonicalCalendarId : ''
+  }
+
+  // Un evento nacido en Google se importa como cita completa en una sola agenda
+  // local. Las demás agendas que reflejan el mismo Google Calendar reciben una
+  // sombra de ocupación determinista: bloquea disponibilidad sin duplicar
+  // contactos, automatizaciones ni la identidad canónica del evento.
+  const existingImported = cleanString(event.id)
+    ? await localCalendarService.getLocalAppointment(localIdForGoogleEvent(event.id)).catch(() => null)
+    : null
+  const existingCalendarId = cleanString(existingImported?.calendarId)
+  if (cleanString(existingImported?.source).toLowerCase() === 'google' && targetIds.has(existingCalendarId)) {
+    return existingCalendarId
+  }
+
+  return [...targetIds][0] || ''
 }
 
 export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId = null, config = null } = {}) {
@@ -800,177 +810,195 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
   const accountTimezone = await getAccountTimezone()
   let saved = 0
   let deleted = 0
-  for (const target of targets) {
+  const targetGroups = groupGoogleSyncTargetsByProvider(targets)
+  for (const targetGroup of targetGroups) {
     const events = await listGoogleEvents({
-        timeMin: range.timeMin,
-        timeMax: range.timeMax,
-        calendarId: target.googleCalendarId,
-        config: activeConfig,
-        showDeleted: true
-      })
+      timeMin: range.timeMin,
+      timeMax: range.timeMax,
+      calendarId: targetGroup.googleCalendarId,
+      config: activeConfig,
+      showDeleted: true
+    })
 
     for (const event of events) {
       if (!event?.id) continue
 
-      if (mapGoogleEventStatus(event) === 'cancelled') {
-        const cancellation = await deleteLocalAppointmentForCancelledGoogleEvent(event, {
-          calendarId: target.localCalendarId,
-          providerCalendarId: target.googleCalendarId
-        })
-        if (cancellation.deleted) {
-          deleted += 1
-          if (
-            cancellation.appointment?.contactId &&
-            cleanString(cancellation.appointment?.source).toLowerCase() !== 'google_shadow'
-          ) {
-            await dispatchAppointmentAutomationEvent(
-              'appointment-status',
-              cancellation.appointment,
-              {
-                previousStatus: cancellation.previousStatus || null,
-                previousAppointmentId: cancellation.appointment.id,
-                appointmentChange: 'cancelled'
-              }
-            )
+      const canonicalCalendarId = mapGoogleEventStatus(event) === 'cancelled'
+        ? ''
+        : await resolveGoogleEventCanonicalCalendarId(event, targetGroup.localCalendarIds)
+
+      for (const localCalendarId of targetGroup.localCalendarIds) {
+        if (mapGoogleEventStatus(event) === 'cancelled') {
+          const cancellation = await deleteLocalAppointmentForCancelledGoogleEvent(event, {
+            calendarId: localCalendarId,
+            providerCalendarId: targetGroup.googleCalendarId
+          })
+          if (cancellation.deleted) {
+            deleted += 1
+            if (
+              cancellation.appointment?.contactId &&
+              cleanString(cancellation.appointment?.source).toLowerCase() !== 'google_shadow'
+            ) {
+              await dispatchAppointmentAutomationEvent(
+                'appointment-status',
+                cancellation.appointment,
+                {
+                  previousStatus: cancellation.previousStatus || null,
+                  previousAppointmentId: cancellation.appointment.id,
+                  appointmentChange: 'cancelled'
+                }
+              )
+            }
           }
+          continue
         }
-        continue
-      }
 
-      if (!event.start) continue
+        if (!event.start) continue
 
-      let appointment = googleEventToAppointment(event, {
-        calendarId: target.localCalendarId,
-        timezone: accountTimezone // (GCAL-004)
-      })
+        let appointment = googleEventToAppointment(event, {
+          calendarId: localCalendarId,
+          timezone: accountTimezone, // (GCAL-004)
+          occupancyOnly: localCalendarId !== canonicalCalendarId
+        })
 
-      if (!appointment.startTime || !appointment.endTime) continue
+        if (!appointment.startTime || !appointment.endTime) continue
 
-      const localCalendarId = await resolveLocalCalendarId(appointment.calendarId)
-      const localCalendar = await localCalendarService.getLocalCalendar(localCalendarId)
-      appointment.calendarId = localCalendarId
-      appointment.locationId = localCalendar?.locationId || null
-      let existingAppointment = await localCalendarService.getLocalAppointment(appointment.id).catch(() => null)
-      if (appointment.source !== 'google_shadow') {
-        const existingByRemoteId = await localCalendarService.getLocalAppointment(event.id).catch(() => null)
-        if (existingByRemoteId?.id) existingAppointment = existingByRemoteId
-      }
-
-      if (appointment.source === 'ristak' && !existingAppointment?.id) {
-        // La metadata privada de Google no tiene autoridad para inventar o
-        // resucitar una cita canónica que ya no existe en Ristak.
-        appointment = {
-          ...appointment,
-          id: localIdForGoogleOwnershipShadow(event.id, localCalendarId),
-          googleEventId: null,
-          source: 'google_shadow'
+        const resolvedLocalCalendarId = await resolveLocalCalendarId(appointment.calendarId)
+        const localCalendar = await localCalendarService.getLocalCalendar(resolvedLocalCalendarId)
+        appointment.calendarId = resolvedLocalCalendarId
+        appointment.locationId = localCalendar?.locationId || null
+        let existingAppointment = await localCalendarService.getLocalAppointment(appointment.id).catch(() => null)
+        if (appointment.source !== 'google_shadow') {
+          const existingByRemoteId = await localCalendarService.getLocalAppointment(event.id).catch(() => null)
+          if (existingByRemoteId?.id) existingAppointment = existingByRemoteId
         }
-        existingAppointment = await localCalendarService.getLocalAppointment(appointment.id).catch(() => null)
-      }
 
-      if (
-        existingAppointment?.id &&
-        isRistakCanonicalAppointment(existingAppointment) &&
-        cleanString(existingAppointment.calendarId) === localCalendarId
-      ) {
-        const storedProvider = cleanString(existingAppointment.googleProviderCalendarId)
-        if (storedProvider && storedProvider.toLowerCase() !== target.googleCalendarId.toLowerCase()) {
-          // No reasignamos la propiedad remota de una cita canónica con sólo
-          // verla desde otro destino. Materializamos una sombra de ocupación.
+        if (appointment.source === 'ristak' && !existingAppointment?.id) {
+          // La metadata privada de Google no tiene autoridad para inventar o
+          // resucitar una cita canónica que ya no existe en Ristak.
           appointment = {
             ...appointment,
-            id: localIdForGoogleOwnershipShadow(event.id, localCalendarId),
+            id: localIdForGoogleOwnershipShadow(event.id, resolvedLocalCalendarId),
             googleEventId: null,
             source: 'google_shadow'
           }
           existingAppointment = await localCalendarService.getLocalAppointment(appointment.id).catch(() => null)
-        } else {
-          if (googleMirrorMatchesCanonicalAppointment(event, existingAppointment)) {
-            await markGoogleSyncSuccess(existingAppointment.id, event.id, target.googleCalendarId, {
-              expectedAppointment: existingAppointment,
-              failOnStale: false
-            })
-          } else {
-            await markGoogleMirrorPending(
-              existingAppointment.id,
-              event.id,
-              target.googleCalendarId,
-              'Google modificó la copia; Ristak conservará y volverá a publicar la cita local.',
-              { expectedAppointment: existingAppointment }
-            )
-          }
-          saved += 1
-          continue
         }
-      }
 
-      // (GCAL-006) Enlazar/crear contacto por email (y teléfono si viniera) del invitado
-      // ANTES del upsert, para que la cita entrante de Google entre al MISMO flujo de
-      // recordatorios/automatizaciones (cron-driven por contact_id) que una cita normal.
-      // upsertLocalAppointment ya llama updateContactAppointmentDate cuando hay contactId.
-      if (!appointment.contactId && (appointment.guestEmail || existingAppointment?.contactId)) {
-        if (existingAppointment?.contactId) {
-          // (GCAL-006) Si ya existía con contacto, conservarlo (no pisar el enlace previo).
-          appointment.contactId = existingAppointment.contactId
-        } else {
-          try {
-            const resolvedContactId = await localCalendarService.resolveOrCreateContactForGoogleAppointment({
-              email: appointment.guestEmail,
-              name: appointment.guestName
-            })
-            if (resolvedContactId) {
-              appointment.contactId = resolvedContactId
-            } else {
-              // (GCAL-006) Invitado sin datos utilizables: la cita entra sin contacto, como hoy.
-              logger.info(`(GCAL-006) Evento de Google ${event.id} entró sin datos de contacto utilizables; cita sin contacto.`)
+        if (
+          existingAppointment?.id &&
+          isRistakCanonicalAppointment(existingAppointment) &&
+          cleanString(existingAppointment.calendarId) === resolvedLocalCalendarId
+        ) {
+          const storedProvider = cleanString(existingAppointment.googleProviderCalendarId)
+          if (storedProvider && storedProvider.toLowerCase() !== targetGroup.googleCalendarId.toLowerCase()) {
+            // No reasignamos la propiedad remota de una cita canónica con sólo
+            // verla desde otro destino. Materializamos una sombra de ocupación.
+            appointment = {
+              ...appointment,
+              id: localIdForGoogleOwnershipShadow(event.id, resolvedLocalCalendarId),
+              googleEventId: null,
+              source: 'google_shadow'
             }
-          } catch (contactError) {
-            // (GCAL-006) No romper el sync si falla la resolución de contacto: degradar a cita sin contacto.
-            logger.warn(`(GCAL-006) No se pudo resolver/crear contacto para evento de Google ${event.id}: ${contactError.message}`)
+            existingAppointment = await localCalendarService.getLocalAppointment(appointment.id).catch(() => null)
+          } else {
+            if (googleMirrorMatchesCanonicalAppointment(event, existingAppointment)) {
+              await markGoogleSyncSuccess(existingAppointment.id, event.id, targetGroup.googleCalendarId, {
+                expectedAppointment: existingAppointment,
+                failOnStale: false
+              })
+            } else {
+              await markGoogleMirrorPending(
+                existingAppointment.id,
+                event.id,
+                targetGroup.googleCalendarId,
+                'Google modificó la copia; Ristak conservará y volverá a publicar la cita local.',
+                { expectedAppointment: existingAppointment }
+              )
+            }
+            saved += 1
+            continue
           }
         }
-      } else if (!appointment.contactId) {
-        // (GCAL-006) Evento sin attendees utilizables y sin contacto previo: cita sin contacto.
-        logger.info(`(GCAL-006) Evento de Google ${event.id} sin invitado con email; cita sin contacto.`)
-      }
 
-      const ownershipShadow = appointment.source === 'google_shadow'
-      const savedAppointment = await localCalendarService.upsertLocalAppointment(appointment, {
-        id: appointment.id,
-        source: appointment.source,
-        googleEventId: ownershipShadow ? null : event.id,
-        googleProviderCalendarId: target.googleCalendarId,
-        calendarId: localCalendarId,
-        locationId: localCalendar?.locationId || null,
-        syncStatus: existingAppointment?.syncStatus || (appointment.source === 'ristak' ? 'pending' : 'synced'),
-        googleSyncStatus: 'synced',
-        // (GCAL-003) Pull entrante de Google: last-write-wins por date_updated para no pisar
-        // una edición local fresca con el evento viejo de Google cuando el push falló o no corrió.
-        lastWriteWins: true
-      })
-      if (savedAppointment?.contactId && !ownershipShadow && existingAppointment?.id) {
-        const previousStatus = cleanString(
-          existingAppointment.appointmentStatus || existingAppointment.status
-        ).toLowerCase()
-        const nextStatus = cleanString(
-          savedAppointment.appointmentStatus || savedAppointment.status
-        ).toLowerCase()
-        const previousStartMs = Date.parse(cleanString(existingAppointment.startTime))
-        const nextStartMs = Date.parse(cleanString(savedAppointment.startTime))
-        const startChanged = Number.isFinite(previousStartMs) &&
-          Number.isFinite(nextStartMs) &&
-          previousStartMs !== nextStartMs
-        if (previousStatus !== nextStatus || startChanged) {
-          await dispatchAppointmentAutomationEvent('appointment-status', savedAppointment, {
-            previousStatus: previousStatus || null,
-            appointmentChange: startChanged ? 'rescheduled' : 'status_changed',
-            previousAppointmentId: existingAppointment.id,
-            previousStartTime: existingAppointment.startTime || null,
-            previousEndTime: existingAppointment.endTime || null
-          })
+        const ownershipShadow = appointment.source === 'google_shadow'
+
+        if (!ownershipShadow) {
+          // Si la agenda que tenía la importación canónica se desvinculó, una
+          // agenda hermana puede promover su sombra a cita completa. Retiramos
+          // primero esa sombra para no dejar dos bloqueos del mismo evento.
+          await deleteGoogleOwnershipShadow(event.id, resolvedLocalCalendarId)
         }
+
+        // (GCAL-006) Enlazar/crear contacto por email (y teléfono si viniera) del invitado
+        // ANTES del upsert, para que la cita entrante de Google entre al MISMO flujo de
+        // recordatorios/automatizaciones (cron-driven por contact_id) que una cita normal.
+        // upsertLocalAppointment ya llama updateContactAppointmentDate cuando hay contactId.
+        // Una sombra sólo bloquea disponibilidad: no crea/actualiza contactos ni
+        // dispara una segunda identidad de negocio por cada calendario hermano.
+        if (!ownershipShadow && !appointment.contactId && (appointment.guestEmail || existingAppointment?.contactId)) {
+          if (existingAppointment?.contactId) {
+            // (GCAL-006) Si ya existía con contacto, conservarlo (no pisar el enlace previo).
+            appointment.contactId = existingAppointment.contactId
+          } else {
+            try {
+              const resolvedContactId = await localCalendarService.resolveOrCreateContactForGoogleAppointment({
+                email: appointment.guestEmail,
+                name: appointment.guestName
+              })
+              if (resolvedContactId) {
+                appointment.contactId = resolvedContactId
+              } else {
+                // (GCAL-006) Invitado sin datos utilizables: la cita entra sin contacto, como hoy.
+                logger.info(`(GCAL-006) Evento de Google ${event.id} entró sin datos de contacto utilizables; cita sin contacto.`)
+              }
+            } catch (contactError) {
+              // (GCAL-006) No romper el sync si falla la resolución de contacto: degradar a cita sin contacto.
+              logger.warn(`(GCAL-006) No se pudo resolver/crear contacto para evento de Google ${event.id}: ${contactError.message}`)
+            }
+          }
+        } else if (!ownershipShadow && !appointment.contactId) {
+          // (GCAL-006) Evento sin attendees utilizables y sin contacto previo: cita sin contacto.
+          logger.info(`(GCAL-006) Evento de Google ${event.id} sin invitado con email; cita sin contacto.`)
+        }
+
+        const savedAppointment = await localCalendarService.upsertLocalAppointment(appointment, {
+          id: appointment.id,
+          source: appointment.source,
+          googleEventId: ownershipShadow ? null : event.id,
+          googleProviderCalendarId: targetGroup.googleCalendarId,
+          calendarId: resolvedLocalCalendarId,
+          locationId: localCalendar?.locationId || null,
+          syncStatus: existingAppointment?.syncStatus || (appointment.source === 'ristak' ? 'pending' : 'synced'),
+          googleSyncStatus: 'synced',
+          // (GCAL-003) Pull entrante de Google: last-write-wins por date_updated para no pisar
+          // una edición local fresca con el evento viejo de Google cuando el push falló o no corrió.
+          lastWriteWins: true
+        })
+        if (savedAppointment?.contactId && !ownershipShadow && existingAppointment?.id) {
+          const previousStatus = cleanString(
+            existingAppointment.appointmentStatus || existingAppointment.status
+          ).toLowerCase()
+          const nextStatus = cleanString(
+            savedAppointment.appointmentStatus || savedAppointment.status
+          ).toLowerCase()
+          const previousStartMs = Date.parse(cleanString(existingAppointment.startTime))
+          const nextStartMs = Date.parse(cleanString(savedAppointment.startTime))
+          const startChanged = Number.isFinite(previousStartMs) &&
+            Number.isFinite(nextStartMs) &&
+            previousStartMs !== nextStartMs
+          if (previousStatus !== nextStatus || startChanged) {
+            await dispatchAppointmentAutomationEvent('appointment-status', savedAppointment, {
+              previousStatus: previousStatus || null,
+              appointmentChange: startChanged ? 'rescheduled' : 'status_changed',
+              previousAppointmentId: existingAppointment.id,
+              previousStartTime: existingAppointment.startTime || null,
+              previousEndTime: existingAppointment.endTime || null
+            })
+          }
+        }
+        saved += 1
       }
-      saved += 1
     }
   }
 
@@ -1134,18 +1162,6 @@ export async function updateLocalCalendarGoogleSync({ calendarId, googleCalendar
 
   const affectedContacts = []
   const updated = await db.transaction(async () => {
-    // Serializa la elección aunque dos pestañas intenten ligar el mismo Google
-    // Calendar al mismo tiempo. Como el ID vive dentro de raw_json, el candado
-    // explícito sobre las agendas sustituye una restricción UNIQUE tradicional.
-    await db.all(
-      `SELECT id FROM calendars ORDER BY id${process.env.DATABASE_URL ? ' FOR UPDATE' : ''}`
-    )
-    const linkedCalendars = await localCalendarService.listGoogleLinkedLocalCalendars({ includeInactive: true })
-    assertUniqueGoogleCalendarOwner({
-      googleCalendarId: googleCalendar.id,
-      localCalendarId: localCalendar.id,
-      linkedCalendars
-    })
     const linkChanged = previousGoogleCalendarId.toLowerCase() !== googleCalendar.id.toLowerCase()
     if (linkChanged) {
       if (previousGoogleCalendarId) {
@@ -1476,14 +1492,6 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
       }
     }
 
-    // Preflight temprano: en una BD legacy corrupta no hacemos ni siquiera la
-    // reconciliación remota. Además se repite justo antes de cada write para no
-    // depender de una comprobación que pudo quedar vieja.
-    await assertUniqueGoogleCalendarOwnerBeforeOutboundWrite({
-      googleCalendarId: targetGoogleCalendarId,
-      localCalendarId: appointment.calendarId
-    })
-
     const status = cleanString(appointment.appointmentStatus || appointment.status).toLowerCase()
     if (status === 'cancelled' || status === 'canceled') {
       await deleteGoogleEventForAppointment(appointment)
@@ -1506,10 +1514,6 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
       storedProviderCalendarId &&
       storedProviderCalendarId.toLowerCase() !== targetGoogleCalendarId.toLowerCase()
     ) {
-      await assertUniqueGoogleCalendarOwnerBeforeOutboundWrite({
-        googleCalendarId: storedProviderCalendarId,
-        localCalendarId: appointment.calendarId
-      })
       try {
         await googleRequest(config, eventWritePath(storedProviderCalendarId, storedEventId), {
           method: 'DELETE'
@@ -1578,10 +1582,6 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
     }
 
     if (storedEventId && !appointment.isTest) {
-      await assertUniqueGoogleCalendarOwnerBeforeOutboundWrite({
-        googleCalendarId: targetGoogleCalendarId,
-        localCalendarId: appointment.calendarId
-      })
       try {
         remote = await googleRequest(config, eventWritePath(targetGoogleCalendarId, eventId), {
           method: 'PATCH',
@@ -1598,10 +1598,6 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
 
     if (!remote) {
       const requestedEventId = eventId
-      await assertUniqueGoogleCalendarOwnerBeforeOutboundWrite({
-        googleCalendarId: targetGoogleCalendarId,
-        localCalendarId: appointment.calendarId
-      })
       try {
         remote = await googleRequest(config, eventWritePath(targetGoogleCalendarId), {
           method: 'POST',
@@ -1654,10 +1650,6 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
         // duplicado, pero no demuestra que contenga la versión vigente: si
         // difiere, imponemos la cita canónica con PATCH antes de marcar synced.
         if (!googleMirrorMatchesCanonicalAppointment(remote, appointment)) {
-          await assertUniqueGoogleCalendarOwnerBeforeOutboundWrite({
-            googleCalendarId: targetGoogleCalendarId,
-            localCalendarId: appointment.calendarId
-          })
           remote = await googleRequest(config, eventWritePath(targetGoogleCalendarId, eventId), {
             method: 'PATCH',
             body: JSON.stringify(payload)
@@ -1990,10 +1982,6 @@ export async function deleteGoogleEventForAppointment(appointmentOrId) {
       return { enabled: false, deleted: false, reason: 'calendar_not_linked' }
     }
 
-    await assertUniqueGoogleCalendarOwnerBeforeOutboundWrite({
-      googleCalendarId: targetGoogleCalendarId,
-      localCalendarId: appointment.calendarId
-    })
     await googleRequest(config, eventWritePath(targetGoogleCalendarId, appointment.googleEventId), {
       method: 'DELETE'
     })

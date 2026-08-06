@@ -61,7 +61,8 @@ function createGoogleApiFetchMock(requests, {
   failDeleteOnce = false,
   failCreateAmbiguouslyOnce = false,
   conflictOnDuplicateCreate = false,
-  beforeCreateResponse = null
+  beforeCreateResponse = null,
+  importedAttendee = null
 } = {}) {
   let deleteAttempts = 0
   let createAttempts = 0
@@ -106,7 +107,8 @@ function createGoogleApiFetchMock(requests, {
               id: 'evt_google_imported',
               summary: 'Cita importada desde Google',
               start: { dateTime: '2026-06-17T18:00:00.000Z', timeZone: 'America/Mexico_City' },
-              end: { dateTime: '2026-06-17T19:00:00.000Z', timeZone: 'America/Mexico_City' }
+              end: { dateTime: '2026-06-17T19:00:00.000Z', timeZone: 'America/Mexico_City' },
+              ...(importedAttendee ? { attendees: [importedAttendee] } : {})
             },
             {
               id: 'evt_google_cancelled',
@@ -1231,7 +1233,7 @@ test('un tombstone viejo tras B→A→B no rota el espejo que todavía pertenece
   }
 })
 
-test('un dueño Google duplicado legacy bloquea outbound antes de cualquier fetch remoto', async () => {
+test('dos calendarios Ristak publican citas distintas en el mismo Google Calendar', async () => {
   await initializeMasterKey()
   const previousEnv = snapshotEnv()
   const requests = []
@@ -1241,7 +1243,8 @@ test('un dueño Google duplicado legacy bloquea outbound antes de cualquier fetc
   const suffix = randomUUID()
   const firstCalendarId = `rstk_cal_google_legacy_owner_a_${suffix}`
   const secondCalendarId = `rstk_cal_google_legacy_owner_b_${suffix}`
-  const appointmentId = `rstk_appt_google_legacy_owner_${suffix}`
+  const firstAppointmentId = `rstk_appt_google_shared_a_${suffix}`
+  const secondAppointmentId = `rstk_appt_google_shared_b_${suffix}`
   let db = null
   let googleCalendarService = null
 
@@ -1271,36 +1274,38 @@ test('un dueño Google duplicado legacy bloquea outbound antes de cualquier fetc
     }, { allowGoogleSyncMetadata: true })
     await localCalendarService.createLocalCalendar({
       id: secondCalendarId,
-      name: 'Agenda legacy duplicada'
-    })
-    const appointment = await localCalendarService.createLocalAppointment({
-      id: appointmentId,
+      name: 'Segundo espejo Google',
+      googleCalendarId: googleFetch.calendarA,
+      googleAccessRole: 'owner'
+    }, { allowGoogleSyncMetadata: true })
+    const firstAppointment = await localCalendarService.createLocalAppointment({
+      id: firstAppointmentId,
       calendarId: firstCalendarId,
-      title: 'No debe salir de Ristak',
+      title: 'Cita de la agenda A',
       startTime: '2026-08-21T18:00:00.000Z',
       endTime: '2026-08-21T19:00:00.000Z'
     })
+    const secondAppointment = await localCalendarService.createLocalAppointment({
+      id: secondAppointmentId,
+      calendarId: secondCalendarId,
+      title: 'Cita de la agenda B',
+      startTime: '2026-08-22T18:00:00.000Z',
+      endTime: '2026-08-22T19:00:00.000Z'
+    })
 
-    // Bypass deliberado de las rutas protegidas para simular una BD creada por
-    // una versión antigua que ya contiene dos dueños del mismo Google Calendar.
-    await db.run(
-      'UPDATE calendars SET raw_json = ? WHERE id = ?',
-      [JSON.stringify({ googleCalendarId: googleFetch.calendarA }), secondCalendarId]
-    )
+    await googleCalendarService.syncAppointmentToGoogle(firstAppointment)
+    await googleCalendarService.syncAppointmentToGoogle(secondAppointment)
 
-    await assert.rejects(
-      () => googleCalendarService.syncAppointmentToGoogle(appointment),
-      error => error?.status === 409 && error?.code === 'duplicate_google_calendar_owner'
-    )
-    assert.equal(googleRequests.length, 0, 'el conflicto local debe detectarse antes de tocar Google')
-
-    const local = await localCalendarService.getLocalAppointment(appointmentId)
-    assert.equal(local.googleEventId, null)
-    assert.equal(local.googleProviderCalendarId, null)
-    assert.equal(local.title, 'No debe salir de Ristak')
+    assert.deepEqual(googleRequests.map(request => request.method), ['POST', 'POST'])
+    assert.equal(googleFetch.eventsByCalendar.get(googleFetch.calendarA).size, 2)
+    const firstLocal = await localCalendarService.getLocalAppointment(firstAppointmentId)
+    const secondLocal = await localCalendarService.getLocalAppointment(secondAppointmentId)
+    assert.equal(firstLocal.googleProviderCalendarId, googleFetch.calendarA)
+    assert.equal(secondLocal.googleProviderCalendarId, googleFetch.calendarA)
+    assert.notEqual(firstLocal.googleEventId, secondLocal.googleEventId)
   } finally {
     if (db) {
-      await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => undefined)
+      await db.run('DELETE FROM appointments WHERE id IN (?, ?)', [firstAppointmentId, secondAppointmentId]).catch(() => undefined)
       await db.run('DELETE FROM calendars WHERE id IN (?, ?)', [firstCalendarId, secondCalendarId]).catch(() => undefined)
     }
     await googleCalendarService?.deleteGoogleCalendarConfig?.().catch(() => undefined)
@@ -1419,7 +1424,7 @@ test('OAuth Google conserva la cita local si alguien cancela sólo su espejo en 
   }
 })
 
-test('OAuth Google local importa eventos despues de ligar un calendario Ristak a Google', async () => {
+test('OAuth Google permite varios calendarios Ristak por destino sin duplicar la cita importada', async () => {
   await initializeMasterKey()
   const previousEnv = snapshotEnv()
   const requests = []
@@ -1428,6 +1433,8 @@ test('OAuth Google local importa eventos despues de ligar un calendario Ristak a
   const { server, baseUrl } = await startLicenseServer(requests)
   const suffix = randomUUID()
   const calendarId = `rstk_cal_linked_google_${suffix}`
+  const mirrorCalendarId = `rstk_cal_linked_google_mirror_${suffix}`
+  const importedGuestEmail = `google-guest-${suffix}@example.test`
   const configKeys = ['default_calendar_id', 'attribution_calendar_ids']
   const previousConfigRows = new Map()
   const existingDefaultCalendarId = `rstk_cal_default_${suffix}`
@@ -1443,7 +1450,12 @@ test('OAuth Google local importa eventos despues de ligar un calendario Ristak a
     process.env.APP_URL = 'https://demo.onrender.com'
     process.env.APP_VERSION = '1.0.0'
     process.env.OWNER_EMAIL = 'dueno@clinica.test'
-    const googleFetch = createGoogleApiFetchMock(googleRequests)
+    const googleFetch = createGoogleApiFetchMock(googleRequests, {
+      importedAttendee: {
+        email: importedGuestEmail,
+        displayName: 'Contacto Google'
+      }
+    })
     global.fetch = (url, options) => String(url).startsWith(baseUrl)
       ? previousFetch(url, options)
       : googleFetch(url, options)
@@ -1460,6 +1472,10 @@ test('OAuth Google local importa eventos despues de ligar un calendario Ristak a
     const calendar = await localCalendarService.createLocalCalendar({
       id: calendarId,
       name: 'Valoraciones Ristak'
+    })
+    const mirrorCalendar = await localCalendarService.createLocalCalendar({
+      id: mirrorCalendarId,
+      name: 'Segundo calendario Ristak'
     })
     await localCalendarService.createLocalCalendar({
       id: existingDefaultCalendarId,
@@ -1502,15 +1518,80 @@ test('OAuth Google local importa eventos despues de ligar un calendario Ristak a
     assert.equal(responseBody.data.googleAccessRole, 'owner')
     assert.equal(responseBody.data.initialGoogleSync.saved, 1)
 
+    let mirrorStatusCode = 200
+    let mirrorResponseBody = null
+    await updateCalendarGoogleSync({
+      params: { id: mirrorCalendar.id },
+      body: { googleCalendarId: 'ventas@test.com' }
+    }, {
+      status(code) {
+        mirrorStatusCode = code
+        return this
+      },
+      json(payload) {
+        mirrorResponseBody = payload
+        return this
+      }
+    })
+    assert.equal(mirrorStatusCode, 200)
+    assert.equal(mirrorResponseBody.success, true)
+    assert.equal(mirrorResponseBody.data.googleCalendarId, 'ventas@test.com')
+    assert.equal(mirrorResponseBody.data.initialGoogleSync.saved, 2)
+
     const linkedCalendars = await localCalendarService.listGoogleLinkedLocalCalendars()
     assert.ok(linkedCalendars.some(item => item.id === calendarId && item.googleCalendarId === 'ventas@test.com'))
+    assert.ok(linkedCalendars.some(item => item.id === mirrorCalendarId && item.googleCalendarId === 'ventas@test.com'))
 
     const importedAppointment = await db.get(
-      'SELECT title, calendar_id, google_event_id FROM appointments WHERE google_event_id = ?',
+      'SELECT title, calendar_id, contact_id, google_event_id, source FROM appointments WHERE google_event_id = ?',
       ['evt_google_imported']
     )
     assert.equal(importedAppointment.title, 'Cita importada desde Google')
     assert.equal(importedAppointment.calendar_id, calendarId)
+    assert.equal(importedAppointment.source, 'google')
+    assert.ok(importedAppointment.contact_id)
+
+    const occupancyShadow = await db.get(`
+      SELECT calendar_id, contact_id, google_event_id, google_provider_calendar_id, source
+      FROM appointments
+      WHERE calendar_id = ? AND source = 'google_shadow'
+    `, [mirrorCalendarId])
+    assert.equal(occupancyShadow.calendar_id, mirrorCalendarId)
+    assert.equal(occupancyShadow.contact_id, null)
+    assert.equal(occupancyShadow.google_event_id, null)
+    assert.equal(occupancyShadow.google_provider_calendar_id, 'ventas@test.com')
+    assert.equal(occupancyShadow.source, 'google_shadow')
+    assert.equal(
+      (await db.get('SELECT COUNT(*) AS total FROM contacts WHERE LOWER(email) = LOWER(?)', [importedGuestEmail])).total,
+      1
+    )
+
+    await googleCalendarService.updateLocalCalendarGoogleSync({
+      calendarId,
+      googleCalendarId: ''
+    })
+    const promotedSync = await googleCalendarService.syncGoogleEventsToLocal({
+      calendarId: mirrorCalendarId,
+      startTime: '2026-06-17T00:00:00.000Z',
+      endTime: '2026-06-18T00:00:00.000Z'
+    })
+    assert.equal(promotedSync.saved, 1)
+    const promotedAppointment = await db.get(`
+      SELECT calendar_id, contact_id, google_event_id, source
+      FROM appointments
+      WHERE google_event_id = ?
+    `, ['evt_google_imported'])
+    assert.equal(promotedAppointment.calendar_id, mirrorCalendarId)
+    assert.equal(promotedAppointment.source, 'google')
+    assert.ok(promotedAppointment.contact_id)
+    assert.equal(
+      (await db.get("SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND source = 'google_shadow'", [mirrorCalendarId])).total,
+      0
+    )
+    assert.equal(
+      (await db.get('SELECT COUNT(*) AS total FROM contacts WHERE LOWER(email) = LOWER(?)', [importedGuestEmail])).total,
+      1
+    )
 
     const defaultConfig = await db.get('SELECT config_value FROM app_config WHERE config_key = ?', ['default_calendar_id'])
     const attributionConfig = await db.get('SELECT config_value FROM app_config WHERE config_key = ?', ['attribution_calendar_ids'])
@@ -1520,14 +1601,20 @@ test('OAuth Google local importa eventos despues de ligar un calendario Ristak a
     assert.equal(requests.length, 2)
     assert.equal(requests[0].path, '/api/license/oauth-handoff/claim')
     assert.equal(requests[1].path, '/api/license/google-calendar/refresh-token')
-    assert.equal(googleRequests.length, 2)
+    assert.equal(googleRequests.length, 5)
     assert.equal(googleRequests[0].path, '/calendar/v3/users/me/calendarList?maxResults=250&showHidden=true&minAccessRole=reader')
     assert.match(googleRequests[1].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events/)
     assert.match(googleRequests[1].path, /showDeleted=true/)
+    assert.equal(googleRequests[2].path, '/calendar/v3/users/me/calendarList?maxResults=250&showHidden=true&minAccessRole=reader')
+    assert.match(googleRequests[3].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events/)
+    assert.match(googleRequests[3].path, /showDeleted=true/)
+    assert.match(googleRequests[4].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events/)
+    assert.match(googleRequests[4].path, /showDeleted=true/)
   } finally {
     if (db) {
-      await db.run('DELETE FROM appointments WHERE google_event_id = ?', ['evt_google_imported']).catch(() => undefined)
-      await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+      await db.run('DELETE FROM appointments WHERE calendar_id IN (?, ?)', [calendarId, mirrorCalendarId]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE LOWER(email) = LOWER(?)', [importedGuestEmail]).catch(() => undefined)
+      await db.run('DELETE FROM calendars WHERE id IN (?, ?)', [calendarId, mirrorCalendarId]).catch(() => undefined)
       await db.run('DELETE FROM calendars WHERE id = ?', [existingDefaultCalendarId]).catch(() => undefined)
       for (const key of configKeys) {
         const previous = previousConfigRows.get(key)

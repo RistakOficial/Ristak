@@ -9579,10 +9579,21 @@ nunca un booleano escrito por el modelo.
   religar o desvincular. Si alguien cancela en Google una copia creada por Ristak,
   la cita local permanece activa y rota a una nueva generación determinista de ID
   remoto, incluso cuando el POST termina en timeout y necesita reconciliación.
-  Antes de cada POST, PATCH o DELETE se vuelve a comprobar que ese calendario de
-  Google tenga un solo dueño local; una liga duplicada legacy falla antes de
-  escribir. Un tombstone viejo de otro calendario proveedor tampoco puede rotar
-  ni perder la referencia del espejo vigente.
+  Varios calendarios locales pueden reflejar sus citas en el mismo Google
+  Calendar: el destino remoto no es dueño exclusivo de una agenda Ristak. Cada
+  cita conserva un ID remoto determinista distinto y el calendario proveedor
+  exacto de su espejo, por lo que crear, editar o cancelar una cita de una agenda
+  no muta las citas de las otras. El pull agrupa los calendarios locales por
+  destino Google y consulta cada destino una sola vez. Un evento nacido en Google
+  se importa como cita completa en una sola agenda local estable; las demás
+  agendas hermanas reciben únicamente sombras deterministas de ocupación, sin
+  duplicar contactos, recordatorios ni automatizaciones. Si esa agenda se
+  desvincula, una hermana promueve su sombra a cita completa y elimina el bloqueo
+  redundante. Un evento creado por Ristak conserva como canónica la agenda indicada
+  en su metadata y sólo bloquea disponibilidad mediante sombras en las otras
+  agendas que comparten destino.
+  Un tombstone viejo de otro calendario proveedor tampoco puede rotar ni perder
+  la referencia del espejo vigente.
   La opción persistida del calendario `allow_overlaps` se aplica igual en
   consulta, oferta, validación previa al cobro, confirmación automática y
   solicitud humana; apagada exige slot libre y encendida permite el empalme sin

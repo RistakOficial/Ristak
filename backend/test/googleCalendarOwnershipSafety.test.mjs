@@ -5,12 +5,12 @@ import { randomUUID } from 'node:crypto'
 import { db } from '../src/config/database.js'
 import {
   googleEventToAppointment,
-  syncGoogleEventsToLocal,
   updateLocalCalendarGoogleSync
 } from '../src/services/googleCalendarService.js'
 import {
   checkSlotAvailability,
   getLocalCalendar,
+  listGoogleLinkedLocalCalendars,
   upsertLocalAppointment,
   upsertLocalCalendar
 } from '../src/services/localCalendarService.js'
@@ -170,7 +170,7 @@ test('desvincular Google conserva la cita canónica y elimina toda ocupación im
   }
 })
 
-test('el vínculo Google sólo cambia por la ruta protegida y rechaza dueños duplicados', async () => {
+test('el vínculo Google sólo cambia por la ruta protegida y permite varios espejos locales', async () => {
   const suffix = randomUUID()
   const firstCalendarId = `rstk_google_owner_a_${suffix}`
   const secondCalendarId = `rstk_google_owner_b_${suffix}`
@@ -200,32 +200,21 @@ test('el vínculo Google sólo cambia por la ruta protegida y rechaza dueños du
       }, { source: 'ristak', syncStatus: 'synced' }),
       error => error?.status === 409 && error?.code === 'google_calendar_link_requires_sync_route'
     )
-    await assert.rejects(
-      () => upsertLocalCalendar({
-        id: secondCalendarId,
-        name: 'Agenda B',
-        source: 'ristak',
-        googleCalendarId
-      }, { source: 'ristak', syncStatus: 'synced', allowGoogleSyncMetadata: true }),
-      error => error?.status === 409 && error?.code === 'duplicate_google_calendar_owner'
-    )
+    const secondLinked = await upsertLocalCalendar({
+      id: secondCalendarId,
+      name: 'Agenda B',
+      source: 'ristak',
+      googleCalendarId,
+      googleCalendarSummary: 'Google compartido',
+      googleAccessRole: 'owner'
+    }, { source: 'ristak', syncStatus: 'synced', allowGoogleSyncMetadata: true })
 
-    // Simula una instalación histórica ya corrupta para comprobar que el sync
-    // también falla cerrado aunque la protección de escritura no existiera antes.
-    await db.run(
-      'UPDATE calendars SET raw_json = ? WHERE id = ?',
-      [JSON.stringify({ googleCalendarId }), secondCalendarId]
-    )
-
-    await assert.rejects(
-      () => syncGoogleEventsToLocal({
-        calendarId: firstCalendarId,
-        startTime: '2030-07-20T00:00:00.000Z',
-        endTime: '2030-07-21T00:00:00.000Z',
-        config: { connectionMode: 'oauth', refreshToken: 'unused-because-ownership-fails-first' }
-      }),
-      error => error?.status === 409 && error?.code === 'duplicate_google_calendar_owner'
-    )
+    assert.equal(secondLinked.googleCalendarId, googleCalendarId)
+    const mirrors = (await listGoogleLinkedLocalCalendars({ includeInactive: true }))
+      .filter(calendar => calendar.googleCalendarId === googleCalendarId)
+      .map(calendar => calendar.id)
+      .sort()
+    assert.deepEqual(mirrors, [firstCalendarId, secondCalendarId].sort())
   } finally {
     await db.run('DELETE FROM calendars WHERE id IN (?, ?)', [firstCalendarId, secondCalendarId]).catch(() => undefined)
   }
