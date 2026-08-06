@@ -168,9 +168,11 @@ cambiar de calendario la UI vacía la lista anterior y descarta respuestas
 asíncronas que pertenezcan a la selección previa.
 
 Cuando un calendario es `online`, Ristak agrega una regla administrada diez
-minutos antes con la plantilla `acceso_videollamada_10_minutos`. La
-plantilla es la preferida para calendarios en línea nuevos y conserva texto fijo
-después de la URL dinámica para que Meta pueda aceptarla. La
+minutos antes con la plantilla `acceso_videollamada_10_minutos_v2`. La
+plantilla es la preferida para calendarios en línea nuevos, usa solamente el
+enlace seguro como variable y conserva después el texto fijo de preparación
+previa a la llamada para que Meta pueda aceptarla. El nombre versionado evita
+chocar con una identidad anterior que el proveedor todavía conserve. La
 variable **Enlace de ingreso a la cita** (`{{cita.enlace_ingreso}}`) aparece en
 el grupo Citas del catálogo compartido del CRM: plantillas de WhatsApp, correos,
 mensajes y demás campos con variables de Automatizaciones. Se materializa como

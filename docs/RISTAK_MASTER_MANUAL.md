@@ -2212,10 +2212,13 @@ la variable se vuelve vacía; nunca busca "la próxima cita" ni expone el destin
 de Zoom/Meet por aproximación. Una misma pieza renderizada reutiliza el mismo
 enlace seguro en asunto, texto y HTML.
 
-La plantilla preferida `acceso_videollamada_10_minutos` se crea al activar un
+La plantilla preferida `acceso_videollamada_10_minutos_v2` se crea al activar un
 calendario en línea y una regla administrada la programa diez minutos antes. Su
-copy conserva texto fijo después de la URL dinámica para cumplir la validación de
-Meta. Cada render cifra
+copy usa únicamente `{{cita.enlace_ingreso}}` como variable, pide al contacto
+probar el acceso mientras el anfitrión se conecta y conserva texto fijo después
+de la URL dinámica para cumplir la validación de Meta. El nombre versionado evita
+reutilizar una identidad que el proveedor todavía conserve aprobada, en revisión
+o dentro del periodo de eliminación del copy anterior. Cada render cifra
 `public_id + contact_id + appointment_id` en un token `pce1_*`; el destino real
 no se incluye en el WhatsApp. El primer clic válido registra el evento, comprueba
 que los tres IDs coincidan, marca la cita `showed` y crea la señal idempotente de

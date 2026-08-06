@@ -62,16 +62,31 @@ test('una cita en línea usa enlace opaco, oculta el destino interno y marca asi
     assert.equal(reminder?.enabled, 1)
     assert.equal(reminder?.offset_value, 10)
     assert.equal(reminder?.offset_unit, 'minutes')
-    assert.equal(reminder?.template_name, 'acceso_videollamada_10_minutos')
+    assert.equal(reminder?.template_name, 'acceso_videollamada_10_minutos_v2')
+    assert.equal(
+      reminder?.message_text,
+      'Aquí te paso el enlace para conectarnos:\n{{cita.enlace_ingreso}}\n\nYo me conecto en diez minutos. También te envié el enlace por correo electrónico, por si no puedes ingresar desde aquí.\n\nUn favor, ¿puedes ir ingresando para verificar que sí puedes entrar? Gracias.'
+    )
     const onlineTemplate = await db.get(
-      'SELECT body_text, footer_text FROM whatsapp_message_templates WHERE id = ?',
+      'SELECT body_text, footer_text, variable_bindings_json FROM whatsapp_message_templates WHERE id = ?',
       [reminder.template_id]
     )
     assert.equal(
       onlineTemplate?.body_text,
-      'Hola {{1}}, tu cita en línea comienza el {{2}} a las {{3}}. Ingresa a la videollamada aquí: {{4}}\n\nTe esperamos.'
+      'Aquí te paso el enlace para conectarnos:\n{{1}}\n\nYo me conecto en diez minutos. También te envié el enlace por correo electrónico, por si no puedes ingresar desde aquí.\n\nUn favor, ¿puedes ir ingresando para verificar que sí puedes entrar? Gracias.'
     )
     assert.equal(onlineTemplate?.footer_text, 'Mensaje automático de Ristak')
+    assert.deepEqual(JSON.parse(onlineTemplate?.variable_bindings_json || '{}'), {
+      headerText: {},
+      bodyText: {
+        1: {
+          variableKey: 'cita.enlace_ingreso',
+          mergeField: '{{cita.enlace_ingreso}}',
+          label: 'Enlace de ingreso a la cita',
+          example: 'https://app.ristak.com/pce1_enlace_seguro'
+        }
+      }
+    })
 
     const customTemplate = await createMessageTemplate({
       folderId: null,

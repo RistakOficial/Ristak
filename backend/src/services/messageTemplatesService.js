@@ -274,8 +274,8 @@ const APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS = [
     }
   },
   {
-    name: 'acceso_videollamada_10_minutos',
-    providerRevision: 2,
+    name: 'acceso_videollamada_10_minutos_v2',
+    providerRevision: 1,
     description: 'Recordatorio automático con el enlace seguro de ingreso a una cita en línea.',
     category: 'utility',
     language: DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE,
@@ -283,37 +283,16 @@ const APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS = [
     headerEnabled: false,
     headerType: 'none',
     headerText: '',
-    bodyText: 'Hola {{1}}, tu cita en línea comienza el {{2}} a las {{3}}. Ingresa a la videollamada aquí: {{4}}\n\nTe esperamos.',
+    bodyText: 'Aquí te paso el enlace para conectarnos:\n{{1}}\n\nYo me conecto en diez minutos. También te envié el enlace por correo electrónico, por si no puedes ingresar desde aquí.\n\nUn favor, ¿puedes ir ingresando para verificar que sí puedes entrar? Gracias.',
     footerText: 'Mensaje automático de Ristak',
     buttons: [],
     variableExamples: {
-      '{{contact.first_name}}': 'María',
-      '{{cita.fecha}}': 'viernes 19 de junio',
-      '{{cita.hora}}': '9:00',
       '{{cita.enlace_ingreso}}': 'https://app.ristak.com/pce1_enlace_seguro'
     },
     variableBindings: {
       headerText: {},
       bodyText: {
         1: {
-          variableKey: 'contact.first_name',
-          mergeField: '{{contact.first_name}}',
-          label: 'Primer nombre',
-          example: 'María'
-        },
-        2: {
-          variableKey: 'cita.fecha',
-          mergeField: '{{cita.fecha}}',
-          label: 'Fecha de cita',
-          example: 'viernes 19 de junio'
-        },
-        3: {
-          variableKey: 'cita.hora',
-          mergeField: '{{cita.hora}}',
-          label: 'Hora de cita',
-          example: '9:00'
-        },
-        4: {
           variableKey: 'cita.enlace_ingreso',
           mergeField: '{{cita.enlace_ingreso}}',
           label: 'Enlace de ingreso a la cita',
@@ -324,7 +303,7 @@ const APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS = [
   }
 ]
 const ONLINE_MEETING_MESSAGE_TEMPLATE = APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS.find(
-  template => template.name === 'acceso_videollamada_10_minutos'
+  template => template.name === 'acceso_videollamada_10_minutos_v2'
 )
 const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS.filter(
   template => template !== ONLINE_MEETING_MESSAGE_TEMPLATE

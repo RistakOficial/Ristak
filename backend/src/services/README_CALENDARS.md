@@ -74,9 +74,12 @@ enlaces de disparo.
 
 Al activar el modo en línea, Ristak crea también el mensaje automático
 `online_meeting_join_link_10m`, diez minutos antes, con la plantilla
-`acceso_videollamada_10_minutos`. Esta es la plantilla preferida que se crea para
-cualquier calendario en línea nuevo; mantiene texto fijo después de la URL
-dinámica para cumplir la validación de plantillas de Meta.
+`acceso_videollamada_10_minutos_v2`. Esta es la plantilla preferida que se crea
+para cualquier calendario en línea nuevo. Usa como única variable el enlace
+seguro de ingreso y después conserva el texto fijo de preparación previa a la
+llamada para cumplir la validación de plantillas de Meta. El nombre versionado
+evita reutilizar una identidad que Meta todavía tenga aprobada, en revisión o en
+periodo de eliminación con el copy anterior.
 
 La variable
 `{{cita.enlace_ingreso}}` se resuelve para la cita y el contacto exactos. Su
