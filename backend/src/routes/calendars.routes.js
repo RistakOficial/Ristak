@@ -27,6 +27,9 @@ router.get('/', calendarsController.getCalendars);
 // Crear calendario local de Ristak
 router.post('/', calendarsController.createCalendar);
 
+// Adoptar espejos de HighLevel como calendarios nativos después de desconectar
+router.post('/adopt-highlevel', calendarsController.adoptHighLevelCalendars);
+
 // Integración Google Calendar: OAuth por handoff desde el portal Ristak.
 router.get('/google-integration', requireGoogleCalendarFeature, calendarsController.getGoogleCalendarIntegration);
 router.post('/google-integration/connect-url', requireGoogleCalendarFeature, calendarsController.getGoogleCalendarConnectUrl);

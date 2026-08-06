@@ -4655,6 +4655,164 @@ export async function updateLocalCalendar(calendarId, updateData = {}, {
   })
 }
 
+function calendarAdoptionError(message, code, status = 409, data = undefined) {
+  const error = new Error(message)
+  error.code = code
+  error.status = status
+  error.statusCode = status
+  if (data !== undefined) error.data = data
+  return error
+}
+
+/**
+ * Convierte espejos de calendario HighLevel desconectados en calendarios nativos
+ * de Ristak sin cambiar sus IDs locales, slugs, configuración ni citas.
+ *
+ * La adopción es deliberadamente explícita: desconectar HighLevel por sí solo
+ * conserva los vínculos para permitir una reconexión posterior. Esta operación
+ * corta esos vínculos y vuelve local también cualquier cita ligada a HighLevel
+ * dentro de los calendarios seleccionados. Las citas Google no se alteran.
+ */
+export async function adoptDisconnectedHighLevelCalendars(calendarIds = []) {
+  const normalizedIds = [...new Set(
+    (Array.isArray(calendarIds) ? calendarIds : [])
+      .map(cleanString)
+      .filter(Boolean)
+  )]
+
+  if (!normalizedIds.length) {
+    throw calendarAdoptionError(
+      'Selecciona al menos un calendario de HighLevel para convertirlo en calendario de Ristak.',
+      'calendar_adoption_selection_required',
+      400
+    )
+  }
+  if (normalizedIds.length > 100) {
+    throw calendarAdoptionError(
+      'Sólo se pueden adoptar hasta 100 calendarios por operación.',
+      'calendar_adoption_selection_too_large',
+      400
+    )
+  }
+
+  const placeholders = normalizedIds.map(() => '?').join(', ')
+
+  return db.transaction(async transaction => {
+    const connectedHighLevel = await transaction.get('SELECT 1 AS connected FROM highlevel_config LIMIT 1')
+    if (connectedHighLevel) {
+      throw calendarAdoptionError(
+        'Desconecta HighLevel antes de convertir sus calendarios en calendarios nativos de Ristak.',
+        'calendar_adoption_requires_highlevel_disconnect'
+      )
+    }
+
+    const selectedRows = await transaction.all(`
+      SELECT id, name, source
+      FROM calendars
+      WHERE id IN (${placeholders})
+      ORDER BY id
+      ${isPostgresDatabase ? 'FOR UPDATE' : ''}
+    `, normalizedIds)
+    const selectedById = new Map(selectedRows.map(row => [cleanString(row.id), row]))
+    const missingCalendarIds = normalizedIds.filter(id => !selectedById.has(id))
+    if (missingCalendarIds.length) {
+      throw calendarAdoptionError(
+        'Uno o más calendarios seleccionados ya no existen.',
+        'calendar_adoption_calendar_not_found',
+        404,
+        { calendarIds: missingCalendarIds }
+      )
+    }
+
+    const nonHighLevelCalendars = selectedRows
+      .filter(row => normalizeCalendarSource(row.source) !== 'ghl')
+      .map(row => ({ id: row.id, name: row.name, source: normalizeCalendarSource(row.source) }))
+    if (nonHighLevelCalendars.length) {
+      throw calendarAdoptionError(
+        'La adopción sólo acepta calendarios que todavía estén marcados como HighLevel.',
+        'calendar_adoption_source_conflict',
+        409,
+        { calendars: nonHighLevelCalendars }
+      )
+    }
+
+    const appointmentUpdate = await transaction.run(`
+      UPDATE appointments
+      SET source = 'ristak',
+          location_id = NULL,
+          ghl_appointment_id = NULL,
+          sync_status = CASE
+            WHEN sync_status = 'pending_delete' THEN 'pending_delete'
+            ELSE 'synced'
+          END,
+          sync_error = NULL,
+          synced_at = NULL,
+          date_updated = CURRENT_TIMESTAMP
+      WHERE calendar_id IN (${placeholders})
+        AND COALESCE(source, '') NOT IN ('google', 'google_shadow')
+        AND (
+          COALESCE(source, '') = 'ghl'
+          OR COALESCE(ghl_appointment_id, '') != ''
+        )
+    `, normalizedIds)
+
+    const mirrorIntentDelete = await transaction.run(`
+      DELETE FROM appointment_highlevel_mirror_intents
+      WHERE local_calendar_id IN (${placeholders})
+    `, normalizedIds)
+
+    const calendarUpdate = await transaction.run(`
+      UPDATE calendars
+      SET source = 'ristak',
+          location_id = NULL,
+          ghl_calendar_id = NULL,
+          sync_status = 'synced',
+          sync_error = NULL,
+          last_synced_at = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id IN (${placeholders})
+        AND COALESCE(source, '') = 'ghl'
+    `, normalizedIds)
+
+    const adoptedCalendarCount = Number(calendarUpdate?.changes ?? calendarUpdate?.rowCount ?? 0)
+    if (adoptedCalendarCount !== normalizedIds.length) {
+      throw calendarAdoptionError(
+        'Los calendarios cambiaron durante la adopción. No se aplicó ningún cambio.',
+        'calendar_adoption_conflict'
+      )
+    }
+
+    const remainingHighLevel = await transaction.get(
+      "SELECT COUNT(*) AS total FROM calendars WHERE COALESCE(source, '') = 'ghl'"
+    )
+    let sourcePreferenceUpdated = false
+    if (Number(remainingHighLevel?.total || 0) === 0) {
+      const preferenceUpdate = await transaction.run(`
+        UPDATE app_config
+        SET config_value = 'ristak', updated_at = CURRENT_TIMESTAMP
+        WHERE config_key = ?
+          AND LOWER(TRIM(config_value)) IN ('ghl', '"ghl"')
+      `, [SOURCE_PREFERENCE_CONFIG_KEY])
+      sourcePreferenceUpdated = Number(preferenceUpdate?.changes ?? preferenceUpdate?.rowCount ?? 0) > 0
+    }
+
+    const adoptedRows = await transaction.all(`
+      SELECT *
+      FROM calendars
+      WHERE id IN (${placeholders})
+      ORDER BY LOWER(name), id
+    `, normalizedIds)
+
+    return {
+      adoptedCalendarCount,
+      adoptedAppointmentCount: Number(appointmentUpdate?.changes ?? appointmentUpdate?.rowCount ?? 0),
+      discardedMirrorIntentCount: Number(mirrorIntentDelete?.changes ?? mirrorIntentDelete?.rowCount ?? 0),
+      sourcePreferenceUpdated,
+      calendars: adoptedRows.map(calendarRowToApi)
+    }
+  })
+}
+
 export async function deleteLocalCalendar(calendarId) {
   const existing = await getLocalCalendar(calendarId)
   if (!existing) return null

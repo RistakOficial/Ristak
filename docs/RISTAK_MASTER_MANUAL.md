@@ -4119,6 +4119,21 @@ Reglas base:
   pendiente no bloquea una edición local posterior: si un PUT trae `openHours`
   explícito, reemplaza el horario guardado; el horario anterior sólo se conserva
   cuando la escritura realmente omite el campo.
+- Desconectar HighLevel no cambia automáticamente la propiedad de esos espejos:
+  permite reconectar y continuar la sincronización. Si el usuario decide
+  abandonarla definitivamente, `POST /api/calendars/adopt-highlevel` y la tool
+  MCP idempotente `appointments_adopt_highlevel_calendars` adoptan únicamente
+  los `calendarIds` seleccionados. La operación exige que `highlevel_config`
+  esté vacío, corre en una sola transacción y conserva IDs locales, slugs, URLs,
+  configuración, defaults, atribución y citas. Cambia calendarios y citas
+  ligadas a `source=ristak`, elimina sus IDs/location de HighLevel, limpia los
+  intents remotos transitorios y no toca citas Google. Las citas ya borradas
+  conservan su tombstone `pending_delete`. Si no queda otro calendario
+  HighLevel, un filtro guardado en `ghl` pasa a `ristak` para no ocultar las
+  agendas recién adoptadas. La adopción no modifica el proveedor remoto ni se
+  revierte automáticamente; una selección inexistente, mezclada con calendarios
+  no HighLevel o ejecutada mientras la integración siga conectada falla completa
+  sin aplicar cambios parciales.
 - El espejo saliente de calendarios usa el contrato vigente `v3` de HighLevel.
   Antes de crear o actualizar el calendario remoto, `openHours` se canoniza al
   formato de días `0..6` y rangos completos; el domingo legacy `7` se convierte

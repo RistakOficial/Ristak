@@ -3696,6 +3696,34 @@ export async function updateCalendar(req, res) {
 }
 
 /**
+ * POST /api/calendars/adopt-highlevel
+ * Convierte calendarios espejo de una cuenta HighLevel ya desconectada en
+ * calendarios nativos de Ristak, conservando IDs, configuración y citas.
+ */
+export async function adoptHighLevelCalendars(req, res) {
+  try {
+    const result = await localCalendarService.adoptDisconnectedHighLevelCalendars(req.body?.calendarIds)
+
+    await localCalendarService.reconcileCalendarDefaults().catch(error => {
+      logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado tras adoptar calendarios: ${error.message}`)
+    })
+
+    res.json({
+      success: true,
+      data: result
+    })
+  } catch (error) {
+    logger.error(`[Calendars Controller] Error al adoptar calendarios HighLevel: ${error.message}`)
+    res.status(error.status || error.statusCode || 500).json({
+      success: false,
+      code: error.code,
+      ...(error.data !== undefined ? { data: error.data } : {}),
+      error: error.message
+    })
+  }
+}
+
+/**
  * DELETE /api/calendars/:id
  * Eliminar un calendario local de Ristak.
  */
@@ -3853,6 +3881,7 @@ export default {
   createAppointment,
   updateAppointment,
   updateCalendar,
+  adoptHighLevelCalendars,
   updateCalendarGoogleSync,
   deleteEvent,
   getGoogleCalendarIntegration,

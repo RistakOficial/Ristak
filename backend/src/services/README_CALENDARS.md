@@ -163,6 +163,35 @@ La ruta pública resuelve el calendario desde el slug y aplica el mismo contrato
 local más espejo. Las importaciones de citas que ya nacieron en HighLevel son
 conciliación entrante, no una nueva alta, y no deben volver a publicarse.
 
+## Adopción Definitiva De Calendarios HighLevel
+
+Desconectar HighLevel conserva por defecto los calendarios importados como
+espejos locales para que una reconexión posterior pueda continuar la
+sincronización. Cuando el usuario decide abandonar definitivamente ese origen,
+`POST /api/calendars/adopt-highlevel` convierte de forma explícita los
+`calendarIds` seleccionados en calendarios nativos de Ristak.
+
+La operación exige que `highlevel_config` esté vacío y es transaccional:
+
+- conserva los IDs locales, nombres, slugs, URLs públicas, disponibilidad,
+  formularios, cobros, configuración, calendario predeterminado y atribución;
+- cambia `calendars.source` a `ristak` y elimina únicamente `location_id`,
+  `ghl_calendar_id` y el estado/error del espejo remoto;
+- adopta también las citas HighLevel o ligadas a HighLevel de esos calendarios,
+  conservando sus IDs locales y contenido, pero quitando
+  `ghl_appointment_id`/`location_id`;
+- no modifica citas Google ni sus metadatos;
+- conserva como borradas las citas que ya estaban en `pending_delete` y descarta
+  intents transitorios que sólo servían para confirmar escrituras remotas;
+- si ya no queda ningún calendario HighLevel y el filtro guardado era `ghl`, lo
+  cambia a `ristak` para que la lista no quede vacía.
+
+La operación no borra ni edita nada en HighLevel y no puede deshacerse
+automáticamente. El MCP funcional expone el mismo contrato como
+`appointments_adopt_highlevel_calendars`, con `calendarIds` e
+`idempotencyKey` obligatorios. No uses `appointments_update_calendar` para esta
+transición: ese endpoint preserva intencionalmente el origen actual.
+
 ## Calendarios Publicos Y Contactos
 
 El endpoint `POST /api/calendars/public/:slug/appointments` crea citas desde la

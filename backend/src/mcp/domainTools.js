@@ -524,6 +524,17 @@ const calendarTools = [
     body: (args) => args.calendar
   }),
   controllerSpec({
+    name: 'appointments_adopt_highlevel_calendars',
+    description: 'Convierte calendarios espejo de HighLevel en calendarios nativos de Ristak después de desconectar la integración; conserva IDs, configuración, enlaces y citas, y elimina sólo los vínculos remotos.',
+    module: 'appointments', access: 'write', scope: 'ristak.execute', risk: 'high', handler: calendarsController.adoptHighLevelCalendars, method: 'POST',
+    idempotencyRequired: true,
+    inputSchema: schema({
+      calendarIds: { type: 'array', items: ID, minItems: 1, maxItems: 100, uniqueItems: true },
+      ...controls({ idempotency: true })
+    }, requiredWith(['calendarIds'], { idempotency: true })),
+    body: (args) => ({ calendarIds: args.calendarIds })
+  }),
+  controllerSpec({
     name: 'appointments_update_calendar', description: 'Actualiza horarios, disponibilidad, formularios y políticas de un calendario.',
     module: 'appointments', access: 'write', scope: 'ristak.write', risk: 'medium', handler: calendarsController.updateCalendar, method: 'PUT',
     idempotencyRequired: true,
