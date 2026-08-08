@@ -431,7 +431,15 @@ para insertar otra fila.
 
 El botón de canal del composer inferior mantiene el mismo catálogo en `/movil`,
 React Native Android e iOS: cada WhatsApp nativo, `WhatsApp · HighLevel` y cada
-número SMS activo de HighLevel aparecen como rutas independientes. Seleccionar un
+número SMS activo de HighLevel aparecen como rutas independientes, pero sólo
+mientras el proveedor correspondiente esté realmente conectado. Una fila
+WhatsApp sin API ni QR listo se omite; al desconectar HighLevel desaparecen todas
+sus rutas, y Messenger/Instagram sólo aparecen con la conexión Meta
+correspondiente. En superficies que mantienen el catálogo completo, una ruta
+social conectada puede quedar deshabilitada para explicar que ese contacto aún
+no tiene identidad en la red. Una preferencia guardada hacia una ruta
+desconectada cae a un WhatsApp nativo disponible en vez de dejar un canal
+invisible seleccionado. Seleccionar un
 WhatsApp HighLevel liga la ruta al `business_phone` del ultimo inbound
 `ghl_whatsapp` verificado; seleccionar un SMS pasa el `fromNumber` del inventario
 LC Phone en texto, archivos, audio, ubicación y programación. El catalogo
@@ -1115,8 +1123,11 @@ remitente anterior.
 La conversacion nativa en `mobile/` debe aplicar el mismo contrato: el selector
 del composer solo muestra rutas realmente conectadas para ese chat, lista cada
 numero de WhatsApp disponible por separado y agrega Messenger/Instagram solo si
-la integracion Meta correspondiente esta conectada y el contacto pertenece a
-ese canal. `ios/app` conserva ese mismo boton de canal en el panel inferior,
+la integracion Meta correspondiente esta conectada; si conserva una fila social
+para explicar que el contacto no tiene identidad en esa red, la deja
+deshabilitada. HighLevel desconectado no deja filas grises ni restaura como
+activa una preferencia anterior de WhatsApp/SMS HighLevel. `ios/app` conserva ese
+mismo boton de canal en el panel inferior,
 antes del boton `+`, y comparte la preferencia persistente con `/movil`, Android
 y la ficha `Contactando desde`.
 

@@ -24,6 +24,7 @@ const {
   getPreferredWhatsAppPhoneId,
   getOutboundSendResultState,
   isHighLevelWhatsAppTransport,
+  isNativeWhatsAppComposerPhoneConnected,
   keepLastKnownCatalogValue,
   normalizeNativeWhatsAppSenderRoute,
   readLocalCatalogWithRetry,
@@ -137,6 +138,32 @@ test('el numero elegido viaja como una sola identidad en id, from y transporte',
     fromPhone: undefined,
     transport: 'api',
   });
+});
+
+test('el selector solo conserva remitentes WhatsApp con transporte conectado', () => {
+  assert.equal(isNativeWhatsAppComposerPhoneConnected({
+    id: 'meta-ready',
+    phone_number: '+526567000001',
+    availability: { apiAvailable: true, qrReady: false, available: true },
+  }), true);
+  assert.equal(isNativeWhatsAppComposerPhoneConnected({
+    id: 'qr-ready',
+    qr_connected_phone: '+526567000002',
+    api_send_enabled: false,
+    qr_send_enabled: true,
+    qr_status: 'connected',
+  }), true);
+  assert.equal(isNativeWhatsAppComposerPhoneConnected({
+    id: 'disconnected',
+    phone_number: '+526567000003',
+    api_send_enabled: false,
+    qr_send_enabled: false,
+    availability: { apiAvailable: false, qrReady: false, available: false },
+  }), false);
+  assert.equal(isNativeWhatsAppComposerPhoneConnected({
+    id: 'missing-number',
+    api_send_enabled: true,
+  }), false);
 });
 
 test('la ventana de 24 horas pertenece al numero seleccionado, no a otro WhatsApp', () => {

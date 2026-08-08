@@ -315,7 +315,10 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   Instagram, email/SMS cuando aplique.
   - Avance: el composer separa WhatsApp API/QR, HighLevel WhatsApp, cada número
     SMS de HighLevel y Messenger/Instagram; texto, media, ubicación y programación
-    conservan la ruta elegida. WhatsApp nativo mantiene su ventana de 24 horas y
+    conservan la ruta elegida. El selector omite remitentes sin transporte listo,
+    elimina todas las rutas HighLevel al desconectarlo y sólo presenta
+    Messenger/Instagram con la conexión Meta correspondiente. WhatsApp nativo
+    mantiene su ventana de 24 horas y
     plantillas, mientras WhatsApp HighLevel se liga al ultimo `business_phone`
     inbound verificado y SMS HighLevel pasa el `fromNumber` seleccionado del
     catalogo LC Phone, que nunca se trata como inventario WhatsApp. Android

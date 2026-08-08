@@ -2661,7 +2661,16 @@ histórica de YCloud; Meta directo se valida con
 fila nativa de WhatsApp coexisten, elegir esa fila conserva la ruta nativa:
 HighLevel sólo puede manejar WhatsApp cuando el usuario elige explícitamente
 `WhatsApp · HighLevel`, nunca como fallback silencioso de una fila
-indisponible. Con HighLevel conectado, el selector agrega `WhatsApp · HighLevel`
+indisponible. El selector de envío de desktop, `/movil`, Android e iOS muestra
+únicamente rutas cuyo proveedor está conectado: al desconectar HighLevel
+desaparecen `WhatsApp · HighLevel`, `SMS · HighLevel` y sus remitentes; Messenger,
+Instagram y correo también desaparecen cuando ninguna integración conectada
+puede entregarlos. Una ruta conectada sí puede quedar deshabilitada por una
+limitación del contacto, por ejemplo falta de teléfono o identidad social, para
+explicar el problema sin presentar una integración fantasma. Si una preferencia
+guardada apuntaba al proveedor desconectado, el composer vuelve a una ruta nativa
+conectada y no conserva una selección invisible. Con HighLevel conectado, el
+selector agrega `WhatsApp · HighLevel`
 y consulta el inventario activo de LC Phone para mostrar cada remitente SMS como
 `SMS · <etiqueta> · <numero>` sin ocultar las filas nativas. Elegir un SMS pasa
 su `fromNumber` a HighLevel en texto, adjuntos, audio y programación. Si el token
@@ -3154,6 +3163,10 @@ agente completa una nueva meta, el chat reaparece.
 En el chat movil, el selector de canal del composer no debe mostrar rutas
 fantasma: lista cada numero de WhatsApp conectado como opcion separada y envia el
 `phoneNumberId` elegido en texto, adjuntos, ubicacion y mensajes programados.
+Las filas WhatsApp sin API ni QR listo se omiten; HighLevel, Messenger,
+Instagram y los canales de comentarios sólo se agregan mientras su integración
+correspondiente siga conectada. La misma regla aplica a `/chat`, `/movil`, React
+Native Android e iOS y evita restaurar una preferencia de envío ya desconectada.
 Si HighLevel está conectado, esas opciones nativas coexisten con
 `WhatsApp · HighLevel` y una fila por cada número SMS activo de HighLevel; elegir
 una de esas filas aplica su `fromNumber`, y elegir cualquier ruta HighLevel no

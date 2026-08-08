@@ -117,6 +117,10 @@ import {
   getLatestHighLevelWhatsAppInboundSender,
   resolveHighLevelChatFromNumber
 } from '@/utils/highLevelChatSend'
+import {
+  isChatComposerIntegrationRouteConnected,
+  isNativeWhatsAppComposerRouteConnected
+} from '@/utils/chatComposerAvailability'
 import apiClient from '@/services/apiClient'
 import { createAuthScopedLocalStorageNamespace } from '@/services/authScopedLocalStorage'
 import automationsService, { type AutomationSummary } from '@/services/automationsService'
@@ -3488,14 +3492,36 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
   )
   const activeInfoContactHasPhone = activeContactPhones.length > 0
   const businessPhones = useMemo(() => whatsappStatus?.phoneNumbers || [], [whatsappStatus?.phoneNumbers])
-  const defaultComposerBusinessPhone = useMemo(() => getComposerBusinessPhone(whatsappStatus, activeContact), [activeContact, whatsappStatus])
+  const requestedDefaultComposerBusinessPhone = useMemo(
+    () => getComposerBusinessPhone(whatsappStatus, activeContact),
+    [activeContact, whatsappStatus]
+  )
+  const whatsappComposerPhones = useMemo(() => (
+    businessPhones.length
+      ? businessPhones
+      : requestedDefaultComposerBusinessPhone
+        ? [requestedDefaultComposerBusinessPhone]
+        : []
+  ), [businessPhones, requestedDefaultComposerBusinessPhone])
+  const connectedWhatsappComposerPhones = useMemo(() => whatsappComposerPhones.filter((phone) => (
+    isNativeWhatsAppComposerRouteConnected({
+      businessPhoneValue: getBusinessPhoneValue(phone),
+      apiAvailable: isPhoneApiEnabled(phone, whatsappStatus),
+      qrReady: isPhoneQrReadyForSend(phone)
+    })
+  )), [whatsappComposerPhones, whatsappStatus])
+  const defaultComposerBusinessPhone = useMemo(() => (
+    connectedWhatsappComposerPhones.find((phone) => phone.id === requestedDefaultComposerBusinessPhone?.id) ||
+    connectedWhatsappComposerPhones[0] ||
+    null
+  ), [connectedWhatsappComposerPhones, requestedDefaultComposerBusinessPhone?.id])
   const selectedBusinessPhone = useMemo(() => {
     if (composerChannel === 'sms' || composerBusinessPhoneId === HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID) return null
 
-    return businessPhones.find((phone) => phone.id === composerBusinessPhoneId) ||
+    return connectedWhatsappComposerPhones.find((phone) => phone.id === composerBusinessPhoneId) ||
       defaultComposerBusinessPhone ||
       null
-  }, [businessPhones, composerBusinessPhoneId, composerChannel, defaultComposerBusinessPhone])
+  }, [composerBusinessPhoneId, composerChannel, connectedWhatsappComposerPhones, defaultComposerBusinessPhone])
   const preferredWhatsAppPhoneNumberId = getPreferredWhatsAppPhoneNumberId(activeInfoContact)
   const automaticWhatsAppRoutePhone = useMemo(() => {
     const routedMessage = [...messages]
@@ -3630,7 +3656,29 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
       setEmailIncludeSignature(true)
       return
     }
-    const defaultChannel = getDefaultComposerChannel(activeContact)
+    const requestedDefaultChannel = getDefaultComposerChannel(activeContact)
+    const defaultChannel = requestedDefaultChannel === 'sms' && !highLevelConnected
+      ? 'whatsapp'
+      : requestedDefaultChannel === 'messenger' && !isChatComposerIntegrationRouteConnected('messenger', {
+          highLevelConnected,
+          metaMessengerConnected,
+          metaInstagramConnected
+        })
+        ? 'whatsapp'
+        : requestedDefaultChannel === 'instagram' && !isChatComposerIntegrationRouteConnected('instagram', {
+            highLevelConnected,
+            metaMessengerConnected,
+            metaInstagramConnected
+          })
+          ? 'whatsapp'
+          : requestedDefaultChannel === 'email' && !isChatComposerIntegrationRouteConnected('email', {
+              highLevelConnected,
+              metaMessengerConnected,
+              metaInstagramConnected,
+              emailConnected
+            })
+            ? 'whatsapp'
+            : requestedDefaultChannel
     const lastMessageTransport = String(activeContact.lastMessageTransport || '').trim().toLowerCase()
     setComposerChannel(defaultChannel)
     setComposerBusinessPhoneId(
@@ -3645,7 +3693,15 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     setEmailSubject('')
     setEmailBodyHtml('')
     setEmailIncludeSignature(true)
-  }, [activeContact?.id, defaultComposerBusinessPhone?.id, defaultHighLevelPhoneNumber?.phoneNumber, highLevelConnected])
+  }, [
+    activeContact?.id,
+    defaultComposerBusinessPhone?.id,
+    defaultHighLevelPhoneNumber?.phoneNumber,
+    emailConnected,
+    highLevelConnected,
+    metaInstagramConnected,
+    metaMessengerConnected
+  ])
   useEffect(() => {
     if (!activeContact?.id) return
     const requestId = composerChannelPreferenceRequestRef.current + 1
@@ -3655,33 +3711,72 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     void contactsService.getConversationalChannelPreference(activeContact.id)
       .then((preference) => {
         if (cancelled || composerChannelPreferenceRequestRef.current !== requestId || !preference?.channel) return
+        const preferredChannel = preference.channel === 'sms' && !highLevelConnected
+          ? 'whatsapp'
+          : preference.channel === 'messenger' && !isChatComposerIntegrationRouteConnected('messenger', {
+              highLevelConnected,
+              metaMessengerConnected,
+              metaInstagramConnected
+            })
+            ? 'whatsapp'
+            : preference.channel === 'instagram' && !isChatComposerIntegrationRouteConnected('instagram', {
+                highLevelConnected,
+                metaMessengerConnected,
+                metaInstagramConnected
+              })
+              ? 'whatsapp'
+              : preference.channel === 'email' && !isChatComposerIntegrationRouteConnected('email', {
+                  highLevelConnected,
+                  metaMessengerConnected,
+                  metaInstagramConnected,
+                  emailConnected
+                })
+                ? 'whatsapp'
+                : preference.channel
         setCommentReplyTarget(null)
-        setComposerChannel(preference.channel)
+        setComposerChannel(preferredChannel)
+        const preferredNativeWhatsAppRouteId = preference.routeId && preference.routeId !== 'highlevel'
+          ? preference.routeId
+          : ''
+        const connectedPreferredNativeWhatsAppRouteId = preferredNativeWhatsAppRouteId && connectedWhatsappComposerPhones.some((phone) => (
+          phone.id === preferredNativeWhatsAppRouteId
+        ))
+          ? preferredNativeWhatsAppRouteId
+          : ''
         setComposerBusinessPhoneId(
-          preference.channel === 'whatsapp'
-            ? preference.routeId === 'highlevel'
+          preferredChannel === 'whatsapp'
+            ? preference.routeId === 'highlevel' && highLevelConnected
               ? HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID
-              : preference.routeId || defaultComposerBusinessPhone?.id || ''
-            : preference.channel === 'sms'
+              : connectedPreferredNativeWhatsAppRouteId || defaultComposerBusinessPhone?.id || ''
+            : preferredChannel === 'sms'
               ? HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID
               : defaultComposerBusinessPhone?.id || ''
         )
         setComposerHighLevelFromNumber(
-          preference.channel === 'sms' ? defaultHighLevelPhoneNumber?.phoneNumber || '' : ''
+          preferredChannel === 'sms' ? defaultHighLevelPhoneNumber?.phoneNumber || '' : ''
         )
       })
       .catch(() => undefined)
 
     return () => { cancelled = true }
-  }, [activeContact?.id])
+  }, [
+    activeContact?.id,
+    connectedWhatsappComposerPhones,
+    defaultComposerBusinessPhone?.id,
+    defaultHighLevelPhoneNumber?.phoneNumber,
+    emailConnected,
+    highLevelConnected,
+    metaInstagramConnected,
+    metaMessengerConnected
+  ])
   useEffect(() => {
     setComposerBusinessPhoneId((current) => {
       if (!activeContact) return ''
       if (current === HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID && highLevelConnected) return current
-      if (current && businessPhones.some((phone) => phone.id === current)) return current
+      if (current && connectedWhatsappComposerPhones.some((phone) => phone.id === current)) return current
       return defaultComposerBusinessPhone?.id || ''
     })
-  }, [activeContact, businessPhones, defaultComposerBusinessPhone?.id, highLevelConnected])
+  }, [activeContact, connectedWhatsappComposerPhones, defaultComposerBusinessPhone?.id, highLevelConnected])
   useEffect(() => {
     setComposerHighLevelFromNumber((current) => {
       if (!highLevelConnected || highLevelPhoneNumbers.length === 0) return ''
@@ -4141,15 +4236,14 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     contactHasCommentActivity(activeContact) &&
     getCommentPlatform(activeContact) === 'instagram'
   )
-  const whatsappComposerPhones = businessPhones.length
-    ? businessPhones
-    : selectedBusinessPhone
-    ? [selectedBusinessPhone]
-    : []
   const whatsappApiSourcesAvailable = hasWhatsAppPhoneApiAvailable(whatsappStatus)
-  const whatsappNativeSourcesAvailable = whatsappComposerPhones.some((phone) => (
-    Boolean(getBusinessPhoneValue(phone)) && (isPhoneApiEnabled(phone, whatsappStatus) || isPhoneQrReadyForSend(phone))
-  ))
+  const whatsappNativeSourcesAvailable = connectedWhatsappComposerPhones.length > 0
+  const composerConnectionState = {
+    highLevelConnected,
+    metaMessengerConnected,
+    metaInstagramConnected,
+    emailConnected
+  }
   const canSendMessenger = metaMessengerConnected || highLevelConnected
   const canSendInstagram = metaInstagramConnected || highLevelConnected
   const activeContactRecord = (activeContact || {}) as Record<string, unknown>
@@ -4198,7 +4292,12 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
       ? Boolean(metaMessengerConnected && facebookCommentsEnabled)
       : false
   const emailChannelConnected = highLevelConnected || emailConnected
-  const commentChannelOption = latestEligibleCommentReplyTarget
+  const latestCommentProviderConnected = latestEligibleCommentReplyTarget?.platform === 'instagram'
+    ? Boolean(metaInstagramConnected && instagramCommentsEnabled)
+    : latestEligibleCommentReplyTarget?.platform === 'messenger'
+      ? Boolean(metaMessengerConnected && facebookCommentsEnabled)
+      : false
+  const commentChannelOption = latestEligibleCommentReplyTarget && latestCommentProviderConnected
     ? {
         value: getCommentComposerChannelForPlatform(latestEligibleCommentReplyTarget.platform),
         label: getCommentComposerLabel(latestEligibleCommentReplyTarget.platform)
@@ -4220,45 +4319,47 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     }
     if (option.value === 'whatsapp') {
       const whatsappDisabled = !activeContact?.phone
-      const nativeWhatsAppOptions = whatsappComposerPhones.map((phone) => ({
+      const nativeWhatsAppOptions = connectedWhatsappComposerPhones.map((phone) => ({
         value: `whatsapp:${phone.id}`,
         label: getNativeWhatsAppRouteLabel(phone),
         icon: renderComposerChannelIcon(option.value),
-        disabled: whatsappDisabled || !getBusinessPhoneValue(phone) || (!isPhoneApiEnabled(phone, whatsappStatus) && !isPhoneQrReadyForSend(phone))
+        disabled: whatsappDisabled
       }))
       return [
         ...nativeWhatsAppOptions,
-        {
+        ...(isChatComposerIntegrationRouteConnected('highlevel', composerConnectionState) ? [{
           value: HIGHLEVEL_WHATSAPP_COMPOSER_VALUE,
           label: getHighLevelWhatsAppRouteLabel(highLevelWhatsAppSender),
           icon: renderComposerChannelIcon(option.value),
-          disabled: whatsappDisabled || !highLevelConnected
-        }
+          disabled: whatsappDisabled
+        }] : [])
       ]
     }
     if (option.value === 'sms') {
+      if (!isChatComposerIntegrationRouteConnected('highlevel', composerConnectionState)) return []
       const highLevelSmsOptions = highLevelPhoneNumbers.map((phone) => ({
         value: `${HIGHLEVEL_SMS_COMPOSER_VALUE_PREFIX}${phone.id}`,
         label: `SMS · ${phone.label} · ${phone.phoneNumber}`,
         icon: renderComposerChannelIcon(option.value),
-        disabled: !activeContact?.phone || !highLevelConnected
+        disabled: !activeContact?.phone
       }))
       return highLevelSmsOptions.length > 0
         ? highLevelSmsOptions
         : [{
             ...option,
             icon: renderComposerChannelIcon(option.value),
-            disabled: !activeContact?.phone || !highLevelConnected
+            disabled: !activeContact?.phone
           }]
     }
     if (option.value === 'email') {
-      if (!hasEmailAccess) return []
+      if (!hasEmailAccess || !isChatComposerIntegrationRouteConnected('email', composerConnectionState)) return []
       return [{
         ...option,
         icon: renderComposerChannelIcon(option.value),
-        disabled: !activeContact?.email || !emailChannelConnected
+        disabled: !activeContact?.email
       }]
     }
+    if (!isChatComposerIntegrationRouteConnected(option.value, composerConnectionState)) return []
     return [{
       ...option,
       icon: renderComposerChannelIcon(option.value),

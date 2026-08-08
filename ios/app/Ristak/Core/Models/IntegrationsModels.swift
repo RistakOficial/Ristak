@@ -12,10 +12,13 @@ struct IntegrationConnectionState: Decodable, Sendable, Equatable {
     let locationId: String?
     let hasApiKey: Bool?
     let webhookConfigured: Bool?
+    let pageId: String?
+    let instagramAccountId: String?
 
     enum CodingKeys: String, CodingKey {
         case configured, connected, connectionType, mode, publishableKey
         case accountLabel, locationId, hasApiKey, webhookConfigured
+        case pageId, instagramAccountId
     }
 
     init(from decoder: Decoder) throws {
@@ -29,6 +32,8 @@ struct IntegrationConnectionState: Decodable, Sendable, Equatable {
         locationId = container.flexibleString(forKey: .locationId)
         hasApiKey = container.flexibleBool(forKey: .hasApiKey)
         webhookConfigured = container.flexibleBool(forKey: .webhookConfigured)
+        pageId = container.flexibleString(forKey: .pageId)
+        instagramAccountId = container.flexibleString(forKey: .instagramAccountId)
     }
 
     /// «Conectado» para la UI: `connected === true` (RN también acepta
@@ -87,6 +92,14 @@ struct IntegrationsStatus: Decodable, Sendable, Equatable {
     /// location usables. `configured` también existe para filas parciales (por
     /// ejemplo, sólo etiquetas) y no debe inventar canales fantasma.
     var isHighLevelConnected: Bool { highlevel?.connected == true }
+
+    var isMetaMessengerConnected: Bool {
+        meta?.connected == true && !(meta?.pageId ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var isMetaInstagramConnected: Bool {
+        meta?.connected == true && !(meta?.instagramAccountId ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
 struct HighLevelPhoneNumber: Decodable, Sendable, Equatable, Identifiable {

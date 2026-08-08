@@ -314,48 +314,32 @@ enum ConversationChannelOptionsBuilder {
     static func build(
         whatsAppStatus: WhatsAppAPIStatus?,
         highLevelConnected: Bool,
+        metaMessengerConnected: Bool,
+        metaInstagramConnected: Bool,
         highLevelWhatsAppFromNumber: String?,
         highLevelPhoneNumbers: [HighLevelPhoneNumber],
         hasContactPhone: Bool,
         channelEvidence: String
     ) -> [ComposerChannelOption] {
-        let whatsAppPhones = whatsAppStatus?.phoneNumbers ?? []
+        let whatsAppPhones = (whatsAppStatus?.phoneNumbers ?? []).filter { phone in
+            let phoneValue = phone.displayPhoneNumber ?? phone.phoneNumber ?? phone.qrConnectedPhone ?? ""
+            let available = phone.availability?.available
+                ?? (phone.apiSendEnabled || (phone.qrSendEnabled && phone.isQRConnected))
+            return !phone.id.isEmpty && !phoneValue.isEmpty && available
+        }
         let evidence = channelEvidence.lowercased()
         var options: [ComposerChannelOption] = []
 
-        if whatsAppPhones.isEmpty {
+        for (index, phone) in whatsAppPhones.enumerated() {
+            let label = phone.label?.isEmpty == false ? phone.label! : "Número \(index + 1)"
             options.append(
                 ComposerChannelOption(
-                    channel: .whatsapp(phoneNumberId: ""),
-                    title: "WhatsApp",
-                    subtitle: "Mensaje por WhatsApp conectado.",
-                    disabledReason: whatsAppStatus?.connected == true
-                        ? (hasContactPhone ? nil : "Este contacto no tiene teléfono guardado.")
-                        : "Conecta WhatsApp API o QR para responder."
+                    channel: .whatsapp(phoneNumberId: phone.id),
+                    title: "WhatsApp · \(label)",
+                    subtitle: phone.displayPhoneNumber ?? phone.phoneNumber ?? phone.verifiedName ?? "",
+                    disabledReason: hasContactPhone ? nil : "Este contacto no tiene teléfono guardado."
                 )
             )
-        } else {
-            for (index, phone) in whatsAppPhones.enumerated() {
-                let label = phone.label?.isEmpty == false ? phone.label! : "Número \(index + 1)"
-                let available = phone.availability?.available
-                    ?? (phone.apiSendEnabled || phone.isQRConnected)
-                var reason: String?
-                if !hasContactPhone {
-                    reason = "Este contacto no tiene teléfono guardado."
-                } else if !available {
-                    reason = "Ese número de WhatsApp ya no está disponible."
-                } else if (phone.displayPhoneNumber ?? phone.phoneNumber ?? "").isEmpty {
-                    reason = "Ese WhatsApp todavía no tiene número detectado."
-                }
-                options.append(
-                    ComposerChannelOption(
-                        channel: .whatsapp(phoneNumberId: phone.id),
-                        title: "WhatsApp · \(label)",
-                        subtitle: phone.displayPhoneNumber ?? phone.phoneNumber ?? phone.verifiedName ?? "",
-                        disabledReason: reason
-                    )
-                )
-            }
         }
 
         if highLevelConnected {
@@ -403,26 +387,30 @@ enum ConversationChannelOptionsBuilder {
             }
         }
 
-        options.append(
-            ComposerChannelOption(
-                channel: .messenger,
-                title: "Messenger",
-                subtitle: "Responde por Facebook Messenger.",
-                disabledReason: (evidence.contains("messenger") || evidence.contains("facebook"))
-                    ? nil
-                    : "Activa Messenger en Configuración > Meta Ads para responder desde Ristak."
+        if metaMessengerConnected {
+            options.append(
+                ComposerChannelOption(
+                    channel: .messenger,
+                    title: "Messenger",
+                    subtitle: "Responde por Facebook Messenger.",
+                    disabledReason: (evidence.contains("messenger") || evidence.contains("facebook"))
+                        ? nil
+                        : "Este contacto todavía no tiene una conversación de Messenger."
+                )
             )
-        )
-        options.append(
-            ComposerChannelOption(
-                channel: .instagram,
-                title: "Instagram DM",
-                subtitle: "Responde por Instagram Direct.",
-                disabledReason: evidence.contains("instagram")
-                    ? nil
-                    : "Activa Instagram en Configuración > Meta Ads para responder desde Ristak."
+        }
+        if metaInstagramConnected {
+            options.append(
+                ComposerChannelOption(
+                    channel: .instagram,
+                    title: "Instagram DM",
+                    subtitle: "Responde por Instagram Direct.",
+                    disabledReason: evidence.contains("instagram")
+                        ? nil
+                        : "Este contacto todavía no tiene una conversación de Instagram."
+                )
             )
-        )
+        }
         return options
     }
 }

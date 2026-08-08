@@ -181,6 +181,8 @@ final class ConversationViewModel {
 
     private(set) var whatsAppStatus: WhatsAppAPIStatus?
     private(set) var highLevelConnected = false
+    private(set) var metaMessengerConnected = false
+    private(set) var metaInstagramConnected = false
     private(set) var highLevelPhoneNumbers: [HighLevelPhoneNumber] = []
     private(set) var selectedChannel: ComposerChannel = .whatsapp(phoneNumberId: "")
     private var channelResolved = false
@@ -1233,6 +1235,8 @@ final class ConversationViewModel {
         }
 
         let connected = status.isHighLevelConnected
+        metaMessengerConnected = status.isMetaMessengerConnected
+        metaInstagramConnected = status.isMetaInstagramConnected
         guard connected else {
             highLevelConnected = false
             highLevelPhoneNumbers = []
@@ -1342,8 +1346,14 @@ final class ConversationViewModel {
 
         let evidence = channelEvidence()
         if contactPhone == nil || contactPhone?.isEmpty == true {
-            if evidence.contains("instagram") { selectedChannel = .instagram; return }
-            if evidence.contains("messenger") || evidence.contains("facebook") { selectedChannel = .messenger; return }
+            if metaInstagramConnected && evidence.contains("instagram") {
+                selectedChannel = .instagram
+                return
+            }
+            if metaMessengerConnected && (evidence.contains("messenger") || evidence.contains("facebook")) {
+                selectedChannel = .messenger
+                return
+            }
         }
 
         selectedChannel = ConversationWhatsAppRouteResolver.defaultChannel(
@@ -1399,6 +1409,8 @@ final class ConversationViewModel {
         ConversationChannelOptionsBuilder.build(
             whatsAppStatus: whatsAppStatus,
             highLevelConnected: highLevelConnected,
+            metaMessengerConnected: metaMessengerConnected,
+            metaInstagramConnected: metaInstagramConnected,
             highLevelWhatsAppFromNumber: highLevelWhatsAppFromNumber,
             highLevelPhoneNumbers: highLevelPhoneNumbers,
             hasContactPhone: !(contactPhone ?? "").isEmpty,

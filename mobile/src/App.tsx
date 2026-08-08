@@ -230,6 +230,7 @@ import {
   getOutboundSendResultState,
   getPreferredWhatsAppPhoneId,
   isHighLevelWhatsAppTransport,
+  isNativeWhatsAppComposerPhoneConnected,
   keepLastKnownCatalogValue,
   readLocalCatalogWithRetry,
   type NativeWhatsAppSenderRoute,
@@ -18093,7 +18094,7 @@ function getComposerChannelOptions(
   const highLevelConnected = isHighLevelConnected(integrations);
   const messengerConnected = isNativeMessengerConnected(integrations);
   const instagramConnected = isNativeInstagramConnected(integrations);
-  const connectedPhones = businessPhones.filter((phone) => Boolean(phone.id));
+  const connectedPhones = businessPhones.filter(isNativeWhatsAppComposerPhoneConnected);
   const whatsappOptions: ComposerChannelOption[] = connectedPhones.map((phone, index) => ({
         value: `whatsapp:${phone.id}` as ComposerChannelRouteValue,
         channel: 'whatsapp',
@@ -18113,14 +18114,15 @@ function getComposerChannelOptions(
   if (latestCommentReplyTarget) {
     const commentChannel = getCommentComposerChannelForPlatform(latestCommentReplyTarget.platform);
     const commentConnected = latestCommentReplyTarget.platform === 'instagram' ? instagramConnected : messengerConnected;
-    options.unshift({
-      value: commentChannel,
-      channel: commentChannel,
-      label: getCommentComposerLabel(latestCommentReplyTarget.platform),
-      description: 'Responde público en la publicación.',
-      kind: commentChannel,
-      disabledReason: commentConnected ? undefined : 'Conecta Meta Ads para responder comentarios.',
-    });
+    if (commentConnected) {
+      options.unshift({
+        value: commentChannel,
+        channel: commentChannel,
+        label: getCommentComposerLabel(latestCommentReplyTarget.platform),
+        description: 'Responde público en la publicación.',
+        kind: commentChannel,
+      });
+    }
   }
 
   if (highLevelConnected) {

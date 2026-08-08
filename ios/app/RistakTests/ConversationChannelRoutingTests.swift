@@ -19,6 +19,8 @@ final class ConversationChannelRoutingTests: XCTestCase {
         let options = ConversationChannelOptionsBuilder.build(
             whatsAppStatus: status,
             highLevelConnected: true,
+            metaMessengerConnected: true,
+            metaInstagramConnected: true,
             highLevelWhatsAppFromNumber: "+15559990000",
             highLevelPhoneNumbers: highLevelPhones,
             hasContactPhone: true,
@@ -31,6 +33,8 @@ final class ConversationChannelRoutingTests: XCTestCase {
         })?.disabledReason)
         XCTAssertNil(options.first(where: { $0.channel == .sms(fromNumber: "+15550001111") })?.disabledReason)
         XCTAssertNil(options.first(where: { $0.channel == .sms(fromNumber: "+15550002222") })?.disabledReason)
+        XCTAssertNotNil(options.first(where: { $0.channel == .messenger }))
+        XCTAssertNotNil(options.first(where: { $0.channel == .instagram }))
     }
 
     func testRouteMatchesDesktopPriorityUsingLastInboundBeforeLastBusinessAndDefault() throws {
@@ -109,6 +113,8 @@ final class ConversationChannelRoutingTests: XCTestCase {
         let options = ConversationChannelOptionsBuilder.build(
             whatsAppStatus: try whatsAppStatus(),
             highLevelConnected: true,
+            metaMessengerConnected: false,
+            metaInstagramConnected: false,
             highLevelWhatsAppFromNumber: nil,
             highLevelPhoneNumbers: [],
             hasContactPhone: true,
@@ -122,6 +128,23 @@ final class ConversationChannelRoutingTests: XCTestCase {
         XCTAssertEqual(option.channel, .highLevelWhatsApp(fromNumber: ""))
         XCTAssertNotNil(option.disabledReason)
         XCTAssertTrue(option.subtitle.localizedCaseInsensitiveContains("Recibe primero"))
+    }
+
+    func testSelectorOmitsEveryDisconnectedIntegrationRoute() throws {
+        let options = ConversationChannelOptionsBuilder.build(
+            whatsAppStatus: try whatsAppStatus(),
+            highLevelConnected: false,
+            metaMessengerConnected: false,
+            metaInstagramConnected: false,
+            highLevelWhatsAppFromNumber: "+15559990000",
+            highLevelPhoneNumbers: [],
+            hasContactPhone: true,
+            channelEvidence: "ghl_whatsapp ghl_sms messenger instagram"
+        )
+
+        XCTAssertFalse(options.contains(where: { $0.channel.isHighLevel }))
+        XCTAssertFalse(options.contains(where: { $0.channel == .messenger }))
+        XCTAssertFalse(options.contains(where: { $0.channel == .instagram }))
     }
 
     func testRecoverableInitialFailureKeepsPendingSSEAndDrainsWhenRecoveryStarts() {

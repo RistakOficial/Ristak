@@ -112,6 +112,10 @@ import {
   shouldHideEmptyChatControlMessage
 } from '@/utils/chatMessageContent'
 import { getChatBubbleColorChannel, getChatMessageSourceLabel, resolveChatMessageChannel } from '@/utils/chatMessageChannel'
+import {
+  isChatComposerIntegrationRouteConnected,
+  isNativeWhatsAppComposerRouteConnected
+} from '@/utils/chatComposerAvailability'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -6444,8 +6448,15 @@ export const PhoneChat: React.FC = () => {
       controller.abort()
     }
   }, [activeAppointmentEntryMode, appointmentCalendarMonth, appointmentSheetCalendarId, sheet, timezone])
-  const businessPhones = whatsappStatus?.phoneNumbers || []
+  const businessPhones = useMemo(() => whatsappStatus?.phoneNumbers || [], [whatsappStatus?.phoneNumbers])
   const chatPhoneFilterEnabled = businessPhones.length > 1
+  const connectedComposerBusinessPhones = useMemo(() => businessPhones.filter((phone) => (
+    isNativeWhatsAppComposerRouteConnected({
+      businessPhoneValue: getBusinessPhoneValue(phone),
+      apiAvailable: isWhatsAppPhoneApiAvailable(phone, whatsappStatus),
+      qrReady: isBusinessPhoneQrReady(phone)
+    })
+  )), [businessPhones, whatsappStatus])
   const explicitContactBusinessPhoneOverrideId = activeContact?.id ? contactBusinessPhoneOverrides[activeContact.id] || '' : ''
   const inferredHighLevelWhatsAppRoute = Boolean(
     !explicitContactBusinessPhoneOverrideId &&
@@ -6453,9 +6464,16 @@ export const PhoneChat: React.FC = () => {
     activeContact &&
     String(activeContact.lastMessageTransport || '').trim().toLowerCase().startsWith('ghl_whatsapp')
   )
-  const activeContactBusinessPhoneOverrideId = explicitContactBusinessPhoneOverrideId || (
+  const requestedContactBusinessPhoneOverrideId = explicitContactBusinessPhoneOverrideId || (
     inferredHighLevelWhatsAppRoute ? HIGHLEVEL_WHATSAPP_ROUTE_OVERRIDE_ID : ''
   )
+  const activeContactBusinessPhoneOverrideId = requestedContactBusinessPhoneOverrideId === HIGHLEVEL_WHATSAPP_ROUTE_OVERRIDE_ID && !highLevelConnected
+    ? ''
+    : requestedContactBusinessPhoneOverrideId && requestedContactBusinessPhoneOverrideId !== HIGHLEVEL_WHATSAPP_ROUTE_OVERRIDE_ID && !connectedComposerBusinessPhones.some((phone) => (
+        phone.id === requestedContactBusinessPhoneOverrideId
+      ))
+      ? ''
+      : requestedContactBusinessPhoneOverrideId
   const highLevelWhatsAppSender = useMemo(
     () => getLatestHighLevelWhatsAppInboundSender(messages),
     [messages]
@@ -6466,20 +6484,41 @@ export const PhoneChat: React.FC = () => {
     label: string
     description: string
   }>>(() => {
-    const whatsappOptions = businessPhones.map((phone, index) => ({
+    const composerConnectionState = {
+      highLevelConnected,
+      metaMessengerConnected,
+      metaInstagramConnected
+    }
+    const whatsappOptions = connectedComposerBusinessPhones.map((phone, index) => ({
       value: `whatsapp:${phone.id}` as ComposerMessageRouteValue,
       label: getNativeWhatsAppRouteLabel(phone),
       description: `${getBusinessPhoneLabel(phone) || `Número ${index + 1}`} · ${getBusinessPhoneValue(phone) || phone.verified_name || 'Número conectado'}`
     }))
-    const highLevelSmsOptions = highLevelPhoneNumbers.map((phone) => ({
-      value: `${HIGHLEVEL_SMS_ROUTE_PREFIX}${phone.id}` as ComposerMessageRouteValue,
-      label: `SMS · ${phone.label}`,
-      description: phone.phoneNumber
-    }))
+    const highLevelSmsOptions = isChatComposerIntegrationRouteConnected('highlevel', composerConnectionState)
+      ? highLevelPhoneNumbers.map((phone) => ({
+          value: `${HIGHLEVEL_SMS_ROUTE_PREFIX}${phone.id}` as ComposerMessageRouteValue,
+          label: `SMS · ${phone.label}`,
+          description: phone.phoneNumber
+        }))
+      : []
+    const connectedBaseOptions = baseComposerMessageChannelOptions.filter((option) => {
+      if (option.value === 'whatsapp_api' || option.value === 'sms_qr') {
+        return isChatComposerIntegrationRouteConnected('highlevel', composerConnectionState)
+      }
+      if (option.value === 'messenger' || option.value === 'instagram') {
+        return isChatComposerIntegrationRouteConnected(option.value, composerConnectionState)
+      }
+      return true
+    })
     const baseOptions = highLevelSmsOptions.length > 0
-      ? baseComposerMessageChannelOptions.filter((option) => option.value !== 'sms_qr')
-      : baseComposerMessageChannelOptions
-    const commentOption = latestEligibleCommentReplyTarget
+      ? connectedBaseOptions.filter((option) => option.value !== 'sms_qr')
+      : connectedBaseOptions
+    const commentProviderConnected = latestEligibleCommentReplyTarget?.platform === 'instagram'
+      ? Boolean(metaInstagramConnected && instagramCommentsEnabled)
+      : latestEligibleCommentReplyTarget?.platform === 'messenger'
+        ? Boolean(metaMessengerConnected && facebookCommentsEnabled)
+        : false
+    const commentOption = latestEligibleCommentReplyTarget && commentProviderConnected
       ? {
           value: getCommentComposerChannelForPlatform(latestEligibleCommentReplyTarget.platform) as ComposerMessageRouteValue,
           label: getCommentComposerLabel(latestEligibleCommentReplyTarget.platform),
@@ -6501,7 +6540,18 @@ export const PhoneChat: React.FC = () => {
           }
         : option)
     ]
-  }, [baseComposerMessageChannelOptions, businessPhones, highLevelPhoneNumbers, highLevelWhatsAppSender, latestEligibleCommentReplyTarget])
+  }, [
+    baseComposerMessageChannelOptions,
+    connectedComposerBusinessPhones,
+    highLevelConnected,
+    highLevelPhoneNumbers,
+    highLevelWhatsAppSender,
+    latestEligibleCommentReplyTarget,
+    facebookCommentsEnabled,
+    instagramCommentsEnabled,
+    metaInstagramConnected,
+    metaMessengerConnected
+  ])
   const selectedChatPhone = useMemo(() => (
     businessPhones.find((phone) => phone.id === selectedChatPhoneId) || null
   ), [businessPhones, selectedChatPhoneId])
@@ -6772,13 +6822,13 @@ export const PhoneChat: React.FC = () => {
     if (activeContactBusinessPhoneOverrideId === HIGHLEVEL_WHATSAPP_ROUTE_OVERRIDE_ID) return null
 
     const fromComposerOverride = activeContactBusinessPhoneOverrideId
-      ? businessPhones.find((phone) => phone.id === activeContactBusinessPhoneOverrideId)
+      ? connectedComposerBusinessPhones.find((phone) => phone.id === activeContactBusinessPhoneOverrideId)
       : null
     const preferredBusinessPhoneId = activeContact?.preferredWhatsAppPhoneNumberId ||
       activeContact?.preferred_whatsapp_phone_number_id ||
       ''
     const fromContactPreference = preferredBusinessPhoneId
-      ? businessPhones.find((phone) => phone.id === preferredBusinessPhoneId)
+      ? connectedComposerBusinessPhones.find((phone) => phone.id === preferredBusinessPhoneId)
       : null
 
     const newestInboundMessageWithBusinessPhone = [...messages]
@@ -6789,28 +6839,28 @@ export const PhoneChat: React.FC = () => {
       .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))[0] || null
 
     const fromInboundMessageId = newestInboundMessageWithBusinessPhone?.businessPhoneNumberId
-      ? businessPhones.find((phone) => phone.id === newestInboundMessageWithBusinessPhone.businessPhoneNumberId)
+      ? connectedComposerBusinessPhones.find((phone) => phone.id === newestInboundMessageWithBusinessPhone.businessPhoneNumberId)
       : null
     const fromInboundMessagePhone = newestInboundMessageWithBusinessPhone?.businessPhone
-      ? businessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), newestInboundMessageWithBusinessPhone.businessPhone))
+      ? connectedComposerBusinessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), newestInboundMessageWithBusinessPhone.businessPhone))
       : null
     const fromMessageId = newestMessageWithBusinessPhone?.businessPhoneNumberId
-      ? businessPhones.find((phone) => phone.id === newestMessageWithBusinessPhone.businessPhoneNumberId)
+      ? connectedComposerBusinessPhones.find((phone) => phone.id === newestMessageWithBusinessPhone.businessPhoneNumberId)
       : null
     const fromMessagePhone = newestMessageWithBusinessPhone?.businessPhone
-      ? businessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), newestMessageWithBusinessPhone.businessPhone))
+      ? connectedComposerBusinessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), newestMessageWithBusinessPhone.businessPhone))
       : null
     const fromChatInboundId = activeContact?.lastInboundBusinessPhoneNumberId
-      ? businessPhones.find((phone) => phone.id === activeContact.lastInboundBusinessPhoneNumberId)
+      ? connectedComposerBusinessPhones.find((phone) => phone.id === activeContact.lastInboundBusinessPhoneNumberId)
       : null
     const fromChatInboundPhone = activeContact?.lastInboundBusinessPhone
-      ? businessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), activeContact.lastInboundBusinessPhone))
+      ? connectedComposerBusinessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), activeContact.lastInboundBusinessPhone))
       : null
     const fromChatId = activeContact?.lastBusinessPhoneNumberId
-      ? businessPhones.find((phone) => phone.id === activeContact.lastBusinessPhoneNumberId)
+      ? connectedComposerBusinessPhones.find((phone) => phone.id === activeContact.lastBusinessPhoneNumberId)
       : null
     const fromChatPhone = activeContact?.lastBusinessPhone
-      ? businessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), activeContact.lastBusinessPhone))
+      ? connectedComposerBusinessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), activeContact.lastBusinessPhone))
       : null
 
     return fromComposerOverride ||
@@ -6823,9 +6873,9 @@ export const PhoneChat: React.FC = () => {
       fromMessagePhone ||
       fromChatId ||
       fromChatPhone ||
-      businessPhones.find((phone) => phone.is_default_sender) ||
-      whatsappStatus?.selectedPhone ||
-      businessPhones[0] ||
+      connectedComposerBusinessPhones.find((phone) => phone.is_default_sender) ||
+      connectedComposerBusinessPhones.find((phone) => phone.id === whatsappStatus?.selectedPhone?.id) ||
+      connectedComposerBusinessPhones[0] ||
       null
   }, [
     activeContact?.lastInboundBusinessPhone,
@@ -6835,7 +6885,7 @@ export const PhoneChat: React.FC = () => {
     activeContact?.preferredWhatsAppPhoneNumberId,
     activeContact?.preferred_whatsapp_phone_number_id,
     activeContactBusinessPhoneOverrideId,
-    businessPhones,
+    connectedComposerBusinessPhones,
     messages,
     whatsappStatus?.selectedPhone
   ])
@@ -6907,7 +6957,22 @@ export const PhoneChat: React.FC = () => {
   const inferredSocialHighLevelChannel = (highLevelConnected || metaMessengerConnected || metaInstagramConnected) && (inferredHighLevelChatChannel === 'instagram' || inferredHighLevelChatChannel === 'messenger')
     ? inferredHighLevelChatChannel
     : ''
-  const activeHighLevelChatChannel = activeContactHighLevelChannelOverride || inferredSocialHighLevelChannel || selectedHighLevelChatChannel
+  const requestedHighLevelChatChannel = activeContactHighLevelChannelOverride || inferredSocialHighLevelChannel || selectedHighLevelChatChannel
+  const activeHighLevelChatChannel = requestedHighLevelChatChannel === 'sms_qr' && !highLevelConnected
+    ? 'whatsapp_api'
+    : requestedHighLevelChatChannel === 'messenger' && !isChatComposerIntegrationRouteConnected('messenger', {
+        highLevelConnected,
+        metaMessengerConnected,
+        metaInstagramConnected
+      })
+      ? 'whatsapp_api'
+      : requestedHighLevelChatChannel === 'instagram' && !isChatComposerIntegrationRouteConnected('instagram', {
+          highLevelConnected,
+          metaMessengerConnected,
+          metaInstagramConnected
+        })
+        ? 'whatsapp_api'
+        : requestedHighLevelChatChannel
   const defaultHighLevelPhoneNumber = highLevelPhoneNumbers.find((phone) => phone.isDefault) || highLevelPhoneNumbers[0] || null
   const activeHighLevelFromNumberOverride = activeContact?.id
     ? contactHighLevelFromNumberOverrides[activeContact.id] || ''

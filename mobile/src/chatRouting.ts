@@ -54,6 +54,20 @@ export function getNativeWhatsAppPhoneValue(phone?: WhatsAppApiPhoneNumber | nul
   return cleanString(phone?.phone_number || phone?.display_phone_number || phone?.qr_connected_phone);
 }
 
+export function isNativeWhatsAppComposerPhoneConnected(phone?: WhatsAppApiPhoneNumber | null) {
+  if (!cleanString(phone?.id) || !getNativeWhatsAppPhoneValue(phone)) return false;
+  if (phone?.availability) {
+    return Boolean(
+      phone.availability.available
+      || phone.availability.apiAvailable
+      || phone.availability.qrReady
+      || (phone.qr_send_enabled && normalizeRouteToken(phone.qr_status) === 'connected')
+    );
+  }
+  return phone?.api_send_enabled !== false
+    || Boolean(phone?.qr_send_enabled && normalizeRouteToken(phone.qr_status) === 'connected');
+}
+
 export function getPreferredWhatsAppPhoneId(contact: ChatContact) {
   return cleanString(
     contact.preferredWhatsAppPhoneNumberId
