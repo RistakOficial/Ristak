@@ -2516,7 +2516,13 @@ la facultad de cambiar JavaScript publicado.
   debe quedarse como "Evento" sin detalle. Los mensajes de WhatsApp se resumen
   en un solo marcador por dia local; si el mismo dia existe un WhatsApp directo y
   otro atribuido a anuncio, gana/fusiona el atribuido para conservar el origen
-  sin duplicar la entrada del cliente. Los eventos de Messenger/Instagram se
+  sin duplicar la entrada del cliente. WhatsApp pertenece al recorrido de
+  adquisicion solamente antes del primer pago `live` exitoso con importe
+  positivo: un mensaje con el mismo instante del pago o posterior queda fuera,
+  aunque sea organico, venga atribuido a un anuncio o se soliciten mensajes del
+  negocio. La conversacion conserva el historial completo para seguimiento y el
+  journey sigue mostrando ese primer pago y todos los pagos posteriores. Los
+  eventos de Messenger/Instagram se
   resumen por dia local, plataforma y tipo de accion (`message` vs `comment`).
   Asi un DM y un comentario del mismo dia no se pisan entre si, pero cinco
   comentarios del mismo dia siguen contando como un solo punto de comentario.

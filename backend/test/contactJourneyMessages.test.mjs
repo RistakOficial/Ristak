@@ -96,6 +96,7 @@ async function cleanup(contactId, phone, extraPhones = []) {
   await db.run('DELETE FROM video_playback_sessions WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM sessions WHERE contact_id = ?', [contactId]).catch(() => undefined)
   for (const phoneValue of phones) {
+    await db.run('DELETE FROM whatsapp_attribution WHERE contact_id = ? OR phone = ?', [contactId, phoneValue]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_attribution WHERE contact_id = ? OR phone = ?', [contactId, phoneValue]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR phone = ?', [contactId, phoneValue]).catch(() => undefined)
     await db.run('DELETE FROM contact_phone_numbers WHERE contact_id = ? OR phone = ?', [contactId, phoneValue]).catch(() => undefined)
@@ -1797,6 +1798,130 @@ test('contact journey defaults to contact-authored messages only', async () => {
         'meta_message:inbound:DM del contacto',
         'meta_message:outbound:DM del negocio'
       ]
+    )
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
+test('contact journey stops every WhatsApp touch at the first live payment without truncating conversation or later payments', async () => {
+  const id = randomUUID()
+  const contactId = `journey_first_payment_cutoff_${id}`
+  const phone = `+52997${Date.now().toString().slice(-7)}`
+  const firstPaymentAt = '2026-06-16T10:05:00.000Z'
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente con corte de atribución',
+      first_name: 'Cliente',
+      source: 'WhatsApp_API',
+      created_at: '2026-06-16T10:00:00.000Z',
+      updated_at: '2026-06-16T10:00:00.000Z'
+    })
+
+    const messages = [
+      {
+        suffix: 'before',
+        direction: 'inbound',
+        text: 'Pregunta previa al pago',
+        timestamp: '2026-06-16T10:04:00.000Z'
+      },
+      {
+        suffix: 'at_payment_attributed',
+        direction: 'inbound',
+        text: 'Mensaje atribuido a la hora exacta del pago',
+        timestamp: firstPaymentAt,
+        detected_source_id: `ad_after_conversion_${id}`,
+        detected_source_type: 'ad'
+      },
+      {
+        suffix: 'after_organic',
+        direction: 'inbound',
+        text: 'Seguimiento posterior a la compra',
+        timestamp: '2026-06-16T10:06:00.000Z'
+      },
+      {
+        suffix: 'after_outbound',
+        direction: 'outbound',
+        text: 'Entrega posterior enviada por el negocio',
+        timestamp: '2026-06-16T10:07:00.000Z'
+      }
+    ]
+
+    for (const message of messages) {
+      await insertRow('whatsapp_api_messages', {
+        id: `api_payment_cutoff_${message.suffix}_${id}`,
+        contact_id: contactId,
+        phone,
+        from_phone: message.direction === 'inbound' ? phone : '+526561000000',
+        to_phone: message.direction === 'inbound' ? '+526561000000' : phone,
+        business_phone: '+526561000000',
+        transport: 'api',
+        direction: message.direction,
+        message_type: 'text',
+        message_text: message.text,
+        detected_source_id: message.detected_source_id || null,
+        detected_source_type: message.detected_source_type || null,
+        message_timestamp: message.timestamp,
+        created_at: message.timestamp
+      })
+    }
+
+    const legacyFollowUpText = 'Seguimiento legacy posterior a la compra'
+    await insertRow('whatsapp_attribution', {
+      contact_id: contactId,
+      phone,
+      message_content: legacyFollowUpText,
+      referral_source_type: 'ad',
+      referral_source_id: `legacy_ad_after_conversion_${id}`,
+      created_at: '2026-06-16T10:08:00.000Z'
+    })
+
+    // El primer pago usa created_at como fallback canónico cuando date es NULL.
+    await insertRow('payments', {
+      id: `payment_first_${id}`,
+      contact_id: contactId,
+      amount: 100,
+      currency: 'MXN',
+      status: 'paid',
+      payment_mode: 'live',
+      date: null,
+      created_at: firstPaymentAt
+    })
+    await insertRow('payments', {
+      id: `payment_later_${id}`,
+      contact_id: contactId,
+      amount: 50,
+      currency: 'MXN',
+      status: 'paid',
+      payment_mode: 'live',
+      date: '2026-06-20T12:00:00.000Z',
+      created_at: '2026-06-20T12:00:00.000Z'
+    })
+
+    const journey = await readJourney(contactId, { includeBusinessMessages: 'true' })
+    const journeyWhatsAppMessages = journey.filter(event => event.type === 'whatsapp_message')
+    const journeyPayments = journey.filter(event => event.type === 'payment')
+
+    assert.deepEqual(
+      journeyWhatsAppMessages.map(event => event.data.message_text),
+      ['Pregunta previa al pago']
+    )
+    assert.deepEqual(
+      journeyPayments.map(event => event.data.id),
+      [`payment_first_${id}`, `payment_later_${id}`]
+    )
+
+    const conversation = await readConversation(contactId)
+    assert.deepEqual(
+      conversation
+        .filter(event => event.type === 'whatsapp_message')
+        .map(event => event.data.message_text),
+      [...messages.map(message => message.text), legacyFollowUpText]
     )
   } finally {
     await cleanup(contactId, phone)

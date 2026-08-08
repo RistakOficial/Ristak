@@ -6853,15 +6853,17 @@ export const getContactJourney = async (req, res) => {
       AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
       AND ${nonTestPaymentCondition()}
     `
+    const paymentTimestamp = 'COALESCE(date, created_at)'
     const firstPayment = chatMessagesOnly ? null : await db.get(
-      `SELECT date FROM payments
+      `SELECT ${paymentTimestamp} AS first_payment_at FROM payments
        WHERE ${successfulPaymentsCondition}
-       ORDER BY ${timestampSortExpression('date')} ASC, ${timestampSortExpression('created_at')} ASC, id ASC
+       ORDER BY ${timestampSortExpression(paymentTimestamp)} ASC, id ASC
        LIMIT 1`,
       [id],
       databaseOptions
     )
-    const rawFirstPaymentTime = firstPayment?.date ? parseSortableTimestamp(firstPayment.date) : null
+    const firstPaymentAt = firstPayment?.first_payment_at || null
+    const rawFirstPaymentTime = firstPaymentAt ? parseSortableTimestamp(firstPaymentAt) : null
     const firstPaymentTime = Number.isFinite(rawFirstPaymentTime) ? rawFirstPaymentTime : null
 
     const getDateTime = (value) => {
@@ -6873,14 +6875,13 @@ export const getContactJourney = async (req, res) => {
     // El journey default sólo representa acciones del contacto. La conversación usa
     // getContactConversation para incluir mensajes del negocio sin contaminar los
     // timelines de atribución con mensajes salientes.
-    const isStoredChatMessageEvent = (event) => Boolean(
-	      event?.data?.whatsapp_api_message_id ||
-	      event?.data?.whatsapp_message_id ||
-	      event?.data?.email_message_id ||
-	      event?.data?.message_type ||
-	      event?.data?.direction ||
-	      event?.data?.transport
-    )
+    const journeyBeforeFirstPaymentClause = (valueExpression) => firstPaymentAt
+      ? `AND ${timestampSortExpression(valueExpression)} < ${timestampSortParameterExpression()}`
+      : ''
+
+    const appendJourneyFirstPaymentParam = (params) => firstPaymentAt
+      ? [...params, firstPaymentAt]
+      : params
 
     const addWhatsAppJourneyEvents = (events) => {
       events
@@ -6889,11 +6890,7 @@ export const getContactJourney = async (req, res) => {
         .sort((a, b) => getDateTime(a.date) - getDateTime(b.date))
         .forEach(event => {
           const eventTime = getDateTime(event.date)
-          const isAfterFirstPayment = firstPaymentTime !== null && eventTime >= firstPaymentTime
-
-          if (isAfterFirstPayment && !event.data?.is_ad_attributed && !isStoredChatMessageEvent(event)) {
-            return
-          }
+          if (firstPaymentTime !== null && eventTime >= firstPaymentTime) return
 
           journey.push(event)
         })
@@ -6958,7 +6955,8 @@ export const getContactJourney = async (req, res) => {
       })
     }
 
-    // 2. Movimientos de WhatsApp del cliente: diario antes del pago, atribuidos despues.
+    // 2. WhatsApp pertenece al recorrido de adquisición sólo antes del primer pago.
+    // La conversación conserva el historial completo mediante chatMessagesOnly.
     const whatsappJourneyEvents = []
     const whatsappAttributionMessageTimestamp = 'created_at'
     const whatsappMessages = await db.all(
@@ -6968,6 +6966,7 @@ export const getContactJourney = async (req, res) => {
                 ${losslessTimestampCursorProjection(whatsappAttributionMessageTimestamp)} AS journey_message_cursor_date
          FROM whatsapp_attribution
          WHERE contact_id = ?
+         ${journeyBeforeFirstPaymentClause(whatsappAttributionMessageTimestamp)}
          ${journeyMessageBeforeClause(
            whatsappAttributionMessageTimestamp,
            journeyMessageCursorSqlExpression('whatsapp_attribution', 'id'),
@@ -6982,7 +6981,7 @@ export const getContactJourney = async (req, res) => {
                 ${journeyMessageCursorSqlExpression('whatsapp_attribution', 'id')} ASC`,
       appendOptionalLimitParam(
         appendJourneyMessageBeforeParams(
-          [id],
+          appendJourneyFirstPaymentParam([id]),
           journeyMessageBefore,
           journeyMessageBeforeCursor
         ),
@@ -7093,6 +7092,7 @@ export const getContactJourney = async (req, res) => {
            ? = 1
            OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})
          )
+         ${journeyBeforeFirstPaymentClause(whatsappApiMessageTimestamp)}
          ${journeyMessageBeforeClause(
            whatsappApiMessageTimestamp,
            journeyMessageCursorSqlExpression('whatsapp_api', 'msg.id'),
@@ -7107,7 +7107,11 @@ export const getContactJourney = async (req, res) => {
                 ${journeyMessageCursorSqlExpression('whatsapp_api', 'whatsapp_api_message_id')} ASC`,
       appendOptionalLimitParam(
         appendJourneyMessageBeforeParams(
-          [...whatsappApiMessageContactMatch.params, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
+          appendJourneyFirstPaymentParam([
+            ...whatsappApiMessageContactMatch.params,
+            includeBusinessMessages ? 1 : 0,
+            ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS
+          ]),
           journeyMessageBefore,
           journeyMessageBeforeCursor
         ),
@@ -7621,7 +7625,6 @@ export const getContactJourney = async (req, res) => {
     })
 
     // 5. Pagos exitosos: página keyset acotada.
-    const paymentTimestamp = 'COALESCE(date, created_at)'
     const paymentCursorIdentity = journeyMessageCursorSqlExpression('payment', 'id')
     const payments = await db.all(
       `SELECT * FROM (
