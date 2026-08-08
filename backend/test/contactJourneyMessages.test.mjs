@@ -3994,3 +3994,61 @@ test('contact journey preserves the visual structure of sent WhatsApp templates'
     await cleanup(contactId, phone)
   }
 })
+
+test('contact journey repairs legacy object text and exposes a safe contact card', async () => {
+  const id = randomUUID()
+  const hash = id.replaceAll('-', '').slice(0, 24)
+  const contactId = `contact_card_${id}`
+  const phone = `+52993${Date.now().toString().slice(-7)}`
+  const messageId = `waapi_msg_${hash}`
+  const timestamp = '2098-08-07T18:00:00.000Z'
+
+  await cleanup(contactId, phone)
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente contacto visual',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: timestamp,
+      updated_at: timestamp
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: messageId,
+      provider: 'meta_direct',
+      source_adapter: 'meta_direct',
+      provider_message_id: `wamid.${hash}`,
+      wamid: `wamid.${hash}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'contacts',
+      message_text: 'Contacto compartido: [object Object] · +52 443 147 5304',
+      raw_payload_json: JSON.stringify({
+        type: 'contacts',
+        contacts: [{
+          name: { formatted_name: 'Carlos Mendoza', first_name: 'Carlos' },
+          phones: [{ phone: '+52 443 147 5304' }]
+        }]
+      }),
+      message_timestamp: timestamp,
+      created_at: timestamp
+    })
+
+    const journey = await readJourney(contactId, { includeBusinessMessages: 'true' })
+    const message = journey.find(event => event.data?.whatsapp_api_message_id === messageId)
+
+    assert.ok(message)
+    assert.equal(message.data.message_text, 'Contacto compartido: Carlos Mendoza · +52 443 147 5304')
+    assert.equal(message.data.message_presentation.kind, 'contacts')
+    assert.equal(message.data.message_presentation.sections[0].title, 'Carlos Mendoza')
+    assert.doesNotMatch(JSON.stringify(message.data), /\[object Object\]/)
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})

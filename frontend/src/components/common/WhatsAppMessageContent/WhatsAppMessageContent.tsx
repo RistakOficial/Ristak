@@ -1,16 +1,29 @@
 import {
+  CalendarDays,
+  CheckCircle2,
+  CircleDollarSign,
   Copy,
+  CreditCard,
   ExternalLink,
   FileText,
+  Info,
+  KeyRound,
+  Link2,
+  ListChecks,
+  Mail,
   MapPin,
+  Package,
   Phone,
   PhoneCall,
-  Reply
+  Reply,
+  ShoppingBag,
+  UserRound
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { WhatsAppFormattedText } from '../WhatsAppFormattedText'
 import type {
   WhatsAppMessageButtonType,
+  WhatsAppMessageItemKind,
   WhatsAppMessagePresentation
 } from './presentation'
 import styles from './WhatsAppMessageContent.module.css'
@@ -26,7 +39,24 @@ function MessageActionIcon({ type }: { type: WhatsAppMessageButtonType }) {
   if (type === 'phone') return <Phone size={15} aria-hidden="true" />
   if (type === 'copy_code') return <Copy size={15} aria-hidden="true" />
   if (type === 'voice_call') return <PhoneCall size={15} aria-hidden="true" />
+  if (type === 'flow') return <ListChecks size={15} aria-hidden="true" />
+  if (type === 'catalog') return <ShoppingBag size={15} aria-hidden="true" />
+  if (type === 'payment') return <CreditCard size={15} aria-hidden="true" />
+  if (type === 'otp') return <KeyRound size={15} aria-hidden="true" />
   return <Reply size={15} aria-hidden="true" />
+}
+
+function MessageItemIcon({ kind }: { kind: WhatsAppMessageItemKind }) {
+  if (kind === 'contact') return <UserRound size={16} aria-hidden="true" />
+  if (kind === 'phone') return <Phone size={16} aria-hidden="true" />
+  if (kind === 'email') return <Mail size={16} aria-hidden="true" />
+  if (kind === 'address') return <MapPin size={16} aria-hidden="true" />
+  if (kind === 'product') return <Package size={16} aria-hidden="true" />
+  if (kind === 'option') return <CheckCircle2 size={16} aria-hidden="true" />
+  if (kind === 'amount') return <CircleDollarSign size={16} aria-hidden="true" />
+  if (kind === 'calendar') return <CalendarDays size={16} aria-hidden="true" />
+  if (kind === 'link') return <Link2 size={16} aria-hidden="true" />
+  return <Info size={16} aria-hidden="true" />
 }
 
 function MessageHeader({ header }: { header: NonNullable<WhatsAppMessagePresentation['header']> }) {
@@ -82,7 +112,9 @@ export function WhatsAppMessageContent({
   fallbackText = '',
   className
 }: WhatsAppMessageContentProps) {
-  const body = presentation.body || fallbackText
+  const body = presentation.body || (
+    ['template', 'interactive', 'interactive_reply'].includes(presentation.kind) ? fallbackText : ''
+  )
 
   return (
     <div className={cn(styles.content, className)} data-whatsapp-message-content={presentation.kind}>
@@ -90,6 +122,26 @@ export function WhatsAppMessageContent({
       {body ? <WhatsAppFormattedText text={body} className={styles.body} /> : null}
       {presentation.footer ? (
         <WhatsAppFormattedText text={presentation.footer} className={styles.footer} />
+      ) : null}
+      {presentation.sections?.length ? (
+        <div className={styles.sections} aria-label="Detalles del mensaje de WhatsApp">
+          {presentation.sections.map((section, sectionIndex) => (
+            <section className={styles.section} key={`${section.title || 'section'}-${sectionIndex}`}>
+              {section.title ? <strong className={styles.sectionTitle}>{section.title}</strong> : null}
+              <div className={styles.items}>
+                {section.items.map((item, itemIndex) => (
+                  <div className={styles.item} key={`${item.kind}-${item.label}-${itemIndex}`}>
+                    <span className={styles.itemIcon}><MessageItemIcon kind={item.kind} /></span>
+                    <span className={styles.itemText}>
+                      <span>{item.label}</span>
+                      {item.value ? <small>{item.value}</small> : null}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
       ) : null}
       {presentation.buttons.length ? (
         <div className={styles.actions} aria-label="Opciones mostradas en WhatsApp">

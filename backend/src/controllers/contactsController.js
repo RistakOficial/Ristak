@@ -2280,7 +2280,10 @@ const getWhatsAppLocationFromPayload = (rawPayload, messageType = '') => {
   const candidates = [
     payload.location,
     payload.locationMessage,
+    payload.liveLocationMessage,
     payload.qrRaw?.location,
+    payload.qrRaw?.message?.liveLocationMessage,
+    payload.qrRaw?.message?.locationMessage,
     payload.whatsappMessage?.location,
     payload.whatsappInboundMessage?.location,
     payload.message?.location,
@@ -7148,6 +7151,10 @@ export const getContactJourney = async (req, res) => {
       const payloadLocation = getWhatsAppLocationFromPayload(msg.raw_payload_json, msg.message_type)
       const rawPayload = parseJsonObject(msg.raw_payload_json)
       const supplementalMessageText = extractSupplementalWhatsAppMessageText(rawPayload)
+      const storedMessageText = cleanString(msg.message_text)
+      const visibleMessageText = supplementalMessageText && /\[object Object\]/i.test(storedMessageText)
+        ? supplementalMessageText
+        : (storedMessageText || supplementalMessageText)
       const agentMetadata = extractConversationalAgentMessageMetadata(rawPayload)
       const context = parseJsonObject(msg.context_json)
       const detectedAttribution = detectWhatsAppAttributionFields({ row: msg, rawPayload, context }, [msg.message_text])
@@ -7182,7 +7189,7 @@ export const getContactJourney = async (req, res) => {
         provider: msg.provider || 'ycloud',
         source_adapter: msg.source_adapter || (msg.transport === 'qr' ? 'baileys' : 'ycloud'),
         routing_reason: msg.routing_reason || null,
-        message_text: stripRistakAdIdMarkersFromText(msg.message_text || supplementalMessageText),
+        message_text: stripRistakAdIdMarkersFromText(visibleMessageText),
         message_type: msg.message_type,
         message_presentation: messagePresentation,
         ...media,

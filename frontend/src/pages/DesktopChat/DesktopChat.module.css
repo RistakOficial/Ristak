@@ -1607,6 +1607,14 @@
   padding: 4px;
 }
 
+.messageStickerBubble {
+  width: fit-content;
+  max-width: min(210px, 100%);
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .messageAudioBubble {
   width: min(390px, 100%);
   max-width: min(390px, 100%);
@@ -2315,6 +2323,19 @@
   aspect-ratio: 4 / 3;
   line-height: 0;
   vertical-align: top;
+}
+
+.mediaAttachmentSticker {
+  width: min(196px, 42vw);
+  aspect-ratio: 1;
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+
+.mediaAttachmentSticker .mediaAttachmentPlaceholder,
+.mediaAttachmentSticker img {
+  background: transparent;
 }
 
 .mediaAttachmentPlaceholder {

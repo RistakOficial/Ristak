@@ -2883,10 +2883,13 @@ a otro canal, desktop y móvil piden escoger el canal correcto; no presentan una
 desconexión global ficticia. El backend repite la misma validación antes de tocar
 Graph o YCloud.
 
-El historial conserva la estructura visible de las plantillas y mensajes
-interactivos de WhatsApp. El journey reconstruye `message_presentation` desde el
-snapshot durable del envío y expone encabezado, cuerpo, pie y únicamente el tipo
-y la etiqueta de cada botón. `/chat` y `/movil` usan el mismo componente web;
+El historial conserva la estructura visible de los mensajes enriquecidos de
+WhatsApp. El journey reconstruye `message_presentation` desde el payload durable
+y expone un contrato seguro con encabezado, cuerpo, pie, secciones, filas y
+únicamente el tipo y la etiqueta de cada botón. Además de plantillas e
+interactivos, cubre contactos, pedidos, productos, encuestas, eventos, pagos,
+respuestas de botón/lista/Flow, avisos del sistema y contenido no compatible.
+`/chat` y `/movil` usan el mismo componente web;
 los clientes nativos `mobile/` (Android) e `ios/app` consumen el mismo contrato y
 lo representan con sus controles visuales propios. La estructura aparece dentro
 del globo, incluida la vista previa y el detalle del mensaje móvil web. Los
@@ -2895,13 +2898,29 @@ exponen ni ejecutan URLs, teléfonos, códigos o payloads desde el CRM. Así, to
 la copia de un botón de videollamada en Ristak no dispara tracking ni registra
 una asistencia falsa; el botón real sigue funcionando solamente en WhatsApp.
 
+Las tarjetas de contacto leen tanto el objeto oficial `name.formatted_name` como
+los nombres y teléfonos de vCard usados por QR. Nunca convierten un objeto a
+texto ni muestran `[object Object]`. El GET también repara ese texto en filas
+históricas usando `raw_payload_json`, sin migración destructiva. Los pedidos y
+pagos muestran importes únicamente cuando el proveedor incluyó moneda explícita;
+no infieren MXN, USD ni la moneda del navegador. Las respuestas de Flow descartan
+tokens, IDs técnicos y campos internos antes de construir sus filas visibles.
+
 Los mensajes entrantes sin texto no se convierten por defecto en una burbuja
 genérica `Mensaje`. Imagen, GIF, sticker, video, audio/voz, documento, ubicación,
-contacto, pedido, sistema, botón/interactivo, reacción y plantilla conservan un
-nombre legible; contactos, pedidos, avisos del sistema y ediciones extraen además
-el contenido que venga dentro del payload. Esta lectura también se aplica al
-payload histórico cuando la columna `message_text` quedó vacía. Un evento
+contacto, pedido, producto, encuesta, evento, pago, invitación a grupo, solicitud
+de contacto, paquete de stickers, sistema, botón/interactivo, reacción y plantilla
+conservan un nombre legible. Esta lectura también se aplica al payload histórico
+cuando la columna `message_text` quedó vacía o contiene el placeholder roto
+`[object Object]`. Un evento
 `edit` sin contenido y un recibo `status` no son mensajes visibles.
+
+Ubicaciones estáticas y en tiempo real se normalizan a la tarjeta de mapa
+existente. GIF mantiene animación y visor; sticker conserva WebP y se dibuja en
+un lienzo compacto transparente, sin el rectángulo de foto. Reacciones siguen
+ancladas al mensaje objetivo. Estas reglas aplican en mensajes enviados y
+recibidos, en desktop, web móvil, Android Expo e iOS SwiftUI; el snapshot local
+de iOS preserva también secciones y filas para el modo sin conexión.
 
 Cuando WhatsApp o Meta entrega `unsupported`, `unknown`, `131051`, `131060` o
 una señal equivalente sin el contenido original, Ristak no puede reconstruir lo

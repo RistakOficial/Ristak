@@ -395,12 +395,29 @@ contacto; esa fila es invisible para conversación, bandeja y conteos, y el
 INSERT del envío la convierte en el mensaje real usando el mismo `wamid`.
 
 Los formatos entrantes se normalizan antes de construir el journey. Además de
-texto, media, ubicación, reacción, botones, interactivos y plantillas, el
-extractor compartido debe leer `contacts`, `order`, `system` y el mensaje anidado
-de `edit`. Si una fila histórica tiene `message_text` vacío, el GET de la
-conversación vuelve a extraer esos formatos desde `raw_payload_json`; no exige
-reescribir ni borrar el evento original. Un `edit` que no trae contenido y un
-`status` son controles, no burbujas visibles.
+texto, media, ubicación estática/en vivo, reacción, botones, interactivos y
+plantillas, el extractor compartido lee `contacts`, `order`, `product`, encuestas,
+eventos, pagos, respuestas de botón/lista/Flow, `system` y el mensaje anidado de
+`edit`. QR/Baileys conserva además vCard, pedido, producto, encuesta, evento,
+solicitud de pago, invitación a grupo, solicitud de teléfono y paquete de
+stickers cuando son contenido visible; recibos técnicos y mutaciones cifradas
+no crean globos independientes.
+
+`message_presentation` es la frontera pública: `{kind, header, body, footer,
+buttons, sections}`. Una sección contiene solo título y filas
+`{kind,label,value}`. No expone URL accionable, teléfono accionable, payload,
+invite code, token de Flow, firma, nonce ni ID interno. Si una fila histórica
+tiene `message_text` vacío o el placeholder `[object Object]`, el GET vuelve a
+extraer el texto desde `raw_payload_json`; no exige reescribir ni borrar el
+evento original. Un `edit` sin contenido y un `status` son controles, no
+burbujas visibles.
+
+La moneda de pedidos/pagos pertenece al payload externo. Solo se formatea si el
+proveedor incluyó un código ISO explícito; nunca se rellena con un default de
+cuenta, país o navegador. Los eventos compartidos no reinterpretan horas desde
+la zona del dispositivo: mientras el payload no cruce por los helpers de zona
+del negocio, la tarjeta muestra nombre, descripción, ubicación y enlace, pero no
+inventa una hora local.
 
 `type=unsupported`/`unknown` y los errores `131051` o `131060` significan que el
 proveedor no entregó el contenido a Ristak. El payload se conserva para soporte,

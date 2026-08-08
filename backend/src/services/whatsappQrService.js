@@ -1075,6 +1075,14 @@ function describeBaileysMessageContent(content) {
       ...(location ? { location } : {})
     }
   }
+  if (unwrapped.liveLocationMessage) {
+    const location = normalizeBaileysLocationMessage(unwrapped.liveLocationMessage)
+    return {
+      type: 'location',
+      text: cleanString(unwrapped.liveLocationMessage.caption || 'Ubicación en tiempo real'),
+      ...(location ? { location: { ...location, live: true } } : {})
+    }
+  }
   if (unwrapped.reactionMessage) {
     const reaction = unwrapped.reactionMessage
     const emoji = cleanString(reaction.text || reaction.emoji)
@@ -1090,10 +1098,56 @@ function describeBaileysMessageContent(content) {
     }
   }
   if (unwrapped.contactMessage || unwrapped.contactsArrayMessage) {
-    return { type: 'contacts', text: cleanString(unwrapped.contactMessage?.displayName) }
+    const contacts = [
+      ...(unwrapped.contactMessage ? [unwrapped.contactMessage] : []),
+      ...(Array.isArray(unwrapped.contactsArrayMessage?.contacts) ? unwrapped.contactsArrayMessage.contacts : [])
+    ]
+    const names = contacts.map(contact => cleanString(contact?.displayName)).filter(Boolean)
+    return {
+      type: 'contacts',
+      text: names.length === 1 ? `Contacto compartido: ${names[0]}` : `${contacts.length} contactos compartidos`
+    }
+  }
+  if (unwrapped.orderMessage) {
+    return {
+      type: 'order',
+      text: cleanString(unwrapped.orderMessage.message || unwrapped.orderMessage.orderTitle || 'Pedido compartido')
+    }
+  }
+  if (unwrapped.productMessage) {
+    const product = unwrapped.productMessage.product || unwrapped.productMessage.productSnapshot || {}
+    return { type: 'product', text: cleanString(product.title || product.name || 'Producto compartido') }
+  }
+  const poll = unwrapped.pollCreationMessage ||
+    unwrapped.pollCreationMessageV2 ||
+    unwrapped.pollCreationMessageV3 ||
+    unwrapped.pollCreationMessageV4 ||
+    unwrapped.pollResultSnapshotMessage
+  if (poll) return { type: 'poll', text: cleanString(poll.name || poll.question || 'Encuesta compartida') }
+  if (unwrapped.eventMessage) {
+    return { type: 'event', text: cleanString(unwrapped.eventMessage.name || unwrapped.eventMessage.title || 'Evento compartido') }
+  }
+  if (unwrapped.scheduledCallCreationMessage) {
+    return { type: 'event', text: cleanString(unwrapped.scheduledCallCreationMessage.title || 'Llamada programada') }
+  }
+  if (unwrapped.requestPaymentMessage || unwrapped.sendPaymentMessage || unwrapped.paymentInviteMessage) {
+    const payment = unwrapped.requestPaymentMessage || unwrapped.sendPaymentMessage || unwrapped.paymentInviteMessage
+    return { type: 'payment_request', text: cleanString(payment.note || payment.description || 'Solicitud de pago') }
+  }
+  if (unwrapped.groupInviteMessage) {
+    return {
+      type: 'group_invite',
+      text: cleanString(unwrapped.groupInviteMessage.groupName || unwrapped.groupInviteMessage.caption || 'Invitación a grupo')
+    }
+  }
+  if (unwrapped.requestPhoneNumberMessage) {
+    return { type: 'contact_request', text: 'Solicitud de número de teléfono' }
+  }
+  if (unwrapped.stickerPackMessage || unwrapped.stickerPackSizeMessage) {
+    return { type: 'sticker_pack', text: 'Paquete de stickers compartido' }
   }
 
-  // Eventos de protocolo, encuestas y demás no forman parte del historial de chat.
+  // Recibos técnicos y mutaciones cifradas no generan globos independientes.
   return null
 }
 

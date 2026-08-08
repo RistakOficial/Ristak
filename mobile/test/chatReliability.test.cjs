@@ -107,6 +107,33 @@ test('Android conserva la estructura visual de plantillas sin ejecutar sus boton
   );
 });
 
+test('Android conserva tarjetas estructuradas de contactos y descarta acciones privadas', () => {
+  const presentation = normalizeWhatsAppMessagePresentation({
+    kind: 'contacts',
+    header: { kind: 'text', text: 'Contacto compartido' },
+    body: '',
+    buttons: [],
+    sections: [{
+      title: 'Carlos Mendoza',
+      items: [
+        { kind: 'phone', label: '+52 443 147 5304', href: 'tel:+524431475304' },
+        { kind: 'email', label: 'carlos@example.com' },
+      ],
+    }],
+  });
+
+  assert.deepEqual(presentation.sections, [{
+    title: 'Carlos Mendoza',
+    items: [
+      { kind: 'phone', label: '+52 443 147 5304' },
+      { kind: 'email', label: 'carlos@example.com' },
+    ],
+  }]);
+  const appSource = fs.readFileSync(require.resolve('../src/App.tsx'), 'utf8');
+  assert.match(appSource, /function NativeMessageItemIcon/);
+  assert.match(appSource, /messageStickerMedia/);
+});
+
 test('seleccionar todos conserva ids que no estan en la pagina visible', () => {
   const allIds = normalizeChatSelectionIds([
     { id: 'visible-1' },

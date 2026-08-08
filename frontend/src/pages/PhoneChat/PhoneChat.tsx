@@ -16773,6 +16773,7 @@ export const PhoneChat: React.FC = () => {
               const isAudioAttachment = message.attachment?.type === 'audio'
               const isAudioMessage = isAudioAttachment && Boolean(message.attachment?.dataUrl || message.attachment?.url)
               const isImageMessage = message.attachment?.type === 'image' && Boolean(message.attachment.dataUrl || message.attachment.url)
+              const isStickerMessage = isImageMessage && String(message.messageType || '').toLowerCase().includes('sticker')
               const isVideoMessage = message.attachment?.type === 'video' && Boolean(message.attachment.dataUrl || message.attachment.url)
               const isGifVideoMessage = isVideoMessage && Boolean(message.attachment?.isGif)
               const isFileMessage = Boolean(message.attachment && ['document', 'file'].includes(message.attachment.type))
@@ -16820,7 +16821,7 @@ export const PhoneChat: React.FC = () => {
                     </span>
                     {message.direction !== 'outbound' ? renderAgentSideMarker(message) : null}
                     <div
-                      className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isImageMessage ? styles.messageImageBubble : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${isLocationMessage ? styles.messageLocationBubble : ''} ${isEmailMessage ? styles.messageEmailBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''} ${message.isComment ? styles.messageComment : ''}`}
+                      className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isImageMessage ? styles.messageImageBubble : ''} ${isStickerMessage ? styles.messageStickerBubble : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${isLocationMessage ? styles.messageLocationBubble : ''} ${isEmailMessage ? styles.messageEmailBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''} ${message.isComment ? styles.messageComment : ''}`}
                       data-chat-channel={getChatBubbleColorChannel(messageChannel, message.direction)}
                       data-chat-message-id={message.id}
                       data-chat-search-id={searchTargetId}
@@ -16904,7 +16905,7 @@ export const PhoneChat: React.FC = () => {
                     {message.attachment?.type === 'image' && (message.attachment.dataUrl || message.attachment.url) && (
                       <button
                         type="button"
-                        className={styles.messageMediaButton}
+                        className={`${styles.messageMediaButton} ${isStickerMessage ? styles.messageStickerMedia : ''}`}
                         onClick={() => openMessageAttachmentFocus(message)}
                         aria-label={message.attachment.name || (message.attachment.isGif ? 'Abrir GIF' : 'Abrir foto')}
                       >

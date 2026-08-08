@@ -114,6 +114,7 @@ export {
 export type {
   WhatsAppMessageButtonType,
   WhatsAppMessageContentProps,
+  WhatsAppMessageItemKind,
   WhatsAppMessagePresentation
 } from './WhatsAppMessageContent'
 export { CustomSelect } from './CustomSelect'

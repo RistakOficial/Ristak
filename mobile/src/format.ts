@@ -5,6 +5,7 @@ import type {
   JourneyEvent,
   ChatMessage,
   WhatsAppMessageButtonType,
+  WhatsAppMessageItemKind,
   WhatsAppMessagePresentation,
 } from './types';
 import { resolveChatMessageChannel } from './chatMessageChannel';
@@ -696,7 +697,10 @@ function getJourneyAgentMessageMetadata(data: Record<string, unknown>) {
   };
 }
 
-const WHATSAPP_PRESENTATION_KINDS = new Set<WhatsAppMessagePresentation['kind']>(['template', 'interactive']);
+const WHATSAPP_PRESENTATION_KINDS = new Set<WhatsAppMessagePresentation['kind']>([
+  'template', 'interactive', 'interactive_reply', 'contacts', 'order', 'product',
+  'poll', 'event', 'payment', 'system', 'unsupported',
+]);
 const WHATSAPP_HEADER_KINDS = new Set<NonNullable<WhatsAppMessagePresentation['header']>['kind']>([
   'text',
   'image',
@@ -710,7 +714,14 @@ const WHATSAPP_BUTTON_TYPES = new Set<WhatsAppMessageButtonType>([
   'phone',
   'copy_code',
   'voice_call',
+  'flow',
+  'catalog',
+  'payment',
+  'otp',
   'unknown',
+]);
+const WHATSAPP_ITEM_KINDS = new Set<WhatsAppMessageItemKind>([
+  'contact', 'phone', 'email', 'address', 'product', 'option', 'amount', 'calendar', 'link', 'info',
 ]);
 
 function cleanPresentationText(value: unknown, maxLength = 50_000) {
@@ -750,7 +761,31 @@ export function normalizeWhatsAppMessagePresentation(value: unknown): WhatsAppMe
     : [];
   const body = cleanPresentationText(source.body);
   const footer = cleanPresentationText(source.footer, 500);
-  if (!body && !footer && !header && !buttons.length) return undefined;
+  const sections = Array.isArray(source.sections)
+    ? source.sections.flatMap((entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+        const section = entry as Record<string, unknown>;
+        const items = Array.isArray(section.items)
+          ? section.items.flatMap((rawItem) => {
+              if (!rawItem || typeof rawItem !== 'object' || Array.isArray(rawItem)) return [];
+              const item = rawItem as Record<string, unknown>;
+              const label = cleanPresentationText(item.label, 500);
+              const value = cleanPresentationText(item.value, 2_000);
+              const rawKind = cleanPresentationText(item.kind, 40) as WhatsAppMessageItemKind;
+              if (!label) return [];
+              return [{
+                kind: WHATSAPP_ITEM_KINDS.has(rawKind) ? rawKind : 'info' as WhatsAppMessageItemKind,
+                label,
+                ...(value ? { value } : {}),
+              }];
+            }).slice(0, 30)
+          : [];
+        if (!items.length) return [];
+        const title = cleanPresentationText(section.title, 240);
+        return [{ ...(title ? { title } : {}), items }];
+      }).slice(0, 20)
+    : [];
+  if (!body && !footer && !header && !buttons.length && !sections.length) return undefined;
 
   return {
     kind,
@@ -758,6 +793,7 @@ export function normalizeWhatsAppMessagePresentation(value: unknown): WhatsAppMe
     body,
     ...(footer ? { footer } : {}),
     buttons,
+    ...(sections.length ? { sections } : {}),
   };
 }
 

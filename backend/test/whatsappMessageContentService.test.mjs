@@ -17,7 +17,37 @@ test('normaliza contactos compartidos con nombre y teléfonos', () => {
         }
       ]
     }),
-    'Contacto compartido: Ana Torres · +52 656 123 4567, 526561234567'
+    'Contacto compartido: Ana Torres · +52 656 123 4567'
+  )
+
+  assert.equal(
+    extractSupplementalWhatsAppMessageText({
+      type: 'contacts',
+      contacts: [{
+        name: { formatted_name: 'Carlos Mendoza', first_name: 'Carlos' },
+        phones: [{ phone: '+52 443 147 5304' }]
+      }]
+    }),
+    'Contacto compartido: Carlos Mendoza · +52 443 147 5304'
+  )
+  assert.doesNotMatch(
+    extractSupplementalWhatsAppMessageText({
+      type: 'contacts',
+      contacts: [{ name: { formatted_name: 'Carlos Mendoza' } }]
+    }),
+    /\[object Object\]/
+  )
+})
+
+test('lee contactos QR en vCard sin imprimir objetos internos', () => {
+  assert.equal(
+    extractSupplementalWhatsAppMessageText({
+      type: 'contacts',
+      contacts: [{
+        vcard: 'BEGIN:VCARD\nVERSION:3.0\nFN:María López\nTEL;TYPE=CELL:+52 656 555 0101\nEND:VCARD'
+      }]
+    }),
+    'Contacto compartido: María López · +52 656 555 0101'
   )
 })
 

@@ -281,10 +281,43 @@ export type ChatReaction = {
   direction?: 'inbound' | 'outbound' | 'system';
 };
 
-export type WhatsAppMessageButtonType = 'quick_reply' | 'url' | 'phone' | 'copy_code' | 'voice_call' | 'unknown';
+export type WhatsAppMessageButtonType =
+  | 'quick_reply'
+  | 'url'
+  | 'phone'
+  | 'copy_code'
+  | 'voice_call'
+  | 'flow'
+  | 'catalog'
+  | 'payment'
+  | 'otp'
+  | 'unknown';
+
+export type WhatsAppMessageItemKind =
+  | 'contact'
+  | 'phone'
+  | 'email'
+  | 'address'
+  | 'product'
+  | 'option'
+  | 'amount'
+  | 'calendar'
+  | 'link'
+  | 'info';
 
 export type WhatsAppMessagePresentation = {
-  kind: 'template' | 'interactive';
+  kind:
+    | 'template'
+    | 'interactive'
+    | 'interactive_reply'
+    | 'contacts'
+    | 'order'
+    | 'product'
+    | 'poll'
+    | 'event'
+    | 'payment'
+    | 'system'
+    | 'unsupported';
   header?: {
     kind: 'text' | 'image' | 'video' | 'document' | 'location';
     text?: string;
@@ -296,6 +329,14 @@ export type WhatsAppMessagePresentation = {
   buttons: Array<{
     type: WhatsAppMessageButtonType;
     label: string;
+  }>;
+  sections?: Array<{
+    title?: string;
+    items: Array<{
+      kind: WhatsAppMessageItemKind;
+      label: string;
+      value?: string;
+    }>;
   }>;
 };
 

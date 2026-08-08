@@ -287,6 +287,10 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     `whatsapp_message`, `meta_message`, `email_message`,
     `appointment_confirmation`, adjuntos basicos, ubicacion, comentarios,
     estados, timestamps de lectura/entrega, reacciones y mensajes de sistema.
+    También conserva el contrato enriquecido de WhatsApp para contactos,
+    pedidos, productos, encuestas, eventos, pagos, botones/listas/Flow y avisos;
+    las secciones sobreviven en la cache iOS sin exponer acciones privadas. GIF
+    mantiene animacion y sticker usa canvas cuadrado transparente en Android/iOS.
     La UI nativa ya agrupa por dia con zona horaria del negocio, pinta globos
     inbound/outbound, media imagen, tarjetas de archivo/ubicacion, contexto de
     comentario, receipts y errores. Falta correo desplegable completo, player

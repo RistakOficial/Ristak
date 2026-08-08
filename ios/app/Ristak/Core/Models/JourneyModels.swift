@@ -149,6 +149,10 @@ enum WhatsAppMessageButtonType: String, Sendable, Equatable {
     case phone
     case copyCode = "copy_code"
     case voiceCall = "voice_call"
+    case flow
+    case catalog
+    case payment
+    case otp
     case unknown
 }
 
@@ -169,8 +173,24 @@ struct WhatsAppMessagePresentation: Sendable, Equatable {
         var label: String
     }
 
+    struct Section: Sendable, Equatable {
+        struct Item: Sendable, Equatable {
+            enum Kind: String, Sendable, Equatable {
+                case contact, phone, email, address, product, option, amount, calendar, link, info
+            }
+
+            var kind: Kind
+            var label: String
+            var value: String? = nil
+        }
+
+        var title: String?
+        var items: [Item]
+    }
+
     enum Kind: String, Sendable, Equatable {
-        case template, interactive
+        case template, interactive, contacts, order, product, poll, event, payment, system, unsupported
+        case interactiveReply = "interactive_reply"
     }
 
     var kind: Kind
@@ -178,6 +198,7 @@ struct WhatsAppMessagePresentation: Sendable, Equatable {
     var body: String
     var footer: String?
     var buttons: [Action]
+    var sections: [Section] = []
 }
 
 /// Estado de palomitas de un mensaje saliente. Sets normalizados de `/movil`
@@ -837,15 +858,42 @@ enum ChatJourneyParser {
             }
         }
 
+        var sections: [WhatsAppMessagePresentation.Section] = []
+        if case .array(let rawSections)? = source["sections"] {
+            for rawSection in rawSections.prefix(20) {
+                guard case .object(let section) = rawSection else { continue }
+                var items: [WhatsAppMessagePresentation.Section.Item] = []
+                if case .array(let rawItems)? = section["items"] {
+                    for rawItem in rawItems.prefix(30) {
+                        guard case .object(let item) = rawItem else { continue }
+                        let label = cleanPresentationText(readString(item, ["label"]), maxLength: 500)
+                        guard !label.isEmpty else { continue }
+                        let rawKind = cleanPresentationText(readString(item, ["kind"]), maxLength: 40)
+                        items.append(WhatsAppMessagePresentation.Section.Item(
+                            kind: WhatsAppMessagePresentation.Section.Item.Kind(rawValue: rawKind) ?? .info,
+                            label: label,
+                            value: nonEmpty(cleanPresentationText(readString(item, ["value"]), maxLength: 2_000))
+                        ))
+                    }
+                }
+                guard !items.isEmpty else { continue }
+                sections.append(WhatsAppMessagePresentation.Section(
+                    title: nonEmpty(cleanPresentationText(readString(section, ["title"]), maxLength: 240)),
+                    items: items
+                ))
+            }
+        }
+
         let body = cleanPresentationText(readString(source, ["body"]))
         let footer = nonEmpty(cleanPresentationText(readString(source, ["footer"]), maxLength: 500))
-        guard !body.isEmpty || footer != nil || header != nil || !buttons.isEmpty else { return nil }
+        guard !body.isEmpty || footer != nil || header != nil || !buttons.isEmpty || !sections.isEmpty else { return nil }
         return WhatsAppMessagePresentation(
             kind: kind,
             header: header,
             body: body,
             footer: footer,
-            buttons: buttons
+            buttons: buttons,
+            sections: sections
         )
     }
 

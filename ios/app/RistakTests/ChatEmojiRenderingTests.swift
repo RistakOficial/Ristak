@@ -153,6 +153,47 @@ final class ChatEmojiRenderingTests: XCTestCase {
         ])
     }
 
+    func testWhatsAppContactKeepsStructuredRowsWithoutUnsafeFields() throws {
+        let events = try decodeEvents(
+            """
+            [
+              {
+                "type": "whatsapp_message",
+                "date": "2026-08-07T18:00:00Z",
+                "data": {
+                  "whatsapp_api_message_id": "contact-card-1",
+                  "message_type": "contacts",
+                  "direction": "inbound",
+                  "transport": "api",
+                  "message_presentation": {
+                    "kind": "contacts",
+                    "header": { "kind": "text", "text": "Contacto compartido" },
+                    "body": "",
+                    "buttons": [],
+                    "sections": [{
+                      "title": "Carlos Mendoza",
+                      "items": [
+                        { "kind": "phone", "label": "+52 443 147 5304", "href": "tel:+524431475304" },
+                        { "kind": "email", "label": "carlos@example.com" }
+                      ]
+                    }]
+                  }
+                }
+              }
+            ]
+            """
+        )
+
+        let message = try XCTUnwrap(ChatJourneyParser.buildMessages(contactId: "contact-1", events: events).first)
+        let presentation = try XCTUnwrap(message.presentation)
+        XCTAssertEqual(presentation.kind, .contacts)
+        XCTAssertEqual(presentation.sections.first?.title, "Carlos Mendoza")
+        XCTAssertEqual(presentation.sections.first?.items, [
+            WhatsAppMessagePresentation.Section.Item(kind: .phone, label: "+52 443 147 5304"),
+            WhatsAppMessagePresentation.Section.Item(kind: .email, label: "carlos@example.com")
+        ])
+    }
+
     private func decodeEvents(_ json: String) throws -> [JourneyEvent] {
         try JSONDecoder().decode([JourneyEvent].self, from: Data(json.utf8))
     }

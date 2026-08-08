@@ -899,6 +899,25 @@ Messenger, Instagram o HighLevel se manda como texto con link de mapa cuando no
 exista soporte nativo verificado. iOS requiere
 `NSLocationWhenInUseUsageDescription` en `ios/app/Support/Info.plist`.
 
+El timeline móvil consume el mismo `message_presentation` seguro que desktop.
+Web móvil, Android Expo e iOS SwiftUI representan contactos, pedidos, productos,
+encuestas, eventos, pagos, respuestas de botón/lista/Flow y avisos como tarjetas
+planas dentro del globo: encabezado, cuerpo, secciones con icono y acciones
+históricas no ejecutables. Teléfonos, enlaces, códigos, payloads y tokens no se
+vuelven controles activos desde Ristak. iOS incluye las secciones en
+`ChatThreadSnapshotCache`, por lo que el formato se conserva al reabrir sin red.
+
+GIF conserva animación y acceso al visor. Sticker WebP usa un canvas cuadrado
+compacto y fondo transparente en web móvil, Android e iOS; no reutiliza el marco
+4:3 de una fotografía. Las ubicaciones en vivo recibidas por QR se reducen a la
+última coordenada disponible y usan la misma tarjeta de mapa que una ubicación
+estática; Ristak no intenta reproducir el movimiento histórico.
+
+Las push sin texto usan etiquetas semánticas para contacto, pedido, producto,
+encuesta, evento, pago, invitación de grupo, solicitud de contacto y paquete de
+stickers. Si existe texto real del cliente se respeta y no se reemplaza por la
+etiqueta.
+
 En QR, YCloud y Meta Direct, mensaje, unread y SSE quedan confirmados antes de
 esperar la red push. QR y YCloud disparan la notificacion best-effort fuera de su
 ruta critica. Meta Direct inserta un job `push` en

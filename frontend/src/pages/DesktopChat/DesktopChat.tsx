@@ -8948,6 +8948,9 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
   const getMessageBubbleMediaClass = (message: DesktopChatMessage) => {
     if (message.location) return styles.messageLocationBubble
     const attachmentType = message.attachment?.type
+    if (attachmentType === 'image' && String(message.messageType || '').toLowerCase().includes('sticker')) {
+      return styles.messageStickerBubble
+    }
     if (attachmentType === 'image' || attachmentType === 'video') return styles.messageMediaBubble
     if (attachmentType === 'audio') return styles.messageAudioBubble
     return ''
@@ -9136,7 +9139,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
       return (
         <button
           type="button"
-          className={`${styles.mediaAttachment} ${styles.mediaAttachmentImage}`}
+          className={`${styles.mediaAttachment} ${styles.mediaAttachmentImage} ${String(message.messageType || '').toLowerCase().includes('sticker') ? styles.mediaAttachmentSticker : ''}`}
           onClick={openAttachmentFocus}
           aria-label={attachment.name || (attachment.isGif ? 'Abrir GIF' : 'Abrir foto')}
         >

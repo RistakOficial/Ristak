@@ -66,6 +66,30 @@ struct ChatRemoteImage: View {
     }
 }
 
+/// `SwiftUI.Image` no reproduce todos los cuadros de un `UIImage` animado. Este
+/// puente conserva la animación nativa de `UIImageView` sin meter una dependencia.
+private struct ChatAnimatedImage: UIViewRepresentable {
+    let image: UIImage
+    var contentMode: UIView.ContentMode = .scaleAspectFit
+
+    func makeUIView(context: Context) -> UIImageView {
+        let view = UIImageView()
+        view.clipsToBounds = true
+        view.contentMode = contentMode
+        return view
+    }
+
+    func updateUIView(_ view: UIImageView, context: Context) {
+        view.contentMode = contentMode
+        guard view.image !== image else { return }
+        view.stopAnimating()
+        view.image = image
+        if image.images?.isEmpty == false {
+            view.startAnimating()
+        }
+    }
+}
+
 // MARK: - Imagen
 
 /// Canvas inmutable de foto/video dentro del timeline. No depende de que la red
@@ -128,9 +152,11 @@ enum ChatVisualMediaPresentation {
 
 struct ImageAttachmentView: View {
     let attachment: ChatAttachment
+    var isSticker = false
 
     @State private var showsViewer = false
     @State private var localImage: UIImage?
+    @State private var animatedRemoteImage: UIImage?
 
     private var remoteURL: URL? {
         guard let raw = attachment.url, let url = URL(string: raw) else { return nil }
@@ -139,7 +165,10 @@ struct ImageAttachmentView: View {
 
     var body: some View {
         content
-            .frame(width: ChatVisualMediaLayout.size.width, height: ChatVisualMediaLayout.size.height)
+            .frame(
+                width: isSticker ? 196 : ChatVisualMediaLayout.size.width,
+                height: isSticker ? 196 : ChatVisualMediaLayout.size.height
+            )
             .clipped()
             .contentShape(Rectangle())
             .onTapGesture {
@@ -153,20 +182,37 @@ struct ImageAttachmentView: View {
                 // El binario optimista se decodifica fuera de main sin convertirlo
                 // primero a un String base64. `dataUrl` queda solo para mensajes
                 // legacy recibidos del servidor.
+                let shouldAnimate = prefersAnimation
                 let decoded = await Task.detached(priority: .userInitiated) { () -> UIImage? in
-                    let image: UIImage?
+                    let data: Data?
                     if let previewData {
-                        image = UIImage(data: previewData)
+                        data = previewData
                     } else if let dataURL {
-                        image = Self.decodeDataURL(dataURL)
+                        data = Self.decodeDataURLData(dataURL)
                     } else {
-                        image = nil
+                        data = nil
                     }
+                    guard let data else { return nil }
+                    let image = shouldAnimate
+                        ? RistakImageLoader.animatedImage(from: data)
+                        : UIImage(data: data)
                     guard let image else { return nil }
+                    if shouldAnimate { return image }
                     return image.preparingForDisplay() ?? image
                 }.value
                 guard let image = decoded, !Task.isCancelled else { return }
                 localImage = image
+            }
+            .task(id: animatedRemoteTaskID) {
+                guard prefersAnimation, localImage == nil, let remoteURL else {
+                    animatedRemoteImage = nil
+                    return
+                }
+                if let cached = RistakImageLoader.shared.cachedAnimatedImage(for: remoteURL) {
+                    animatedRemoteImage = cached
+                    return
+                }
+                animatedRemoteImage = await RistakImageLoader.shared.animatedImageIfAvailable(for: remoteURL)
             }
             .fullScreenCover(isPresented: $showsViewer) {
                 FullScreenImageViewer(remoteURL: remoteURL, localImage: localImage)
@@ -181,14 +227,37 @@ struct ImageAttachmentView: View {
         return attachment.dataUrl ?? ""
     }
 
+    private var animatedRemoteTaskID: String {
+        prefersAnimation ? "animated:\(attachment.url ?? "")" : "static"
+    }
+
+    private var prefersAnimation: Bool {
+        attachment.isGif || isSticker
+    }
+
     @ViewBuilder
     private var content: some View {
         if let localImage {
-            Image(uiImage: localImage)
-                .resizable()
-                .scaledToFill()
+            if prefersAnimation {
+                ChatAnimatedImage(
+                    image: localImage,
+                    contentMode: isSticker ? .scaleAspectFit : .scaleAspectFill
+                )
+            } else {
+                Image(uiImage: localImage)
+                    .resizable()
+                    .aspectRatio(contentMode: isSticker ? .fit : .fill)
+            }
         } else if let remoteURL {
-            ChatRemoteImage(url: remoteURL)
+            ZStack {
+                ChatRemoteImage(url: remoteURL, contentMode: isSticker ? .fit : .fill)
+                if let animatedRemoteImage {
+                    ChatAnimatedImage(
+                        image: animatedRemoteImage,
+                        contentMode: isSticker ? .scaleAspectFit : .scaleAspectFill
+                    )
+                }
+            }
         } else {
             unavailablePlaceholder
         }
@@ -206,11 +275,16 @@ struct ImageAttachmentView: View {
     }
 
     nonisolated static func decodeDataURL(_ dataUrl: String) -> UIImage? {
+        guard let data = decodeDataURLData(dataUrl) else { return nil }
+        return UIImage(data: data)
+    }
+
+    nonisolated static func decodeDataURLData(_ dataUrl: String) -> Data? {
         guard let comma = dataUrl.firstIndex(of: ","),
               let data = Data(base64Encoded: String(dataUrl[dataUrl.index(after: comma)...])) else {
             return nil
         }
-        return UIImage(data: data)
+        return data
     }
 }
 

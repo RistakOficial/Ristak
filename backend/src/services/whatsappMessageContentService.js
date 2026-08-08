@@ -1,5 +1,7 @@
 function cleanString(value) {
-  return String(value ?? '').trim()
+  if (value === null || value === undefined) return ''
+  if (!['string', 'number', 'boolean', 'bigint'].includes(typeof value)) return ''
+  return String(value).trim()
 }
 
 function isPlainObject(value) {
@@ -12,25 +14,52 @@ function joinReadableLines(lines = []) {
 
 function formatContactName(contact = {}) {
   const profile = isPlainObject(contact.profile) ? contact.profile : {}
+  const name = isPlainObject(contact.name) ? contact.name : {}
   const explicitName = cleanString(
     profile.formatted_name ||
     profile.formattedName ||
     profile.name ||
+    name.formatted_name ||
+    name.formattedName ||
+    contact.displayName ||
+    contact.display_name ||
     contact.name
   )
   if (explicitName) return explicitName
 
-  return [profile.first_name, profile.middle_name, profile.last_name]
+  const composedName = [
+    profile.first_name || name.first_name || name.firstName,
+    profile.middle_name || name.middle_name || name.middleName,
+    profile.last_name || name.last_name || name.lastName
+  ]
     .map(cleanString)
     .filter(Boolean)
     .join(' ')
+  if (composedName) return composedName
+
+  return cleanString(contact.vcard).match(/(?:^|\r?\n)FN(?:;[^:]*)?:(.+)(?:\r?\n|$)/i)?.[1]?.trim() || ''
 }
 
 function formatContactPhones(contact = {}) {
   const phones = Array.isArray(contact.phones) ? contact.phones : []
-  return [...new Set(phones
+  const vcardPhones = [...cleanString(contact.vcard).matchAll(/(?:^|\r?\n)TEL(?:;[^:]*)?:(.+)(?:\r?\n|$)/gi)]
+    .map(match => cleanString(match[1]))
+  const seen = new Set()
+  return [
+    ...phones,
+    contact.phone,
+    contact.wa_id,
+    contact.waId,
+    ...vcardPhones
+  ]
     .map(phone => cleanString(phone?.phone || phone?.wa_id || phone?.waId || phone))
-    .filter(Boolean))]
+    .filter(phone => {
+      if (!phone) return false
+      const identity = phone.replace(/\D/g, '') || phone.toLowerCase()
+      if (seen.has(identity)) return false
+      seen.add(identity)
+      return true
+    })
 }
 
 function formatSharedContacts(contacts = []) {
@@ -55,6 +84,31 @@ function formatSharedOrder(order = {}) {
   }, 0)
   const summary = itemCount === 1 ? 'Pedido compartido · 1 producto' : `Pedido compartido · ${itemCount} productos`
   return joinReadableLines([text, itemCount > 0 ? summary : 'Pedido compartido'])
+}
+
+function formatPoll(poll = {}) {
+  if (!isPlainObject(poll)) return ''
+  const name = cleanString(poll.name || poll.question || poll.title)
+  return name ? `Encuesta: ${name}` : 'Encuesta compartida'
+}
+
+function formatProduct(product = {}) {
+  if (!isPlainObject(product)) return ''
+  const snapshot = isPlainObject(product.productImage) ? product : (product.product || product.productSnapshot || product)
+  const name = cleanString(snapshot.name || snapshot.title || snapshot.productName)
+  return name ? `Producto compartido: ${name}` : 'Producto compartido'
+}
+
+function formatEvent(event = {}) {
+  if (!isPlainObject(event)) return ''
+  const name = cleanString(event.name || event.title)
+  return name ? `Evento compartido: ${name}` : 'Evento compartido'
+}
+
+function formatPayment(payment = {}) {
+  if (!isPlainObject(payment)) return ''
+  const note = cleanString(payment.note || payment.description || payment.memo)
+  return note ? `Solicitud de pago: ${note}` : 'Solicitud de pago'
 }
 
 function extractSimpleMessageText(message = {}, depth = 0) {
@@ -82,6 +136,18 @@ function extractSimpleMessageText(message = {}, depth = 0) {
   const orderText = formatSharedOrder(message.order)
   if (orderText) return orderText
 
+  const pollText = formatPoll(message.poll || message.pollCreationMessage || message.pollResultSnapshotMessage)
+  if (pollText) return pollText
+
+  const productText = formatProduct(message.product || message.productMessage)
+  if (productText) return productText
+
+  const eventText = formatEvent(message.event || message.eventMessage)
+  if (eventText) return eventText
+
+  const paymentText = formatPayment(message.payment || message.requestPaymentMessage)
+  if (paymentText) return paymentText
+
   const editedMessage = message.edit?.message || message.edited_message || message.editedMessage
   if (isPlainObject(editedMessage)) return extractSimpleMessageText(editedMessage, depth + 1)
 
@@ -101,6 +167,18 @@ export function extractSupplementalWhatsAppMessageText(message = {}) {
   }
   if (type === 'order' || isPlainObject(message.order)) {
     return formatSharedOrder(message.order)
+  }
+  if (type.includes('poll') || isPlainObject(message.poll)) {
+    return formatPoll(message.poll || message.pollCreationMessage || message.pollResultSnapshotMessage)
+  }
+  if (type === 'product' || isPlainObject(message.product)) {
+    return formatProduct(message.product || message.productMessage)
+  }
+  if (type === 'event' || isPlainObject(message.event)) {
+    return formatEvent(message.event || message.eventMessage)
+  }
+  if (type.includes('payment') || isPlainObject(message.payment)) {
+    return formatPayment(message.payment || message.requestPaymentMessage)
   }
   if (type === 'system' || isPlainObject(message.system)) {
     return cleanString(message.system?.body || message.system?.text) || 'Actualización del sistema de WhatsApp'

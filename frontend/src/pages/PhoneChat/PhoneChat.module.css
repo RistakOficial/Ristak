@@ -4648,6 +4648,17 @@
   padding: 4px;
 }
 
+.messageStickerBubble {
+  width: fit-content;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.messageStickerBubble p {
+  padding: 0;
+}
+
 .messageImageBubble p {
   padding: 2px 5px 0;
 }
@@ -5384,6 +5395,18 @@
   cursor: zoom-in;
   font: inherit;
   line-height: 0;
+}
+
+.messageStickerMedia {
+  width: min(196px, 48vw);
+  aspect-ratio: 1;
+  margin: 0;
+  background: transparent;
+}
+
+.messageStickerMedia .messageMediaPlaceholder,
+.messageStickerMedia .messageImage {
+  background: transparent;
 }
 
 .messageMediaPlaceholder {

@@ -34,6 +34,33 @@ assert.deepEqual(normalizeWhatsAppMessagePresentation({
   ]
 })
 assert.equal(normalizeWhatsAppMessagePresentation({ kind: 'text', body: 'No aplica' }), undefined)
+assert.deepEqual(normalizeWhatsAppMessagePresentation({
+  kind: 'contacts',
+  header: { kind: 'text', text: 'Contacto compartido' },
+  body: '',
+  buttons: [],
+  sections: [{
+    title: 'Carlos Mendoza',
+    items: [
+      { kind: 'phone', label: '+52 443 147 5304', href: 'tel:+524431475304' },
+      { kind: 'email', label: 'carlos@example.com' },
+      { kind: 'invalid', label: 'Dato adicional' }
+    ]
+  }]
+}), {
+  kind: 'contacts',
+  header: { kind: 'text', text: 'Contacto compartido', mediaUrl: undefined, fileName: undefined },
+  body: '',
+  buttons: [],
+  sections: [{
+    title: 'Carlos Mendoza',
+    items: [
+      { kind: 'phone', label: '+52 443 147 5304' },
+      { kind: 'email', label: 'carlos@example.com' },
+      { kind: 'info', label: 'Dato adicional' }
+    ]
+  }]
+})
 
 const componentSource = await readFile(
   new URL('../src/components/common/WhatsAppMessageContent/WhatsAppMessageContent.tsx', import.meta.url),
@@ -53,9 +80,11 @@ assert.match(
   /\.action\s*\{[\s\S]*?color:\s*color-mix\(in srgb, var\(--brand-ristak-blue\) 54%, var\(--chat-bubble-text\)\);/
 )
 assert.match(desktopChatSource, /message\.presentation\s*\?\s*\([\s\S]*?<WhatsAppMessageContent/)
+assert.match(desktopChatSource, /messageStickerBubble/)
 assert.ok(
   phoneChatSource.match(/<WhatsAppMessageContent/g)?.length >= 3,
   'el chat móvil debe conservar la estructura en burbuja, vista previa y detalle'
 )
+assert.match(phoneChatSource, /messageStickerMedia/)
 
-console.log('WhatsApp template and interactive message presentation OK')
+console.log('WhatsApp rich message presentation OK')

@@ -494,11 +494,46 @@ private struct MessagePresentationDTO: Codable, Sendable {
         }
     }
 
+    struct SectionDTO: Codable, Sendable {
+        struct ItemDTO: Codable, Sendable {
+            var kind: String
+            var label: String
+            var value: String?
+
+            init(_ item: WhatsAppMessagePresentation.Section.Item) {
+                kind = item.kind.rawValue
+                label = item.label
+                value = item.value
+            }
+
+            var item: WhatsAppMessagePresentation.Section.Item {
+                WhatsAppMessagePresentation.Section.Item(
+                    kind: WhatsAppMessagePresentation.Section.Item.Kind(rawValue: kind) ?? .info,
+                    label: label,
+                    value: value
+                )
+            }
+        }
+
+        var title: String?
+        var items: [ItemDTO]
+
+        init(_ section: WhatsAppMessagePresentation.Section) {
+            title = section.title
+            items = section.items.map(ItemDTO.init)
+        }
+
+        var section: WhatsAppMessagePresentation.Section {
+            WhatsAppMessagePresentation.Section(title: title, items: items.map(\.item))
+        }
+    }
+
     var kind: String
     var header: HeaderDTO?
     var body: String
     var footer: String?
     var buttons: [ActionDTO]
+    var sections: [SectionDTO]?
 
     init(_ presentation: WhatsAppMessagePresentation) {
         kind = presentation.kind.rawValue
@@ -506,6 +541,7 @@ private struct MessagePresentationDTO: Codable, Sendable {
         body = presentation.body
         footer = presentation.footer
         buttons = presentation.buttons.map(ActionDTO.init)
+        sections = presentation.sections.map(SectionDTO.init)
     }
 
     var presentation: WhatsAppMessagePresentation? {
@@ -515,7 +551,8 @@ private struct MessagePresentationDTO: Codable, Sendable {
             header: header?.header,
             body: body,
             footer: footer,
-            buttons: buttons.map(\.action)
+            buttons: buttons.map(\.action),
+            sections: sections?.map(\.section) ?? []
         )
     }
 }

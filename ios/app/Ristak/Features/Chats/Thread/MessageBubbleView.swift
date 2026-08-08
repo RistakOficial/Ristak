@@ -219,6 +219,9 @@ struct MessageRowView: View, Equatable {
         ChatVisualMediaPresentation.caption(message.displayText, kind: visualMediaKind)
     }
     private var hasVisualMedia: Bool { visualMediaKind != nil }
+    private var isStickerMessage: Bool {
+        visualMediaKind == .image && (message.messageType ?? "").lowercased().contains("sticker")
+    }
 
     var body: some View {
         if message.direction == .system {
@@ -278,7 +281,7 @@ struct MessageRowView: View, Equatable {
             .modifier(RistakChatBubbleStyle(
                 side: isOutbound ? .outbound : .inbound,
                 fill: bubbleFillOverride,
-                channelColor: message.failed ? nil : bubbleChannelColor,
+                channelColor: message.failed || isStickerMessage ? nil : bubbleChannelColor,
                 dashed: message.isScheduled,
                 contentInsets: hasVisualMedia
                     ? EdgeInsets()
@@ -343,18 +346,28 @@ struct MessageRowView: View, Equatable {
 
             visualMediaAttachmentBlock
                 .overlay(alignment: .bottom) {
-                    LinearGradient(
-                        colors: [.clear, .black.opacity(0.64)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 64)
-                    .allowsHitTesting(false)
+                    if !isStickerMessage {
+                        LinearGradient(
+                            colors: [.clear, .black.opacity(0.64)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 64)
+                        .allowsHitTesting(false)
+                    }
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    mediaMetaRow
-                        .padding(.horizontal, 9)
-                        .padding(.bottom, 8)
+                    if isStickerMessage {
+                        mediaMetaRow
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(.black.opacity(0.52)))
+                            .padding(6)
+                    } else {
+                        mediaMetaRow
+                            .padding(.horizontal, 9)
+                            .padding(.bottom, 8)
+                    }
                 }
 
             if hasVisualMediaFooter {
@@ -389,7 +402,9 @@ struct MessageRowView: View, Equatable {
     /// Relleno explícito solo cuando falló (rojo). Programado y lados normales
     /// los resuelve `RistakChatBubbleStyle` (dashed / inbound / outbound).
     private var bubbleFillOverride: Color? {
-        message.failed ? RistakTheme.bubbleFailed : nil
+        if message.failed { return RistakTheme.bubbleFailed }
+        if isStickerMessage { return .clear }
+        return nil
     }
 
     private var bubbleChannelColor: Color? {
@@ -457,7 +472,7 @@ struct MessageRowView: View, Equatable {
         if let attachment = message.attachment {
             switch attachment.type {
             case .image:
-                ImageAttachmentView(attachment: attachment)
+                ImageAttachmentView(attachment: attachment, isSticker: isStickerMessage)
             case .video:
                 VideoAttachmentView(attachment: attachment)
             case .audio:
@@ -480,7 +495,7 @@ struct MessageRowView: View, Equatable {
         if let attachment = visualMediaAttachment {
             switch attachment.type {
             case .image:
-                ImageAttachmentView(attachment: attachment)
+                ImageAttachmentView(attachment: attachment, isSticker: isStickerMessage)
             case .video:
                 VideoAttachmentView(attachment: attachment)
             case .audio, .document, .file:
@@ -592,7 +607,8 @@ struct MessageRowView: View, Equatable {
                     }
                 }
 
-                let visibleBody = presentation.body.isEmpty ? message.displayText : presentation.body
+                let canUseFallbackBody = [.template, .interactive, .interactiveReply].contains(presentation.kind)
+                let visibleBody = presentation.body.isEmpty && canUseFallbackBody ? message.displayText : presentation.body
                 if !visibleBody.isEmpty {
                     WhatsAppFormattedMessageText(text: visibleBody)
                         .foregroundStyle(message.failed ? RistakTheme.neg : bubbleTextColor)
@@ -601,6 +617,49 @@ struct MessageRowView: View, Equatable {
                     WhatsAppFormattedMessageText(text: footer, baseFont: .caption)
                         .font(.caption)
                         .foregroundStyle(RistakTheme.bubbleMeta)
+                }
+                if !presentation.sections.isEmpty {
+                    VStack(alignment: .leading, spacing: RistakTheme.Spacing.sm) {
+                        ForEach(Array(presentation.sections.enumerated()), id: \.offset) { sectionIndex, section in
+                            VStack(alignment: .leading, spacing: RistakTheme.Spacing.xxs) {
+                                if let title = section.title, !title.isEmpty {
+                                    Text(title)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(bubbleTextColor)
+                                }
+                                ForEach(Array(section.items.enumerated()), id: \.offset) { itemIndex, item in
+                                    HStack(alignment: .top, spacing: RistakTheme.Spacing.xs) {
+                                        presentationItemIcon(item.kind)
+                                            .font(.system(size: 14, weight: .semibold))
+                                            .foregroundStyle(RistakTheme.bubbleMeta)
+                                            .frame(width: 18, height: 20)
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text(item.label)
+                                                .font(.caption)
+                                                .foregroundStyle(bubbleTextColor)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                            if let value = item.value, !value.isEmpty {
+                                                Text(value)
+                                                    .font(.caption2)
+                                                    .foregroundStyle(RistakTheme.bubbleMeta)
+                                                    .fixedSize(horizontal: false, vertical: true)
+                                            }
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                    .padding(.vertical, 3)
+                                    if itemIndex < section.items.count - 1 {
+                                        Divider().overlay(RistakTheme.bubbleMeta.opacity(0.20))
+                                    }
+                                }
+                            }
+                            if sectionIndex < presentation.sections.count - 1 {
+                                Divider().overlay(RistakTheme.bubbleMeta.opacity(0.28))
+                            }
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Detalles del mensaje de WhatsApp")
                 }
                 if !presentation.buttons.isEmpty {
                     VStack(spacing: 0) {
@@ -663,7 +722,27 @@ struct MessageRowView: View, Equatable {
         case .url: Image(systemName: "arrow.up.right")
         case .phone, .voiceCall: Image(systemName: "phone")
         case .copyCode: Image(systemName: "doc.on.doc")
+        case .flow: Image(systemName: "list.bullet.clipboard")
+        case .catalog: Image(systemName: "bag")
+        case .payment: Image(systemName: "creditcard")
+        case .otp: Image(systemName: "key")
         case .quickReply, .unknown: Image(systemName: "arrowshape.turn.up.left")
+        }
+    }
+
+    @ViewBuilder
+    private func presentationItemIcon(_ kind: WhatsAppMessagePresentation.Section.Item.Kind) -> some View {
+        switch kind {
+        case .contact: Image(systemName: "person.crop.circle")
+        case .phone: Image(systemName: "phone")
+        case .email: Image(systemName: "envelope")
+        case .address: Image(systemName: "mappin.and.ellipse")
+        case .product: Image(systemName: "shippingbox")
+        case .option: Image(systemName: "checkmark.circle")
+        case .amount: Image(systemName: "dollarsign.circle")
+        case .calendar: Image(systemName: "calendar")
+        case .link: Image(systemName: "link")
+        case .info: Image(systemName: "info.circle")
         }
     }
 

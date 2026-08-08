@@ -233,6 +233,16 @@ terminar cambio el filtro de calendarios.
   `messageType` aunque el primer payload todavía no incluya `attachment` o URL;
   la hidratación posterior conserva el mismo ID y exactamente la misma geometría.
   Los fallbacks generados (`Foto`, `Video`, etc.) no crean un footer temporal.
+  Sticker WebP es la excepción visual: usa canvas 196x196, `fit` y relleno
+  transparente; la metadata vive en una cápsula legible y no hereda el marco
+  4:3 de foto. GIF conserva el mismo pipeline de imagen animada/visor.
+- Mensajes enriquecidos de WhatsApp: `ChatJourneyParser` normaliza
+  `message_presentation` con encabezado, cuerpo, pie, botones visuales y
+  secciones de filas tipadas. Contactos, pedidos, productos, encuestas, eventos,
+  pagos y respuestas interactivas se dibujan dentro del globo sin ejecutar URL,
+  teléfono, código o payload. `ChatThreadSnapshotCache.MessagePresentationDTO`
+  codifica también esas secciones como campo opcional para seguir leyendo
+  snapshots creados por versiones anteriores.
   `ChatVideoPreviewLoader` genera, prepara y cachea miniaturas fuera del
   `MainActor`; la carga nunca cambia geometría, bloquea el scroll ni desplaza el hilo.
   La media se recorta `scaledToFill` y forma el globo full-bleed, mientras

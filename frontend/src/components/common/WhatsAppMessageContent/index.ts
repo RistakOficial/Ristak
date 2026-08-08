@@ -7,5 +7,6 @@ export type {
 export { normalizeWhatsAppMessagePresentation } from './presentation'
 export type {
   WhatsAppMessageButtonType,
+  WhatsAppMessageItemKind,
   WhatsAppMessagePresentation
 } from './presentation'

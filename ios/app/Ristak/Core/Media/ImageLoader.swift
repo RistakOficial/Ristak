@@ -17,12 +17,16 @@ actor RistakImageLoader {
     /// `nonisolated(unsafe)` porque `NSCache` está sincronizado internamente
     /// (thread-safe) pero no está marcado `Sendable` en el SDK.
     private nonisolated(unsafe) let memoryCache: NSCache<NSURL, UIImage>
+    /// Caché separada para GIF/WebP animados del chat. Mantenerlos aparte evita
+    /// que sus cuadros desplacen avatares y fotos estáticas del presupuesto normal.
+    private nonisolated(unsafe) let animatedMemoryCache: NSCache<NSURL, UIImage>
     /// Caché aparte (pequeña) para la resolución NATIVA del visor con zoom: así el
     /// full-res no compite con las miniaturas por el presupuesto de memoria.
     private nonisolated(unsafe) let fullResCache: NSCache<NSURL, UIImage>
     private let diskCache: URLCache
     private let session: URLSession
     private var inFlight: [URL: Task<UIImage, Error>] = [:]
+    private var animatedInFlight: [URL: Task<UIImage, Error>] = [:]
     private var fullResInFlight: [URL: Task<UIImage, Error>] = [:]
 
     /// Lado máximo (px) al que se reduce la imagen para burbujas/avatares. Muy por
@@ -51,6 +55,11 @@ actor RistakImageLoader {
         cache.totalCostLimit = 64 * 1024 * 1024
         memoryCache = cache
 
+        let animatedCache = NSCache<NSURL, UIImage>()
+        animatedCache.countLimit = 32
+        animatedCache.totalCostLimit = 96 * 1024 * 1024
+        animatedMemoryCache = animatedCache
+
         let fullCache = NSCache<NSURL, UIImage>()
         fullCache.countLimit = 6
         fullCache.totalCostLimit = 96 * 1024 * 1024
@@ -73,6 +82,12 @@ actor RistakImageLoader {
     /// para poder leerse sin `await` desde el `init`/`body` de una vista SwiftUI.
     nonisolated func cachedImage(for url: URL) -> UIImage? {
         memoryCache.object(forKey: url as NSURL)
+    }
+
+    /// GIF/WebP animado ya cacheado para que las filas recicladas no regresen al
+    /// primer cuadro ni vuelvan a descargar el archivo.
+    nonisolated func cachedAnimatedImage(for url: URL) -> UIImage? {
+        animatedMemoryCache.object(forKey: url as NSURL)
     }
 
     /// Descarga (o lee de caché) la imagen ya REDUCIDA a un tamaño de presentación
@@ -115,6 +130,48 @@ actor RistakImageLoader {
     /// Variante tolerante: nil en lugar de error (para avatares opcionales).
     func imageIfAvailable(for url: URL) async -> UIImage? {
         try? await image(for: url)
+    }
+
+    /// Conserva todos los cuadros de GIF, APNG o WebP animado y los reduce antes
+    /// de meterlos a memoria. ImageIO expone los cuadros para los formatos que el
+    /// sistema operativo soporte; si el archivo es estático, cae al decoder normal.
+    func animatedImage(for url: URL) async throws -> UIImage {
+        if let cached = animatedMemoryCache.object(forKey: url as NSURL) {
+            return cached
+        }
+        if let existing = animatedInFlight[url] {
+            return try await existing.value
+        }
+
+        let task = Task<UIImage, Error> { [session] in
+            var request = URLRequest(url: url)
+            request.cachePolicy = .returnCacheDataElseLoad
+            let (data, response) = try await session.data(for: request)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                throw LoadFailure.badStatus(http.statusCode)
+            }
+            guard let image = Self.animatedImage(
+                from: data,
+                maxPixelSize: Self.displayMaxPixelSize
+            ) else {
+                throw LoadFailure.invalidImageData
+            }
+            return image
+        }
+        animatedInFlight[url] = task
+        defer { animatedInFlight[url] = nil }
+
+        let image = try await task.value
+        animatedMemoryCache.setObject(
+            image,
+            forKey: url as NSURL,
+            cost: Self.animatedBitmapCost(image)
+        )
+        return image
+    }
+
+    func animatedImageIfAvailable(for url: URL) async -> UIImage? {
+        try? await animatedImage(for: url)
     }
 
     /// Imagen a RESOLUCIÓN NATIVA para el visor con zoom (no se reduce). Se
@@ -175,12 +232,71 @@ actor RistakImageLoader {
         return UIImage(cgImage: cg)
     }
 
+    /// Decoder compartido por media remota y previews optimistas. Los metadatos
+    /// de duración varían entre GIF/APNG/WebP; las llaves de ImageIO se consultan
+    /// por nombre para conservar compatibilidad entre versiones de iOS.
+    nonisolated static func animatedImage(from data: Data, maxPixelSize: Int = displayMaxPixelSize) -> UIImage? {
+        let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary) else {
+            return UIImage(data: data)
+        }
+        let frameCount = CGImageSourceGetCount(source)
+        guard frameCount > 1 else {
+            return downsampledImage(from: data, maxPixelSize: maxPixelSize)
+        }
+
+        let frameOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        var frames: [UIImage] = []
+        frames.reserveCapacity(frameCount)
+        var duration: TimeInterval = 0
+
+        for index in 0..<frameCount {
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(
+                source,
+                index,
+                frameOptions as CFDictionary
+            ) else { continue }
+            frames.append(UIImage(cgImage: cgImage))
+            duration += frameDuration(source: source, index: index)
+        }
+
+        guard frames.count > 1 else { return frames.first }
+        return UIImage.animatedImage(with: frames, duration: max(duration, 0.02 * Double(frames.count)))
+    }
+
+    nonisolated private static func frameDuration(source: CGImageSource, index: Int) -> TimeInterval {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [String: Any] else {
+            return 0.1
+        }
+        let containerKeys = ["{GIF}", "{PNG}", "{WebP}"]
+        let delayKeys = ["UnclampedDelayTime", "DelayTime"]
+        for containerKey in containerKeys {
+            guard let container = properties[containerKey] as? [String: Any] else { continue }
+            for delayKey in delayKeys {
+                if let delay = container[delayKey] as? NSNumber {
+                    return max(delay.doubleValue, 0.02)
+                }
+            }
+        }
+        return 0.1
+    }
+
     /// Coste real (bytes) del bitmap decodificado, para el presupuesto de NSCache.
     private static func bitmapCost(_ image: UIImage) -> Int {
         guard let cg = image.cgImage else {
             return Int(image.size.width * image.size.height * image.scale * image.scale * 4)
         }
         return cg.bytesPerRow * cg.height
+    }
+
+    private static func animatedBitmapCost(_ image: UIImage) -> Int {
+        guard let frames = image.images, !frames.isEmpty else { return bitmapCost(image) }
+        return frames.reduce(0) { $0 + bitmapCost($1) }
     }
 
     /// Pre-calienta la caché (p. ej. avatares de la primera página de la bandeja).
@@ -194,9 +310,11 @@ actor RistakImageLoader {
     /// Limpia todas las cachés (logout).
     func removeAll() {
         memoryCache.removeAllObjects()
+        animatedMemoryCache.removeAllObjects()
         fullResCache.removeAllObjects()
         diskCache.removeAllCachedResponses()
         inFlight.removeAll()
+        animatedInFlight.removeAll()
         fullResInFlight.removeAll()
     }
 }

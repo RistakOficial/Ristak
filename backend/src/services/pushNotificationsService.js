@@ -1358,13 +1358,25 @@ function getChatMessageBody(message = {}) {
     voice: buildChatVoiceBody(message),
     document: buildChatDocumentBody(message, bodyText),
     file: buildChatDocumentBody(message, bodyText),
-    sticker: 'Sticker',
+    sticker: '🖼️ Sticker',
     location: '📍 Ubicación',
-    contacts: 'Contacto',
-    contact: 'Contacto',
+    contacts: '👤 Contacto compartido',
+    contact: '👤 Contacto compartido',
+    order: '🛍️ Pedido compartido',
+    product: '🛍️ Producto compartido',
+    poll: '📊 Encuesta',
+    event: '📅 Evento compartido',
+    payment: '💳 Pago compartido',
+    payment_request: '💳 Solicitud de pago',
+    group_invite: '👥 Invitación a grupo',
+    contact_request: '👤 Solicitud de contacto',
+    sticker_pack: '🖼️ Paquete de stickers',
     reaction: 'Reacción',
     button: 'Respuesta',
-    interactive: 'Respuesta'
+    button_reply: 'Respuesta',
+    list_reply: 'Opción seleccionada',
+    interactive: 'Mensaje interactivo',
+    interactive_reply: 'Respuesta interactiva'
   }
 
   if (bodyText && !bodyIsGeneric) return bodyText.slice(0, 220)

@@ -344,6 +344,7 @@ import type {
   WhatsAppApiPhoneNumber,
   WhatsAppApiStatus,
   WhatsAppMessageButtonType,
+  WhatsAppMessageItemKind,
   WhatsAppMessagePresentation,
   WhatsAppNumberOriginDatum,
 } from './types';
@@ -25096,6 +25097,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
   const system = message.direction === 'system';
   const attachment = message.attachment;
   const attachmentKind = attachment ? getNativeAttachmentKind(attachment) : null;
+  const isSticker = attachmentKind === 'image' && String(message.messageType || '').toLowerCase().includes('sticker');
   const status = getMessageReceiptStatus(message);
   const scheduled = isScheduledMessage(message);
   const channelBubbleStyle = useMemo(
@@ -25209,6 +25211,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
           styles.messageBubble,
           outbound ? styles.outboundBubble : styles.inboundBubble,
           attachmentKind === 'image' && styles.imageMessageBubble,
+          isSticker && styles.stickerMessageBubble,
           attachmentKind === 'audio' && styles.audioMessageBubble,
           message.location && styles.locationMessageBubble,
           scheduled && styles.messageBubbleScheduled,
@@ -25237,6 +25240,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
             pending={Boolean(message.pending)}
             status={status}
             transportBadge={transportBadge}
+            isSticker={isSticker}
             onOpenContent={onOpenContent}
           />
         ) : null}
@@ -25330,7 +25334,23 @@ function NativeTemplateActionIcon({ color, type }: { color: string; type: WhatsA
   if (type === 'url') return <ExternalLink size={15} color={color} strokeWidth={2.35} />;
   if (type === 'phone' || type === 'voice_call') return <Phone size={15} color={color} strokeWidth={2.35} />;
   if (type === 'copy_code') return <Copy size={15} color={color} strokeWidth={2.35} />;
+  if (type === 'flow') return <ListChecks size={15} color={color} strokeWidth={2.35} />;
+  if (type === 'catalog') return <Package size={15} color={color} strokeWidth={2.35} />;
+  if (type === 'payment') return <CreditCard size={15} color={color} strokeWidth={2.35} />;
   return <Reply size={15} color={color} strokeWidth={2.35} />;
+}
+
+function NativeMessageItemIcon({ color, kind }: { color: string; kind: WhatsAppMessageItemKind }) {
+  if (kind === 'contact') return <User size={16} color={color} strokeWidth={2.25} />;
+  if (kind === 'phone') return <Phone size={16} color={color} strokeWidth={2.25} />;
+  if (kind === 'email') return <Mail size={16} color={color} strokeWidth={2.25} />;
+  if (kind === 'address') return <MapPin size={16} color={color} strokeWidth={2.25} />;
+  if (kind === 'product') return <Package size={16} color={color} strokeWidth={2.25} />;
+  if (kind === 'option') return <CheckCircle2 size={16} color={color} strokeWidth={2.25} />;
+  if (kind === 'amount') return <CircleDollarSign size={16} color={color} strokeWidth={2.25} />;
+  if (kind === 'calendar') return <CalendarDays size={16} color={color} strokeWidth={2.25} />;
+  if (kind === 'link') return <Link2 size={16} color={color} strokeWidth={2.25} />;
+  return <Info size={16} color={color} strokeWidth={2.25} />;
 }
 
 function NativeWhatsAppMessagePresentation({
@@ -25344,7 +25364,9 @@ function NativeWhatsAppMessagePresentation({
   outbound?: boolean;
   presentation: WhatsAppMessagePresentation;
 }) {
-  const body = presentation.body || fallbackText;
+  const body = presentation.body || (
+    ['template', 'interactive', 'interactive_reply'].includes(presentation.kind) ? fallbackText : ''
+  );
   const header = presentation.header;
   const actionColor = activeNativeThemeTone === 'light' ? '#0D4E8F' : '#71B2F8';
   const headerAssetLabel = header && header.kind !== 'text' && !header.mediaUrl
@@ -25387,6 +25409,30 @@ function NativeWhatsAppMessagePresentation({
           style={styles.messageTemplateFooter}
           text={presentation.footer}
         />
+      ) : null}
+      {presentation.sections?.length ? (
+        <View accessible accessibilityLabel="Detalles del mensaje de WhatsApp" style={styles.messageTemplateSections}>
+          {presentation.sections.map((section, sectionIndex) => (
+            <View
+              key={`${section.title || 'section'}-${sectionIndex}`}
+              style={[styles.messageTemplateSection, sectionIndex > 0 && styles.messageTemplateSectionDivider]}
+            >
+              {section.title ? <Text style={styles.messageTemplateSectionTitle}>{section.title}</Text> : null}
+              {section.items.map((item, itemIndex) => (
+                <View
+                  key={`${item.kind}-${item.label}-${itemIndex}`}
+                  style={[styles.messageTemplateItem, itemIndex > 0 && styles.messageTemplateItemDivider]}
+                >
+                  <NativeMessageItemIcon color={COLORS.meta} kind={item.kind} />
+                  <View style={styles.messageTemplateItemCopy}>
+                    <Text style={styles.messageTemplateItemLabel}>{item.label}</Text>
+                    {item.value ? <Text style={styles.messageTemplateItemValue}>{item.value}</Text> : null}
+                  </View>
+                </View>
+              ))}
+            </View>
+          ))}
+        </View>
       ) : null}
       {presentation.buttons.length ? (
         <View
@@ -25881,6 +25927,7 @@ function NativeMessageAttachment({
   pending,
   status,
   transportBadge,
+  isSticker,
 }: {
   attachment: ChatAttachment;
   contact: ChatContact;
@@ -25891,13 +25938,14 @@ function NativeMessageAttachment({
   pending?: boolean;
   status: 'sent' | 'delivered' | 'read' | 'pending' | 'failed';
   transportBadge?: string;
+  isSticker?: boolean;
 }) {
   const kind = getNativeAttachmentKind(attachment);
   const uri = kind === 'audio'
     ? getNativeAudioAttachmentUri(attachment)
     : (attachment.dataUrl || attachment.url);
   if (kind === 'image' && uri) {
-    return <NativeImageAttachment attachment={attachment} uri={uri} onOpenContent={onOpenContent} />;
+    return <NativeImageAttachment attachment={attachment} uri={uri} isSticker={isSticker} onOpenContent={onOpenContent} />;
   }
 
   if (kind === 'video' && uri) {
@@ -25945,10 +25993,12 @@ function buildNativeAttachmentFocusItem(attachment: ChatAttachment, uri?: string
 
 function NativeImageAttachment({
   attachment,
+  isSticker,
   onOpenContent,
   uri,
 }: {
   attachment: ChatAttachment;
+  isSticker?: boolean;
   onOpenContent?: (item: NativeContentFocusItem) => void;
   uri: string;
 }) {
@@ -25992,7 +26042,11 @@ function NativeImageAttachment({
         }
         openImageViewer(uri);
       }}
-      style={({ pressed }) => [styles.messageMediaCard, { width: size.width, height: size.height }, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.messageMediaCard,
+        isSticker ? styles.messageStickerMedia : { width: size.width, height: size.height },
+        pressed && styles.pressed,
+      ]}
     >
       <Image source={{ uri }} resizeMode="contain" style={styles.messageImage} />
     </Pressable>
@@ -33613,6 +33667,14 @@ function createAppStyles() {
     paddingHorizontal: 6,
     paddingTop: 6,
   },
+  stickerMessageBubble: {
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    backgroundColor: 'transparent',
+    shadowOpacity: 0,
+    elevation: 0,
+  },
   audioMessageBubble: {
     width: 264,
     maxWidth: '100%',
@@ -33687,6 +33749,53 @@ function createAppStyles() {
     fontWeight: '600',
   },
   messageTemplateFooter: {
+    color: messageBubbleMetaColor,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+  },
+  messageTemplateSections: {
+    minWidth: 0,
+    gap: 8,
+  },
+  messageTemplateSection: {
+    minWidth: 0,
+    gap: 4,
+  },
+  messageTemplateSectionDivider: {
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: messageBubbleMetaColor,
+  },
+  messageTemplateSectionTitle: {
+    color: messageBubbleTextColor,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '800',
+  },
+  messageTemplateItem: {
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingVertical: 5,
+  },
+  messageTemplateItemDivider: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: messageBubbleMetaColor,
+  },
+  messageTemplateItemCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 1,
+  },
+  messageTemplateItemLabel: {
+    color: messageBubbleTextColor,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  messageTemplateItemValue: {
     color: messageBubbleMetaColor,
     fontSize: 12,
     lineHeight: 16,
@@ -33907,6 +34016,11 @@ function createAppStyles() {
   messageMediaCard: {
     borderRadius: 8,
     overflow: 'hidden',
+    backgroundColor: 'transparent',
+  },
+  messageStickerMedia: {
+    width: 190,
+    height: 190,
     backgroundColor: 'transparent',
   },
   messageImage: {
