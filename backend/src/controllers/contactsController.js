@@ -1828,18 +1828,37 @@ const loadContactJourneySessionRows = async (contact, {
   return { rows, matchedByEmail, ignoredVisitorId: contactVisitorId && !trustedVisitorId ? contactVisitorId : '' }
 }
 
+const JOURNEY_VISITOR_DERIVED_VIDEO_MATCH_METHODS = Object.freeze([
+  'visitor_id',
+  'visitor_id_contact',
+  'visitor_id_linked',
+  'visitor_linked_later'
+])
+
 const loadContactVideoEngagements = async (contact = {}, { limit = JOURNEY_DEFAULT_PAGE_LIMIT, beforeDate = null, beforeCursor = null } = {}) => {
+  const contactVisitorId = cleanString(contact.visitor_id)
+  const trustedVisitorId = isTrustedTrackingVisitorId(contactVisitorId)
   const conditions = ['vps.contact_id = ?']
   const params = [contact.id]
 
-  if (cleanString(contact.visitor_id)) {
+  if (trustedVisitorId) {
     conditions.push('vps.visitor_id = ?')
-    params.push(cleanString(contact.visitor_id))
+    params.push(contactVisitorId)
   }
 
   if (cleanString(contact.email)) {
     conditions.push('vps.email = ?')
     params.push(cleanString(contact.email))
+  }
+
+  const ignoredVisitorIdentityCondition = contactVisitorId && !trustedVisitorId
+    ? `AND NOT (
+        COALESCE(CAST(vps.visitor_id AS TEXT), '') = ?
+        AND LOWER(COALESCE(vps.match_method, '')) IN (${JOURNEY_VISITOR_DERIVED_VIDEO_MATCH_METHODS.map(() => '?').join(', ')})
+      )`
+    : ''
+  if (ignoredVisitorIdentityCondition) {
+    params.push(contactVisitorId, ...JOURNEY_VISITOR_DERIVED_VIDEO_MATCH_METHODS)
   }
 
   const videoTimestamp = 'COALESCE(vps.first_event_at, vps.started_at, vps.last_event_at)'
@@ -1862,6 +1881,7 @@ const loadContactVideoEngagements = async (contact = {}, { limit = JOURNEY_DEFAU
       SELECT vps.*
       FROM video_playback_sessions vps
       WHERE (${conditions.join(' OR ')})
+        ${ignoredVisitorIdentityCondition}
         AND (
           COALESCE(vps.play_count, 0) > 0
           OR COALESCE(vps.watched_seconds, 0) > 0

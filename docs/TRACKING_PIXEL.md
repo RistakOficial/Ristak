@@ -688,6 +688,16 @@ Los eventos publicados de video usan `tracking_source = native_site_video` y
 `video_playback_sessions` es una proyección para Journey/identidad y no debe
 usarse para recomponer métricas históricas.
 
+La identidad de video aplica la misma compuerta que el tracking general. Un
+`visitor_id` largo compuesto sólo por números se considera compartido/no
+confiable porque puede ser un ID de anuncio recibido por error como `rkvi_id`.
+La ingesta lo sustituye por una identidad aislada derivada de `session_id`, no
+busca contactos con él y los procesos de vinculación/unificación lo rechazan.
+Journey también omite reproducciones históricas cuya única evidencia fue ese
+visitor compartido (`visitor_id*`); conserva vínculos directos o sustentados por
+otra señal fuerte. Así el tráfico completo de un anuncio no termina adjudicado a
+la primera persona que guardó su ID como visitante.
+
 El Journey del contacto muestra cada reproducción como evento propio con el
 `first_event_at`, `site_id`, `public_page_id` y `page_url` guardados por el
 reproductor. No reemplaza esa fecha por el inicio de la sesión ni esconde el

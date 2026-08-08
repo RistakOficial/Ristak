@@ -15,6 +15,10 @@ import {
   buildHiddenContactDataCondition,
   getHiddenContactFilters
 } from '../utils/hiddenContactsFilter.js'
+import {
+  buildFallbackVisitorIdFromSession,
+  isTrustedTrackingVisitorId
+} from '../utils/trackingVisitorIdentity.js'
 
 const isPostgresRuntime = Boolean(process.env.DATABASE_URL)
 const MAX_PLAYBACK_CHART_POINTS = 400
@@ -310,7 +314,7 @@ async function resolveContactForPlayback(tx, contactId, visitorId, video, reques
   }
 
   const cleanVisitorId = cleanString(visitorId, 160)
-  if (cleanVisitorId) {
+  if (cleanVisitorId && isTrustedTrackingVisitorId(cleanVisitorId)) {
     const contact = await tx.get(`
       SELECT id, full_name, email
       FROM contacts
@@ -768,11 +772,9 @@ async function upsertPlaybackSession(tx, body, video, contact, requestInfo, even
 }
 
 export async function recordVideoPlaybackEvent(input = {}) {
-  const body = {
-    visitorId: cleanString(input.visitor_id || input.visitorId, 160),
-    sessionId: cleanString(input.session_id || input.sessionId, 160),
-    contactId: cleanString(input.contact_id || input.contactId, 160)
-  }
+  const receivedVisitorId = cleanString(input.visitor_id || input.visitorId, 160)
+  const sessionId = cleanString(input.session_id || input.sessionId, 160)
+  const contactId = cleanString(input.contact_id || input.contactId, 160)
   const video = readVideoData(input)
   const parsedEventDate = parseEventDate(input.ts || input.timestamp || Date.now(), {
     strict: video.ingestionVersion >= 2,
@@ -780,10 +782,17 @@ export async function recordVideoPlaybackEvent(input = {}) {
   })
   const eventAt = parsedEventDate.eventAt
 
-  if (!body.visitorId || !body.sessionId || !video.eventName || !video.playbackId) {
+  if (!receivedVisitorId || !sessionId || !video.eventName || !video.playbackId) {
     const error = new Error('Missing required video tracking fields')
     error.status = 400
     throw error
+  }
+  const body = {
+    visitorId: isTrustedTrackingVisitorId(receivedVisitorId)
+      ? receivedVisitorId
+      : buildFallbackVisitorIdFromSession(sessionId),
+    sessionId,
+    contactId
   }
   if (video.ingestionVersion >= 2) {
     if (!video.eventId || !Number.isInteger(video.eventSequence) || video.eventSequence < 1) {
@@ -866,6 +875,14 @@ export async function linkVideoVisitorToContact(visitorId, contactId, fullName =
   const cleanVisitorId = cleanString(visitorId, 160)
   const cleanContactId = cleanString(contactId, 160)
   if (!cleanVisitorId || !cleanContactId) return { sessionsUpdated: 0, eventsUpdated: 0 }
+  if (!isTrustedTrackingVisitorId(cleanVisitorId)) {
+    return {
+      sessionsUpdated: 0,
+      eventsUpdated: 0,
+      skipped: true,
+      reason: 'untrusted_visitor_id'
+    }
+  }
 
   const contact = await db.get('SELECT full_name, email FROM contacts WHERE id = ?', [cleanContactId])
   const resolvedName = cleanString(fullName, 260) || contact?.full_name || null
@@ -901,6 +918,14 @@ export async function unifyVideoPlaybackVisitorIds(contactId, canonicalVisitorId
   const cleanContactId = cleanString(contactId, 160)
   const cleanVisitorId = cleanString(canonicalVisitorId, 160)
   if (!cleanContactId || !cleanVisitorId) return { sessionsUpdated: 0, eventsUpdated: 0 }
+  if (!isTrustedTrackingVisitorId(cleanVisitorId)) {
+    return {
+      sessionsUpdated: 0,
+      eventsUpdated: 0,
+      skipped: true,
+      reason: 'untrusted_visitor_id'
+    }
+  }
 
   const sessionsResult = await db.run(`
     UPDATE video_playback_sessions

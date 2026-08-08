@@ -3490,10 +3490,40 @@ test('contact journey suppresses inflated metrics from ad-like visitor ids', asy
       public_page_title: 'Quiero Pacientes'
     })
 
+    const contaminatedPlaybackId = `playback_ad_like_${id}`
+    await insertRow('video_playback_sessions', {
+      id: randomUUID(),
+      playback_id: contaminatedPlaybackId,
+      visitor_id: adLikeVisitorId,
+      session_id: secondSessionId,
+      contact_id: contactId,
+      full_name: 'Cliente Visitor Compartido',
+      email: `ad-like-${id}@ristak.test`,
+      video_title: 'Video principal',
+      tracking_source: 'native_site_video',
+      site_id: `site_ad_like_${id}`,
+      public_page_id: `page_ad_like_${id}`,
+      block_id: `block_ad_like_${id}`,
+      page_url: `https://raulgomez.com.mx/quiero-pacientes?rkvi_id=${adLikeVisitorId}&ad_id=${adLikeVisitorId}`,
+      duration_seconds: 120,
+      max_position_seconds: 10,
+      last_position_seconds: 10,
+      watched_seconds: 10,
+      max_progress_percent: 8.33,
+      play_count: 1,
+      match_method: 'visitor_id_contact',
+      match_confidence: 98,
+      first_event_at: '2026-06-22T23:41:00.000Z',
+      started_at: '2026-06-22T23:41:00.000Z',
+      last_event_at: '2026-06-22T23:41:10.000Z'
+    })
+
     const journey = await readJourney(contactId)
     const pageVisits = journey.filter(event => event.type === 'page_visit')
+    const videoPlaybacks = journey.filter(event => event.type === 'video_playback')
 
     assert.equal(pageVisits.length, 2)
+    assert.equal(videoPlaybacks.length, 0)
     assert.equal(new Set(pageVisits.map(event => event.cursorKey)).size, 2)
     assert.deepEqual(
       new Set(pageVisits.map(event => event.data.session_id)),

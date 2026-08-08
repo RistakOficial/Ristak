@@ -2508,7 +2508,12 @@ la facultad de cambiar JavaScript publicado.
   existe cercanía temporal. Una visita de otra página queda descartada aunque
   sea la anterior o la más cercana. Si el histórico no permite comprobar una
   relación exacta, el video queda independiente en vez de inventar el vínculo.
-  Esta lectura corrige también datos existentes sin backfill.
+  Esta lectura corrige también datos existentes sin backfill. Un `visitor_id`
+  largo compuesto sólo por números se trata como identidad compartida/no
+  confiable —puede ser el ID de un anuncio recibido como `rkvi_id`—: la ingesta
+  de video lo aísla por sesión y no resuelve contactos con él, mientras Journey
+  omite el histórico cuya única evidencia de contacto fue ese visitor. Los
+  vínculos directos o respaldados por otra señal fuerte se conservan.
   El pixel externo, Sites y el fallback de video sólo comparten `ristak_sid`
   entre pestañas cuando la cookie compañera `ristak_sid_at` demuestra actividad
   dentro de esos 30 minutos. Si un evento trae metadata de mensaje social o email, el tooltip debe

@@ -272,6 +272,66 @@ test('video playback tracking links anonymous playback to contact after registra
   }
 })
 
+test('video tracking quarantines ad-like visitor ids instead of assigning every playback to one contact', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const adLikeVisitorId = '120241691100910604'
+  const sessionId = `session_video_ad_like_${suffix}`
+  const playbackId = `playback_video_ad_like_${suffix}`
+  const contactId = `contact_video_ad_like_${suffix}`
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, email, full_name, source, visitor_id) VALUES (?, ?, ?, ?, ?)',
+      [contactId, `${contactId}@example.com`, 'Contacto de anuncio compartido', 'native_site', adLikeVisitorId]
+    )
+
+    const result = await recordVideoPlaybackEvent({
+      visitor_id: adLikeVisitorId,
+      session_id: sessionId,
+      event_name: 'video_play',
+      ts: Date.now(),
+      data: {
+        event_id: `${playbackId}:play`,
+        event_sequence: 1,
+        ingestion_version: 2,
+        playback_id: playbackId,
+        media_asset_id: `asset_video_ad_like_${suffix}`,
+        site_id: `site_video_ad_like_${suffix}`,
+        page_id: 'page_ad_like',
+        block_id: 'block_ad_like',
+        position_seconds: 0,
+        duration_seconds: 120
+      }
+    })
+
+    assert.equal(result.contactId, null)
+    assert.equal(result.matchMethod, 'anonymous')
+    assert.equal(result.visitorId, `untrusted_${sessionId}`)
+
+    const playback = await db.get(
+      'SELECT visitor_id, contact_id, match_method FROM video_playback_sessions WHERE playback_id = ?',
+      [playbackId]
+    )
+    assert.equal(playback.visitor_id, `untrusted_${sessionId}`)
+    assert.equal(playback.contact_id, null)
+    assert.equal(playback.match_method, 'anonymous')
+
+    const linkResult = await linkVideoVisitorToContact(adLikeVisitorId, contactId, 'Contacto de anuncio compartido')
+    assert.equal(linkResult.skipped, true)
+    assert.equal(linkResult.reason, 'untrusted_visitor_id')
+
+    const unchangedPlayback = await db.get(
+      'SELECT contact_id FROM video_playback_sessions WHERE playback_id = ?',
+      [playbackId]
+    )
+    assert.equal(unchangedPlayback.contact_id, null)
+  } finally {
+    await db.run('DELETE FROM video_playback_events WHERE playback_id = ?', [playbackId]).catch(() => undefined)
+    await db.run('DELETE FROM video_playback_sessions WHERE playback_id = ?', [playbackId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
 test('video playback aggregate measures startup and buffering quality', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const assetId = `asset_video_qoe_${suffix}`
