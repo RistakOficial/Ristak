@@ -308,3 +308,75 @@ test('contact stats honors contact list search, quick filter and date range', as
     ])
   }
 })
+
+test('contact stats calcula el promedio pagado por cliente en ambos periodos', async () => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const currentDate = '2098-08-17'
+  const previousDate = '2098-08-16'
+  const currentCreatedAt = `${currentDate}T18:00:00.000Z`
+  const previousCreatedAt = `${previousDate}T18:00:00.000Z`
+  const contacts = [
+    { id: `avg-current-a-${suffix}`, date: currentCreatedAt },
+    { id: `avg-current-b-${suffix}`, date: currentCreatedAt },
+    { id: `avg-current-lead-${suffix}`, date: currentCreatedAt },
+    { id: `avg-previous-customer-${suffix}`, date: previousCreatedAt },
+    { id: `avg-previous-lead-${suffix}`, date: previousCreatedAt }
+  ]
+  const payments = [
+    { id: `avg-payment-current-a1-${suffix}`, contactId: contacts[0].id, amount: 100, date: currentCreatedAt },
+    { id: `avg-payment-current-a2-${suffix}`, contactId: contacts[0].id, amount: 200, date: currentCreatedAt },
+    { id: `avg-payment-current-b-${suffix}`, contactId: contacts[1].id, amount: 600, date: currentCreatedAt },
+    { id: `avg-payment-previous-${suffix}`, contactId: contacts[3].id, amount: 150, date: previousCreatedAt }
+  ]
+
+  await Promise.all(contacts.map(contact => cleanupContact(contact.id)))
+
+  try {
+    for (const [index, contact] of contacts.entries()) {
+      await db.run(`
+        INSERT INTO contacts (
+          id, email, full_name, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?)
+      `, [
+        contact.id,
+        `avg-paid-${index}-${suffix}@local.invalid`,
+        `Promedio cliente ${index} ${suffix}`,
+        contact.date,
+        contact.date
+      ])
+    }
+
+    for (const payment of payments) {
+      await db.run(`
+        INSERT INTO payments (
+          id, contact_id, amount, currency, status, payment_method, payment_mode, date, created_at, updated_at
+        ) VALUES (?, ?, ?, 'MXN', 'succeeded', 'card', 'live', ?, ?, ?)
+      `, [
+        payment.id,
+        payment.contactId,
+        payment.amount,
+        payment.date,
+        payment.date,
+        payment.date
+      ])
+    }
+
+    const { metrics } = await buildContactStats({
+      startDate: currentDate,
+      endDate: currentDate,
+      search: suffix
+    })
+
+    assert.equal(metrics.total, 3)
+    assert.equal(metrics.customers, 2)
+    assert.equal(metrics.ltvTotal, 900)
+    assert.equal(metrics.avgLtv, 450)
+    assert.equal(metrics.totalPrev, 2)
+    assert.equal(metrics.customersPrev, 1)
+    assert.equal(metrics.ltvTotalPrev, 150)
+    assert.equal(metrics.avgLtvPrev, 150)
+    assert.equal(((metrics.avgLtv - metrics.avgLtvPrev) / metrics.avgLtvPrev) * 100, 200)
+  } finally {
+    await Promise.all(contacts.map(contact => cleanupContact(contact.id)))
+  }
+})

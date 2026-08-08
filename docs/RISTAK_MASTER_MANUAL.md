@@ -2408,9 +2408,13 @@ la facultad de cambiar JavaScript publicado.
   conjunto completo que coincide con el rango y filtros activos. `/api/contacts/stats`
   debe reutilizar los mismos filtros de `/api/contacts`, para
   que totales, clientes, LTV y promedio sigan siendo correctos aunque la tabla
-  muestre solo un batch. La ficha/modal pinta primero el snapshot local del
-  contacto; el resumen visible conserva el total pagado, la cantidad de pagos
-  exitosos y el total de citas que entrega `GET /api/contacts/:id`, aunque las
+  muestre solo un batch. **Pagos totales promedio** es el total pagado dividido
+  entre el numero de clientes del mismo conjunto, nunca entre todos los contactos;
+  el porcentaje contra el periodo anterior compara esa misma razon en ambos
+  periodos. Si no hay clientes, el promedio es `0`. La ficha/modal pinta primero
+  el snapshot local del contacto; el resumen visible conserva el total pagado,
+  la cantidad de pagos exitosos y el total de citas que entrega
+  `GET /api/contacts/:id`, aunque las
   colecciones paginadas todavia no se hayan descargado. El importe se formatea
   con `account_currency`. La ficha no descarga pagos, citas, conversacion ni
   journey como requisito para abrirse. Pagos y citas se piden al expandir su

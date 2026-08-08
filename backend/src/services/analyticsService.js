@@ -102,8 +102,17 @@ const DEFAULT_NUMBER = {
   total: 0,
   customers: 0,
   with_appointments: 0,
-  ltv_total: 0,
-  avg_ltv: 0
+  ltv_total: 0
+}
+
+function calculateAveragePaidPerCustomer(result) {
+  const totalPaid = Number(result?.ltv_total || 0)
+  const customers = Number(result?.customers || 0)
+
+  if (customers <= 0 || !Number.isFinite(totalPaid)) return 0
+
+  const average = totalPaid / customers
+  return Number.isFinite(average) ? average : 0
 }
 
 export function normalizePhoneValue(phone) {
@@ -266,8 +275,7 @@ export async function buildContactStats ({
       COUNT(DISTINCT CASE
         WHEN ${activeAppointmentExists} THEN ${dedupExpr}
       END) as with_appointments,
-      COALESCE(SUM(${validPaymentTotal}), 0) as ltv_total,
-      COALESCE(AVG(${validPaymentTotal}), 0) as avg_ltv
+      COALESCE(SUM(${validPaymentTotal}), 0) as ltv_total
     FROM contacts
     ${useProjectedActivity ? 'LEFT JOIN contact_list_activity contact_activity ON contact_activity.contact_id = contacts.id' : ''}
   `
@@ -330,8 +338,8 @@ export async function buildContactStats ({
     customersPrev: parseInt(previousResult?.customers || 0),
     ltvTotal: parseFloat(currentResult?.ltv_total || 0),
     ltvTotalPrev: parseFloat(previousResult?.ltv_total || 0),
-    avgLtv: parseFloat(currentResult?.avg_ltv || 0),
-    avgLtvPrev: parseFloat(previousResult?.avg_ltv || 0)
+    avgLtv: calculateAveragePaidPerCustomer(currentResult),
+    avgLtvPrev: calculateAveragePaidPerCustomer(previousResult)
   }
 
   return {
