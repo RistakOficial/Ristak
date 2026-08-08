@@ -2629,6 +2629,12 @@ temporales, destinatario y multimedia quedan fuera aunque el texto también
 mencione una plantilla. La ventana usa su propia regla anterior y nunca sirve
 para saltarse la aprobación de una plantilla.
 
+Los chats de escritorio y móvil sólo bloquean el texto libre fuera de la ventana
+cuando el remitente seleccionado no tiene un QR compatible listo. Si API y QR
+coexisten en el mismo número, el frontend conserva esa selección y envía la
+solicitud para que el backend aplique y audite el fallback; no obliga al usuario a
+elegir una plantilla que técnicamente no hace falta.
+
 Esta prioridad es independiente del orden de conexión. Cuando termina de
 conectarse cualquier proveedor registrado como API oficial, el backend marca esa
 fila como remitente principal y conserva cualquier QR del mismo teléfono como

@@ -113,6 +113,12 @@ el texto libre a HighLevel. Adjuntos, audio, reacciones y mensajes programados
 respetan la misma autoridad del número seleccionado y el flag
 `allowQrFallback`.
 
+Los compositores de escritorio y móvil no deben bloquear el texto libre ni la
+programación sólo porque la API esté fuera de ventana cuando ese mismo remitente
+tiene QR listo. En ese caso conservan la fila oficial seleccionada y dejan que el
+backend haga el preflight y registre el cambio a QR; la plantilla se vuelve
+obligatoria únicamente cuando no existe ese respaldo compatible.
+
 Si una fila QR representa el mismo teléfono que una fila oficial sana, la fila
 oficial toma la salida aunque el consumidor histórico haya solicitado
 `transport=qr` mientras la ventana oficial esté abierta. QR es respaldo, no un

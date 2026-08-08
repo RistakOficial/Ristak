@@ -6977,7 +6977,7 @@ export const PhoneChat: React.FC = () => {
     : sendingThroughMetaSocial
     ? Boolean(activeContact?.id)
     : Boolean(activeContact?.phone)
-  const composerBlockedByReplyWindow = Boolean(outsideReplyWindow && !selectedApiUnavailable && !highLevelChannelRequired && !sendingThroughMetaSocial && !selectedCommentReplyTarget)
+  const composerBlockedByReplyWindow = Boolean(outsideReplyWindow && !selectedApiUnavailable && !selectedQrReady && !highLevelChannelRequired && !sendingThroughMetaSocial && !selectedCommentReplyTarget)
   const composerTemplateOnlyMode = composerBlockedByReplyWindow
   const hasComposerText = Boolean(messageText.trim())
   const hasComposerContent = Boolean(hasComposerText || draftAttachments.length > 0 || voiceDraft)
@@ -13077,7 +13077,7 @@ export const PhoneChat: React.FC = () => {
         return
       }
 
-      if (!apiReplyWindowOpen && transport === 'api') {
+      if (!apiReplyWindowOpen && transport === 'api' && !selectedQrReady) {
         setScheduleError('Para este chat necesitas mandar una plantilla antes de programar un mensaje libre.')
         return
       }
@@ -13088,7 +13088,7 @@ export const PhoneChat: React.FC = () => {
       }
 
       const lastInboundTime = parseSortableDateValue(lastInboundForSelectedPhone?.date)
-      if (transport === 'api' && lastInboundTime && scheduledDate.getTime() > lastInboundTime + 24 * 60 * 60 * 1000) {
+      if (transport === 'api' && !selectedQrReady && lastInboundTime && scheduledDate.getTime() > lastInboundTime + 24 * 60 * 60 * 1000) {
         setScheduleError('Para esa hora WhatsApp ya no dejará responder así. Usa una plantilla oficial.')
         return
       }
@@ -14044,7 +14044,7 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    if (!apiReplyWindowOpen && resolvedTransport === 'api') {
+    if (!apiReplyWindowOpen && resolvedTransport === 'api' && !selectedQrReady) {
       handleOpenTemplatesSheet()
       return
     }

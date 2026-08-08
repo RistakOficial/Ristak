@@ -32,14 +32,16 @@ test('Configuración sincroniza Meta directo contra el proveedor y no relee sól
   assert.doesNotMatch(refreshSource, /if \(ycloudConnected\)/)
 })
 
-test('PhoneChat conserva el numero nativo seleccionado y aplica plantillas fuera de 24 horas', async () => {
+test('PhoneChat conserva el numero nativo seleccionado y solo exige plantilla sin respaldo QR', async () => {
   const source = await readSource('frontend/src/pages/PhoneChat/PhoneChat.tsx')
 
   assert.match(source, /const whatsappConnected = isWhatsAppPhoneApiAvailable\(selectedBusinessPhone, whatsappStatus\)/)
   assert.match(source, /activeHighLevelChatChannel === 'whatsapp_api' && !selectedBusinessPhone/)
   assert.match(source, /const selectedApiUnavailable = Boolean\(selectedBusinessPhone && !whatsappConnected\)/)
   assert.match(source, /message\.businessPhoneNumberId === selectedBusinessPhone\.id/)
-  assert.match(source, /const composerBlockedByReplyWindow = Boolean\(outsideReplyWindow && !selectedApiUnavailable && !highLevelChannelRequired/)
+  assert.match(source, /const composerBlockedByReplyWindow = Boolean\(outsideReplyWindow && !selectedApiUnavailable && !selectedQrReady && !highLevelChannelRequired/)
+  assert.match(source, /if \(!apiReplyWindowOpen && resolvedTransport === 'api' && !selectedQrReady\)/)
+  assert.match(source, /if \(!apiReplyWindowOpen && transport === 'api' && !selectedQrReady\)/)
   assert.doesNotMatch(source, /Boolean\(whatsappStatus\?\.connected && whatsappStatus\?\.configured\)/)
   assert.doesNotMatch(source, /activeHighLevelChatChannel === 'whatsapp_api' && !whatsappConnected && !selectedQrReady/)
 })
@@ -75,7 +77,7 @@ test('DesktopChat no usa HighLevel como rescate silencioso de un numero nativo',
   assert.match(source, /selectedBusinessPhone[\s\S]*?\? whatsappConnected \|\| selectedQrReady[\s\S]*?: highLevelConnected/)
   assert.match(sendSource, /composerChannel === 'whatsapp' && !selectedBusinessPhone/)
   assert.match(sendSource, /highLevelConnected && \(composerChannel !== 'whatsapp' \|\| !selectedBusinessPhone\)/)
-  assert.match(sendSource, /!apiReplyWindowOpen[\s\S]*?Usa una plantilla/)
+  assert.match(sendSource, /!apiReplyWindowOpen &&[\s\S]*?!selectedQrReady &&[\s\S]*?Usa una plantilla/)
   assert.doesNotMatch(source, /Boolean\(whatsappStatus\?\.connected && selectedBusinessPhoneValue\)/)
   assert.doesNotMatch(sendSource, /composerChannel === 'whatsapp' && !whatsappConnected && !selectedQrReady/)
 })

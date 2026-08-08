@@ -6376,7 +6376,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
       return
     }
 
-    if (provider === 'whatsapp_api' && transport === 'api' && !apiReplyWindowOpen) {
+    if (provider === 'whatsapp_api' && transport === 'api' && !apiReplyWindowOpen && !selectedQrReady) {
       setScheduleError('Para este chat necesitas mandar una plantilla antes de programar un mensaje libre.')
       return
     }
@@ -7217,6 +7217,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
       activeContact.phone &&
       (whatsappConnected || selectedQrReady) &&
       !apiReplyWindowOpen &&
+      !selectedQrReady &&
       nativeWhatsAppTransport === 'api' &&
       !sendAttachmentsThroughHighLevel
     ) {
