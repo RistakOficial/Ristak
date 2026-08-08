@@ -921,6 +921,12 @@ function getCalendarRawJsonWithBookingForm(calendar = {}, options = {}) {
       baseRaw.timeZone,
       baseRaw.time_zone
     )),
+    googleGuestContactImportEnabled: parseBoolean(firstDefined(
+      calendar.googleGuestContactImportEnabled,
+      calendar.google_guest_contact_import_enabled,
+      baseRaw.googleGuestContactImportEnabled,
+      baseRaw.google_guest_contact_import_enabled
+    ), true),
     meeting: {
       mode: cleanString(firstDefined(
         calendar.meetingMode,
@@ -1577,6 +1583,12 @@ function calendarRowToApi(row = {}) {
     googleCalendarSummary: rawJson?.googleCalendarSummary || rawJson?.google_calendar_summary || rawJson?.summary || '',
     googleCalendarTimeZone: rawJson?.googleCalendarTimeZone || rawJson?.google_calendar_time_zone || rawJson?.timeZone || rawJson?.time_zone || '',
     googleSyncEnabled: Boolean(rawJson?.googleCalendarId || rawJson?.google_calendar_id),
+    // Compatibilidad: calendarios creados antes de este ajuste conservan el
+    // comportamiento histórico hasta que la persona lo apague explícitamente.
+    googleGuestContactImportEnabled: parseBoolean(
+      rawJson?.googleGuestContactImportEnabled ?? rawJson?.google_guest_contact_import_enabled,
+      true
+    ),
     meetingMode: cleanString(rawJson?.meeting?.mode || rawJson?.meetingMode || rawJson?.meeting_mode).toLowerCase() === 'online'
       ? 'online'
       : 'in_person',
@@ -1961,6 +1973,9 @@ export async function createLocalCalendar(calendarData = {}, { allowGoogleSyncMe
   return upsertLocalCalendar({
     ...calendarData,
     ...(connectedMetaDataset ? { customEvents } : {}),
+    googleGuestContactImportEnabled: calendarData.googleGuestContactImportEnabled
+      ?? calendarData.google_guest_contact_import_enabled
+      ?? false,
     openHours,
     availabilityScheduleConfigured: calendarData.availabilityScheduleConfigured
       ?? calendarData.availability_schedule_configured

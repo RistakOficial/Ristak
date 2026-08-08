@@ -940,6 +940,10 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
           if (existingAppointment?.contactId) {
             // (GCAL-006) Si ya existía con contacto, conservarlo (no pisar el enlace previo).
             appointment.contactId = existingAppointment.contactId
+          } else if (localCalendar?.googleGuestContactImportEnabled === false) {
+            // El evento sigue entrando como bloqueo de disponibilidad, pero el
+            // invitado externo no se convierte en una identidad del CRM.
+            logger.info(`(GCAL-006) Evento de Google ${event.id} importado sin crear contacto por configuración del calendario.`)
           } else {
             try {
               const resolvedContactId = await localCalendarService.resolveOrCreateContactForGoogleAppointment({

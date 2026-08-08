@@ -4172,6 +4172,16 @@ Reglas base:
   claro ambos usan el tono claro de superficie sobre un verde reforzado y el
   hover lo oscurece ligeramente. Cuando no está activa muestra `Conectar con
   Google Calendar` y conserva la acción para abrir la conexión.
+- En `Avanzado > Conexión bidireccional`, cada calendario ligado a Google puede
+  decidir si un invitado externo se convierte en contacto del CRM. Apagar
+  `Crear contactos con invitados de Google` no elimina contactos ni citas ya
+  existentes: los eventos entrantes siguen sincronizándose y bloqueando
+  disponibilidad, pero una cita nueva importada queda sin `contact_id`. Los
+  calendarios nuevos nacen con esta opción apagada; los registros legacy que aún
+  no tengan el campo conservan el comportamiento anterior encendido hasta que la
+  persona lo cambie explícitamente. Las reservas hechas desde Ristak, su URL
+  pública o Sites no dependen de esta opción y siguen creando/reutilizando su
+  contacto normalmente.
 - Cada hora del editor semanal se elige en un menú de tres columnas
   (hora, minuto y AM/PM). El campo y el resumen `Horario seleccionado` componen
   el borrador en vivo mientras el menú está abierto, pero el rango sólo cambia al

@@ -1424,6 +1424,108 @@ test('OAuth Google conserva la cita local si alguien cancela sólo su espejo en 
   }
 })
 
+test('OAuth Google bloquea horarios sin crear contactos cuando el calendario lo desactiva', async () => {
+  await initializeMasterKey()
+  const previousEnv = snapshotEnv()
+  const requests = []
+  const googleRequests = []
+  const previousFetch = global.fetch
+  const { server, baseUrl } = await startLicenseServer(requests)
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_google_guest_import_${suffix}`
+  const importedGuestEmail = `google-disabled-guest-${suffix}@example.test`
+  let db = null
+  let googleCalendarService = null
+
+  try {
+    process.env.LICENSE_SERVER_URL = baseUrl
+    process.env.CLIENT_ID = 'cli_google_oauth'
+    process.env.LICENSE_KEY = 'RSTK-GOOGLE-TEST'
+    process.env.INSTALLATION_ID = 'inst_google_oauth'
+    process.env.APP_URL = 'https://demo.onrender.com'
+    process.env.APP_VERSION = '1.0.0'
+    process.env.OWNER_EMAIL = 'dueno@clinica.test'
+    const googleFetch = createGoogleApiFetchMock(googleRequests, {
+      importedAttendee: {
+        email: importedGuestEmail,
+        displayName: 'Invitado que no entra al CRM'
+      }
+    })
+    global.fetch = (url, options) => String(url).startsWith(baseUrl)
+      ? previousFetch(url, options)
+      : googleFetch(url, options)
+
+    ;({ db } = await import('../src/config/database.js'))
+    const localCalendarService = await import('../src/services/localCalendarService.js')
+    googleCalendarService = await import('../src/services/googleCalendarService.js')
+    await googleCalendarService.claimGoogleCalendarOAuthHandoff('google_handoff_test')
+
+    const calendar = await localCalendarService.createLocalCalendar({
+      id: calendarId,
+      name: 'Agenda que sólo bloquea horarios'
+    })
+    assert.equal(calendar.googleGuestContactImportEnabled, false)
+
+    await googleCalendarService.updateLocalCalendarGoogleSync({
+      calendarId,
+      googleCalendarId: 'ventas@test.com'
+    })
+
+    const firstSync = await googleCalendarService.syncGoogleEventsToLocal({
+      calendarId,
+      startTime: '2026-06-17T00:00:00.000Z',
+      endTime: '2026-06-18T00:00:00.000Z'
+    })
+    assert.equal(firstSync.saved, 1)
+
+    const blockingAppointment = await db.get(`
+      SELECT calendar_id, contact_id, source
+      FROM appointments
+      WHERE google_event_id = ?
+    `, ['evt_google_imported'])
+    assert.equal(blockingAppointment.calendar_id, calendarId)
+    assert.equal(blockingAppointment.source, 'google')
+    assert.equal(blockingAppointment.contact_id, null)
+    assert.equal(
+      (await db.get('SELECT COUNT(*) AS total FROM contacts WHERE LOWER(email) = LOWER(?)', [importedGuestEmail])).total,
+      0
+    )
+
+    const enabled = await localCalendarService.updateLocalCalendar(calendarId, {
+      googleGuestContactImportEnabled: true
+    })
+    assert.equal(enabled.googleGuestContactImportEnabled, true)
+
+    const secondSync = await googleCalendarService.syncGoogleEventsToLocal({
+      calendarId,
+      startTime: '2026-06-17T00:00:00.000Z',
+      endTime: '2026-06-18T00:00:00.000Z'
+    })
+    assert.equal(secondSync.saved, 1)
+
+    const linkedAppointment = await db.get(
+      'SELECT contact_id FROM appointments WHERE google_event_id = ?',
+      ['evt_google_imported']
+    )
+    assert.ok(linkedAppointment.contact_id)
+    assert.equal(
+      (await db.get('SELECT COUNT(*) AS total FROM contacts WHERE LOWER(email) = LOWER(?)', [importedGuestEmail])).total,
+      1
+    )
+  } finally {
+    if (db) {
+      await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE LOWER(email) = LOWER(?)', [importedGuestEmail]).catch(() => undefined)
+      await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    }
+    await googleCalendarService?.deleteGoogleCalendarConfig?.().catch(() => undefined)
+    global.fetch = previousFetch
+    server.closeAllConnections?.()
+    server.close()
+    restoreEnv(previousEnv)
+  }
+})
+
 test('OAuth Google permite varios calendarios Ristak por destino sin duplicar la cita importada', async () => {
   await initializeMasterKey()
   const previousEnv = snapshotEnv()
@@ -1471,11 +1573,13 @@ test('OAuth Google permite varios calendarios Ristak por destino sin duplicar la
 
     const calendar = await localCalendarService.createLocalCalendar({
       id: calendarId,
-      name: 'Valoraciones Ristak'
+      name: 'Valoraciones Ristak',
+      googleGuestContactImportEnabled: true
     })
     const mirrorCalendar = await localCalendarService.createLocalCalendar({
       id: mirrorCalendarId,
-      name: 'Segundo calendario Ristak'
+      name: 'Segundo calendario Ristak',
+      googleGuestContactImportEnabled: true
     })
     await localCalendarService.createLocalCalendar({
       id: existingDefaultCalendarId,

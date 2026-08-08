@@ -3641,6 +3641,8 @@ export async function updateCalendar(req, res) {
           meeting_mode,
           meetingUrl,
           meeting_url,
+          googleGuestContactImportEnabled,
+          google_guest_contact_import_enabled,
           antiTrackingEnabled,
           anti_tracking_enabled,
           availabilityScheduleConfigured,
@@ -3670,7 +3672,8 @@ export async function updateCalendar(req, res) {
             bookingForm: preservedBookingForm,
             bookingCompletion: preservedBookingCompletion,
             bookingPayment: preservedBookingPayment,
-            customEvents: preservedCustomEvents
+            customEvents: preservedCustomEvents,
+            googleGuestContactImportEnabled: calendar.googleGuestContactImportEnabled
           }
         });
       } catch (error) {

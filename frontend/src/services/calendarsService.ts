@@ -207,6 +207,7 @@ export interface Calendar {
   googleCalendarSummary?: string;
   googleCalendarTimeZone?: string;
   googleSyncEnabled?: boolean;
+  googleGuestContactImportEnabled?: boolean;
   syncStatus?: 'pending' | 'synced' | 'error';
   syncError?: string | null;
   publicBookingPath?: string;

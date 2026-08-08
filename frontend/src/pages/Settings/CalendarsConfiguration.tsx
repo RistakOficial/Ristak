@@ -1999,7 +1999,8 @@ export const CalendarsConfiguration: React.FC = () => {
         bookingPayment,
         bookingDisplay,
         customEvents,
-        antiTrackingEnabled: selectedCalendar.antiTrackingEnabled !== false
+        antiTrackingEnabled: selectedCalendar.antiTrackingEnabled !== false,
+        googleGuestContactImportEnabled: selectedCalendar.googleGuestContactImportEnabled !== false
       }
 
       // Agregar lookBusyConfig si está configurado
@@ -4009,6 +4010,20 @@ export const CalendarsConfiguration: React.FC = () => {
                               ? 'Elige el calendario de Google donde quieres que caigan estas citas.'
                               : 'No hay calendarios de Google disponibles para ligar.'}
                   </small>
+                </div>
+
+                <div className={`${pageStyles.eventSwitchRow} ${pageStyles.editorFieldWide}`}>
+                  <div>
+                    <span>Crear contactos con invitados de Google</span>
+                    <small>
+                      Al traer un evento externo, Ristak convertirá al primer invitado en contacto. Apágalo para usar Google sólo como bloqueo de horario.
+                    </small>
+                  </div>
+                  <Switch
+                    checked={selectedCalendar.googleGuestContactImportEnabled !== false}
+                    onChange={(enabled) => updateSelectedCalendar({ googleGuestContactImportEnabled: enabled })}
+                    aria-label="Crear contactos con invitados de Google Calendar"
+                  />
                 </div>
 
                 <div className={pageStyles.googleSyncHint}>
