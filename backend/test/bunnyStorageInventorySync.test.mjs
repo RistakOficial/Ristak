@@ -260,6 +260,12 @@ test('sincroniza carpetas y archivos manuales de Bunny sólo dentro de la cuenta
       'un asset ya registrado debe actualizarse, no duplicarse'
     )
 
+    await media.renameMediaFolder({
+      businessId,
+      folderPath: 'Manual',
+      name: 'Material iPhone VIP'
+    })
+
     const secondManualSync = await media.syncBunnyStorageFolder({
       businessId,
       clientAccountId,
@@ -267,6 +273,11 @@ test('sincroniza carpetas y archivos manuales de Bunny sólo dentro de la cuenta
     })
     assert.equal(secondManualSync.assetsImported, 0)
     assert.equal(secondManualSync.assetsUpdated, 4)
+    assert.equal(
+      (await media.listMediaFolders({ businessId, parentPath: '' })).items[0]?.name,
+      'Material iPhone VIP',
+      'el refresh del proveedor no debe reemplazar el nombre elegido en Media'
+    )
     const duplicateCheck = await db.get(
       `SELECT COUNT(*) AS total
        FROM media_assets

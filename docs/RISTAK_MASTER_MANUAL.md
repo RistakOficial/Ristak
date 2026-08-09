@@ -8259,14 +8259,18 @@ Capacidades:
   resto del explorador sube a la ubicación abierta. Una carpeta arrastrada
   conserva su jerarquía interna y la operación siempre copia: no altera el
   archivo original de la computadora.
-- Renombrar, mover o eliminar carpetas mantiene sincronizados los assets y la carpeta
-  persistente. Las taxonomías automáticas de Chat, Sites, formularios, avatares y
+- Mover o eliminar carpetas mantiene sincronizados los assets y la carpeta
+  persistente. Renombrar cambia únicamente la etiqueta visible guardada en
+  `media_folders.name`; conserva la ruta técnica, los archivos, las URLs y los
+  bindings. Las taxonomías automáticas de Chat, Sites, formularios, avatares y
   otros módulos internos no cambian: el control manual aplica sólo a la biblioteca
   administrativa de Media.
 - En archivos, **Cambiar nombre** actualiza sólo el nombre visible/de descarga y
   conserva el binario, la URL y la extensión real. En carpetas, la misma acción
-  renombra toda la ruta y sus descendientes; ambos flujos bloquean nombres
-  duplicados dentro de la ubicación actual.
+  es instantánea aunque contengan muchos archivos o archivos grandes, persiste
+  después de sincronizar Bunny y respeta exactamente la escritura elegida en
+  listas y breadcrumbs. Ambos flujos bloquean nombres duplicados dentro de la
+  ubicación actual.
 - Subida TUS directa y resumible para videos de Sites/Forms, en chunks, sin que
   el upload inicial atraviese el proceso Render ni exponga la API key.
 - Selección inmediata de videos existentes en Bunny Storage. Sites conserva su

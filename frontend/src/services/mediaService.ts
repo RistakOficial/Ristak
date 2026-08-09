@@ -92,6 +92,11 @@ export interface MediaFolderSummary {
   sizeBytes: number
 }
 
+export interface MediaFolderBreadcrumb {
+  path: string
+  name: string
+}
+
 export interface MediaLibrarySummary {
   totalItems: number
   totalBytes: number
@@ -125,6 +130,7 @@ export interface ListMediaFoldersInput {
 
 export interface MediaFolderPage {
   items: MediaFolderSummary[]
+  breadcrumbs: MediaFolderBreadcrumb[]
   pageInfo: MediaPageInfo
 }
 

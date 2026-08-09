@@ -57,6 +57,7 @@ import { getApiBaseUrl } from '@/services/apiBaseUrl'
 import mediaService, {
   isMediaUploadCancelledError,
   type MediaAsset,
+  type MediaFolderBreadcrumb,
   type MediaFolderPage,
   type MediaDownloadEntry,
   type MediaPageInfo,
@@ -314,7 +315,13 @@ function formatFolderSegment(segment: string) {
 }
 
 function presentFolderSummary(folder: FolderSummary): FolderSummary {
-  return { ...folder, name: formatFolderSegment(folder.name) }
+  const name = folder.name.trim()
+  return { ...folder, name: folderLabelMap[name.toLowerCase()] || name }
+}
+
+function presentFolderBreadcrumb(folder: MediaFolderBreadcrumb): MediaFolderBreadcrumb {
+  const name = folder.name.trim()
+  return { ...folder, name: folderLabelMap[name.toLowerCase()] || name }
 }
 
 function formatModuleLabel(module?: string) {
@@ -409,10 +416,21 @@ function getMediaIcon(mediaType?: string, size = 18) {
   return <File size={size} />
 }
 
-function getCurrentFolderLabel(currentPath: string) {
+function getCurrentFolderLabel(currentPath: string, breadcrumbs: MediaFolderBreadcrumb[] = []) {
+  const knownFolder = breadcrumbs.find((folder) => folder.path === currentPath)
+  if (knownFolder?.name) return knownFolder.name
   const parts = pathSegments(currentPath)
   if (!parts.length) return 'Mi unidad'
   return formatFolderSegment(parts[parts.length - 1])
+}
+
+function getFolderDisplayPath(currentPath: string, breadcrumbs: MediaFolderBreadcrumb[] = []) {
+  if (!currentPath) return 'Mi unidad'
+  const namesByPath = new Map(breadcrumbs.map((folder) => [folder.path, folder.name]))
+  return pathSegments(currentPath).map((_segment, index, segments) => {
+    const path = segments.slice(0, index + 1).join('/')
+    return namesByPath.get(path) || formatFolderSegment(segments[index])
+  }).join(' / ')
 }
 
 function getMediaFilterLabel(filter: MediaFilter) {
@@ -562,6 +580,7 @@ export const MediaSettings: React.FC = () => {
   const [assets, setAssets] = useState<MediaAsset[]>([])
   const [folderSummaries, setFolderSummaries] = useState<FolderSummary[]>([])
   const [rootFolders, setRootFolders] = useState<FolderSummary[]>([])
+  const [currentFolderBreadcrumbs, setCurrentFolderBreadcrumbs] = useState<MediaFolderBreadcrumb[]>([])
   const [assetPageInfo, setAssetPageInfo] = useState<MediaPageInfo>(EMPTY_MEDIA_PAGE_INFO)
   const [folderPageInfo, setFolderPageInfo] = useState<MediaPageInfo>(EMPTY_FOLDER_PAGE_INFO)
   const [rootFolderPageInfo, setRootFolderPageInfo] = useState<MediaPageInfo>(EMPTY_FOLDER_PAGE_INFO)
@@ -701,6 +720,7 @@ export const MediaSettings: React.FC = () => {
     folderRequestVersionRef.current = requestVersion
     if (requestedFolderPath === null) {
       setFolderSummaries([])
+      setCurrentFolderBreadcrumbs([])
       setFolderPageInfo(EMPTY_FOLDER_PAGE_INFO)
       return
     }
@@ -714,6 +734,7 @@ export const MediaSettings: React.FC = () => {
       if (requestVersion !== folderRequestVersionRef.current) return
       const nextFolders = page.items.map(presentFolderSummary)
       setFolderSummaries(nextFolders)
+      setCurrentFolderBreadcrumbs(page.breadcrumbs.map(presentFolderBreadcrumb))
       setFolderPageInfo(page.pageInfo)
       if (requestedFolderPath === '') {
         setRootFolders(nextFolders)
@@ -852,6 +873,8 @@ export const MediaSettings: React.FC = () => {
   const visibleItemsCount = folderSummaries.length + libraryItemsCount
   const visibleItemsCountLabel = `${visibleItemsCount}${libraryItemsCountIsLowerBound ? '+' : ''}`
   const folderPathParts = pathSegments(currentPath)
+  const currentFolderDisplayPath = getFolderDisplayPath(currentPath, currentFolderBreadcrumbs)
+  const currentFolderLabel = getCurrentFolderLabel(currentPath, currentFolderBreadcrumbs)
   const selectedElementCount = selectedItemKeys.size
   const allVisibleSelected = visibleSelectionKeys.length > 0 && visibleSelectionKeys.every((key) => selectedItemKeys.has(key))
   const partiallySelected = !allVisibleSelected && visibleSelectionKeys.some((key) => selectedItemKeys.has(key))
@@ -947,7 +970,7 @@ export const MediaSettings: React.FC = () => {
   }
 
   const openRenameFolderDialog = (folder: FolderSummary) => {
-    const currentName = pathSegments(folder.path).slice(-1)[0] || folder.name
+    const currentName = folder.name || pathSegments(folder.path).slice(-1)[0] || ''
     setRenameDialog({
       kind: 'folder',
       currentName,
@@ -1604,10 +1627,10 @@ export const MediaSettings: React.FC = () => {
     const selectedFolderNames = Array.from(selectedItemKeys)
       .map(selectedFolderPathFromKey)
       .filter(Boolean)
-      .map((path) => getCurrentFolderLabel(path))
+      .map((path) => folderSummaries.find((folder) => folder.path === path)?.name || getCurrentFolderLabel(path))
     const currentFolderName = selectedElementCount === 1 && selectedFolderNames[0]
       ? selectedFolderNames[0]
-      : getCurrentFolderLabel(currentPath)
+      : currentFolderLabel
     const filename = selectedElementCount === 1
       ? buildArchiveFilename(currentFolderName)
       : buildArchiveFilename(`Media ${selectedFileCount} archivos`)
@@ -1966,7 +1989,7 @@ export const MediaSettings: React.FC = () => {
           <span className={styles.rowIcon}>{getMediaIcon(asset.mediaType, 18)}</span>
           <span>
             <strong>{file.fileName}</strong>
-            <small>{file.folderPath ? file.folderPath.split('/').map(formatFolderSegment).join(' / ') : 'Mi unidad'}</small>
+            <small>{getFolderDisplayPath(file.folderPath, file.folderPath === currentPath ? currentFolderBreadcrumbs : [])}</small>
           </span>
         </span>
         <span>{formatDate(asset.createdAt)}</span>
@@ -1982,7 +2005,7 @@ export const MediaSettings: React.FC = () => {
       <PageHeader
         eyebrow="Configuración"
         title="Media"
-        subtitle={`Explora el storage privado de esta cuenta. Las nuevas subidas se guardan en ${currentPath ? currentPath.split('/').map(formatFolderSegment).join(' / ') : 'Mi unidad'}.`}
+        subtitle={`Explora el storage privado de esta cuenta. Las nuevas subidas se guardan en ${currentFolderDisplayPath}.`}
         actions={(
           <>
             <Button
@@ -2010,7 +2033,7 @@ export const MediaSettings: React.FC = () => {
               leftIcon={uploading ? <Loader2 size={16} className={styles.spin} /> : <Upload size={16} />}
               onClick={handleUploadClick}
               disabled={uploading || loading}
-              title={`Se guardará en ${currentPath ? currentPath.split('/').map(formatFolderSegment).join(' / ') : 'Mi unidad'}`}
+              title={`Se guardará en ${currentFolderDisplayPath}`}
             >
               Subir aquí
             </Button>
@@ -2139,11 +2162,12 @@ export const MediaSettings: React.FC = () => {
               <button type="button" onClick={() => handleFolderOpen('')}>Mi unidad</button>
               {folderPathParts.map((segment, index) => {
                 const path = folderPathParts.slice(0, index + 1).join('/')
+                const breadcrumbName = currentFolderBreadcrumbs.find((folder) => folder.path === path)?.name
                 return (
                   <React.Fragment key={path}>
                     <ChevronRight size={14} />
                     <button type="button" onClick={() => handleFolderOpen(path)}>
-                      {formatFolderSegment(segment)}
+                      {breadcrumbName || formatFolderSegment(segment)}
                     </button>
                   </React.Fragment>
                 )
@@ -2233,7 +2257,7 @@ export const MediaSettings: React.FC = () => {
               ) : null}
               <div className={styles.paneHeader}>
                 <div>
-                  <h2>{normalizedQuery ? 'Resultados' : browsingGlobalType ? getMediaFilterLabel(activeFilter) : getCurrentFolderLabel(currentPath)}</h2>
+                  <h2>{normalizedQuery ? 'Resultados' : browsingGlobalType ? getMediaFilterLabel(activeFilter) : currentFolderLabel}</h2>
                   <p>{folderSummaries.length} carpeta{folderSummaries.length === 1 ? '' : 's'} · {libraryItemsCountLabel} archivo{libraryItemsCount === 1 ? '' : 's'}</p>
                 </div>
                 {selectedElementCount > 0 ? (
@@ -2348,7 +2372,7 @@ export const MediaSettings: React.FC = () => {
                   </div>
                   <div className={styles.previewInfo}>
                     <h3>{selectedFile.fileName}</h3>
-                    <p>{selectedFile.folderPath ? selectedFile.folderPath.split('/').map(formatFolderSegment).join(' / ') : 'Mi unidad'}</p>
+                    <p>{getFolderDisplayPath(selectedFile.folderPath, selectedFile.folderPath === currentPath ? currentFolderBreadcrumbs : [])}</p>
                   </div>
                   <div className={styles.previewActions}>
                     <Button variant="secondary" size="sm" leftIcon={<Pencil size={15} />} onClick={() => openRenameFileDialog(selectedFile)}>
@@ -2419,7 +2443,7 @@ export const MediaSettings: React.FC = () => {
         isOpen={createFolderOpen}
         onClose={closeCreateFolderDialog}
         title="Nueva carpeta"
-        subtitle={`Dentro de ${currentPath ? currentPath.split('/').map(formatFolderSegment).join(' / ') : 'Mi unidad'}`}
+        subtitle={`Dentro de ${currentFolderDisplayPath}`}
         size="sm"
       >
         <form className={styles.createFolderForm} onSubmit={handleCreateFolder}>

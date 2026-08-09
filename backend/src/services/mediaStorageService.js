@@ -3937,7 +3937,7 @@ async function upsertMediaFolderHierarchy(database, {
        ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
        ON CONFLICT (business_id, path) DO UPDATE SET
          parent_path = excluded.parent_path,
-         name = excluded.name,
+         name = media_folders.name,
          created_by = COALESCE(media_folders.created_by, excluded.created_by),
          updated_at = CURRENT_TIMESTAMP`,
       [normalizedBusinessId, record.path, record.parentPath, record.name, createdBy ? String(createdBy) : null]
@@ -3966,9 +3966,11 @@ export async function createMediaFolder({
     db.get(
       `SELECT path
        FROM media_folders
-       WHERE business_id = ? AND LOWER(path) = LOWER(?)
+       WHERE business_id = ?
+         AND parent_path = ?
+         AND (LOWER(path) = LOWER(?) OR LOWER(name) = LOWER(?))
        LIMIT 1`,
-      [normalizedBusinessId, path]
+      [normalizedBusinessId, normalizedParentPath, path, normalizedName]
     ),
     db.get(
       `SELECT folder_path
@@ -5656,7 +5658,7 @@ export async function listMediaFolders({
   const slashPosition = databaseDialect === 'postgres'
     ? `POSITION('/' IN relative_path)`
     : `instr(relative_path, '/')`
-  const cursorClause = cursorName ? 'AND child_names.child_name > ?' : ''
+  const cursorClause = cursorName ? 'AND child_paths.child_path > ?' : ''
   const prefix = normalizedParentPath
     ? `${escapeMediaLibraryLike(normalizedParentPath)}/%`
     : '%'
@@ -5664,15 +5666,14 @@ export async function listMediaFolders({
     normalizedParentPath,
     ...filters.params,
     prefix,
-    ...(includeDeclaredFolders ? [normalizeBusinessId(businessId), normalizedParentPath] : []),
+    normalizeBusinessId(businessId),
+    normalizedParentPath,
     ...(cursorName ? [cursorName] : []),
     safeLimit + 1
   ]
   const declaredFoldersQuery = includeDeclaredFolders
-    ? `SELECT name AS child_name
-       FROM media_folders
-       WHERE business_id = ? AND parent_path = ?`
-    : `SELECT NULL AS child_name WHERE 1 = 0`
+    ? 'SELECT child_path FROM declared_names'
+    : 'SELECT NULL AS child_path WHERE 1 = 0'
 
   const rows = await db.all(
     `WITH options AS (
@@ -5696,34 +5697,45 @@ export async function listMediaFolders({
          CASE
            WHEN ${slashPosition} > 0 THEN substr(relative_path, 1, ${slashPosition} - 1)
            ELSE relative_path
-         END AS child_name,
+         END AS child_path,
          files_count,
          used_bytes
        FROM scoped
      ), counter_summary AS (
        SELECT
-         child_name,
+         child_path,
          COALESCE(SUM(files_count), 0) AS files_count,
          COALESCE(SUM(used_bytes), 0) AS size_bytes
        FROM children
-       WHERE child_name <> ''
-       GROUP BY child_name
+       WHERE child_path <> ''
+       GROUP BY child_path
+     ), declared_names AS (
+       SELECT
+         CASE
+           WHEN parent_path = '' THEN path
+           ELSE substr(path, length(parent_path) + 2)
+         END AS child_path,
+         name AS display_name
+       FROM media_folders
+       WHERE business_id = ? AND parent_path = ?
      ), declared_children AS (
        ${declaredFoldersQuery}
-     ), child_names AS (
-       SELECT child_name FROM counter_summary
+     ), child_paths AS (
+       SELECT child_path FROM counter_summary
        UNION
-       SELECT child_name FROM declared_children
+       SELECT child_path FROM declared_children
      )
      SELECT
-       child_names.child_name,
+       child_paths.child_path,
+       COALESCE(declared_names.display_name, child_paths.child_path) AS display_name,
        COALESCE(counter_summary.files_count, 0) AS files_count,
        COALESCE(counter_summary.size_bytes, 0) AS size_bytes
-     FROM child_names
-     LEFT JOIN counter_summary ON counter_summary.child_name = child_names.child_name
-     WHERE child_names.child_name <> ''
+     FROM child_paths
+     LEFT JOIN counter_summary ON counter_summary.child_path = child_paths.child_path
+     LEFT JOIN declared_names ON declared_names.child_path = child_paths.child_path
+     WHERE child_paths.child_path <> ''
        ${cursorClause}
-     ORDER BY child_names.child_name ASC
+     ORDER BY child_paths.child_path ASC
      LIMIT ?`,
     params
   )
@@ -5731,20 +5743,38 @@ export async function listMediaFolders({
   const hasMore = rows.length > safeLimit
   const pageRows = rows.slice(0, safeLimit)
   const folders = pageRows.map((row) => ({
-    path: normalizeMediaFolderPath([normalizedParentPath, row.child_name].filter(Boolean).join('/')),
-    name: cleanString(row.child_name),
+    path: normalizeMediaFolderPath([normalizedParentPath, row.child_path].filter(Boolean).join('/')),
+    name: cleanString(row.display_name || row.child_path),
     filesCount: numberValue(row.files_count),
     sizeBytes: numberValue(row.size_bytes)
   }))
   const lastFolder = folders[folders.length - 1]
+  const breadcrumbPaths = normalizedParentPath
+    .split('/')
+    .filter(Boolean)
+    .map((_segment, index, segments) => segments.slice(0, index + 1).join('/'))
+  const breadcrumbRows = breadcrumbPaths.length
+    ? await db.all(
+        `SELECT path, name
+         FROM media_folders
+         WHERE business_id = ? AND path IN (${breadcrumbPaths.map(() => '?').join(', ')})`,
+        [normalizeBusinessId(businessId), ...breadcrumbPaths]
+      )
+    : []
+  const breadcrumbNames = new Map(breadcrumbRows.map((row) => [cleanString(row.path), cleanString(row.name)]))
+  const breadcrumbs = breadcrumbPaths.map((path) => ({
+    path,
+    name: breadcrumbNames.get(path) || path.split('/').pop() || path
+  }))
 
   return {
     items: folders,
+    breadcrumbs,
     pageInfo: {
       limit: safeLimit,
       hasMore,
       nextCursor: hasMore && lastFolder
-        ? encodeMediaLibraryCursor('media-folder', { name: pageRows[pageRows.length - 1].child_name })
+        ? encodeMediaLibraryCursor('media-folder', { name: pageRows[pageRows.length - 1].child_path })
         : null
     }
   }
@@ -6282,7 +6312,7 @@ async function moveMediaFolderRecords({
   const normalizedBusinessId = normalizeBusinessId(businessId)
   const movedFolders = new Map(selection.folderPaths.map((sourcePath) => [
     movedSelectionFolderPath(sourcePath, sourcePath, normalizedTarget),
-    null
+    { createdBy: null, name: '' }
   ]))
 
   for (const row of existingRows) {
@@ -6290,7 +6320,7 @@ async function moveMediaFolderRecords({
     if (!sourceFolderPath) continue
     movedFolders.set(
       movedSelectionFolderPath(row.path, sourceFolderPath, normalizedTarget),
-      row.created_by || null
+      { createdBy: row.created_by || null, name: cleanString(row.name) }
     )
   }
 
@@ -6300,51 +6330,24 @@ async function moveMediaFolderRecords({
        WHERE business_id = ? AND (${selection.clauses.join(' OR ')})`,
       [normalizedBusinessId, ...selection.params]
     )
-    for (const [path, createdBy] of movedFolders) {
+    for (const [path, folder] of movedFolders) {
       await upsertMediaFolderHierarchy(transaction, {
         businessId: normalizedBusinessId,
         folderPath: path,
-        createdBy
+        createdBy: folder.createdBy
       })
+      if (folder.name) {
+        await transaction.run(
+          `UPDATE media_folders
+           SET name = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE business_id = ? AND path = ?`,
+          [folder.name, normalizedBusinessId, path]
+        )
+      }
     }
   })
 
   return selection.folderPaths.length
-}
-
-async function renameMediaFolderRecords({
-  businessId = 'default',
-  sourceFolderPath = '',
-  targetFolderPath = '',
-  existingRows = []
-} = {}) {
-  const selection = mediaFolderRecordSelection([sourceFolderPath])
-  const normalizedSource = selection.folderPaths[0]
-  const normalizedTarget = validateMediaFolderPath(targetFolderPath, { allowRoot: false })
-  const normalizedBusinessId = normalizeBusinessId(businessId)
-  const rows = existingRows.length
-    ? existingRows
-    : [{ path: normalizedSource, created_by: null }]
-
-  await db.transaction(async (transaction) => {
-    await transaction.run(
-      `DELETE FROM media_folders
-       WHERE business_id = ? AND (${selection.clauses.join(' OR ')})`,
-      [normalizedBusinessId, ...selection.params]
-    )
-    for (const row of rows) {
-      const relativePath = row.path === normalizedSource
-        ? ''
-        : row.path.slice(normalizedSource.length + 1)
-      await upsertMediaFolderHierarchy(transaction, {
-        businessId: normalizedBusinessId,
-        folderPath: [normalizedTarget, relativePath].filter(Boolean).join('/'),
-        createdBy: row.created_by || null
-      })
-    }
-  })
-
-  return rows.length
 }
 
 async function deleteMediaFolderRecords({ businessId = 'default', folderPaths = [] } = {}) {
@@ -6594,10 +6597,6 @@ export async function renameMediaFolder({
   }
   const sourceParts = normalizedSource.split('/')
   const sourceParentPath = sourceParts.slice(0, -1).join('/')
-  const normalizedTarget = validateMediaFolderPath(
-    [sourceParentPath, normalizedName].filter(Boolean).join('/'),
-    { allowRoot: false }
-  )
 
   const [existingFolderRows, sourceUsage] = await Promise.all([
     listMediaFolderRecords({ businessId: normalizedBusinessId, folderPaths: [normalizedSource] }),
@@ -6613,84 +6612,61 @@ export async function renameMediaFolder({
   if (!existingFolderRows.length && !sourceUsage) {
     throw errorWithStatus('La carpeta ya no existe en esta cuenta.', 404, 'media_folder_not_found')
   }
-  if (normalizedTarget === normalizedSource) {
+  const sourceFolderRow = existingFolderRows.find((row) => row.path === normalizedSource)
+  const currentName = cleanString(sourceFolderRow?.name) || sourceParts[sourceParts.length - 1]
+  if (normalizedName === currentName) {
     return {
       operation: 'La operación de renombrar',
       attempted: 0,
       affected: 0,
       failed: 0,
       foldersAffected: 0,
-      folder: { previousPath: normalizedSource, path: normalizedTarget, name: normalizedName }
+      folder: { previousPath: normalizedSource, path: normalizedSource, name: normalizedName }
     }
   }
 
-  const isCaseOnlyRename = normalizedTarget.toLocaleLowerCase() === normalizedSource.toLocaleLowerCase()
-  if (!isCaseOnlyRename) {
-    const [declaredDuplicate, assetDuplicate] = await Promise.all([
-      db.get(
-        `SELECT path
-         FROM media_folders
-         WHERE business_id = ? AND LOWER(path) = LOWER(?)
-         LIMIT 1`,
-        [normalizedBusinessId, normalizedTarget]
-      ),
-      db.get(
-        `SELECT folder_path
-         FROM media_folder_usage_counters
-         WHERE business_id = ?
-           AND (LOWER(folder_path) = LOWER(?) OR LOWER(folder_path) LIKE LOWER(?) ESCAPE '\\')
-         LIMIT 1`,
-        [normalizedBusinessId, normalizedTarget, `${escapeMediaLibraryLike(normalizedTarget)}/%`]
-      )
-    ])
-    if (declaredDuplicate || assetDuplicate) {
-      throw errorWithStatus(
-        'Ya existe una carpeta con ese nombre en esta ubicación.',
-        409,
-        'media_folder_exists'
-      )
-    }
+  const duplicate = await db.get(
+    `SELECT path
+     FROM media_folders
+     WHERE business_id = ?
+       AND parent_path = ?
+       AND path != ?
+       AND LOWER(name) = LOWER(?)
+     LIMIT 1`,
+    [normalizedBusinessId, sourceParentPath, normalizedSource, normalizedName]
+  )
+  if (duplicate) {
+    throw errorWithStatus(
+      'Ya existe una carpeta con ese nombre en esta ubicación.',
+      409,
+      'media_folder_exists'
+    )
   }
 
-  let result
-  try {
-    result = await runMediaSelectionOperation({
+  await db.transaction(async (transaction) => {
+    await upsertMediaFolderHierarchy(transaction, {
       businessId: normalizedBusinessId,
-      folderPaths: [normalizedSource],
-      operation: 'La operación de renombrar',
-      action: async (row, _selection, { remoteDeadlineAt }) => {
-        const currentFolderPath = normalizeMediaFolderPath(row.folder_path)
-        const relativePath = currentFolderPath === normalizedSource
-          ? ''
-          : currentFolderPath.slice(normalizedSource.length + 1)
-        await moveSingleMediaAsset({
-          assetId: row.id,
-          targetFolderPath: [normalizedTarget, relativePath].filter(Boolean).join('/'),
-          businessId: normalizedBusinessId,
-          skipQuotaRefresh: true,
-          operationDeadlineAt: remoteDeadlineAt
-        })
-      }
+      folderPath: normalizedSource,
+      createdBy: sourceFolderRow?.created_by || null
     })
-  } catch (error) {
-    if (error?.code !== 'media_selection_empty' || !existingFolderRows.length) throw error
-    result = { operation: 'La operación de renombrar', attempted: 0, affected: 0, failed: 0 }
-  }
-
-  const foldersAffected = await renameMediaFolderRecords({
-    businessId: normalizedBusinessId,
-    sourceFolderPath: normalizedSource,
-    targetFolderPath: normalizedTarget,
-    existingRows: existingFolderRows
+    await transaction.run(
+      `UPDATE media_folders
+       SET name = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE business_id = ? AND path = ?`,
+      [normalizedName, normalizedBusinessId, normalizedSource]
+    )
   })
 
-  logger.info(`[MediaStorage] Carpeta renombrada: ${normalizedSource} -> ${normalizedTarget}`)
+  logger.info(`[MediaStorage] Nombre visible de carpeta actualizado: ${normalizedSource} -> ${normalizedName}`)
   return {
-    ...result,
-    foldersAffected,
+    operation: 'La operación de renombrar',
+    attempted: 0,
+    affected: 0,
+    failed: 0,
+    foldersAffected: 1,
     folder: {
       previousPath: normalizedSource,
-      path: normalizedTarget,
+      path: normalizedSource,
       name: normalizedName
     }
   }

@@ -553,17 +553,20 @@ they are not part of the primary product dashboard.
   `accounts/<slug>` que el selector **Subir aquí**. El MIME interno de Media sigue
   reservado para mover assets ya existentes y no se confunde con archivos del
   sistema operativo.
-- Crear, renombrar, mover o eliminar una carpeta actualiza tanto sus assets como su registro
+- Crear, mover o eliminar una carpeta mantiene coordinados sus assets y su registro
   persistente. Borrar el último archivo no borra por accidente una carpeta creada
   por el usuario; una carpeta vacía puede moverse o eliminarse expresamente.
 - **Cambiar nombre** está disponible en el menú de cada archivo y carpeta. En un
   archivo sólo modifica `original_filename`, que es el nombre visible y de
   descarga: no reescribe el binario, `bunny_path`, `public_url` ni bindings por
   asset ID. La extensión real se conserva y el backend rechaza otro nombre igual
-  dentro de la misma carpeta. En una carpeta cambia la ruta completa, mueve sus
-  assets y subcarpetas con el mismo aislamiento y límites síncronos del flujo de
-  mover, conserva carpetas vacías en `media_folders` y rechaza colisiones con una
-  carpeta hermana existente.
+  dentro de la misma carpeta. En una carpeta actualiza únicamente el nombre
+  visible persistido en `media_folders.name`: la ruta técnica, los assets, las
+  subcarpetas, `bunny_path`, `public_url` y los bindings permanecen intactos. Por
+  eso el cambio es inmediato y no hereda los límites de tamaño, cantidad o tiempo
+  del flujo físico de mover. La sincronización con Bunny conserva el alias, las
+  listas filtradas y breadcrumbs lo presentan con la escritura exacta elegida por
+  el usuario, y el backend rechaza otra carpeta hermana con el mismo nombre visible.
 - Quick filters such as Fotos, Videos, Audio, Docs and Otros are global views from the root of Media. Selecting one resets the current folder and shows matching files directly, while normal folder browsing remains available when the user opens a folder.
 
 ## Quotas

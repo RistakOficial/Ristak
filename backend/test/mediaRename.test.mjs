@@ -167,7 +167,7 @@ test('renameMediaAsset cambia sólo el nombre visible y conserva el archivo fís
   })
 })
 
-test('renameMediaFolder actualiza la ruta completa y conserva archivos y subcarpetas', async () => {
+test('renameMediaFolder cambia el nombre visible sin mover archivos, rutas ni URLs', async () => {
   await withLocalMediaTest(async ({ businessId, db, mediaStorageService, trackAsset }) => {
     const asset = trackAsset(await mediaStorageService.uploadMediaAsset({
       buffer: Buffer.from('archivo dentro de subcarpeta'),
@@ -199,38 +199,130 @@ test('renameMediaFolder actualiza la ruta completa y conserva archivos y subcarp
     )
 
     const beforeLocalPath = asset.metadata.localPath
-    const result = await mediaStorageService.renameMediaFolder({
-      businessId,
-      folderPath: 'Clientes/Original',
-      name: 'Proyecto final'
-    })
+    await db.run(
+      `UPDATE media_assets
+       SET storage_provider = 'bunny', quota_size = ?
+       WHERE id = ?`,
+      [65 * 1024 * 1024, asset.id]
+    )
+
+    let result
+    try {
+      result = await mediaStorageService.renameMediaFolder({
+        businessId,
+        folderPath: 'Clientes/Original',
+        name: 'Proyecto iPhone VIP'
+      })
+    } finally {
+      await db.run(
+        `UPDATE media_assets
+         SET storage_provider = 'local', quota_size = size_processed
+         WHERE id = ?`,
+        [asset.id]
+      )
+    }
     const renamedAsset = await mediaStorageService.getMediaAsset(asset.id)
 
     assert.equal(result.folder.previousPath, 'Clientes/Original')
-    assert.equal(result.folder.path, 'Clientes/Proyecto final')
-    assert.equal(renamedAsset.folderPath, 'Clientes/Proyecto final/Subcarpeta')
-    assert.notEqual(renamedAsset.metadata.localPath, beforeLocalPath)
-    assert.equal(await pathExists(beforeLocalPath), false)
-    assert.equal(await pathExists(renamedAsset.metadata.localPath), true)
+    assert.equal(result.folder.path, 'Clientes/Original')
+    assert.equal(result.folder.name, 'Proyecto iPhone VIP')
+    assert.equal(result.foldersAffected, 1)
+    assert.equal(renamedAsset.folderPath, 'Clientes/Original/Subcarpeta')
+    assert.equal(renamedAsset.bunnyPath, asset.bunnyPath)
+    assert.equal(renamedAsset.publicUrl, asset.publicUrl)
+    assert.equal(renamedAsset.metadata.localPath, beforeLocalPath)
+    assert.equal(await pathExists(beforeLocalPath), true)
 
-    const oldRows = await db.all(
-      `SELECT path FROM media_folders
+    const folderRows = await db.all(
+      `SELECT path, name FROM media_folders
        WHERE business_id = ? AND (path = ? OR path LIKE ?)`,
       [businessId, 'Clientes/Original', 'Clientes/Original/%']
     )
-    const newRows = await db.all(
-      `SELECT path FROM media_folders
-       WHERE business_id = ? AND (path = ? OR path LIKE ?)
-       ORDER BY path`,
-      [businessId, 'Clientes/Proyecto final', 'Clientes/Proyecto final/%']
-    )
-    assert.deepEqual(oldRows, [])
     assert.deepEqual(
-      newRows.map((row) => row.path),
+      folderRows.sort((left, right) => left.path.localeCompare(right.path)),
       [
-        'Clientes/Proyecto final',
-        'Clientes/Proyecto final/Subcarpeta',
-        'Clientes/Proyecto final/Vacía'
+        { path: 'Clientes/Original', name: 'Proyecto iPhone VIP' },
+        { path: 'Clientes/Original/Subcarpeta', name: 'Subcarpeta' },
+        { path: 'Clientes/Original/Vacía', name: 'Vacía' }
+      ]
+    )
+
+    const parentFolders = await mediaStorageService.listMediaFolders({
+      businessId,
+      parentPath: 'Clientes'
+    })
+    assert.deepEqual(
+      parentFolders.items.find((folder) => folder.path === 'Clientes/Original'),
+      {
+        path: 'Clientes/Original',
+        name: 'Proyecto iPhone VIP',
+        filesCount: 1,
+        sizeBytes: asset.quotaSize
+      }
+    )
+    assert.equal(
+      (await mediaStorageService.listMediaFolders({
+        businessId,
+        parentPath: 'Clientes',
+        mediaType: 'document'
+      })).items.find((folder) => folder.path === 'Clientes/Original')?.name,
+      'Proyecto iPhone VIP'
+    )
+
+    const childFolders = await mediaStorageService.listMediaFolders({
+      businessId,
+      parentPath: 'Clientes/Original'
+    })
+    assert.deepEqual(childFolders.breadcrumbs, [
+      { path: 'Clientes', name: 'Clientes' },
+      { path: 'Clientes/Original', name: 'Proyecto iPhone VIP' }
+    ])
+
+    trackAsset(await mediaStorageService.uploadMediaAsset({
+      buffer: Buffer.from('archivo agregado después del cambio de nombre'),
+      filename: 'nuevo.txt',
+      mimeType: 'text/plain',
+      module: 'media',
+      folderPath: 'Clientes/Original',
+      businessId,
+      skipCompression: true
+    }))
+    const folderAfterUpload = (await mediaStorageService.listMediaFolders({
+      businessId,
+      parentPath: 'Clientes'
+    })).items.find((folder) => folder.path === 'Clientes/Original')
+    assert.equal(folderAfterUpload?.name, 'Proyecto iPhone VIP')
+
+    await assert.rejects(
+      mediaStorageService.createMediaFolder({
+        businessId,
+        parentPath: 'Clientes',
+        name: 'proyecto iphone vip'
+      }),
+      (error) => error?.code === 'media_folder_exists'
+    )
+
+    const moved = await mediaStorageService.moveMediaSelection({
+      businessId,
+      folderPaths: ['Clientes/Original'],
+      targetFolderPath: 'Archivo'
+    })
+    assert.equal(moved.affected, 2)
+    assert.equal(
+      (await mediaStorageService.listMediaFolders({
+        businessId,
+        parentPath: 'Archivo'
+      })).items.find((folder) => folder.path === 'Archivo/Original')?.name,
+      'Proyecto iPhone VIP'
+    )
+    assert.deepEqual(
+      (await mediaStorageService.listMediaFolders({
+        businessId,
+        parentPath: 'Archivo/Original'
+      })).breadcrumbs,
+      [
+        { path: 'Archivo', name: 'Archivo' },
+        { path: 'Archivo/Original', name: 'Proyecto iPhone VIP' }
       ]
     )
   })
