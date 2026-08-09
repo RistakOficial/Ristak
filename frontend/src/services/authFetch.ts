@@ -4,6 +4,7 @@ import {
   startRistakApiRequest
 } from './requestActivity'
 import { syncAuthScopedCachePrincipal } from './authPrincipalCache'
+import { rememberLicenseBlock } from './licenseBlockState'
 
 const API_AUTH_HEADER = 'Authorization'
 const LOCAL_DEV_LOGIN_TIMEOUT_MS = 2500
@@ -244,6 +245,7 @@ function maybeHandleLicenseBlocked(response: Response) {
 
   response.clone().json().then(data => {
     if (data?.code === 'license_blocked') {
+      rememberLicenseBlock(data)
       try {
         localStorage.removeItem('auth_token')
         syncAuthPrincipal(null)

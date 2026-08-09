@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react'
 import { Logo } from '@/components/common'
 import { mobileAppService } from '@/services/mobileAppService'
 import { loginWithPortal } from '@/services/mobileTenantService'
+import { rememberLicenseBlock } from '@/services/licenseBlockState'
 import { PHONE_APP_HOME_PATH } from '@/utils/phoneAccess'
 import styles from './MobileTenantSetup.module.css'
 
@@ -35,6 +36,10 @@ export const MobileTenantSetup: React.FC = () => {
       window.location.replace(PHONE_APP_HOME_PATH)
     } catch (err) {
       if ((err as { code?: string })?.code === 'license_blocked') {
+        rememberLicenseBlock(err as Error & {
+          reason?: string
+          payment_url?: string | null
+        })
         window.location.replace('/license-blocked')
         return
       }

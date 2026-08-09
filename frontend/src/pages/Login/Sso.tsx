@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Logo } from '@/components/common'
 import { apiUrl } from '@/services/apiBaseUrl'
 import { syncAuthScopedCachePrincipal } from '@/services/authPrincipalCache'
+import { rememberLicenseBlock } from '@/services/licenseBlockState'
 import { getLoginPathForRoute, isPhoneAppPath, sanitizeAuthRedirectPath } from '@/utils/phoneAccess'
 import styles from './Login.module.css'
 
@@ -66,7 +67,8 @@ export const Sso: React.FC = () => {
         }
 
         if (data.code === 'license_blocked') {
-          navigate('/license-blocked', { replace: true, state: { message: data.message } })
+          const blockState = rememberLicenseBlock(data)
+          navigate('/license-blocked', { replace: true, state: blockState })
           return
         }
 

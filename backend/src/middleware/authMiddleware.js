@@ -63,7 +63,8 @@ export async function requireAuth(req, res, next) {
           success: false,
           code: 'license_blocked',
           reason: license.reason,
-          message: license.message || 'Tu licencia de Ristak no está activa. Contacta al administrador o actualiza tu suscripción para continuar.'
+          message: license.message || 'Tu licencia de Ristak no está activa. Contacta al administrador o actualiza tu suscripción para continuar.',
+          payment_url: license.paymentUrl || null
         })
       }
 

@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { apiUrl, clearRuntimeApiBaseUrl, getRuntimeApiBaseUrl, getRuntimeTenant, isNativeAppRuntime } from '@/services/apiBaseUrl'
 import { mobileAppService } from '@/services/mobileAppService'
 import { requestGoogleLoginUrl } from '@/services/googleLoginService'
+import { rememberLicenseBlock } from '@/services/licenseBlockState'
 import { resolveAndStoreMobileTenant } from '@/services/mobileTenantService'
 import { PHONE_APP_HOME_PATH, PHONE_APP_TENANT_PATH, getPostAuthRedirectPath, isPhoneAppPath, type RedirectLocation } from '@/utils/phoneAccess'
 import { prefetchRouteModule } from '@/routing/routeModules'
@@ -108,7 +109,8 @@ export const Login: React.FC = () => {
       navigate(redirectPath, { replace: true })
     } catch (err: any) {
       if (err.code === 'license_blocked') {
-        navigate('/license-blocked', { replace: true, state: { message: err.message } })
+        const blockState = rememberLicenseBlock(err)
+        navigate('/license-blocked', { replace: true, state: blockState })
         return
       }
 
@@ -136,7 +138,8 @@ export const Login: React.FC = () => {
             return
           } catch (retryErr: any) {
             if (retryErr.code === 'license_blocked') {
-              navigate('/license-blocked', { replace: true, state: { message: retryErr.message } })
+              const blockState = rememberLicenseBlock(retryErr)
+              navigate('/license-blocked', { replace: true, state: blockState })
               return
             }
             setError(retryErr.message || 'Correo o contraseña incorrectos.')

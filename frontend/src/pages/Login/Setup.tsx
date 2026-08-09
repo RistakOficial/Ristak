@@ -5,6 +5,7 @@ import { Button, GoogleLoginButton, Logo } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiUrl } from '@/services/apiBaseUrl'
 import { requestGoogleLoginUrl } from '@/services/googleLoginService'
+import { rememberLicenseBlock } from '@/services/licenseBlockState'
 import { getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import { getLoginPathForRoute, getPostAuthRedirectPath, sanitizeAuthRedirectPath, type RedirectLocation } from '@/utils/phoneAccess'
 import styles from './Login.module.css'
@@ -158,7 +159,8 @@ export const Setup: React.FC = () => {
           if (cancelled) return
 
           if (err.code === 'license_blocked') {
-            navigate('/license-blocked', { replace: true, state: { message: err.message } })
+            const blockState = rememberLicenseBlock(err)
+            navigate('/license-blocked', { replace: true, state: blockState })
             return
           }
           if (err.code === 'setup_already_completed') {
@@ -257,7 +259,8 @@ export const Setup: React.FC = () => {
       window.location.replace(redirectPath)
     } catch (err: any) {
       if (err.code === 'license_blocked') {
-        navigate('/license-blocked', { replace: true, state: { message: err.message } })
+        const blockState = rememberLicenseBlock(err)
+        navigate('/license-blocked', { replace: true, state: blockState })
         return
       }
       setError(err.message || (installerLoginMode ? 'Correo o contraseña incorrectos' : 'Error al crear usuario'))

@@ -437,6 +437,21 @@ function normalizeBaseUrl(value = '') {
   }
 }
 
+function normalizePaymentUrl(value = '') {
+  const clean = String(value || '').trim()
+  if (!clean) return null
+
+  try {
+    const parsed = new URL(clean)
+    if (parsed.protocol === 'https:') return parsed.toString()
+    if (parsed.protocol === 'http:' && isLocalHost(parsed.hostname)) return parsed.toString()
+  } catch {
+    // Una ruta de pago inválida se ignora; nunca se convierte en navegación.
+  }
+
+  return null
+}
+
 function normalizeAppBaseUrl(value = '') {
   const clean = normalizeBaseUrl(value)
   if (!clean) return ''
@@ -853,6 +868,7 @@ async function performLicenseVerification(targetEmail, generation) {
     enforced: true,
     reason: data?.reason || 'license_blocked',
     message: data?.message || 'Tu licencia de Ristak no está activa. Contacta al administrador o actualiza tu suscripción para continuar.',
+    paymentUrl: normalizePaymentUrl(data?.payment_url || data?.checkout_url),
     expiresAt: null,
     verifiedAt: new Date().toISOString(),
     blockedUntil: Date.now() + config.blockedCacheSeconds * 1000

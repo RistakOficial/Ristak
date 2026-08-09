@@ -99,8 +99,13 @@ function startMockServer() {
             res.statusCode = 403
             res.end(JSON.stringify({
               allowed: false,
-              reason: 'subscription_inactive',
-              message: 'Tu licencia de Ristak no está activa.'
+              reason: serverMode === 'block_trial_expired' ? 'trial_expired' : 'subscription_inactive',
+              message: serverMode === 'block_trial_expired'
+                ? 'Tu periodo gratis terminó. Activa tu suscripción para seguir usando Ristak.'
+                : 'Tu licencia de Ristak no está activa.',
+              ...(serverMode === 'block_trial_expired'
+                ? { payment_url: 'https://www.ristak.com/login?next=%2Fstart' }
+                : {})
             }))
           }
           return
@@ -473,6 +478,17 @@ test('licencia suspendida bloquea aunque el password local sea correcto', async 
   assert.equal(state.allowed, false)
   assert.equal(state.reason, 'subscription_inactive')
   assert.ok(state.message.includes('no está activa'))
+})
+
+test('fin de prueba conserva la liga segura para mostrar la pantalla de pago', async () => {
+  serverMode = 'block_trial_expired'
+
+  const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
+
+  assert.equal(state.allowed, false)
+  assert.equal(state.reason, 'trial_expired')
+  assert.equal(state.paymentUrl, 'https://www.ristak.com/login?next=%2Fstart')
+  assert.ok(state.message.includes('periodo gratis terminó'))
 })
 
 test('el token temporal evita consultar al servidor en cada request', async () => {

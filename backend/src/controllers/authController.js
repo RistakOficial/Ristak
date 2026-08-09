@@ -170,7 +170,8 @@ function sendLicenseBlocked(res, licenseState, fallbackMessage = 'Tu licencia de
     success: false,
     code: 'license_blocked',
     reason: licenseState?.reason || 'license_blocked',
-    message: licenseState?.message || fallbackMessage
+    message: licenseState?.message || fallbackMessage,
+    payment_url: licenseState?.paymentUrl || null
   })
 }
 

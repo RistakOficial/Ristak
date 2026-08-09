@@ -202,8 +202,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const data = await response.json()
 
       if (!response.ok || !data.success) {
-        const error = new Error(data.message || 'Error en el login') as Error & { code?: string }
+        const error = new Error(data.message || 'Error en el login') as Error & {
+          code?: string
+          reason?: string
+          payment_url?: string | null
+        }
         error.code = data.code
+        error.reason = data.reason
+        error.payment_url = data.payment_url
         throw error
       }
 
@@ -235,8 +241,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const data = await response.json()
 
       if (!response.ok || !data.success) {
-        const error = new Error(data.message || 'Error al crear usuario') as Error & { code?: string }
+        const error = new Error(data.message || 'Error al crear usuario') as Error & {
+          code?: string
+          reason?: string
+          payment_url?: string | null
+        }
         error.code = data.code
+        error.reason = data.reason
+        error.payment_url = data.payment_url
         throw error
       }
 

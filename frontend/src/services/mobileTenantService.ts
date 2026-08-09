@@ -24,6 +24,8 @@ type BackendLoginResponse = {
   apiToken?: string
   code?: string
   message?: string
+  reason?: string
+  payment_url?: string | null
 }
 
 export async function resolveAndStoreMobileTenant(identifier: string): Promise<RuntimeTenant> {
@@ -92,8 +94,14 @@ export async function loginWithPortal(email: string, password: string): Promise<
   }
 
   if (data.code === 'license_blocked') {
-    const err = new Error(data.message || 'Tu licencia de Ristak no está activa.') as Error & { code?: string }
+    const err = new Error(data.message || 'Tu licencia de Ristak no está activa.') as Error & {
+      code?: string
+      reason?: string
+      payment_url?: string | null
+    }
     err.code = 'license_blocked'
+    err.reason = data.reason
+    err.payment_url = data.payment_url
     throw err
   }
 

@@ -95,10 +95,14 @@ cobra en nombre de terceros y no actúa como marketplace.
 3. Si es correcta, llama a `POST {LICENSE_SERVER_URL}/api/license/verify` con
    `client_id`, `license_key`, `installation_id`, `email`, `app_url`, `version`.
 4. `allowed=true` → entra; la app cachea el permiso con el `license_token` temporal
-   (expiración definida por el servidor: 1/12/24 h configurables) y no vuelve a consultar
-   hasta que expire.
-5. `allowed=false` → 403 con `code: license_blocked` y el frontend muestra la pantalla
-   `/license-blocked`: «Tu licencia de Ristak no está activa…».
+   (expiración definida por el servidor: 1/12/24 h configurables), pero vuelve a consultar
+   brevemente mientras hay actividad para aplicar vencimientos y cambios de plan sin esperar
+   hasta el final del token.
+5. `allowed=false` → 403 con `code: license_blocked`, `reason` y, cuando el bloqueo se
+   resuelve pagando, `payment_url`. El frontend conserva esos datos aunque la respuesta ocurra
+   a media sesión y muestra `/license-blocked`. Para `reason: trial_expired` enseña
+   **Tu periodo gratis terminó** y el botón **Continuar con el pago**; la liga sólo se acepta si
+   usa HTTPS (o HTTP local durante desarrollo).
 6. Todas las rutas privadas pasan por `requireAuth`, que re-valida el cache de licencia; si la
    licencia se suspende a media sesión, el siguiente request expulsa al usuario a la pantalla de bloqueo.
 7. Si el servidor central no responde: con token vigente se mantiene el acceso; sin token,
@@ -106,7 +110,9 @@ cobra en nombre de terceros y no actúa como marketplace.
 
 Implementación: `backend/src/services/licenseService.js`,
 `backend/src/middleware/licenseMiddleware.js` y `requireAuth` en
-`backend/src/middleware/authMiddleware.js`.
+`backend/src/middleware/authMiddleware.js`. El estado de navegación vive en
+`frontend/src/services/licenseBlockState.ts` para cubrir login, SSO, setup, app móvil y el
+bloqueo de una sesión ya abierta.
 
 ## Feature flags
 
