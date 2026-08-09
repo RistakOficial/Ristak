@@ -774,7 +774,15 @@ async function startRuntimeServices() {
 
   // Publica el directorio de usuarios al portal para que el login móvil pueda
   // enrutar a dueño y empleados por su correo (best-effort, no bloquea el boot).
-  requestPortalUserRefresh({ autoRegister: false })
+  runStartupDrainTask(
+    'startup:portal-user-refresh',
+    async () => (
+      (await canRunBackgroundJob())
+        ? requestPortalUserRefresh({ autoRegister: false })
+        : { skipped: true, reason: 'license_blocked' }
+    ),
+    'No se pudo refrescar el directorio de usuarios en el portal'
+  )
 
   // Inicializar versión de Meta API desde BD
   await initializeVersion()
@@ -832,6 +840,9 @@ async function startRuntimeServices() {
   runStartupDrainTask(
     'startup:meta-version',
     async () => {
+      if (!(await canRunBackgroundJob())) {
+        return { skipped: true, reason: 'license_blocked' }
+      }
       if (!(await isMetaConnected())) {
         logger.info('Meta API version startup omitido: Meta no está conectado')
         return { skipped: true, reason: 'meta-disconnected' }
@@ -914,6 +925,9 @@ async function startRuntimeServices() {
     'startup:message-template-initialization',
     async () => {
       await ensureDefaultWhatsAppApiMessageTemplates()
+      if (!(await canRunBackgroundJob('whatsapp'))) {
+        return { skipped: true, reason: 'license_blocked' }
+      }
       return repairDefaultAppointmentMessageTemplatesForCurrentConnection()
     },
     'No se pudieron inicializar o actualizar las plantillas default de WhatsApp'
@@ -998,9 +1012,25 @@ async function startRuntimeServices() {
   // competir con la llave maestra, el setup, calendarios ni crons necesarios
   // para que la instancia pase su healthcheck. La cola conserva prioridades y
   // un solo job de I/O intensivo a la vez.
-  scheduleCrmListProjectionBackfill()
+  runStartupDrainTask(
+    'startup:crm-list-projection',
+    async () => (
+      (await canRunBackgroundJob('contacts'))
+        ? scheduleCrmListProjectionBackfill()
+        : { skipped: true, reason: 'license_blocked' }
+    ),
+    'No se pudo agendar el backfill de listas del CRM'
+  )
   scheduleTrackingVisitorProjectionBackfill()
-  scheduleContactFormCustomFieldsRecovery()
+  runStartupDrainTask(
+    'startup:contact-form-fields-recovery',
+    async () => (
+      (await canRunBackgroundJob('forms'))
+        ? scheduleContactFormCustomFieldsRecovery()
+        : { skipped: true, reason: 'license_blocked' }
+    ),
+    'No se pudo agendar la recuperación histórica de campos de formularios'
+  )
   // Chat, first-seen, metricas del agente e identidad se agendan desde sus
   // singletons durables. Un restart caliente no vuelve a encolar ni a sondear
   // historicos que ya fueron certificados como ready.

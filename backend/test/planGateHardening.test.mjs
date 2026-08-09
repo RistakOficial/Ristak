@@ -139,6 +139,7 @@ test('automation builder and runtime reject premium nodes outside the plan', asy
 
 test('mobile phone view and background jobs respect plan features', async () => {
   const phoneApp = await frontendFile('src/pages/PhoneApp/PhoneApp.tsx')
+  const server = await backendFile('src/server.js')
 
   assert.match(phoneApp, /featureKeys\?: readonly string\[\]/)
   assert.match(phoneApp, /id: 'transactions', label: 'Pagos'[\s\S]*featureKeys: \['payments'\]/)
@@ -168,6 +169,12 @@ test('mobile phone view and background jobs respect plan features', async () => 
     const source = await backendFile(cronPath)
     assert.match(source, /canRunBackgroundJob\(/, `${cronPath} must validate license before background work`)
   }
+
+  assert.match(server, /startup:portal-user-refresh[\s\S]*canRunBackgroundJob\(\)[\s\S]*requestPortalUserRefresh/)
+  assert.match(server, /startup:meta-version[\s\S]*canRunBackgroundJob\(\)[\s\S]*updateMetaVersion/)
+  assert.match(server, /startup:message-template-initialization[\s\S]*canRunBackgroundJob\('whatsapp'\)[\s\S]*repairDefaultAppointmentMessageTemplatesForCurrentConnection/)
+  assert.match(server, /startup:crm-list-projection[\s\S]*canRunBackgroundJob\('contacts'\)[\s\S]*scheduleCrmListProjectionBackfill/)
+  assert.match(server, /startup:contact-form-fields-recovery[\s\S]*canRunBackgroundJob\('forms'\)[\s\S]*scheduleContactFormCustomFieldsRecovery/)
 })
 
 test('embedded plan features cannot leak through contacts, chat, notifications, or iPhone', async () => {
