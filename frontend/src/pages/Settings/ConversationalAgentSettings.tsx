@@ -1293,6 +1293,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
   const [paymentSettingsOpen, setPaymentSettingsOpen] = useState(false)
   const [savingPaymentSettings, setSavingPaymentSettings] = useState(false)
   const promptConfig = agent.promptConfig || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG
+  const includeBusinessDescription = promptConfig.includeBusinessDescription !== false
   const strategyText = promptConfig.strategyText ?? promptConfig.editableText ?? ''
   const personalityText = promptConfig.personalityText ?? ''
 
@@ -2139,6 +2140,21 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
         <h3 className={styles.sectionTitle}>1. Capacitación y personalidad</h3>
         <p className={styles.agentSectionHint}>Son dos cosas distintas: qué debe saber y hacer, y cómo debe hablar. Puedes dejar las plantillas, editarlas o borrarlas completas.</p>
         <div className={styles.nativePromptFields}>
+          <div className={styles.configQuestionList}>
+            <QuestionSelectRow
+              question="¿Usar la descripción del negocio como parte de la memoria?"
+              helper="Elige No si quieres que este agente se base únicamente en la Estrategia y capacitación escrita aquí."
+              value={includeBusinessDescription ? 'yes' : 'no'}
+              options={binaryChoiceOptions}
+              selectLabel="Usar descripción del negocio"
+              onChange={(value) => onChange({
+                promptConfig: {
+                  ...promptConfig,
+                  includeBusinessDescription: value === 'yes'
+                }
+              })}
+            />
+          </div>
           <ExpandableTextareaField
             id={`agent-${agent.id}-strategy`}
             label="Estrategia y capacitación"

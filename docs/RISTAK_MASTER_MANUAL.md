@@ -8356,6 +8356,12 @@ deja plantillas utiles por defecto y separa las piezas que el dueño sí control
   Es la autoridad sobre que debe lograr la conversacion, que debe ocurrir antes de
   una accion y en que momento se puede consultar, agendar, cobrar, enlazar o
   entregar a una persona.
+- Descripcion general del negocio: al inicio del formulario, cada agente decide
+  con un selector **Sí/No** si ese perfil compartido forma parte de su memoria.
+  El default es **Sí** para conservar el comportamiento de agentes nuevos y
+  existentes. Al elegir **No**, el runtime no recupera ni envia esa descripcion
+  al modelo y el agente se basa en su propia Estrategia y capacitacion; las
+  capacidades y sus consultas operativas reales siguen disponibles.
 - Personalidad: tono, vocabulario, formalidad, humor, emojis y estilo del agente.
   No puede cambiar el proceso ni adelantar una accion definida por Estrategia. Si
   queda vacia, la voz general del negocio funciona como respaldo.
@@ -8385,7 +8391,9 @@ se permite completar esos datos y ejecutar el traspaso. Las demas decisiones de
 Estrategia/capacidades quedan bloqueadas. Estrategia, Personalidad, una despedida
 o un emoji no pueden cancelar esa obligacion.
 
-Los dos campos editables aceptan el texto completo sin recortes silenciosos y
+Los dos campos editables y la preferencia `includeBusinessDescription` se guardan
+por agente dentro de `prompt_config`. Los textos aceptan el contenido completo
+sin recortes silenciosos y
 pueden abrirse en un editor enfocado grande sin crear una copia temporal del
 borrador. El contrato `prompt_config` schema 2 conserva `strategyText` y
 `personalityText` por separado; un agente anterior con solo `editableText` se
@@ -8931,7 +8939,8 @@ mensajes totales, incluidos, omitidos, bytes y paginas cargadas. No existe una I
 de resumen o compactacion escondida.
 
 El prompt se arma en servidor con estrategia/capacitacion y personalidad como
-las instrucciones editoriales del dueño, contexto real recuperado y una zona
+las instrucciones editoriales del dueño, contexto real recuperado solo cuando
+`includeBusinessDescription` no esta desactivado y una zona
 blindada que sólo protege seguridad, permisos, identidad, configuracion y hechos
 operativos. La estrategia es el cerebro de la conversacion: decide semanticamente
 si primero pregunta, informa, consulta, agenda, cobra, retoma, cancela o entrega.

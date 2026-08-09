@@ -2073,6 +2073,21 @@ test('estrategia gobierna el proceso aunque personalidad intente adelantar una c
   assert.doesNotMatch(instructions, /cuando quien escribe confirme un dato suyo, usa save_contact_data/i)
 })
 
+test('el agente puede excluir la descripción general y usar sólo su capacitación', () => {
+  const instructions = buildNativeConversationalInstructions({
+    promptConfig: {
+      includeBusinessDescription: false,
+      strategyText: 'La capacitación exclusiva dice que primero debemos entender el caso.',
+      personalityText: 'Habla con claridad.'
+    },
+    businessContext: 'MARCADOR_DESCRIPCION_GENERAL_QUE_NO_DEBE_LLEGAR'
+  })
+
+  assert.match(instructions, /La capacitación exclusiva dice que primero debemos entender el caso/)
+  assert.doesNotMatch(instructions, /MARCADOR_DESCRIPCION_GENERAL_QUE_NO_DEBE_LLEGAR/)
+  assert.doesNotMatch(instructions, /## Contexto real del negocio/)
+})
+
 test('prompt de agenda humana ofrece espacios pero prohíbe crear o confirmar la cita', () => {
   const capabilitiesConfig = {
     schemaVersion: 1,

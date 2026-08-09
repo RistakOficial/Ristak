@@ -513,6 +513,7 @@ export function normalizeConversationalPromptConfig(input, { materializeDefault 
     return {
       schemaVersion: PROMPT_SCHEMA_VERSION,
       templateVersion: DEFAULT_CONVERSATIONAL_PROMPT_TEMPLATE_VERSION,
+      includeBusinessDescription: true,
       strategyText,
       personalityText,
       editableText: buildLegacyConversationalEditableText(strategyText, personalityText)
@@ -533,6 +534,9 @@ export function normalizeConversationalPromptConfig(input, { materializeDefault 
   return {
     schemaVersion: PROMPT_SCHEMA_VERSION,
     templateVersion: cleanId(raw.templateVersion, 120) || DEFAULT_CONVERSATIONAL_PROMPT_TEMPLATE_VERSION,
+    // La ausencia significa Sí para que agentes anteriores conserven exactamente
+    // el contexto que ya usaban. Sólo un false explícito lo excluye.
+    includeBusinessDescription: raw.includeBusinessDescription !== false,
     strategyText,
     personalityText,
     // Compatibilidad temporal con clientes web/móviles anteriores. Siempre se

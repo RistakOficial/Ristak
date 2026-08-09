@@ -63,6 +63,7 @@ test('normalizadores nativos conservan texto vacío explícito y descartan capac
   assert.deepEqual(prompt, {
     schemaVersion: 2,
     templateVersion: 'custom-v7',
+    includeBusinessDescription: true,
     strategyText: '',
     personalityText: '',
     editableText: ''
@@ -396,6 +397,7 @@ test('prompt schema 2 conserva textos largos completos y migra schema 1 sin adiv
     editableText: legacyText
   }, { materializeDefault: true })
   assert.equal(migrated.schemaVersion, 2)
+  assert.equal(migrated.includeBusinessDescription, true)
   assert.equal(migrated.strategyText, legacyText)
   assert.equal(migrated.personalityText, '')
   assert.equal(migrated.editableText, legacyText)
@@ -403,10 +405,12 @@ test('prompt schema 2 conserva textos largos completos y migra schema 1 sin adiv
   const personalityText = `${'cálido, directo y humano\n'.repeat(900)}MARCADOR_FINAL_PERSONALIDAD`
   const split = normalizeConversationalPromptConfig({
     schemaVersion: 2,
+    includeBusinessDescription: false,
     strategyText: legacyText,
     personalityText
   }, { materializeDefault: true })
   assert.equal(split.strategyText, legacyText)
+  assert.equal(split.includeBusinessDescription, false)
   assert.equal(split.personalityText, personalityText)
   assert.match(split.editableText, /MARCADOR_FINAL_LEGACY/)
   assert.match(split.editableText, /MARCADOR_FINAL_PERSONALIDAD/)
@@ -725,6 +729,12 @@ test('crear, leer y parchear instrucciones largas conserva ambos campos completo
     })
     assert.equal(agent.promptConfig.strategyText, strategyText)
     assert.equal(agent.promptConfig.personalityText, personalityText)
+    assert.equal(agent.promptConfig.includeBusinessDescription, true)
+
+    agent = await updateConversationalAgent(agent.id, {
+      promptConfig: { includeBusinessDescription: false }
+    })
+    assert.equal(agent.promptConfig.includeBusinessDescription, false)
 
     const stored = JSON.parse((await db.get(
       'SELECT prompt_config FROM conversational_agents WHERE id = ?',
@@ -732,6 +742,7 @@ test('crear, leer y parchear instrucciones largas conserva ambos campos completo
     )).prompt_config)
     assert.equal(stored.strategyText, strategyText)
     assert.equal(stored.personalityText, personalityText)
+    assert.equal(stored.includeBusinessDescription, false)
 
     const changedPersonality = `${personalityText}\nSEGUNDO_FINAL`
     agent = await updateConversationalAgent(agent.id, {
@@ -739,6 +750,7 @@ test('crear, leer y parchear instrucciones largas conserva ambos campos completo
     })
     assert.equal(agent.promptConfig.strategyText, strategyText)
     assert.equal(agent.promptConfig.personalityText, changedPersonality)
+    assert.equal(agent.promptConfig.includeBusinessDescription, false)
     assert.match(agent.promptConfig.editableText, /FIN_ESTRATEGIA/)
     assert.match(agent.promptConfig.editableText, /SEGUNDO_FINAL/)
 
@@ -751,6 +763,7 @@ test('crear, leer y parchear instrucciones largas conserva ambos campos completo
     })
     assert.equal(agent.promptConfig.strategyText, strategyText)
     assert.equal(agent.promptConfig.personalityText, changedPersonality)
+    assert.equal(agent.promptConfig.includeBusinessDescription, false)
 
     const legacyMobileEdit = `${'Edición desde cliente anterior.\n'.repeat(700)}FIN_CLIENTE_ANTERIOR`
     agent = await updateConversationalAgent(agent.id, {
@@ -762,6 +775,7 @@ test('crear, leer y parchear instrucciones largas conserva ambos campos completo
     assert.equal(agent.promptConfig.strategyText, legacyMobileEdit)
     assert.equal(agent.promptConfig.personalityText, '')
     assert.equal(agent.promptConfig.editableText, legacyMobileEdit)
+    assert.equal(agent.promptConfig.includeBusinessDescription, false)
   } finally {
     await removeAgent(agent?.id)
   }

@@ -14146,6 +14146,7 @@ function normalizeAgentPromptPatch(promptInput, basePrompt) {
       return normalizeConversationalPromptConfig({
         schemaVersion: 1,
         templateVersion: promptInput.templateVersion,
+        includeBusinessDescription: normalizedBase.includeBusinessDescription,
         editableText: promptInput.editableText
       }, { materializeDefault: true })
     }
@@ -14157,7 +14158,10 @@ function normalizeAgentPromptPatch(promptInput, basePrompt) {
     // cambie el nombre o el modelo. Si el valor sigue idéntico, conservar los
     // dos campos schema 2 en vez de colapsarlos de nuevo a uno solo.
     if (legacyEditableText === normalizedBase.editableText) return normalizedBase
-    return normalizeConversationalPromptConfig(promptInput, { materializeDefault: true })
+    return normalizeConversationalPromptConfig({
+      ...promptInput,
+      includeBusinessDescription: normalizedBase.includeBusinessDescription
+    }, { materializeDefault: true })
   }
   return normalizeConversationalPromptConfig({ ...normalizedBase, ...promptInput }, { materializeDefault: true })
 }

@@ -28,6 +28,8 @@ export const CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH = 4000
 export interface ConversationalPromptConfig {
   schemaVersion: 1 | 2
   templateVersion: string
+  /** Si es false, el agente usa sólo su capacitación y omite la descripción general del negocio. */
+  includeBusinessDescription?: boolean
   strategyText?: string
   personalityText?: string
   /** Compatibilidad con clientes anteriores; en schema 2 se deriva de ambos campos. */
@@ -716,6 +718,7 @@ export const DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS = buildConversationalLegac
 export const DEFAULT_CONVERSATIONAL_PROMPT_CONFIG: ConversationalPromptConfig = {
   schemaVersion: 2,
   templateVersion: 'ristak-conversational-v3',
+  includeBusinessDescription: true,
   strategyText: DEFAULT_CONVERSATIONAL_STRATEGY_INSTRUCTIONS,
   personalityText: DEFAULT_CONVERSATIONAL_PERSONALITY_INSTRUCTIONS,
   editableText: DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS
@@ -918,6 +921,7 @@ function normalizePromptConfig(value: unknown): ConversationalPromptConfig {
   return {
     schemaVersion: 2,
     templateVersion: String(raw.templateVersion || DEFAULT_CONVERSATIONAL_PROMPT_CONFIG.templateVersion).trim().slice(0, 120),
+    includeBusinessDescription: raw.includeBusinessDescription !== false,
     strategyText,
     personalityText,
     editableText: buildConversationalLegacyEditableText(strategyText, personalityText)

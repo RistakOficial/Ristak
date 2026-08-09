@@ -4556,10 +4556,12 @@ async function buildToolCallingV2AgentForRun({
   historyContext = null,
   runtimeEventContext = ''
 }) {
+  const promptConfig = getConversationalPromptConfig(config)
+  const includeBusinessDescription = promptConfig.includeBusinessDescription !== false
   const [aiConfig, timezone, businessProfile, accountLocale] = await Promise.all([
     getAIRuntimeConfig({}),
     getAccountTimezone().catch(() => DEFAULT_TIMEZONE),
-    getBusinessProfileSnapshot().catch(() => null),
+    includeBusinessDescription ? getBusinessProfileSnapshot().catch(() => null) : Promise.resolve(null),
     getAccountLocaleSettings().catch(() => ({}))
   ])
 
@@ -4581,7 +4583,6 @@ async function buildToolCallingV2AgentForRun({
     businessName = userRow?.business_name || null
   }
 
-  const promptConfig = getConversationalPromptConfig(config)
   const capabilitiesConfig = getConversationalCapabilitiesConfig(config)
   const capabilityManifest = buildConversationalCapabilityManifest(config)
   const ctx = {
@@ -4673,12 +4674,14 @@ async function buildToolCallingV2AgentForRun({
     ? 'resolve_active_appointment_offer'
     : ''
   const requiredFirstToolChoice = paymentResumeToolChoice || appointmentOfferAdjudicationToolChoice
-  const knowledge = retrieveRelevantBusinessKnowledge({
-    businessProfile,
-    fallbackContext: buildRuntimeBusinessContext(aiConfig?.business_context || '', businessProfile),
-    query: knowledgeQuery,
-    maxChars: 10000
-  })
+  const knowledge = includeBusinessDescription
+    ? retrieveRelevantBusinessKnowledge({
+        businessProfile,
+        fallbackContext: buildRuntimeBusinessContext(aiConfig?.business_context || '', businessProfile),
+        query: knowledgeQuery,
+        maxChars: 10000
+      })
+    : { context: '' }
   const baseInstructions = buildNativeConversationalInstructions({
     promptConfig,
     capabilityManifest,
