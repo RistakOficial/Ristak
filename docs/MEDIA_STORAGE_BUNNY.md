@@ -18,6 +18,24 @@ negocio. Ristak reporta cuota interna ilimitada porque deja de consumir la cuota
 administrada, pero esto no elimina los límites, costos, retención ni políticas de
 Bunny.net.
 
+## Media de chats de WhatsApp
+
+Las imágenes y demás archivos entrantes no deben depender de URLs temporales del
+proveedor. YCloud entrega enlaces de descarga que requieren `X-API-Key`; Meta
+directo entrega un ID que se resuelve con su token; QR/Baileys entrega los bytes
+desde la sesión. En los tres casos el backend obtiene la media de forma privada y
+la persiste como asset público de `module=chat` mediante `mediaStorageService`.
+El mensaje sólo expone la URL estable resultante. Si el negocio conectó su propia
+cuenta Bunny.net, esa cuenta recibe estas cargas por tener prioridad de runtime.
+
+Las subidas entrantes usan una clave idempotente basada en proveedor, mensaje y
+media para que un webhook, HistorySync o reintento no duplique el archivo. Los
+envíos de imagen también conservan como preview la copia estable ya almacenada y
+no permiten que la respuesta temporal del proveedor la reemplace. El cron
+existente `whatsapp-api-history-backfill` intenta rescatar por lotes las imágenes
+y stickers YCloud históricos que aún estén dentro de la retención del proveedor;
+su cursor queda en `whatsapp_api_ycloud_media_rehost_state` y no agrega otro cron.
+
 Los assets existentes se migran en segundo plano y por lotes, sin un cron
 permanente. Cada archivo se transmite sin materializarlo completo en RAM, se
 verifica por tamaño en el destino, se actualiza la fila canónica y sólo entonces se

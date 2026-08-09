@@ -3264,6 +3264,13 @@ Independientemente del formato que exija el proveedor, Ristak debe persistir una
 copia publica reproducible en el historial (`media_url`, MIME y nombre de
 archivo), usando MP4/M4A cuando haga falta para que `/chat`, `/movil`, `mobile/`
 y la app iOS puedan volver a reproducir audios salientes despues de recargar. El
+mismo contrato aplica a la media entrante: YCloud se descarga en backend con la
+API key cifrada, Meta directo con su token y QR desde Baileys; después se guarda
+por `mediaStorageService` y el cliente recibe únicamente la URL pública estable.
+La cuenta Bunny.net conectada por el negocio tiene prioridad. Las claves de
+idempotencia por mensaje evitan duplicados ante webhooks o HistorySync repetidos,
+y una URL temporal devuelta después de un envío no puede reemplazar el preview
+estable que Ristak ya almacenó.
 M4A nativo de iPhone puede ser detectado por magic bytes como `audio/x-m4a`;
 `mediaStorageService` debe normalizar ese alias a `audio/mp4` antes de validar y
 guardar el preview compartido por los envios WhatsApp API y QR. En
@@ -3849,6 +3856,12 @@ reinicios sin volver a recorrer el historial completo. Cada lote esta acotado
 para no bloquear el arranque ni el drenado de Render; solo al llegar a la ultima
 pagina marca la version como terminada. Si YCloud o el webhook fallan, conserva
 el punto y reintenta en el siguiente tick mientras la integracion siga activa.
+Ese mismo cron repara por lotes imágenes y stickers históricos que todavía
+apunten al endpoint temporal de YCloud. Descarga cada archivo con la API key sólo
+en backend, lo mueve al storage Bunny activo y reemplaza la URL persistida; el
+cursor independiente vive en `whatsapp_api_ycloud_media_rehost_state`. Si YCloud
+ya eliminó el archivo por vencimiento, Ristak registra el fallo y avanza para no
+reintentar eternamente algo que ya no existe.
 YCloud limita `/whatsapp/messages` a 100 páginas; si el total supera 10,000,
 Ristak cierra ese backfill como truncado al procesar la página 100 y conserva los
 eventos nuevos por webhook, en vez de solicitar indefinidamente la página 101.

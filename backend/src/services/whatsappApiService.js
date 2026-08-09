@@ -469,9 +469,12 @@ const CONFIG_KEYS = {
 
 const HISTORY_DIRECTION_REPAIR_CONFIG_KEY = 'whatsapp_api_history_direction_repair_version'
 const YCLOUD_HISTORY_BACKFILL_STATE_CONFIG_KEY = 'whatsapp_api_ycloud_history_backfill_state'
+const YCLOUD_MEDIA_REHOST_STATE_CONFIG_KEY = 'whatsapp_api_ycloud_media_rehost_state'
 const YCLOUD_MESSAGES_MAX_PAGE = 100
 export const YCLOUD_HISTORY_BACKFILL_VERSION = '2026-07-11-ycloud-smb-echoes-backfill'
+export const YCLOUD_MEDIA_REHOST_VERSION = '2026-08-09-ycloud-media-bunny-v1'
 const HISTORY_DIRECTION_REPAIR_VERSION = YCLOUD_HISTORY_BACKFILL_VERSION
+const YCLOUD_MEDIA_REHOST_BATCH_LIMIT = 5
 const META_DIRECT_WEBHOOK_STALE_AFTER_MS = 30 * 60 * 1000
 const META_DIRECT_SUBSCRIPTION_REFRESH_COOLDOWN_MS = 6 * 60 * 60 * 1000
 let metaDirectSubscriptionRefreshPromise = null
@@ -6589,6 +6592,20 @@ function getMessageMediaId(message = {}) {
   )
 }
 
+export function isYCloudInboundMediaUrl(value = '') {
+  const cleanUrl = cleanString(value)
+  if (!cleanUrl || !/^https:\/\//i.test(cleanUrl)) return false
+
+  try {
+    const candidate = new URL(cleanUrl)
+    const providerBase = new URL(`${YCLOUD_API_BASE_URL}/`)
+    const mediaPath = `${providerBase.pathname.replace(/\/+$/, '')}/whatsapp/media/download/`
+    return candidate.origin === providerBase.origin && candidate.pathname.startsWith(mediaPath)
+  } catch {
+    return false
+  }
+}
+
 const QR_MEDIA_MESSAGE_TYPES = new Set(['image', 'video', 'audio', 'voice', 'document', 'sticker'])
 
 // Traduce el tipo de mensaje a la clave que `extractMessageMedia` sabe leer en el objeto
@@ -6630,6 +6647,96 @@ function buildInboundMediaFilename({ mediaId = '', messageType = '', mimeType = 
   const extension = getInboundMediaExtension({ messageType: type, mimeType, filename })
   const suffix = cleanString(mediaId).slice(-10) || Date.now()
   return `whatsapp-${type}-${suffix}.${extension}`
+}
+
+async function downloadYCloudInboundMedia({
+  mediaUrl = '',
+  mediaId = '',
+  messageId = '',
+  apiKey = '',
+  messageType = '',
+  mimeType = '',
+  filename = ''
+} = {}) {
+  const cleanMediaUrl = cleanString(mediaUrl)
+  const cleanApiKey = normalizeYCloudApiKeyInput(apiKey)
+  const cleanMessageType = cleanString(messageType).toLowerCase()
+  if (!isYCloudInboundMediaUrl(cleanMediaUrl)) return null
+  if (!cleanApiKey) throw new Error('Falta la llave de YCloud para conservar el archivo recibido')
+
+  const maxBytes = getInboundMediaLimitBytes(cleanMessageType)
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), YCLOUD_REQUEST_TIMEOUT_MS)
+  let response
+  let buffer
+  try {
+    response = await ycloudFetch(cleanMediaUrl, {
+      method: 'GET',
+      headers: {
+        accept: '*/*',
+        'X-API-Key': cleanApiKey
+      },
+      signal: controller.signal
+    })
+    if (!response.ok) {
+      throw new Error(`YCloud no permitió descargar el archivo recibido (${response.status})`)
+    }
+    const declaredSize = Number(response.headers?.get?.('content-length') || 0)
+    if (declaredSize > maxBytes) throw new Error('El archivo recibido excede el tamaño máximo permitido')
+    buffer = Buffer.from(await response.arrayBuffer())
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`YCloud no entregó el archivo en ${YCLOUD_REQUEST_TIMEOUT_MS / 1000} segundos`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
+
+  if (!buffer.length) throw new Error('YCloud devolvió un archivo vacío')
+  if (buffer.length > maxBytes) throw new Error('El archivo recibido excede el tamaño máximo permitido')
+
+  const responseMimeType = cleanString(response.headers?.get?.('content-type')).split(';')[0]
+  const fallbackMimeType = cleanMessageType === 'audio' || cleanMessageType === 'voice'
+    ? 'audio/ogg'
+    : cleanMessageType === 'image' || cleanMessageType === 'sticker'
+      ? 'image/jpeg'
+      : cleanMessageType === 'video'
+        ? 'video/mp4'
+        : 'application/octet-stream'
+  const finalMimeType = cleanMimeType(responseMimeType || mimeType || fallbackMimeType)
+  const finalMediaId = cleanString(mediaId) || cleanMediaUrl.split('/').pop()?.split('?')[0] || ''
+  const finalFilename = buildInboundMediaFilename({
+    mediaId: finalMediaId,
+    messageType: cleanMessageType,
+    mimeType: finalMimeType,
+    filename
+  })
+  const { uploadMediaAsset } = await import('./mediaStorageService.js')
+  const asset = await uploadMediaAsset({
+    buffer,
+    mimeType: finalMimeType,
+    filename: finalFilename,
+    module: 'chat',
+    moduleEntityId: cleanString(messageId) || null,
+    clientUploadId: cleanString(messageId)
+      ? `ycloud-inbound:${cleanString(messageId)}:${finalMediaId || 'media'}`
+      : '',
+    isPublic: true,
+    skipCompression: true,
+    metadata: {
+      source: 'ycloud_inbound_media',
+      ycloudMediaId: finalMediaId,
+      whatsappMessageType: cleanMessageType
+    }
+  })
+
+  return {
+    mediaUrl: asset.publicUrl,
+    mediaMimeType: asset.mimeType || finalMimeType,
+    mediaFilename: asset.originalFilename || asset.storedFilename || finalFilename,
+    mediaAssetId: asset.id
+  }
 }
 
 async function downloadMetaDirectInboundMedia({
@@ -6742,12 +6849,55 @@ async function hydrateInboundMessageMedia(
       throwOnError
     })
   }
-  if (media.mediaUrl) return media
   const messageType = cleanString(normalizedMessage.type).toLowerCase()
   if (!['audio', 'voice', 'image', 'video', 'document', 'sticker'].includes(messageType)) return media
-  if (cleanString(normalizedMessage.provider) !== META_DIRECT_PROVIDER_NAME) return media
-
+  const provider = cleanString(normalizedMessage.provider) || PROVIDER_NAME
   const mediaId = getMessageMediaId(normalizedMessage)
+
+  if (provider === PROVIDER_NAME && isYCloudInboundMediaUrl(media.mediaUrl)) {
+    try {
+      const config = await loadConfig({ includeSecrets: true })
+      const downloaded = await downloadYCloudInboundMedia({
+        mediaUrl: media.mediaUrl,
+        mediaId,
+        messageId,
+        apiKey: config.apiKey,
+        messageType,
+        mimeType: media.mediaMimeType,
+        filename: media.mediaFilename
+      })
+      if (!downloaded?.mediaUrl) return media
+
+      const mediaKey = messageType === 'voice' ? 'audio' : messageType
+      const currentMedia = isPlainObject(normalizedMessage[mediaKey]) ? normalizedMessage[mediaKey] : {}
+      normalizedMessage[mediaKey] = {
+        ...currentMedia,
+        ...(mediaId ? { id: mediaId } : {}),
+        link: downloaded.mediaUrl,
+        url: downloaded.mediaUrl,
+        publicUrl: downloaded.mediaUrl,
+        mediaUrl: downloaded.mediaUrl,
+        mimeType: downloaded.mediaMimeType,
+        filename: downloaded.mediaFilename,
+        mediaAssetId: downloaded.mediaAssetId
+      }
+
+      return {
+        ...media,
+        mediaUrl: downloaded.mediaUrl,
+        mediaMimeType: media.mediaMimeType || downloaded.mediaMimeType,
+        mediaFilename: media.mediaFilename || downloaded.mediaFilename
+      }
+    } catch (error) {
+      logger.warn(`[YCloud] No se pudo conservar media entrante ${mediaId || messageId}: ${error.message}`)
+      if (throwOnError) throw error
+      return media
+    }
+  }
+
+  if (media.mediaUrl) return media
+  if (provider !== META_DIRECT_PROVIDER_NAME) return media
+
   if (!mediaId) return media
 
   try {
@@ -10319,20 +10469,164 @@ function parseYCloudHistoryBackfillState(value) {
   }
 }
 
+function parseYCloudMediaRehostState(value) {
+  const parsed = parseJsonValue(value, {})
+  if (!isPlainObject(parsed) || parsed.version !== YCLOUD_MEDIA_REHOST_VERSION) {
+    return { lastId: '', completed: false }
+  }
+  return {
+    lastId: cleanString(parsed.lastId),
+    completed: parsed.completed === true
+  }
+}
+
+export async function repairStoredYCloudInboundMediaBatch({
+  apiKey = '',
+  limit = YCLOUD_MEDIA_REHOST_BATCH_LIMIT
+} = {}) {
+  const state = parseYCloudMediaRehostState(
+    await getAppConfig(YCLOUD_MEDIA_REHOST_STATE_CONFIG_KEY).catch(() => '')
+  )
+  if (state.completed) {
+    return { skipped: true, reason: 'already_repaired', completed: true, scanned: 0, repaired: 0, failed: 0 }
+  }
+
+  const cleanApiKey = normalizeYCloudApiKeyInput(apiKey)
+  if (!cleanApiKey) {
+    return { skipped: true, reason: 'ycloud_disconnected', completed: false, scanned: 0, repaired: 0, failed: 0 }
+  }
+
+  const batchLimit = Math.max(1, Math.min(Number(limit) || YCLOUD_MEDIA_REHOST_BATCH_LIMIT, 25))
+  const rows = await db.all(`
+    SELECT id, contact_id, media_url, media_mime_type, media_filename,
+           message_type, message_timestamp, transport, source_adapter, raw_payload_json
+    FROM whatsapp_api_messages
+    WHERE id > ?
+      AND LOWER(COALESCE(provider, '')) = 'ycloud'
+      AND LOWER(COALESCE(direction, '')) = 'inbound'
+      AND LOWER(COALESCE(message_type, '')) IN ('image', 'sticker')
+      AND COALESCE(media_url, '') LIKE '%/whatsapp/media/download/%'
+    ORDER BY id ASC
+    LIMIT ?
+  `, [state.lastId, batchLimit])
+
+  let repaired = 0
+  let failed = 0
+  for (const row of rows) {
+    try {
+      if (!isYCloudInboundMediaUrl(row.media_url)) continue
+      const normalizedMessage = normalizeWebhookMessage(parseJsonValue(row.raw_payload_json, {}) || {})
+      const messageType = cleanString(row.message_type).toLowerCase()
+      const mediaId = getMessageMediaId(normalizedMessage)
+      const downloaded = await downloadYCloudInboundMedia({
+        mediaUrl: row.media_url,
+        mediaId,
+        messageId: row.id,
+        apiKey: cleanApiKey,
+        messageType,
+        mimeType: row.media_mime_type,
+        filename: row.media_filename
+      })
+      if (!downloaded?.mediaUrl) continue
+
+      const mediaKey = messageType === 'voice' ? 'audio' : messageType
+      const currentMedia = isPlainObject(normalizedMessage[mediaKey]) ? normalizedMessage[mediaKey] : {}
+      normalizedMessage[mediaKey] = {
+        ...currentMedia,
+        ...(mediaId ? { id: mediaId } : {}),
+        link: downloaded.mediaUrl,
+        url: downloaded.mediaUrl,
+        publicUrl: downloaded.mediaUrl,
+        mediaUrl: downloaded.mediaUrl,
+        mimeType: downloaded.mediaMimeType,
+        filename: downloaded.mediaFilename,
+        mediaAssetId: downloaded.mediaAssetId
+      }
+
+      const result = await db.run(`
+        UPDATE whatsapp_api_messages
+        SET media_url = ?,
+            media_mime_type = COALESCE(NULLIF(?, ''), media_mime_type),
+            media_filename = COALESCE(NULLIF(?, ''), media_filename),
+            raw_payload_json = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND media_url = ?
+      `, [
+        downloaded.mediaUrl,
+        downloaded.mediaMimeType,
+        downloaded.mediaFilename,
+        safeJson(normalizedMessage),
+        row.id,
+        row.media_url
+      ])
+
+      if (Number(result?.changes || 0) > 0) {
+        repaired += 1
+        publishChatMessageEvent({
+          contactId: row.contact_id,
+          messageId: row.id,
+          channel: 'whatsapp',
+          provider: PROVIDER_NAME,
+          transport: cleanString(row.transport) || 'api',
+          sourceAdapter: cleanString(row.source_adapter) || PROVIDER_NAME,
+          direction: 'inbound',
+          messageType,
+          messageTimestamp: row.message_timestamp,
+          isNew: false,
+          historyImport: true
+        })
+      }
+    } catch (error) {
+      failed += 1
+      logger.warn(`[YCloud] No se pudo rescatar media histórica ${row.id}: ${error.message}`)
+    }
+  }
+
+  const completed = rows.length < batchLimit
+  const lastId = cleanString(rows.at(-1)?.id || state.lastId)
+  await setAppConfig(YCLOUD_MEDIA_REHOST_STATE_CONFIG_KEY, safeJson({
+    version: YCLOUD_MEDIA_REHOST_VERSION,
+    lastId,
+    completed,
+    updatedAt: nowIso()
+  }))
+
+  if (repaired > 0) {
+    logger.info(`[YCloud] ${repaired} imagen(es) históricas se movieron a Bunny; ${failed} no pudieron recuperarse.`)
+  }
+
+  return {
+    skipped: false,
+    completed,
+    scanned: rows.length,
+    repaired,
+    failed,
+    lastId
+  }
+}
+
 /**
  * Sincroniza una porción corta del historial saliente de YCloud y guarda la
  * siguiente página antes de devolver. Así el proceso se puede reanudar después
  * de un deploy sin volver a recorrer todos los mensajes ya importados.
  */
 export async function runYCloudHistoryBackfillBatch({ maxPages = 3 } = {}) {
-  const currentVersion = await getAppConfig(HISTORY_DIRECTION_REPAIR_CONFIG_KEY).catch(() => '')
-  if (currentVersion === HISTORY_DIRECTION_REPAIR_VERSION) {
-    return { skipped: true, reason: 'already_repaired', completed: true, pages: 0, messages: 0 }
-  }
-
   const config = await loadConfig({ includeSecrets: true })
   if (!config.enabled || !config.apiKey) {
     return { skipped: true, reason: 'ycloud_disconnected', completed: false, pages: 0, messages: 0 }
+  }
+
+  const mediaRepair = await repairStoredYCloudInboundMediaBatch({ apiKey: config.apiKey })
+  const currentVersion = await getAppConfig(HISTORY_DIRECTION_REPAIR_CONFIG_KEY).catch(() => '')
+  if (currentVersion === HISTORY_DIRECTION_REPAIR_VERSION) {
+    return {
+      skipped: mediaRepair.skipped,
+      reason: mediaRepair.skipped ? 'already_repaired' : '',
+      completed: mediaRepair.completed,
+      pages: 0,
+      messages: 0,
+      mediaRepair
+    }
   }
 
   const state = parseYCloudHistoryBackfillState(
@@ -10357,7 +10651,8 @@ export async function runYCloudHistoryBackfillBatch({ maxPages = 3 } = {}) {
     pageEnd: page,
     total,
     truncated: false,
-    providerPageLimitReached: false
+    providerPageLimitReached: false,
+    mediaRepair
   }
 
   if (!webhookUpdated) {
@@ -13720,6 +14015,7 @@ async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageD
     ])
     const qrPreviewImageUrl = cleanString(qrPreviewImage?.link || qrPreviewImage?.publicUrl || qrPreviewImage?.url || qrPreviewImage?.mediaUrl)
     const responseImage = isPlainObject(response.image) ? response.image : {}
+    const stableImageUrl = cleanString(qrPreviewImageUrl || requestImage?.link || localMediaUrl)
     const qrMetadata = buildQrInlineMediaMetadata({
       dataUrl: optimizedImageDataUrl,
       mimeType: requestImage?.mimeType || localMedia?.mimeType,
@@ -13743,7 +14039,14 @@ async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageD
         previewStorageProvider: qrPreviewImage.storageProvider
       } : {}),
       ...responseImage,
-      link: cleanString(responseImage.link || requestImage?.link || qrPreviewImageUrl || localMediaUrl),
+      ...(stableImageUrl ? {
+        mediaUrl: stableImageUrl,
+        publicUrl: stableImageUrl,
+        url: stableImageUrl,
+        link: stableImageUrl
+      } : {
+        link: cleanString(responseImage.link)
+      }),
       mimeType: cleanString(qrPreviewImage?.mimeType || responseImage.mimeType || requestImage?.mimeType || qrMetadata.mimeType || localMedia?.mimeType),
       filename: cleanString(responseImage.filename || requestImage?.filename || localMedia?.filename || qrPreviewFilename || qrMetadata.filename || qrPreviewImage?.filename),
       ...(requestImage?.caption || response.image?.caption ? { caption: requestImage?.caption || response.image?.caption } : {})
@@ -14939,6 +15242,28 @@ export async function sendWhatsAppApiImageMessage({
     throw error
   }
 
+  const responseImage = isPlainObject(response.image) ? response.image : {}
+  const stableImageUrl = cleanString(
+    providerPreviewImage?.mediaUrl ||
+    providerPreviewImage?.publicUrl ||
+    providerPreviewImage?.url ||
+    providerPreviewImage?.link ||
+    storedImage.mediaUrl ||
+    storedImage.publicUrl ||
+    storedImage.url ||
+    storedImage.link
+  )
+  const finalStoredImage = {
+    ...storedImage,
+    ...responseImage,
+    ...(stableImageUrl ? {
+      mediaUrl: stableImageUrl,
+      publicUrl: stableImageUrl,
+      url: stableImageUrl,
+      link: stableImageUrl
+    } : {})
+  }
+
   const persistedMessage = await upsertMessage({
     payload: {
       id: response.id || externalId || hashId('waapi_img_event', `${fromPhone}|${toPhone}|${link}`),
@@ -14951,10 +15276,7 @@ export async function sendWhatsAppApiImageMessage({
       from: response.from || fromPhone,
       to: response.to || toPhone,
       type: response.type || 'image',
-      image: {
-        ...storedImage,
-        ...(response.image || {})
-      },
+      image: finalStoredImage,
       transport: 'api',
       createTime: response.createTime || nowIso()
     },
@@ -14973,10 +15295,7 @@ export async function sendWhatsAppApiImageMessage({
   return {
     ...response,
     localMessageId: persistedMessage?.messageId || null,
-    image: {
-      ...storedImage,
-      ...(response.image || {})
-    },
+    image: finalStoredImage,
     localMedia: null
   }
 }

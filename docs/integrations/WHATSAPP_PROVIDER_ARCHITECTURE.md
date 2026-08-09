@@ -375,6 +375,25 @@ Ristak necesita al menos:
 
 El ID de YCloud y el `wamid` son cosas distintas. Se guardan por separado.
 
+La media entrante de YCloud no puede exponerse directamente al navegador. Sus
+campos `image.link`, `video.link`, `audio.link`, `document.link` y equivalentes
+apuntan a `/v2/whatsapp/media/download/...`, requieren `X-API-Key` y tienen
+retención limitada por el proveedor. El backend valida estrictamente que la URL
+pertenezca al endpoint de descarga de YCloud, la descarga con la API key cifrada
+y la guarda de inmediato mediante `mediaStorageService`. La URL persistida en el
+mensaje y en su payload normalizado es la URL pública estable del asset; la API
+key y la URL firmada del proveedor nunca se entregan al frontend ni se guardan en
+los metadatos del asset. Si el negocio conectó su propia cuenta Bunny.net, esa
+cuenta tiene prioridad sobre el storage administrado.
+
+La migración de imágenes y stickers YCloud históricos reutiliza el cron de
+integración `whatsapp-api-history-backfill`: procesa lotes acotados, guarda un
+cursor versionado en `whatsapp_api_ycloud_media_rehost_state` y sólo corre
+mientras YCloud siga conectado. Cada descarga usa una clave de idempotencia por
+mensaje/media para que reintentos y webhooks duplicados no creen archivos
+repetidos. Una URL que ya venció en YCloud se registra como no recuperable y el
+cursor avanza; no se puede reconstruir un archivo que el proveedor ya eliminó.
+
 ### Meta directo
 
 Meta entrega el envelope `object=whatsapp_business_account` con
@@ -492,6 +511,12 @@ propios. Nunca se puede declarar Meta directo inactivo por no tener una API key
 de YCloud. Si HistorySync trae un WAMID que ya pertenece a una fila API oficial,
 la importación se omite y conserva `provider`, `source_adapter`, `transport` y
 `origin` oficiales.
+
+Cuando QR/Baileys sí es el transporte activo, los bytes entrantes se descargan
+desde el socket y se rehospedan por `mediaStorageService` antes de persistir el
+mensaje. La subida usa el WAMID y el número conectado como clave idempotente; el
+historial y los reintentos ven la misma URL estable de Bunny en vez de duplicar
+el archivo o depender de la sesión de WhatsApp Web.
 
 El botón manual de conexión también es la autoridad sobre el backoff de pairing.
 Si existe un timer de reconexión sin socket activo, el clic conserva el lease, el

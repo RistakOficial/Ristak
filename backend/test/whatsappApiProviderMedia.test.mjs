@@ -445,7 +445,12 @@ async function withYCloudProviderMediaCapture(callback) {
             to: body.to,
             type: body.type,
             status: 'sent',
-            [body.type]: body[body.type]
+            [body.type]: body.type === 'image'
+              ? {
+                  ...body.image,
+                  link: `https://api.ycloud.com/v2/whatsapp/media/download/provider-response-${messageNumber}?sig=temporary`
+                }
+              : body[body.type]
           })
         }
 

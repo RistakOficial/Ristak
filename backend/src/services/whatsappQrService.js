@@ -1291,6 +1291,8 @@ async function downloadAndStoreQrInboundMedia({ phone, message, content, message
     mimeType,
     filename,
     module: 'chat',
+    moduleEntityId: wamid,
+    clientUploadId: `whatsapp-qr-inbound:${phone.id}:${wamid}`,
     isPublic: true,
     skipCompression: true,
     metadata: {
