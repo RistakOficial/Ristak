@@ -21,7 +21,7 @@ const uniqueStrings = (values: unknown[]) => {
   return result
 }
 
-export function getContactCustomFieldKeys(field?: ContactCustomFieldLike | null) {
+export function getContactCustomFieldStableKeys(field?: ContactCustomFieldLike | null) {
   if (!field) return []
 
   return uniqueStrings([
@@ -32,10 +32,59 @@ export function getContactCustomFieldKeys(field?: ContactCustomFieldLike | null)
     field.fieldId,
     field.key,
     field.fieldKey,
-    field.field_key,
-    field.label,
-    field.name
+    field.field_key
   ])
+}
+
+export function getContactCustomFieldFallbackKeys(field?: ContactCustomFieldLike | null) {
+  if (!field) return []
+
+  return uniqueStrings([field.label, field.name])
+    .map((value) => `label:${value.toLocaleLowerCase('es-MX')}`)
+}
+
+export function getContactCustomFieldKeys(field?: ContactCustomFieldLike | null) {
+  const stableKeys = getContactCustomFieldStableKeys(field)
+  return stableKeys.length > 0 ? stableKeys : getContactCustomFieldFallbackKeys(field)
+}
+
+const normalizeMatchKey = (value: unknown) => cleanString(value).toLocaleLowerCase('es-MX')
+
+export function findMatchingContactCustomField<T extends ContactCustomFieldLike>(
+  fields: T[] = [],
+  definition?: ContactCustomFieldLike | null
+) {
+  if (!definition) return null
+
+  const definitionStableKeys = new Set(
+    getContactCustomFieldStableKeys(definition).map(normalizeMatchKey)
+  )
+
+  if (definitionStableKeys.size > 0) {
+    const stableMatch = fields.find((field) =>
+      getContactCustomFieldStableKeys(field)
+        .map(normalizeMatchKey)
+        .some((key) => definitionStableKeys.has(key))
+    )
+    if (stableMatch) return stableMatch
+  }
+
+  const definitionFallbackKeys = new Set(getContactCustomFieldFallbackKeys(definition))
+  if (definitionFallbackKeys.size === 0) return null
+
+  const fallbackMatches = fields.filter((field) => {
+    // Si ambos lados ya tienen identidad estable y no coincidieron arriba, el
+    // texto visible no puede decidir que sean el mismo campo. Dos preguntas
+    // distintas pueden compartir exactamente la misma etiqueta.
+    if (definitionStableKeys.size > 0 && getContactCustomFieldStableKeys(field).length > 0) {
+      return false
+    }
+
+    return getContactCustomFieldFallbackKeys(field)
+      .some((key) => definitionFallbackKeys.has(key))
+  })
+
+  return fallbackMatches.length === 1 ? fallbackMatches[0] : null
 }
 
 export function getContactCustomFieldIdentity(field?: ContactCustomFieldLike | null) {

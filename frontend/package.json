@@ -39,6 +39,7 @@
     "test:appointment-confirmation-reply-draft": "node --experimental-strip-types --test scripts/test-appointment-confirmation-reply-draft.mjs",
     "test:contact-detail-summary": "node --experimental-strip-types --test scripts/test-contact-detail-summary.mjs",
     "test:contact-custom-field-group-label": "node --experimental-strip-types --test scripts/test-contact-custom-field-group-label.mjs",
+    "test:contact-custom-field-identity": "node --experimental-strip-types --test scripts/test-contact-custom-field-identity.mjs",
     "test:appointment-reminder-ordering": "node --experimental-strip-types --test scripts/test-appointment-reminder-ordering.mjs",
     "test:automation-wait-default": "node --test scripts/test-automation-wait-default.mjs",
     "test:calendar-commercial-reports": "node scripts/test-calendar-commercial-reports.mjs",

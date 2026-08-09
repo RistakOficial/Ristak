@@ -13,10 +13,10 @@ import {
 } from '@/services/customFieldsService'
 import type { ContactCustomField, ContactCustomFieldDefinition, ContactCustomFieldValue } from '@/types'
 import {
+  findMatchingContactCustomField,
   formatContactCustomFieldDisplayValue,
   getContactCustomFieldDisplayLabel,
   getContactCustomFieldIdentity,
-  getContactCustomFieldKeys,
   isReservedContactCustomField,
   resolveContactCustomFieldGroup
 } from '@/utils/contactCustomFields'
@@ -101,20 +101,6 @@ const stableStringify = (value: unknown) => {
   }
 }
 
-const uniqueStrings = (...groups: unknown[][]) => {
-  const seen = new Set<string>()
-  const result: string[] = []
-
-  groups.flat().forEach((value) => {
-    const next = cleanString(value)
-    if (!next || seen.has(next)) return
-    seen.add(next)
-    result.push(next)
-  })
-
-  return result
-}
-
 const normalizeOptions = (options: unknown[] = []): CustomFieldOption[] => (
   options
     .map((option) => {
@@ -139,24 +125,8 @@ const fieldIdentity = (field: Partial<ContactCustomField>, index = 0) =>
   cleanString(field.id) ||
   `custom-field-${index}`
 
-const getAllFieldKeys = (field?: Partial<ContactCustomField | CatalogDefinition> | null) =>
-  uniqueStrings(
-    getContactCustomFieldKeys(field),
-    [
-      (field as CatalogDefinition | undefined)?.definitionId,
-      (field as ContactCustomField | undefined)?.id,
-      field?.key,
-      field?.fieldKey,
-      field?.label,
-      field?.name
-    ]
-  )
-
 const findMatchingValueField = (fields: ContactCustomField[], definition: CatalogDefinition) => {
-  const definitionKeys = new Set(getAllFieldKeys(definition))
-  if (!definitionKeys.size) return null
-
-  return fields.find((field) => getAllFieldKeys(field).some((key) => definitionKeys.has(key))) || null
+  return findMatchingContactCustomField(fields, definition)
 }
 
 const isHiddenDefinition = (definition: CatalogDefinition) =>

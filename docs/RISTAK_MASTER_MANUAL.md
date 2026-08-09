@@ -1,6 +1,6 @@
 # Manual maestro de Ristak
 
-Ultima consolidacion: 2026-08-06.
+Ultima consolidacion: 2026-08-09.
 
 Este manual junta el funcionamiento general de Ristak en una sola ruta legible.
 Los documentos especializados siguen existiendo cuando tienen reglas obligatorias
@@ -2136,7 +2136,12 @@ Capacidades:
   "Campos personalizados". El grupo heredado `general` tambien se normaliza bajo
   ese mismo titulo y nunca se muestra como una seccion separada. La edicion se
   guarda como actualizacion manual del contacto y conserva el flujo normal de
-  automatizaciones. Los tipos de opcion
+  automatizaciones. Al unir el catalogo con los valores guardados y al construir
+  columnas de la tabla, manda la identidad estable del campo (`definitionId`,
+  `id`, `fieldKey` o `key`); `label`/`name` solo son compatibilidad legacy cuando
+  falta esa identidad y la coincidencia es unica. Varias preguntas pueden tener
+  exactamente el mismo texto visible sin compartir respuesta ni colapsarse en
+  una sola columna. Los tipos de opcion
   tienen semantica distinta y persistente:
   `radio` muestra varias opciones y guarda una; `dropdown` muestra una lista y
   guarda una; `checkboxes` muestra varias casillas y guarda un arreglo; y
