@@ -11,6 +11,7 @@ import {
 } from '../utils/dateUtils.js'
 import { isDeployShutdownStarted } from '../utils/deployDrainTracker.js'
 import { logger } from '../utils/logger.js'
+import { canRunBackgroundJob } from './licenseService.js'
 import { normalizeTrafficSource } from '../utils/trafficSourceNormalizer.js'
 import { invalidateTrackingAnalyticsCache } from './trackingAnalyticsCache.js'
 import {
@@ -1000,6 +1001,9 @@ export async function runTrackingAnalyticsProjectionBackfill({
   maxReturningRepairBatches = MAX_RETURNING_REPAIR_BATCHES_PER_RUN,
   yieldMs = DEFAULT_YIELD_MS
 } = {}) {
+  if (!(await canRunBackgroundJob('analytics'))) {
+    return { ready: false, unavailable: true, licenseBlocked: true }
+  }
   const normalizedBatchSize = boundedInteger(
     batchSize,
     databaseDialect === 'postgres' ? POSTGRES_BATCH_SIZE : SQLITE_BATCH_SIZE,

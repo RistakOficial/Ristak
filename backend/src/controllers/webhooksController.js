@@ -56,6 +56,7 @@ import {
   dispatchAppointmentAutomationEvent,
   dispatchAppointmentCreatedAutomations
 } from '../services/appointmentAutomationService.js';
+import { canRunBackgroundJob } from '../services/licenseService.js';
 
 function firstValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
@@ -236,6 +237,12 @@ export const handleMetaInstallerRelayWebhook = async (req, res) => {
       mismatch.statusCode = 403;
       mismatch.code = 'META_INSTALLER_RELAY_ASSET_MISMATCH';
       throw mismatch;
+    }
+    // Meta necesita un 200 para no reintentar indefinidamente. Validamos firma y
+    // pertenencia primero, pero con la suscripción suspendida acusamos recibo sin
+    // persistir mensajes, bajar medios ni ejecutar automatizaciones/IA.
+    if (!(await canRunBackgroundJob('chat'))) {
+      return res.status(200).json({ success: true, skipped: true, reason: 'license_blocked' });
     }
     const deliveryId = cleanString(req.get('X-Ristak-Delivery-Id')) ||
       crypto.createHash('sha256').update(rawBody).digest('hex');

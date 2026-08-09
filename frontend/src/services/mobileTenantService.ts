@@ -8,6 +8,9 @@ import { syncAuthScopedCachePrincipal } from './authPrincipalCache'
 
 type InstallerTenantResponse = {
   success?: boolean
+  code?: string
+  reason?: string
+  payment_url?: string | null
   tenant?: {
     client_id?: string
     installation_id?: string
@@ -42,6 +45,17 @@ export async function resolveAndStoreMobileTenant(identifier: string): Promise<R
   const data = await response.json().catch(() => ({})) as InstallerTenantResponse
 
   if (!response.ok || !data.success || !data.tenant?.app_url) {
+    if (data.code === 'license_blocked') {
+      const err = new Error(data.message || 'Tu licencia de Ristak no está activa.') as Error & {
+        code?: string
+        reason?: string
+        payment_url?: string | null
+      }
+      err.code = 'license_blocked'
+      err.reason = data.reason
+      err.payment_url = data.payment_url
+      throw err
+    }
     throw new Error(data.message || 'No encontré una app activa para esos datos.')
   }
 

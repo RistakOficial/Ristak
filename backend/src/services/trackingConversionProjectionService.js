@@ -12,6 +12,7 @@ import {
 import { isDeployShutdownStarted } from '../utils/deployDrainTracker.js'
 import { logger } from '../utils/logger.js'
 import { getContactListProjectionStatus } from './crmListProjectionService.js'
+import { canRunBackgroundJob } from './licenseService.js'
 import { invalidateTrackingAnalyticsCache } from './trackingAnalyticsCache.js'
 import { getTrackingAnalyticsProjectionStatus } from './trackingAnalyticsProjectionService.js'
 
@@ -719,6 +720,9 @@ export async function runTrackingConversionProjectionBackfill({
   maxQueueBatches = MAX_QUEUE_BATCHES_PER_RUN,
   yieldMs = DEFAULT_YIELD_MS
 } = {}) {
+  if (!(await canRunBackgroundJob('analytics'))) {
+    return { ready: false, unavailable: true, licenseBlocked: true }
+  }
   const normalizedBatchSize = boundedInteger(
     batchSize,
     databaseDialect === 'postgres' ? POSTGRES_BATCH_SIZE : SQLITE_BATCH_SIZE,

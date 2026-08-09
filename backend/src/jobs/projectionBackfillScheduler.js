@@ -1,4 +1,5 @@
 import { db } from '../config/database.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 import { scheduleBackfillJob } from './backfillJobCoordinator.js'
 
 const GLOBAL_PROJECTION_BACKFILL_LOCK = 'projection-backfill-global-io'
@@ -52,6 +53,11 @@ export function scheduleProjectionBackfillJob(job = {}) {
   if (typeof run !== 'function') throw new TypeError('Projection backfill job requires a run function')
   return scheduleBackfillJob({
     ...job,
-    run: () => runWithProjectionBackfillIoLease(run)
+    run: async () => {
+      if (!(await canRunBackgroundJob())) {
+        return { skipped: true, reason: 'license_blocked' }
+      }
+      return runWithProjectionBackfillIoLease(run)
+    }
   })
 }

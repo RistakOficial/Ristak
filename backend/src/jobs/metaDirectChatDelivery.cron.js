@@ -4,6 +4,7 @@ import {
   sendConversationalAgentPriorityNotification
 } from '../services/pushNotificationsService.js'
 import { isMetaDirectWhatsAppConnected } from '../services/integrationConnectionStateService.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 import {
   CHAT_DELIVERY_ENRICHMENT_MAX_ATTEMPTS,
   CHAT_DELIVERY_MAX_ATTEMPTS,
@@ -201,6 +202,8 @@ async function runDeliveryLane(jobKind, reason) {
   if (runningLanes.has(jobKind) || isDeployShutdownStarted()) return null
   runningLanes.add(jobKind)
   try {
+    const feature = jobKind === CHAT_DELIVERY_JOB_KIND.PUSH ? 'chat' : 'whatsapp'
+    if (!(await canRunBackgroundJob(feature))) return null
     if (jobKind === CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT && !(await isDeliveryEnabled())) return null
     const locked = await trackDeployDrainWork(
       `cron:meta-direct-chat-delivery:${jobKind}`,

@@ -84,7 +84,7 @@ import {
   resolveWhatsAppSourceAdapter
 } from './whatsapp/providers/providerRegistry.js'
 import { normalizeMetaDirectWebhookPayload } from './whatsapp/providers/metaDirectWebhookAdapter.js'
-import { disconnectCentralWhatsAppMeta } from './licenseService.js'
+import { canRunBackgroundJob, disconnectCentralWhatsAppMeta } from './licenseService.js'
 import { resolveCentralBrokerConfig } from './centralBrokerService.js'
 import { resolveFfmpegBinary } from '../utils/ffmpeg.js'
 import { getWhatsAppStatusProjectionSnapshot } from './whatsappStatusProjectionService.js'
@@ -9546,6 +9546,13 @@ export async function captureQrChatMessage({
   const cleanWamid = cleanString(wamid)
   if (!cleanContactPhone || !cleanWamid) {
     return { skipped: true, reason: 'missing_identity' }
+  }
+
+  // La sesión QR debe seguir conectada para poder reactivarse sin volver a
+  // escanear, pero una licencia suspendida no puede descargar medios, guardar
+  // conversaciones ni disparar efectos de negocio en segundo plano.
+  if (!(await canRunBackgroundJob('whatsapp'))) {
+    return { skipped: true, reason: 'license_blocked' }
   }
 
   const routingConfig = await loadWhatsAppOutboundConfig({

@@ -10,6 +10,7 @@ import {
   saveVersion
 } from '../services/metaVersionService.js'
 import { DEFAULT_TIMEZONE } from '../utils/dateUtils.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 
 let metaVersionTask = null
 
@@ -18,6 +19,9 @@ let metaVersionTask = null
  */
 export async function updateMetaVersion({ source = 'manual' } = {}) {
   try {
+    if (!(await canRunBackgroundJob())) {
+      return { updated: false, skipped: true, reason: 'license_blocked', source }
+    }
     logger.info(`🔄 Verificando actualización de versión de Meta API (${source})...`)
 
     const pinnedVersion = getPinnedMetaApiVersion()

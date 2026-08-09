@@ -1,4 +1,5 @@
 import { expirePausedConversationStates } from '../services/conversationalAgentService.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 import { logger } from '../utils/logger.js'
 import { withCronLock } from '../utils/cronLock.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
@@ -17,6 +18,9 @@ let running = false
  */
 export async function runConversationalAgentPauseExpiry() {
   if (running || isDeployShutdownStarted()) return { skipped: true }
+  if (!(await canRunBackgroundJob('conversational_ai'))) {
+    return { skipped: true, reason: 'license_blocked' }
+  }
   running = true
   try {
     return await trackDeployDrainWork('cron:conversational-agent-pause-expiry', async () => {

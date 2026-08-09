@@ -2,6 +2,7 @@ import {
   cleanupDueConversationalAgentTestAssignments,
   retryConversationalAgentTestAssignmentNotifications
 } from '../services/conversationalAgentTestAssignmentService.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 import { logger } from '../utils/logger.js'
 import { withCronLock } from '../utils/cronLock.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
@@ -15,6 +16,9 @@ let running = false
 /** Job de sistema exportable; server decide cuándo conectarlo. */
 export async function runConversationalAgentTestAssignmentsCleanup(options = {}) {
   if (running || isDeployShutdownStarted()) return { skipped: true }
+  if (!(await canRunBackgroundJob('conversational_ai'))) {
+    return { skipped: true, reason: 'license_blocked' }
+  }
   running = true
   try {
     return await trackDeployDrainWork('cron:conversational-test-assignment-cleanup', async () => {

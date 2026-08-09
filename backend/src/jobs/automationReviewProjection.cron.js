@@ -3,6 +3,7 @@ import {
   readAutomationReviewProjectionState,
   scheduleAutomationReviewProjectionBackfill
 } from '../services/automationReferenceResolver.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 import { logger as defaultLogger } from '../utils/logger.js'
 import { isDeployShutdownStarted } from '../utils/deployDrainTracker.js'
 
@@ -32,6 +33,9 @@ export function createAutomationReviewProjectionScheduler({
 
   async function tick() {
     if (running || shuttingDown()) return { scheduled: false, skipped: true }
+    if (!(await canRunBackgroundJob('automations'))) {
+      return { scheduled: false, skipped: true, reason: 'license_blocked' }
+    }
     running = true
     try {
       const state = await readState()

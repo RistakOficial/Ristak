@@ -50,6 +50,7 @@ import {
 } from '../services/contactOriginProjectionService.js'
 import { isDeployShutdownStarted } from '../utils/deployDrainTracker.js'
 import { logger as defaultLogger } from '../utils/logger.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 
 const DEFAULT_INTERVAL_MS = 30_000
 const DEFAULT_READ_TIMEOUT_MS = 5_000
@@ -166,6 +167,9 @@ export function createReadModelProjectionMaintenanceScheduler({
 
   async function tick() {
     if (running || shuttingDown()) return { scheduled: [], skipped: true }
+    if (!(await canRunBackgroundJob())) {
+      return { scheduled: [], skipped: true, reason: 'license_blocked' }
+    }
     running = true
     try {
       const scheduled = []

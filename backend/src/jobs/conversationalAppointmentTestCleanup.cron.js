@@ -1,6 +1,7 @@
 import cron from 'node-cron'
 import { cleanupExpiredConversationalTestAppointments } from '../services/conversationalAppointmentTestCleanupService.js'
 import { cleanupExpiredConversationalAppointmentPreviewOffers } from '../services/conversationalAppointmentPreviewOfferService.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 import { logger } from '../utils/logger.js'
 import { withCronLock } from '../utils/cronLock.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
@@ -12,6 +13,9 @@ let cleanupRunning = false
 
 export async function runConversationalAppointmentTestCleanup(source = 'manual') {
   if (cleanupRunning || isDeployShutdownStarted()) return { skipped: true }
+  if (!(await canRunBackgroundJob('conversational_ai'))) {
+    return { skipped: true, reason: 'license_blocked' }
+  }
   cleanupRunning = true
 
   try {

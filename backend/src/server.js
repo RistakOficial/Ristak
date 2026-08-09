@@ -130,6 +130,7 @@ import chatEventsRoutes from './routes/chatEvents.routes.js'
 import paymentEventsRoutes from './routes/paymentEvents.routes.js'
 import { publicSiteHostMiddleware } from './controllers/sitesController.js'
 import {
+  canRunBackgroundJob,
   getCentralBrokerHealthInfo,
   getCentralDatabaseStorageManagementUrl,
   getCentralDatabaseStorageStatus,
@@ -797,13 +798,21 @@ async function startRuntimeServices() {
   // converge, el motor conserva el lookup legacy para no perder eventos.
   runStartupDrainTask(
     'startup:automation-trigger-index',
-    scheduleAutomationTriggerIndexBootstrap,
+    async () => (
+      (await canRunBackgroundJob('automations'))
+        ? scheduleAutomationTriggerIndexBootstrap()
+        : { skipped: true, reason: 'license_blocked' }
+    ),
     'No se pudo preparar el índice de disparadores de automatizaciones'
   )
 
   runStartupDrainTask(
     'startup:media-runtime-config',
-    ensureBunnyStreamRuntimeConfigured,
+    async () => (
+      (await canRunBackgroundJob())
+        ? ensureBunnyStreamRuntimeConfigured()
+        : { skipped: true, reason: 'license_blocked' }
+    ),
     'No se pudo preparar Bunny Stream al arrancar'
   )
 
@@ -812,7 +821,11 @@ async function startRuntimeServices() {
   // intacto). No bloquea el arranque. Desactivable con STORAGE_TAXONOMY_AUTOMIGRATE=off.
   runStartupDrainTask(
     'startup:storage-taxonomy-migration',
-    scheduleStartupStorageTaxonomyMigration,
+    async () => (
+      (await canRunBackgroundJob())
+        ? scheduleStartupStorageTaxonomyMigration()
+        : { skipped: true, reason: 'license_blocked' }
+    ),
     'No se pudo agendar la migración de taxonomía de storage'
   )
 
@@ -836,6 +849,9 @@ async function startRuntimeServices() {
   runStartupDrainTask(
     'startup:meta-page-messaging-subscription',
     async () => {
+      if (!(await canRunBackgroundJob('chat'))) {
+        return { skipped: true, reason: 'license_blocked' }
+      }
       if (!(await isMetaSocialConnected())) {
         logger.info('Suscripción Meta de Messenger omitida: Meta Social no está conectado')
         return { skipped: true, reason: 'meta-social-disconnected' }
@@ -858,6 +874,9 @@ async function startRuntimeServices() {
   runStartupDrainTask(
     'startup:stripe-webhook-reconciliation',
     async () => {
+      if (!(await canRunBackgroundJob('payments'))) {
+        return { skipped: true, reason: 'license_blocked' }
+      }
       if (!(await isStripeConnected())) {
         logger.info('Webhook Stripe omitido: Stripe no está conectado')
         return { skipped: true, reason: 'stripe-disconnected' }
@@ -873,13 +892,21 @@ async function startRuntimeServices() {
   // que el resto de tareas de arranque no críticas (repairPendingPaymentFlows, etc.).
   runStartupDrainTask(
     'startup:webhook-verification',
-    verifyAndUpdateWebhooks,
+    async () => (
+      (await canRunBackgroundJob())
+        ? verifyAndUpdateWebhooks()
+        : { skipped: true, reason: 'license_blocked' }
+    ),
     'No se pudo verificar/actualizar webhooks al arrancar'
   )
 
   runStartupDrainTask(
     'startup:payment-flow-repair',
-    repairPendingPaymentFlows,
+    async () => (
+      (await canRunBackgroundJob())
+        ? repairPendingPaymentFlows()
+        : { skipped: true, reason: 'license_blocked' }
+    ),
     'No se pudo ejecutar reparación inicial de parcialidades'
   )
 
@@ -907,6 +934,9 @@ async function startRuntimeServices() {
   runStartupDrainTask(
     'startup:sites-canonical-domain-reconciliation',
     async () => {
+      if (!(await canRunBackgroundJob('sites'))) {
+        return { skipped: true, reason: 'license_blocked' }
+      }
       const { reconcileManagedPublicDomainProvisioning } = await import('./services/sitesService.js')
       return reconcileManagedPublicDomainProvisioning()
     },
@@ -946,6 +976,9 @@ async function startRuntimeServices() {
   runStartupDrainTask(
     'startup:meta-social-profile-photos',
     async () => {
+      if (!(await canRunBackgroundJob('chat'))) {
+        return { skipped: true, reason: 'license_blocked' }
+      }
       if (!(await isMetaSocialConnected())) {
         logger.info('Backfill de fotos Meta omitido: Meta Social no está conectado')
         return { skipped: true, reason: 'meta-social-disconnected' }

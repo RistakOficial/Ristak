@@ -3,6 +3,7 @@ import { BACKFILL_JOB_PRIORITY } from '../jobs/backfillJobCoordinator.js'
 import { scheduleProjectionBackfillJob } from '../jobs/projectionBackfillScheduler.js'
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted } from '../utils/deployDrainTracker.js'
+import { canRunBackgroundJob } from './licenseService.js'
 
 export const TRACKING_VISITOR_PROJECTION_VERSION = 3
 const POSTGRES_BATCH_SIZE = 200
@@ -358,6 +359,15 @@ export async function runTrackingVisitorProjectionBackfill({
   yieldMs = DEFAULT_YIELD_MS,
   maxBatches = MAX_BATCHES_PER_RUN
 } = {}) {
+  if (!(await canRunBackgroundJob('analytics'))) {
+    return {
+      ready: false,
+      updated: 0,
+      version: TRACKING_VISITOR_PROJECTION_VERSION,
+      unavailable: true,
+      licenseBlocked: true
+    }
+  }
   let updated = 0
   let batches = 0
   const batchSizeLimit = databaseDialect === 'postgres'

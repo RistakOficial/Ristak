@@ -3,6 +3,7 @@ import { BACKFILL_JOB_PRIORITY } from '../jobs/backfillJobCoordinator.js'
 import { scheduleProjectionBackfillJob } from '../jobs/projectionBackfillScheduler.js'
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted } from '../utils/deployDrainTracker.js'
+import { canRunBackgroundJob } from './licenseService.js'
 
 const WHATSAPP_STATUS_PROJECTION_VERSION = 1
 
@@ -495,6 +496,10 @@ export async function scheduleWhatsAppStatusProjectionBackfill({
 } = {}) {
   if (isDeployShutdownStarted()) {
     return { scheduled: false, ready: false, reason: 'shutting-down' }
+  }
+  if (!(await canRunBackgroundJob('whatsapp'))) {
+    clearWhatsAppStatusProjectionRetry()
+    return { scheduled: false, ready: false, reason: 'license_blocked' }
   }
   if (dialect !== 'postgres') {
     return { scheduled: false, ready: true, reason: 'sqlite-eager' }

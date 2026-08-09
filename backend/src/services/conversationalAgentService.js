@@ -20,7 +20,7 @@ import {
   getDefaultConversationalModelForProvider,
   normalizeConversationalAIProvider
 } from './conversationalAIProviderService.js'
-import { getConversationalAgentMaxAgents } from './licenseService.js'
+import { canRunBackgroundJob, getConversationalAgentMaxAgents } from './licenseService.js'
 import {
   conversationalPaymentRequestHash,
   getHighLevelPaymentLinkMode,
@@ -4635,6 +4635,9 @@ async function finalizeConversationGoalCompletionEffects(goalId) {
 }
 
 export async function recoverPendingConversationGoalCompletionEffects({ limit = 5000, batchSize = 100 } = {}) {
+  if (!(await canRunBackgroundJob('conversational_ai'))) {
+    return { scanned: 0, completed: 0, failed: 0, skipped: true, reason: 'license_blocked' }
+  }
   const cleanLimit = Math.max(1, Math.min(20_000, Number(limit) || 5000))
   const cleanBatchSize = Math.max(1, Math.min(500, Number(batchSize) || 100))
   const recoveryCutoff = new Date().toISOString()

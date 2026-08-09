@@ -7,6 +7,7 @@ import {
   isDeployShutdownStarted,
   trackDeployDrainWork
 } from '../utils/deployDrainTracker.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 
 const DEFAULT_INTERVAL_MS = 60 * 1000
 const DEFAULT_LOCK_TTL_MS = 55 * 1000
@@ -104,6 +105,9 @@ export function createConversationalVerifiedTerminalHandoffScheduler({
 
   async function tick(source = 'manual') {
     if (running || shuttingDown()) return { skipped: true }
+    if (!(await canRunBackgroundJob('conversational_ai'))) {
+      return { skipped: true, reason: 'license_blocked' }
+    }
     running = true
     let wakeAfterRunMs = null
     try {
