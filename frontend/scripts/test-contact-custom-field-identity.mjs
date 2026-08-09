@@ -3,7 +3,8 @@ import test from 'node:test'
 
 import {
   findMatchingContactCustomField,
-  getContactCustomFieldKeys
+  getContactCustomFieldKeys,
+  selectContactCustomFieldDefinitionsForContact
 } from '../src/utils/contactCustomFields.ts'
 
 const repeatedLabel = 'Elige la opciÃ³n correspondiente.'
@@ -43,5 +44,87 @@ test('usa la etiqueta solo como compatibilidad legacy y exige una coincidencia Ã
       { label: repeatedLabel, value: 'dos' }
     ], { label: repeatedLabel }),
     null
+  )
+})
+
+const sharedQuestion = {
+  sourceFormId: 'form-adrian',
+  sourceFieldId: 'question-reto'
+}
+
+const historicalQuestionDefinitions = [
+  {
+    definitionId: 'field-reto',
+    key: 'reto',
+    fieldKey: 'reto',
+    label: 'Reto',
+    updatedAt: '2026-07-28T12:45:07.036Z',
+    ...sharedQuestion
+  },
+  {
+    definitionId: 'field-resultado',
+    key: 'resultado',
+    fieldKey: 'resultado',
+    label: 'Resultado',
+    updatedAt: '2026-08-09T11:02:48.052Z',
+    ...sharedQuestion
+  }
+]
+
+const selectedKeys = (definitions, fields) => (
+  selectContactCustomFieldDefinitionsForContact(definitions, fields).map(field => field.fieldKey)
+)
+
+test('muestra la variante poblada cuando una pregunta cambio de destino', () => {
+  assert.deepEqual(
+    selectedKeys(historicalQuestionDefinitions, [{ fieldKey: 'resultado', value: 'Quiero crecer' }]),
+    ['resultado']
+  )
+  assert.deepEqual(
+    selectedKeys(historicalQuestionDefinitions, [{ fieldKey: 'reto', value: 'Conseguir audiencia' }]),
+    ['reto']
+  )
+})
+
+test('conserva ambas variantes si ambas tienen respuestas historicas', () => {
+  assert.deepEqual(
+    selectedKeys(historicalQuestionDefinitions, [
+      { fieldKey: 'reto', value: 'Respuesta anterior' },
+      { fieldKey: 'resultado', value: 'Respuesta actual' }
+    ]),
+    ['reto', 'resultado']
+  )
+})
+
+test('usa la definicion mas reciente si ninguna variante tiene respuesta', () => {
+  assert.deepEqual(selectedKeys(historicalQuestionDefinitions, []), ['resultado'])
+  assert.deepEqual(
+    selectedKeys(historicalQuestionDefinitions, [{ fieldKey: 'reto', value: '' }]),
+    ['resultado']
+  )
+})
+
+test('oculta recuperaciones vacias sin curar pero conserva sus datos historicos', () => {
+  const recoveryDefinition = {
+    definitionId: 'field-varias',
+    key: 'varias_opciones',
+    fieldKey: 'varias_opciones',
+    label: 'varias_opciones',
+    sourceType: 'submission_recovery',
+    fieldGroup: 'general'
+  }
+
+  assert.deepEqual(selectedKeys([recoveryDefinition], []), [])
+  assert.deepEqual(
+    selectedKeys([recoveryDefinition], [{ fieldKey: 'varias_opciones', value: '' }]),
+    []
+  )
+  assert.deepEqual(
+    selectedKeys([recoveryDefinition], [{ fieldKey: 'varias_opciones', value: ['Represento varios artistas'] }]),
+    ['varias_opciones']
+  )
+  assert.deepEqual(
+    selectedKeys([{ ...recoveryDefinition, folderId: 'folder-historico' }], []),
+    ['varias_opciones']
   )
 })

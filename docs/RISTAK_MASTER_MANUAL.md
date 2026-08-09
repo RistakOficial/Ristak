@@ -2130,8 +2130,16 @@ Capacidades:
   administrador para crear o eliminar agrupaciones. Crear o editar un campo
   permite elegir carpeta y la seleccion multiple permite mover varios; eliminar
   una carpeta conserva sus campos y los deja bajo `Sin carpeta`. El catalogo de
-  campos personalizados se muestra completo en la ficha de contacto, el panel
-  derecho del chat desktop y la info de contacto del chat movil. Sus carpetas se
+  campos personalizados se administra completo desde Configuracion y alimenta la
+  ficha de contacto, el panel derecho del chat desktop y la info de contacto del
+  chat movil. Esas superficies evitan ruido sin borrar datos: una definición
+  creada únicamente por `submission_recovery`, todavía sin carpeta y sin valor
+  en el contacto actual, no se muestra en su ficha; vuelve a aparecer en cualquier
+  contacto que sí conserve esa respuesta histórica. Cuando dos definiciones
+  corresponden al mismo campo físico de formulario (`sourceFormId +
+  sourceFieldId`) porque su destino cambió, se muestra la variante con respuesta;
+  si ambas conservan información se muestran ambas, y si ninguna tiene dato se
+  conserva la definición actualizada más recientemente. Sus carpetas se
   respetan como secciones desplegables; los campos sin carpeta quedan bajo
   "Campos personalizados". El grupo heredado `general` tambien se normaliza bajo
   ese mismo titulo y nunca se muestra como una seccion separada. La edicion se

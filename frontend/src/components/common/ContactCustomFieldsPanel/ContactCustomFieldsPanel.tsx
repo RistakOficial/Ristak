@@ -18,7 +18,8 @@ import {
   getContactCustomFieldDisplayLabel,
   getContactCustomFieldIdentity,
   isReservedContactCustomField,
-  resolveContactCustomFieldGroup
+  resolveContactCustomFieldGroup,
+  selectContactCustomFieldDefinitionsForContact
 } from '@/utils/contactCustomFields'
 import { formatDateToISO } from '@/utils/format'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -279,7 +280,10 @@ const buildEditableFields = (
   definitions: CatalogDefinition[],
   fields: ContactCustomField[]
 ) => {
-  const visibleDefinitions = definitions.filter(definition => !isHiddenDefinition(definition))
+  const visibleDefinitions = selectContactCustomFieldDefinitionsForContact(
+    definitions.filter(definition => !isHiddenDefinition(definition)),
+    fields
+  )
 
   return visibleDefinitions.map((definition, index) => {
     const valueField = findMatchingValueField(fields, definition)

@@ -87,6 +87,123 @@ export function findMatchingContactCustomField<T extends ContactCustomFieldLike>
   return fallbackMatches.length === 1 ? fallbackMatches[0] : null
 }
 
+const getContactCustomFieldSourceIdentity = (field?: ContactCustomFieldLike | null) => {
+  if (!field) return ''
+
+  const sourceFieldId = cleanString(field.sourceFieldId || field.source_field_id)
+  if (!sourceFieldId) return ''
+
+  const sourceScope = cleanString(
+    field.sourceFormId ||
+    field.source_form_id ||
+    field.sourceSiteId ||
+    field.source_site_id
+  )
+  if (!sourceScope) return ''
+
+  return `source:${normalizeMatchKey(sourceScope)}:field:${normalizeMatchKey(sourceFieldId)}`
+}
+
+const hasMeaningfulContactCustomFieldValue = (field?: ContactCustomFieldLike | null) => {
+  if (!field || field.value === null || field.value === undefined) return false
+  if (typeof field.value === 'string') return field.value.trim().length > 0
+  if (Array.isArray(field.value)) return field.value.length > 0
+  if (typeof field.value === 'object') return Object.keys(field.value).length > 0
+  return true
+}
+
+const definitionTimestamp = (definition: ContactCustomFieldLike) => {
+  const raw = cleanString(
+    definition.updatedAt ||
+    definition.updated_at ||
+    definition.createdAt ||
+    definition.created_at
+  )
+  const parsed = raw ? Date.parse(raw) : Number.NaN
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+const isUncuratedRecoveryDefinition = (
+  definition: ContactCustomFieldLike,
+  matchingField: ContactCustomFieldLike | null
+) => {
+  if (normalizeMatchKey(definition.sourceType || definition.source_type) !== 'submission_recovery') {
+    return false
+  }
+  if (hasMeaningfulContactCustomFieldValue(matchingField)) return false
+
+  const folderId = cleanString(definition.folderId || definition.folder_id)
+  const fieldGroup = normalizeMatchKey(definition.fieldGroup || definition.field_group)
+  return !folderId && (!fieldGroup || fieldGroup === 'general')
+}
+
+interface ContactDefinitionCandidate<T extends ContactCustomFieldLike> {
+  definition: T
+  index: number
+  match: ContactCustomFieldLike | null
+  sourceIdentity: string
+}
+
+const newestDefinitionCandidate = <T extends ContactCustomFieldLike>(
+  candidates: ContactDefinitionCandidate<T>[]
+) => candidates.reduce((current, candidate) => {
+  if (!current) return candidate
+  return definitionTimestamp(candidate.definition) > definitionTimestamp(current.definition)
+    ? candidate
+    : current
+}, null as ContactDefinitionCandidate<T> | null)
+
+export function selectContactCustomFieldDefinitionsForContact<T extends ContactCustomFieldLike>(
+  definitions: T[] = [],
+  fields: ContactCustomFieldLike[] = []
+) {
+  const candidates = definitions
+    .map<ContactDefinitionCandidate<T>>((definition, index) => {
+      const match = findMatchingContactCustomField(fields, definition)
+      return {
+        definition,
+        index,
+        match,
+        sourceIdentity: getContactCustomFieldSourceIdentity(definition)
+      }
+    })
+    .filter(candidate => !isUncuratedRecoveryDefinition(candidate.definition, candidate.match))
+
+  const groupsBySource = new Map<string, ContactDefinitionCandidate<T>[]>()
+  const visibleIndexes = new Set<number>()
+
+  candidates.forEach((candidate) => {
+    if (!candidate.sourceIdentity) {
+      visibleIndexes.add(candidate.index)
+      return
+    }
+
+    const group = groupsBySource.get(candidate.sourceIdentity) || []
+    group.push(candidate)
+    groupsBySource.set(candidate.sourceIdentity, group)
+  })
+
+  groupsBySource.forEach((group) => {
+    if (group.length === 1) {
+      visibleIndexes.add(group[0].index)
+      return
+    }
+
+    const populated = group.filter(candidate => hasMeaningfulContactCustomFieldValue(candidate.match))
+    if (populated.length > 0) {
+      populated.forEach(candidate => visibleIndexes.add(candidate.index))
+      return
+    }
+
+    const preferred = newestDefinitionCandidate(group)
+    if (preferred) visibleIndexes.add(preferred.index)
+  })
+
+  return candidates
+    .filter(candidate => visibleIndexes.has(candidate.index))
+    .map(candidate => candidate.definition)
+}
+
 export function getContactCustomFieldIdentity(field?: ContactCustomFieldLike | null) {
   return getContactCustomFieldKeys(field)[0] || ''
 }
