@@ -42,12 +42,23 @@ test('normaliza contactos compartidos con nombre y teléfonos', () => {
 test('lee contactos QR en vCard sin imprimir objetos internos', () => {
   assert.equal(
     extractSupplementalWhatsAppMessageText({
-      type: 'contacts',
       contacts: [{
         vcard: 'BEGIN:VCARD\nVERSION:3.0\nFN:María López\nTEL;TYPE=CELL:+52 656 555 0101\nEND:VCARD'
       }]
-    }),
+    }, { messageType: 'contacts' }),
     'Contacto compartido: María López · +52 656 555 0101'
+  )
+})
+
+test('ignora el destinatario técnico del ACK de un envío de texto de Meta', () => {
+  assert.equal(
+    extractSupplementalWhatsAppMessageText({
+      type: 'text',
+      text: { body: 'Buenas noches, que descanses' },
+      contacts: [{ input: '+524436816403', wa_id: '5214436816403' }],
+      messages: [{ id: 'wamid.ack-tecnico' }]
+    }),
+    ''
   )
 })
 

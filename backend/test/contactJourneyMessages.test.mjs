@@ -4052,3 +4052,61 @@ test('contact journey repairs legacy object text and exposes a safe contact card
     await cleanup(contactId, phone)
   }
 })
+
+test('contact journey keeps Meta text ACK recipients out of contact cards', async () => {
+  const id = randomUUID()
+  const hash = id.replaceAll('-', '').slice(0, 24)
+  const contactId = `meta_text_ack_${id}`
+  const phone = `+52992${Date.now().toString().slice(-7)}`
+  const messageId = `waapi_msg_${hash}`
+  const timestamp = '2098-08-08T18:00:00.000Z'
+  const messageText = 'Buenas noches, que descanses'
+
+  await cleanup(contactId, phone)
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente ACK Meta',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: timestamp,
+      updated_at: timestamp
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: messageId,
+      provider: 'meta_direct',
+      source_adapter: 'meta_direct',
+      provider_message_id: `wamid.${hash}`,
+      wamid: `wamid.${hash}`,
+      contact_id: contactId,
+      phone,
+      from_phone: '+526561000000',
+      to_phone: phone,
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'outbound',
+      message_type: 'text',
+      message_text: messageText,
+      raw_payload_json: JSON.stringify({
+        messaging_product: 'whatsapp',
+        contacts: [{ input: phone, wa_id: phone.replace(/\D/g, '') }],
+        messages: [{ id: `wamid.${hash}` }],
+        type: 'text',
+        text: { body: messageText }
+      }),
+      message_timestamp: timestamp,
+      created_at: timestamp
+    })
+
+    const journey = await readJourney(contactId, { includeBusinessMessages: 'true' })
+    const message = journey.find(event => event.data?.whatsapp_api_message_id === messageId)
+
+    assert.ok(message)
+    assert.equal(message.data.message_text, messageText)
+    assert.equal(message.data.message_type, 'text')
+    assert.equal(message.data.message_presentation, null)
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})

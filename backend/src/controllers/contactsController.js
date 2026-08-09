@@ -7150,7 +7150,9 @@ export const getContactJourney = async (req, res) => {
       const payloadMedia = getWhatsAppMediaFromPayload(msg.raw_payload_json, msg.message_type)
       const payloadLocation = getWhatsAppLocationFromPayload(msg.raw_payload_json, msg.message_type)
       const rawPayload = parseJsonObject(msg.raw_payload_json)
-      const supplementalMessageText = extractSupplementalWhatsAppMessageText(rawPayload)
+      const supplementalMessageText = extractSupplementalWhatsAppMessageText(rawPayload, {
+        messageType: msg.message_type
+      })
       const storedMessageText = cleanString(msg.message_text)
       const visibleMessageText = supplementalMessageText && /\[object Object\]/i.test(storedMessageText)
         ? supplementalMessageText

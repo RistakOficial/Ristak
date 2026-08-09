@@ -174,6 +174,22 @@ test('presenta contactos Cloud API con nombre estructurado, teléfonos y correo'
   assert.doesNotMatch(JSON.stringify(presentation), /\[object Object\]/)
 })
 
+test('no confunde el destinatario técnico del ACK de Meta con un contacto compartido', () => {
+  const presentation = buildWhatsAppMessagePresentation({
+    messageType: 'text',
+    messageText: 'Buenas noches, que descanses',
+    messageRawPayload: {
+      messaging_product: 'whatsapp',
+      contacts: [{ input: '+524436816403', wa_id: '5214436816403' }],
+      messages: [{ id: 'wamid.ack-tecnico' }],
+      type: 'text',
+      text: { body: 'Buenas noches, que descanses' }
+    }
+  })
+
+  assert.equal(presentation, null)
+})
+
 test('presenta pedidos con la moneda explícita del proveedor', () => {
   const presentation = buildWhatsAppMessagePresentation({
     messageType: 'order',

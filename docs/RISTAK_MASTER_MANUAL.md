@@ -2901,10 +2901,14 @@ una asistencia falsa; el botón real sigue funcionando solamente en WhatsApp.
 Las tarjetas de contacto leen tanto el objeto oficial `name.formatted_name` como
 los nombres y teléfonos de vCard usados por QR. Nunca convierten un objeto a
 texto ni muestran `[object Object]`. El GET también repara ese texto en filas
-históricas usando `raw_payload_json`, sin migración destructiva. Los pedidos y
-pagos muestran importes únicamente cuando el proveedor incluyó moneda explícita;
-no infieren MXN, USD ni la moneda del navegador. Las respuestas de Flow descartan
-tokens, IDs técnicos y campos internos antes de construir sus filas visibles.
+históricas usando `raw_payload_json`, sin migración destructiva. El arreglo
+`contacts` que Graph devuelve dentro del ACK de un envío identifica al
+destinatario técnico y no es una tarjeta compartida: para renderizar contactos,
+el tipo persistido o el contenido QR debe declararlos explícitamente. Los
+pedidos y pagos muestran importes únicamente cuando el proveedor incluyó moneda
+explícita; no infieren MXN, USD ni la moneda del navegador. Las respuestas de
+Flow descartan tokens, IDs técnicos y campos internos antes de construir sus
+filas visibles.
 
 Los mensajes entrantes sin texto no se convierten por defecto en una burbuja
 genérica `Mensaje`. Imagen, GIF, sticker, video, audio/voz, documento, ubicación,

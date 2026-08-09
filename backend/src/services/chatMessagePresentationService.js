@@ -410,8 +410,15 @@ function buildContactsPresentation(rawMessage, normalizedType) {
     ...(qrContent.contactMessage ? [qrContent.contactMessage] : []),
     ...asArray(qrContent.contactsArrayMessage?.contacts)
   ]
-  const contacts = asArray(rawMessage?.contacts).length ? asArray(rawMessage.contacts) : qrContacts
-  if (!contacts.length && !['contact', 'contacts'].includes(normalizedType)) return null
+  const rawType = cleanString(rawMessage?.type, 40).toLowerCase()
+  const declaredMessageType = normalizedType || rawType
+  const declaresSharedContacts = ['contact', 'contacts'].includes(declaredMessageType)
+  if (!declaresSharedContacts && !qrContacts.length) return null
+
+  const contacts = declaresSharedContacts && asArray(rawMessage?.contacts).length
+    ? asArray(rawMessage.contacts)
+    : qrContacts
+  if (!contacts.length) return null
 
   const sections = contacts.map(contact => {
     const phones = uniquePhones([

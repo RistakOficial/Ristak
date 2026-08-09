@@ -158,11 +158,11 @@ function extractSimpleMessageText(message = {}, depth = 0) {
  * Extracts formats that the main WhatsApp parser historically did not cover.
  * Kept pure so it can also repair the visible text of already stored payloads.
  */
-export function extractSupplementalWhatsAppMessageText(message = {}) {
+export function extractSupplementalWhatsAppMessageText(message = {}, { messageType = '' } = {}) {
   if (!isPlainObject(message)) return ''
-  const type = cleanString(message.type).toLowerCase()
+  const type = cleanString(messageType || message.type).toLowerCase()
 
-  if (type === 'contacts' || type === 'contact' || Array.isArray(message.contacts)) {
+  if (type === 'contacts' || type === 'contact') {
     return formatSharedContacts(message.contacts)
   }
   if (type === 'order' || isPlainObject(message.order)) {

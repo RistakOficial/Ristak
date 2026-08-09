@@ -420,7 +420,10 @@ eventos, pagos, respuestas de botón/lista/Flow, `system` y el mensaje anidado d
 `edit`. QR/Baileys conserva además vCard, pedido, producto, encuesta, evento,
 solicitud de pago, invitación a grupo, solicitud de teléfono y paquete de
 stickers cuando son contenido visible; recibos técnicos y mutaciones cifradas
-no crean globos independientes.
+no crean globos independientes. En particular, `contacts` dentro del ACK que
+Graph devuelve al enviar texto sólo describe al destinatario resuelto; no se
+presenta como contacto compartido salvo que el tipo del mensaje o el contenido
+QR declare explícitamente una tarjeta de contacto.
 
 `message_presentation` es la frontera pública: `{kind, header, body, footer,
 buttons, sections}`. Una sección contiene solo título y filas
