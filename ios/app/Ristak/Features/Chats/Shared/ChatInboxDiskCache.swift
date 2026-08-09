@@ -1,8 +1,9 @@
 import Foundation
 
 /// Respaldo local de la bandeja (doc research/03 §4.9 MOB-007): guarda un
-/// snapshot de las primeras filas. La UI lo conserva oculto durante una gracia
-/// live-first y sólo lo revela, identificado, si la respuesta viva tarda o falla.
+/// snapshot de las primeras filas. La bandeja lo pinta de inmediato y lo
+/// identifica mientras la respuesta viva lo revalida en segundo plano. El hilo
+/// conserva por separado su política live-first para mensajes.
 ///
 /// Round 6 #4: migrado a `RistakSnapshotCache`. El snapshot vive bajo la llave
 /// `chat:inbox` del caché global, que se PRECARGA a memoria en el arranque

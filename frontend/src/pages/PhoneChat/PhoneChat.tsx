@@ -7663,7 +7663,6 @@ export const PhoneChat: React.FC = () => {
 
     let freshResolved = false
     let cacheWasRevealed = false
-    let cacheRevealTimer: number | null = null
     const revealCachedChats = () => {
       const requestIsCurrent = chatsRequestRef.current === controller && !controller.signal.aborted
       if (!shouldRevealMobileChatCacheFallback({
@@ -7688,18 +7687,14 @@ export const PhoneChat: React.FC = () => {
     }
     const acceptFreshResponse = () => {
       freshResolved = true
-      if (cacheRevealTimer !== null) {
-        window.clearTimeout(cacheRevealTimer)
-        cacheRevealTimer = null
-      }
       setChatsUsingCachedData(false)
       setChatsRefreshing(false)
     }
 
     if (!append && !silentRefresh && hasCachedChats) {
-      // La red sale YA. El snapshot queda oculto una gracia corta y sólo se
-      // revela si el servidor no alcanzó a responder, evitando el flash viejo→nuevo.
-      cacheRevealTimer = window.setTimeout(revealCachedChats, MOBILE_CHAT_CACHE_FALLBACK_GRACE_MS)
+      // La bandeja debe ser útil desde el primer frame. Pintamos la última copia
+      // conocida y la red la revalida debajo; el hilo conserva live-first.
+      revealCachedChats()
     }
 
     const fetchChatPage = async (cursor: ChatListKeysetCursor | null) => {
@@ -7784,6 +7779,12 @@ export const PhoneChat: React.FC = () => {
         // instante y se rellena al hacer scroll.
         const freshPage = dedupeChatsById(await fetchChatPage(null))
         if (chatsRequestRef.current !== controller) return
+        if (freshPage.length === 0 && cacheWasRevealed && chatsRef.current.length > 0) {
+          // Confirma una respuesta inicial contradictoria antes de retirar una
+          // bandeja útil. El segundo GET silencioso sí queda como autoridad.
+          window.setTimeout(() => void loadChats({ silent: true, useCache: false }), 0)
+          return
+        }
         acceptFreshResponse()
 
         // En búsqueda (o al venir de una), REEMPLAZAMOS; en lista completa fusionamos sobre el
@@ -7852,10 +7853,6 @@ export const PhoneChat: React.FC = () => {
         }
       }
     } finally {
-      if (cacheRevealTimer !== null) {
-        window.clearTimeout(cacheRevealTimer)
-        cacheRevealTimer = null
-      }
       if (append) {
         if (chatListLoadMoreRequestRef.current === controller) {
           chatListLoadMoreRequestRef.current = null

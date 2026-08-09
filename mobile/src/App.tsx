@@ -2952,9 +2952,13 @@ function ChatScreen({
   );
   const firstSyncWasCompleted = hasCanonicalInboxSnapshot
     || hasCachedValue(MOBILE_CACHE_KEYS.firstSyncCompleted);
-  // Live-first: el snapshot queda preparado pero oculto. La red arranca en el
-  // primer frame y la copia local sólo se revela tras la gracia o ante un fallo.
-  const [chats, setChats] = useState<ChatContact[]>([]);
+  // La bandeja usa stale-while-revalidate: al volver a Chat pinta la última
+  // copia conocida en el primer frame y la red la reemplaza en silencio. El
+  // hilo sí conserva live-first porque ahí el contenido exacto importa más.
+  const initialCachedInbox = canUseCanonicalInboxCache
+    ? nativeInboxCache.get(api) || peekCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, [])
+    : [];
+  const [chats, setChats] = useState<ChatContact[]>(() => initialCachedInbox);
   const [inboxCacheHydrated, setInboxCacheHydrated] = useState(() => hasCanonicalInboxSnapshot);
   const initialBusinessTimezone = normalizeRequiredBusinessTimezone(initialAccountTimezone);
   const initialCurrency = normalizeRequiredCurrencyCode(initialAccountCurrency);
@@ -2963,8 +2967,8 @@ function ChatScreen({
   const [accountCurrency, setAccountCurrency] = useState(initialCurrency || DEFAULT_ACCOUNT_CURRENCY);
   const [accountCurrencyReady, setAccountCurrencyReady] = useState(Boolean(initialCurrency));
   const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [showingCachedInbox, setShowingCachedInbox] = useState(false);
+  const [loading, setLoading] = useState(() => initialCachedInbox.length === 0);
+  const [showingCachedInbox, setShowingCachedInbox] = useState(() => initialCachedInbox.length > 0);
   const [firstSyncProgress, setFirstSyncProgress] = useState<MobileFirstSyncProgress | null>(() => (
     firstSyncWasCompleted
       ? null
@@ -2986,7 +2990,7 @@ function ChatScreen({
   const cameraSendLockedRef = useRef(false);
   const chatListGenerationRef = useRef(0);
   const chatListLoadedQueryRef = useRef('');
-  const chatListLoadedScopeRef = useRef('');
+  const chatListLoadedScopeRef = useRef(initialCachedInbox.length ? canonicalInboxScopeKey : '');
   const chatMountedRef = useRef(true);
   const chatsRef = useRef(chats);
   const selectedChatRef = useRef(selected);
@@ -3023,9 +3027,8 @@ function ChatScreen({
     }
   }, [api, canonicalInboxScopeKey, chats, currentChatListScopeKey]);
   selectedChatRef.current = selected;
-  // Hidratar la bandeja desde disco en frío sin pintarla todavía. La petición
-  // viva empieza apenas termina esta lectura acotada; el snapshot queda listo
-  // como fallback, no como primera fuente visual.
+  // Hidratar la bandeja desde disco en frío. El bootstrap precarga normalmente
+  // esta llave, pero este camino cubre una caché válida que aún no llegó a RAM.
   useEffect(() => {
     if (!canUseCanonicalInboxCache) {
       setInboxCacheHydrated(true);
@@ -3039,6 +3042,14 @@ function ChatScreen({
     void readCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, []).then((cached) => {
       if (!alive) return;
       nativeInboxCache.set(api, cached);
+      if (cached.length && chatsRef.current.length === 0) {
+        chatsRef.current = cached;
+        chatListLoadedQueryRef.current = '';
+        chatListLoadedScopeRef.current = canonicalInboxScopeKey;
+        setChats(cached);
+        setLoading(false);
+        setShowingCachedInbox(true);
+      }
     }).finally(() => {
       if (alive) setInboxCacheHydrated(true);
     });
@@ -3156,41 +3167,9 @@ function ChatScreen({
     chatListRequestAbortRef.current?.abort();
     const controller = new AbortController();
     chatListRequestAbortRef.current = controller;
-    const cachedRowsForRequest = requestScopeKey === canonicalInboxScopeKey && !requestQuery
-      ? nativeInboxCache.get(api) || peekCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, [])
-      : [];
-    const hasCachedRowsForRequest = requestScopeKey === canonicalInboxScopeKey
-      && !requestQuery
-      && cachedRowsForRequest.length > 0;
-    let freshResolved = false;
-    let cacheWasRevealed = false;
-    let cacheRevealTimer: ReturnType<typeof setTimeout> | null = null;
-    const revealCachedInbox = () => {
-      if (!shouldRevealChatCacheFallback({
-        freshResolved,
-        hasCachedData: hasCachedRowsForRequest,
-        requestIsCurrent: chatListRequestAbortRef.current === controller && !controller.signal.aborted,
-      })) return false;
-      cacheWasRevealed = true;
-      chatListLoadedQueryRef.current = requestQuery;
-      chatListLoadedScopeRef.current = requestScopeKey;
-      chatsRef.current = cachedRowsForRequest;
-      setChats(cachedRowsForRequest);
-      setLoading(false);
-      setShowingCachedInbox(true);
-      return true;
-    };
     const acceptFreshInbox = () => {
-      freshResolved = true;
-      if (cacheRevealTimer) {
-        clearTimeout(cacheRevealTimer);
-        cacheRevealTimer = null;
-      }
       setShowingCachedInbox(false);
     };
-    if (!silent && hasCachedRowsForRequest) {
-      cacheRevealTimer = setTimeout(revealCachedInbox, CHAT_LIVE_FIRST_CACHE_GRACE_MS);
-    }
     let resolveRequestSettled: () => void = () => undefined;
     const requestSettled = new Promise<void>((resolve) => {
       resolveRequestSettled = resolve;
@@ -3212,11 +3191,23 @@ function ChatScreen({
       });
       if (!chatMountedRef.current) return null;
       if (generation !== chatListGenerationRef.current) return null;
-      acceptFreshInbox();
-      chatLastInboxReconcileAtRef.current = Date.now();
       chatListLoadedQueryRef.current = requestQuery;
       chatListLoadedScopeRef.current = requestScopeKey;
       const serverChats = Array.isArray(data) ? data : [];
+      const shouldConfirmContradictoryInitialEmpty = !silent
+        && serverChats.length === 0
+        && existingRowsAtRequestStart.length > 0
+        && requestScopeKey === canonicalInboxScopeKey
+        && !requestQuery;
+      if (shouldConfirmContradictoryInitialEmpty) {
+        // Una primera página vacía durante el montaje no debe borrar el inbox
+        // útil que ya está en pantalla. Dejamos el timestamp de reconciliación
+        // en cero para que SSE/poll confirme enseguida con una lectura silenciosa.
+        setShowingCachedInbox(true);
+        return existingRowsAtRequestStart;
+      }
+      acceptFreshInbox();
+      chatLastInboxReconcileAtRef.current = Date.now();
       const nextChats = goalCompletedUnreviewed
         ? mergeChatbotGoalRows(serverChats, existingRowsAtRequestStart)
         : serverChats;
@@ -3260,8 +3251,7 @@ function ChatScreen({
       console.warn('[RistakNative][chat] loadChats failed', err);
       if (!chatMountedRef.current) return null;
       if (generation === chatListGenerationRef.current) {
-        const revealedFallback = cacheWasRevealed || (!silent && revealCachedInbox());
-        const hasVisibleCache = revealedFallback || (!scopeChanged && chatsRef.current.length > 0);
+        const hasVisibleCache = !scopeChanged && chatsRef.current.length > 0;
         if (!silent && !hasVisibleCache) {
           setShowingCachedInbox(false);
           setError(timedOut
@@ -3271,7 +3261,6 @@ function ChatScreen({
       }
       return null;
     } finally {
-      if (cacheRevealTimer) clearTimeout(cacheRevealTimer);
       clearTimeout(requestTimeout);
       if (chatListRequestAbortRef.current === controller) chatListRequestAbortRef.current = null;
       if (chatListRequestSettledRef.current === requestSettled) {

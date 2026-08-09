@@ -133,14 +133,21 @@ resultado viejo no puede hidratar, cachear ni ejecutar rollback sobre la cuenta
 que acaba de entrar.
 
 El arranque de Chats nunca espera ese contexto completo ni tapa el shell con un
-loader. Inbox e hilo salen a red de inmediato; si existe snapshot queda oculto
-durante 350 ms y sólo se publica como fallback identificado cuando la respuesta
-viva tarda o falla. En frio, inbox y directorio se solapan mientras navegacion,
+loader. El inbox pinta de inmediato su snapshot identificado y sale a red para
+revalidarlo; el hilo sale a red de inmediato y mantiene su snapshot oculto 350 ms,
+publicándolo sólo si la respuesta viva tarda o falla. En frio, inbox y directorio
+se solapan mientras navegacion,
 buscador y chrome permanecen visibles. Numeros,
 labels, integraciones, flags y etiquetas llegan despues en una tarea satelite:
 primero construye un snapshot puro y solo lo aplica si siguen coincidiendo task
-ID, namespace, generacion y sesion, y si la tarea no fue cancelada. El registro
-push arranca en paralelo con `AppConfigStore` y se repite unicamente si al
+ID, namespace, generacion y sesion, y si la tarea no fue cancelada.
+
+La tarea raíz de Chats usa como identidad el namespace de cuenta y el permiso de
+Chat. Si cualquiera termina de resolverse durante el montaje, SwiftUI cancela el
+intento incompleto y arranca el vigente automáticamente, aun sin snapshot; abrir
+la bandeja nunca debe depender de un pull-to-refresh manual.
+
+El registro push arranca en paralelo con `AppConfigStore` y se repite unicamente si al
 terminar cambio el filtro de calendarios.
 
 ## Realtime (doc 11)

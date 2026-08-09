@@ -51,7 +51,7 @@ const backgroundSource = fs.readFileSync(require.resolve('../src/background.ts')
 const notificationSource = fs.readFileSync(require.resolve('../src/notifications.ts'), 'utf8');
 const indexSource = fs.readFileSync(require.resolve('../index.ts'), 'utf8');
 
-test('la UI móvil da prioridad a la red y reserva caché como fallback', () => {
+test('la bandeja móvil pinta caché al entrar y el hilo conserva live-first', () => {
   assert.equal(CHAT_LIVE_FIRST_CACHE_GRACE_MS, 350);
   assert.equal(shouldRevealChatCacheFallback({
     freshResolved: false,
@@ -63,8 +63,11 @@ test('la UI móvil da prioridad a la red y reserva caché como fallback', () => 
     hasCachedData: true,
     requestIsCurrent: true,
   }), false);
-  assert.match(appSource, /const \[chats, setChats\] = useState<ChatContact\[]>\(\[\]\)/);
-  assert.match(appSource, /setTimeout\(revealCachedInbox, CHAT_LIVE_FIRST_CACHE_GRACE_MS\)/);
+  assert.match(appSource, /const initialCachedInbox = canUseCanonicalInboxCache/);
+  assert.match(appSource, /const \[chats, setChats\] = useState<ChatContact\[]>\(\(\) => initialCachedInbox\)/);
+  assert.match(appSource, /const \[showingCachedInbox, setShowingCachedInbox\] = useState\(\(\) => initialCachedInbox\.length > 0\)/);
+  assert.doesNotMatch(appSource, /setTimeout\(revealCachedInbox, CHAT_LIVE_FIRST_CACHE_GRACE_MS\)/);
+  assert.match(appSource, /shouldConfirmContradictoryInitialEmpty/);
   assert.match(appSource, /setTimeout\(\s*revealCachedConversation,\s*CHAT_LIVE_FIRST_CACHE_GRACE_MS/);
   assert.doesNotMatch(appSource, /preloadCacheKeys\(\[cacheKey\]\)\.finally\(mountConversation\)/);
 });

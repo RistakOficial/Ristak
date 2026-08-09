@@ -29,9 +29,9 @@ Service extensions, or Apple native code in this folder. Apple work belongs in
 - Chat inbox from `/api/contacts/chats`.
 - First connection without a local snapshot shows real, retryable progress for
   account setup, configuration, contacts, conversations, and local cache; later
-  launches request the live inbox immediately and keep the cached state hidden
-  for a 350 ms grace. Cache appears only as a labeled fallback when live data is
-  slow or unavailable.
+  launches paint the labeled cached inbox immediately and revalidate it in the
+  background. A contradictory first empty response is confirmed before visible
+  rows are removed.
 - Native chat inbox parity pass for `/movil`: same high-level header, search,
   quick filter chips, unread emphasis, contact avatar ring/channel badge, and
   last-message preview rules.

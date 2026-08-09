@@ -608,12 +608,13 @@ selección = toggle (no abre chat).
   archives aparecerán aquí.»), prioritarias «Sin conversaciones prioritarias»,
   general «Cuando llegue un mensaje de WhatsApp, Messenger o Instagram
   aparecerá aquí.».
-- **Live-first con fallback local**: `/movil`, Android e iOS disparan el inbox
-  vivo inmediatamente y mantienen oculto el snapshot por 350 ms. Si el servidor
-  responde antes, la cache nunca se pinta; si tarda o falla, se revela con
-  «Mostrando información guardada». El resultado fresco, incluido `[]`, conserva
-  autoridad y reemplaza el fallback salvo la protección ya documentada para un
-  vacío transitorio contradictorio.
+- **Stale-while-revalidate local**: `/movil`, Android e iOS pintan de inmediato
+  el último snapshot con «Mostrando información guardada» y disparan el inbox
+  vivo en paralelo. La respuesta fresca reemplaza la copia sin exigir swipe ni
+  remontar la lista. Una primera página `[]` contradictoria se confirma antes de
+  retirar conversaciones visibles; el segundo resultado sí conserva autoridad.
+  En iOS, la tarea raíz se reinicia al resolverse el namespace de cuenta o el
+  permiso de Chat, por lo que también se recupera sin snapshot local.
 - **Refresco vivo**: web repolling silencioso (~20 s) fusionando la primera
   página sobre la cola ya cargada (sin colapsar profundidad de scroll);
   RN: intervalo + al volver a foreground + evento de push; pull-to-refresh

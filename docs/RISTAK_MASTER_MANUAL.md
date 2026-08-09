@@ -3470,11 +3470,15 @@ completar —incluso con cero chats o con ese fallback— la marca evita repetir
 progreso mientras exista esa cache.
 
 `ios/app` no usa overlay de bootstrap. Mantiene el shell montado y solicita
-inbox/directorio en paralelo. En `/movil`, `mobile/` e iOS, bandeja e hilo son
-live-first: la peticion al servidor sale de inmediato y el snapshot local queda
-oculto durante 350 ms. Si la respuesta viva llega antes, la cache nunca se pinta;
-si tarda o falla, aparece como fallback con el aviso `Mostrando informacion
-guardada`. Numeros, labels,
+inbox/directorio en paralelo. En `/movil`, `mobile/` e iOS, la bandeja usa
+stale-while-revalidate: pinta en el primer frame la última copia local con el
+aviso `Mostrando informacion guardada` y la reemplaza silenciosamente con la
+respuesta viva. Una primera página `[]` contradictoria se confirma antes de
+retirar conversaciones visibles. En iOS, el bootstrap queda ligado al namespace
+de cuenta y al permiso de Chat: al resolverse cualquiera, SwiftUI reinicia la
+carga vigente, aun sin snapshot, en vez de esperar un pull-to-refresh. El hilo sí
+es live-first: solicita al servidor de inmediato, oculta su snapshot durante 350
+ms y sólo lo revela si la red tarda o falla. Numeros, labels,
 integraciones, flags y etiquetas llegan despues en una tarea satelite que
 construye un snapshot puro y solo lo aplica si siguen coincidiendo task ID,
 namespace, generacion y sesion, y si no fue cancelada. Logout o cambio de cuenta

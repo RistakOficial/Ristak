@@ -36,13 +36,13 @@ const phoneChatSource = await readFile(
 
 assert.match(
   phoneChatSource,
-  /const \[chats, setChats\] = useState<ChatContact\[]>\(\[\]\)/,
-  'la bandeja web móvil debe iniciar sin pintar el snapshot viejo'
+  /if \(!append && !silentRefresh && hasCachedChats\) \{[\s\S]{0,260}revealCachedChats\(\)/,
+  'la bandeja web móvil debe pintar el snapshot en el primer frame'
 )
-assert.match(
+assert.doesNotMatch(
   phoneChatSource,
   /window\.setTimeout\(revealCachedChats, MOBILE_CHAT_CACHE_FALLBACK_GRACE_MS\)/,
-  'la bandeja sólo debe revelar su caché después de la gracia live-first'
+  'la bandeja no debe esperar una gracia que pueda dejarla en blanco'
 )
 assert.match(
   phoneChatSource,
@@ -51,8 +51,13 @@ assert.match(
 )
 assert.match(
   phoneChatSource,
+  /freshPage\.length === 0 && cacheWasRevealed && chatsRef\.current\.length > 0/,
+  'un vacío inicial contradictorio debe confirmarse antes de borrar la bandeja visible'
+)
+assert.match(
+  phoneChatSource,
   /Mostrando información guardada/,
   'el fallback local debe identificarse claramente para el usuario'
 )
 
-console.log('Mobile web Chat live-first paint contract OK')
+console.log('Mobile web Chat inbox-first/thread-live-first paint contract OK')

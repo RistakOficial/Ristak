@@ -1,5 +1,14 @@
 import SwiftUI
 
+/// Identidad observable del bootstrap de Chats. SwiftUI cancela una `.task(id:)`
+/// anterior y arranca otra cuando la cuenta o el permiso terminan de resolverse.
+/// Sin esta llave, una carga iniciada con sesión incompleta podía cancelarse y no
+/// volver a pedir la bandeja hasta el pull-to-refresh del usuario.
+struct ChatBootstrapIdentity: Hashable {
+    let namespace: String?
+    let canReadChat: Bool
+}
+
 /// Raíz del módulo Chats (doc research/03). Contenedor adaptativo:
 /// - Compacto (iPhone): `NavigationStack` con la bandeja y push del hilo.
 /// - Regular (iPad): `NavigationSplitView` — bandeja como sidebar (~380 pt) y
@@ -67,11 +76,8 @@ struct ChatsRootView: View {
     /// el callback de background al cableado que ya tenía esta raíz.
     private var bootstrappedLayout: some View {
         layout
-            .task {
+            .task(id: bootstrapIdentity) {
                 await bootstrap()
-            }
-            .onChange(of: session.user?.id) {
-                refreshIdentityNamespace()
             }
             .onChange(of: scenePhase) { _, phase in
                 viewModel.setScenePaused(
@@ -103,6 +109,16 @@ struct ChatsRootView: View {
 
     // MARK: - Arranque
 
+    private var bootstrapIdentity: ChatBootstrapIdentity {
+        ChatBootstrapIdentity(
+            namespace: ChatAccountNamespace.make(
+                baseURL: session.baseURL,
+                userID: session.user?.id
+            ),
+            canReadChat: access.canRead(module: .chat)
+        )
+    }
+
     private func bootstrap() async {
         guard access.canRead(module: .chat) else { return }
         let namespace = ChatAccountNamespace.make(
@@ -126,19 +142,10 @@ struct ChatsRootView: View {
             // existiera la marca explícita del bootstrap.
             cache.store(true, for: ChatSnapshotKey.firstSyncCompleted)
         }
-        // El shell siempre queda montado desde el primer frame. La red tiene una
-        // gracia corta para pintar primero; el snapshot sólo aparece, marcado,
-        // si la respuesta tarda o falla y jamás tapa la navegación.
+        // El shell siempre queda montado desde el primer frame. La última
+        // bandeja conocida aparece de inmediato y la red la revalida debajo;
+        // así un cambio de identidad/layout no puede dejar la lista en blanco.
         _ = await viewModel.initialLoad(markFirstSyncCompleted: !alreadyPrepared)
-    }
-
-    private func refreshIdentityNamespace() {
-        viewModel.updateNamespace(
-            ChatAccountNamespace.make(
-                baseURL: session.baseURL,
-                userID: session.user?.id
-            )
-        )
     }
 
     /// Consume SOLO deep links de chat; el resto de destinos los navega el

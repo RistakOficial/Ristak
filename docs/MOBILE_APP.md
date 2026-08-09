@@ -243,12 +243,16 @@ capacidad de Pagos (plan, pasarelas y HighLevel), productos, pagos recientes,
 impuestos, Analiticas (KPIs, grafica, embudo, origen y numeros) y paneles de
 Ajustes. Las pantallas no-chat pueden pintar el ultimo estado correspondiente a
 su rango o scope exacto y revalidarlo en segundo plano; un timeout no las vacia ni oculta
-flujos que ya estaban verificados. Una respuesta fresca exitosa, incluso `[]`,
-es autoritativa y reemplaza el snapshot. Esa copia vive en `expo-file-system`
+flujos que ya estaban verificados. Fuera de la excepción de confirmación inicial
+de la bandeja descrita abajo, una respuesta fresca exitosa, incluso `[]`, es
+autoritativa y reemplaza el snapshot. Esa copia vive en `expo-file-system`
 bajo el namespace del servidor/cuenta conectada; `SecureStore` queda solo para
-token/base URL y preferencias chicas. En bandeja e hilo, la red manda sobre el
-primer paint: la cache se conserva oculta 350 ms y sólo aparece como fallback
-marcado, sin el salto visual de chats viejos a recientes. El task
+token/base URL y preferencias chicas. La bandeja usa stale-while-revalidate: la
+ultima copia conocida aparece de inmediato, marcada como información guardada,
+y la red la reemplaza silenciosamente. Una primera respuesta `[]` contradictoria
+se confirma una vez antes de retirar filas visibles. El hilo sí conserva
+live-first: oculta su snapshot 350 ms y sólo lo revela si la red tarda o falla.
+El task
 `ristak-inbox-refresh` refresca la bandeja y, con concurrencia dos, hasta seis
 hilos recientes ausentes o atrasados cuando Android concede una ventana. El
 task headless `ristak-chat-notification-refresh-v1` hace una ruta distinta y
@@ -284,17 +288,22 @@ timeout, termina como arranque degradado, abre el producto y reintenta por
 SSE/polling; no queda encerrado en una etapa satelite.
 
 iOS nunca cubre el shell con un overlay de bootstrap: mantiene navegacion,
-buscador y chrome montados desde el primer frame. Inbox e hilo lanzan la red
-inmediatamente y mantienen cualquier snapshot oculto durante la misma gracia de
-350 ms; sólo lo revelan, identificado como información guardada, si la respuesta
-viva tarda o falla. Mientras tanto conserva un vacio silencioso y el directorio
-carga en paralelo. Numeros, labels, integraciones, flags y etiquetas llegan despues en una
+buscador y chrome montados desde el primer frame. La bandeja restaura de inmediato
+su snapshot identificado y lanza la red en paralelo; no puede quedar vacía por la
+cancelación de una tarea inicial de SwiftUI. El bootstrap usa como identidad el
+namespace de cuenta y el permiso de Chat: si cualquiera termina de resolverse
+durante el montaje, SwiftUI cancela el intento incompleto y arranca el vigente
+automáticamente, incluso cuando todavía no existe snapshot. El hilo lanza la red
+inmediatamente y conserva su snapshot oculto durante 350 ms, revelándolo sólo si
+la respuesta viva tarda o falla. El directorio carga en paralelo. Numeros, labels,
+integraciones, flags y etiquetas llegan despues en una
 tarea satelite cuyo snapshot puro solo puede aplicarse si siguen coincidiendo
 task ID, namespace, generacion y sesion, y si la tarea no fue cancelada.
 
 Al completar o entrar en modo degradado, Android guarda
 `mobile:first-sync:completed` dentro del namespace de esa cuenta, por lo que los
-siguientes arranques preparan cache como fallback y priorizan la respuesta viva. Una cuenta con cero
+siguientes arranques pintan la bandeja guardada y la revalidan en segundo plano;
+el hilo sigue priorizando la respuesta viva. Una cuenta con cero
 chats tambien puede completar. iOS guarda la misma marca cuando obtiene estado
 primario utilizable de inbox o directorio. Logout o cambio de cuenta limpia la
 marca junto con sus snapshots.
