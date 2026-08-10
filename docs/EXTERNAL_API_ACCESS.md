@@ -82,7 +82,7 @@ the same server URL; `tools/list` returns the exact tools available to the user
 who authorized that connection.
 
 The MCP is a typed control plane over Ristak's business services, not a generic
-route proxy and not unrestricted SQL. The current registry contains 373 typed
+route proxy and not unrestricted SQL. The current registry contains 375 typed
 tools before authorization filtering. `GET /api/api-access/mcp/status` and
 `tools/list` report only the subset visible to the current user, plan, modules
 and granted scopes. It also removes tools whose provider is not connected in
@@ -261,6 +261,16 @@ The preferred low-latency code-first lifecycle is:
 8. `sites_publish` remains a separate `ristak.execute` action and executes
    directly when that scope has already been granted.
 
+Para reemplazar un video nativo sin perder analítica, el cliente primero sube o
+selecciona el asset nuevo en Media y después llama `sites_replace_video` con el
+`siteId`, `blockId` y `replacementMediaAssetId`. `metricsMode` es obligatorio:
+el cliente debe preguntarle a la persona si quiere `preserve` (el archivo nuevo
+continúa el historial anterior) o `reset` (empieza métricas independientes). La
+tool actualiza el bloque y registra esa decisión en una sola transacción; nunca
+reescribe ni elimina el ledger de reproducciones. Para un archivo local se usa
+primero `media_prepare_bunny_upload`, no el reemplazo físico genérico de Media,
+porque el video anterior debe permanecer como evidencia histórica.
+
 `sites_create_draft` and the block tools are for the native Ristak visual editor,
 native forms and native components. `sites_update_code` remains available for
 multi-file or already-published code changes, but it is intentionally
@@ -302,8 +312,9 @@ records and 30-day MCP business events, retains terminal invitations for 90 days
 and audit records for 180 days. During rolling upgrades it also expires and
 removes historical action-approval rows created by older versions; current MCP
 tools never create new ones. Event, acknowledgement, invitation, historical
-approval and OAuth control tables are blocked from generic REST/MCP table
-queries; only their dedicated internal routes may access them.
+approval, OAuth control and Site video replacement lineage/audit tables are
+blocked from generic REST/MCP table queries; only their dedicated business
+services may access them.
 
 ### Uploading a local file to Bunny.net
 

@@ -23,6 +23,21 @@ function getAuthHeaders(): HeadersInit {
 
 export type SiteType = 'standard_form' | 'interactive_form' | 'landing_page'
 export type SiteStatus = 'draft' | 'published' | 'archived'
+export type SiteVideoMetricsMode = 'preserve' | 'reset'
+
+export interface SiteVideoReplacementResult {
+  id: string
+  siteId: string
+  blockId: string
+  previousMediaAssetId: string | null
+  replacementMediaAssetId: string
+  replacementUrl: string
+  replacementFilename: string
+  metricsMode: SiteVideoMetricsMode
+  historicalMetricsPreserved: boolean
+  canonicalMediaAssetId: string
+  settings: Record<string, unknown>
+}
 export type SiteMetaTrigger = 'page_view' | 'form_submit' | 'calendar_schedule'
 export type SiteMetaSubmitCondition = 'always' | 'qualified_only'
 export type PaymentGateGateway = 'stripe' | 'conekta' | 'mercadopago' | 'clip'
@@ -1829,6 +1844,16 @@ export const sitesService = {
         ...(options?.siteId ? { siteId: options.siteId } : {})
       }
     })
+  },
+
+  replaceVideo(siteId: string, blockId: string, input: {
+    replacementMediaAssetId: string
+    metricsMode: SiteVideoMetricsMode
+  }) {
+    return apiClient.post<SiteVideoReplacementResult>(
+      `/sites/${siteId}/blocks/${blockId}/replace-video`,
+      input
+    )
   },
 
   getAnalyticsSummary(input: SitesAnalyticsSummaryInput, options: { signal?: AbortSignal } = {}) {

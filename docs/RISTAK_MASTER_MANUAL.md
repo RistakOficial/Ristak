@@ -1343,6 +1343,23 @@ ni Stream, la consulta recupera el asset del bloque actual sólo si el evento es
 posterior a `public_site_blocks.updated_at`; una reasociación posterior jamás se
 aplica hacia atrás.
 
+Un bloque nativo que ya contiene video muestra `Reemplazar video` en el panel
+derecho. Antes de abrir Media, el editor obliga a elegir entre **conservar
+métricas** y **empezar desde cero**. La primera opción hace que el asset nuevo sea
+la identidad canónica del linaje anterior; la segunda crea una identidad
+analítica independiente sin borrar el histórico. El cambio de archivo, la
+decisión y la actualización del bloque ocurren en una sola transacción.
+
+`site_video_metric_lineage` permite que los agregados y el detalle resuelvan,
+por Site y bloque, eventos inmutables de assets anteriores hacia el video vigente,
+incluso después de varios reemplazos. Así otro Site que reutilice el mismo asset
+no pierde ni mezcla su historial. `site_video_replacements` conserva la bitácora con Site,
+bloque, assets, modo y usuario. No se reescribe `video_playback_events`, no se
+elimina el archivo anterior y un video externo sin identidad de Media sólo puede
+empezar desde cero. MCP expone la misma operación como `sites_replace_video`:
+`metricsMode` es obligatorio y el agente debe preguntar `preserve` o `reset`
+antes de ejecutarla.
+
 Video usa el ledger `video_playback_events` como fuente analitica; la tabla
 `video_playback_sessions` queda como proyeccion para Journey/contactos. En
 ingesta v2 cada evento lleva UUID, secuencia monotona y hash de payload. Primero
@@ -10261,7 +10278,7 @@ Incluye:
 - MCP para clientes compatibles.
 
 El MCP externo es un plano de control tipado sobre los servicios de negocio de
-Ristak. El registro actual contiene 373 tools antes del filtrado de autorizacion
+Ristak. El registro actual contiene 375 tools antes del filtrado de autorizacion
 y cubre CRM/contactos, tags, campos personalizados, trigger links, inbox y envio
 de mensajes, chatbot, citas, calendarios, automatizaciones, pagos, productos,
 precios, suscripciones, dashboard, reportes, analytics/tracking, campañas ya

@@ -41,6 +41,7 @@ import {
   sitePaymentCheckoutPayHandler,
   sitePaymentCheckoutPrepareHandler,
   reorderBlocksHandler,
+  replaceSiteVideoHandler,
   restoreBlocksHandler,
   setSitesPublicDomainDefaultRouteHandler,
   setSitesDefaultRouteHandler,
@@ -147,6 +148,7 @@ router.get('/:siteId/content-assets', getSiteContentAssetsHandler)
 router.post('/:siteId/content-assets', saveSiteContentAssetHandler)
 router.put('/:siteId/content-assets/:bindingId', saveSiteContentAssetHandler)
 router.delete('/:siteId/content-assets/:bindingId', deleteSiteContentAssetHandler)
+router.post('/:siteId/blocks/:blockId/replace-video', replaceSiteVideoHandler)
 router.get('/:siteId', getSiteHandler)
 router.put('/:siteId', requirePaymentsForSitePaymentFeature, updateSiteHandler)
 router.delete('/:siteId', deleteSiteHandler)

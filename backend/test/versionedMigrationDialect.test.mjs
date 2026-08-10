@@ -113,6 +113,10 @@ test('las migraciones con sufijo de dialecto sólo apuntan a su motor', () => {
   assert.equal(migrationRunsForDialect('128a_media_folders.postgres.sql', 'sqlite'), false)
   assert.equal(migrationRunsForDialect('146_sites_publication_domain.postgres.sql', 'postgres'), true)
   assert.equal(migrationRunsForDialect('146_sites_publication_domain.postgres.sql', 'sqlite'), false)
+  assert.equal(migrationRunsForDialect('160_sites_video_metric_lineage.sqlite.sql', 'sqlite'), true)
+  assert.equal(migrationRunsForDialect('160_sites_video_metric_lineage.sqlite.sql', 'postgres'), false)
+  assert.equal(migrationRunsForDialect('160a_sites_video_metric_lineage.postgres.sql', 'postgres'), true)
+  assert.equal(migrationRunsForDialect('160a_sites_video_metric_lineage.postgres.sql', 'sqlite'), false)
   assert.equal(migrationRunsForDialect('040_common.sql', 'postgres'), true)
   assert.equal(migrationRunsForDialect('040_common.sql', 'sqlite'), true)
 })
@@ -162,6 +166,41 @@ test('la migración 158 enlaza seguimientos de Google sin repetir la columna rep
       await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
       { applied: 0, skipped: 0 }
     )
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('la migración 160 crea el linaje y la bitácora de reemplazos de video', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-site-video-lineage-'))
+  const database = openMemoryDatabase()
+  const migrationName = '160_sites_video_metric_lineage.sqlite.sql'
+
+  try {
+    await copyFile(
+      new URL(`../migrations/versioned/${migrationName}`, import.meta.url),
+      join(directory, migrationName)
+    )
+
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 1, skipped: 0 }
+    )
+
+    const tables = await database.all(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table' AND name IN ('site_video_metric_lineage', 'site_video_replacements')
+      ORDER BY name
+    `)
+    assert.deepEqual(tables.map(row => row.name), [
+      'site_video_metric_lineage',
+      'site_video_replacements'
+    ])
+
+    const indexes = await database.all("PRAGMA index_list('site_video_replacements')")
+    assert.ok(indexes.some(index => index.name === 'idx_site_video_replacements_block'))
+    assert.ok(indexes.some(index => index.name === 'idx_site_video_replacements_assets'))
   } finally {
     await database.close()
     await rm(directory, { recursive: true, force: true })

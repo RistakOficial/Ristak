@@ -1374,7 +1374,7 @@ function playbackBlockJsonTextExpression(alias = 'video_block', key = '') {
   END`
 }
 
-function resolvedVideoEventAssetIdExpression(alias = 'e') {
+function rawResolvedVideoEventAssetIdExpression(alias = 'e') {
   const explicitAssetId = `COALESCE(
     NULLIF(${playbackBlockJsonTextExpression('video_block', 'mediaAssetId')}, ''),
     NULLIF(${playbackBlockJsonTextExpression('video_block', 'media_asset_id')}, '')
@@ -1499,10 +1499,6 @@ function buildVideoEventScope({
   })
   if (hiddenCondition) conditions.push(hiddenCondition)
 
-  if (assetIds.length) {
-    conditions.push(`${resolvedVideoEventAssetIdExpression(alias)} IN (${assetIds.map(() => '?').join(',')})`)
-    params.push(...assetIds)
-  }
   if (streamVideoId) {
     conditions.push(`${alias}.stream_video_id = ?`)
     params.push(streamVideoId)
@@ -1542,7 +1538,8 @@ function buildVideoEventScope({
 
   return {
     where: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '',
-    params
+    params,
+    assetIds
   }
 }
 
@@ -1571,18 +1568,23 @@ function buildVideoLedgerCte(scope, dateFilters = {}) {
   const eventGapSeconds = isPostgresRuntime
     ? 'EXTRACT(EPOCH FROM ((event_at)::timestamptz - (previous_event_at)::timestamptz))'
     : '(julianday(event_at) - julianday(previous_event_at)) * 86400.0'
+  const resolvedAssetWhere = scope.assetIds?.length
+    ? `WHERE COALESCE(metric_lineage.canonical_asset_id, ordered_raw_events.raw_resolved_media_asset_id)
+        IN (${scope.assetIds.map(() => '?').join(',')})`
+    : ''
   return {
     params: [
       ...rangeFlag.params,
       ...scope.params,
+      ...(scope.assetIds || []),
       ...readyRangeParams,
       ...playRangeParams
     ],
     sql: `
-      WITH ordered_events AS (
+      WITH ordered_raw_events AS (
         SELECT
           e.*,
-          ${resolvedVideoEventAssetIdExpression('e')} AS resolved_media_asset_id,
+          ${rawResolvedVideoEventAssetIdExpression('e')} AS raw_resolved_media_asset_id,
           ROW_NUMBER() OVER (
             PARTITION BY e.playback_id
             ORDER BY e.event_at DESC, COALESCE(e.event_sequence, 0) DESC, e.id DESC
@@ -1598,6 +1600,20 @@ function buildVideoLedgerCte(scope, dateFilters = {}) {
           ) AS previous_event_at
         FROM video_playback_events e
         ${scope.where}
+      ),
+      ordered_events AS (
+        SELECT
+          ordered_raw_events.*,
+          COALESCE(
+            metric_lineage.canonical_asset_id,
+            ordered_raw_events.raw_resolved_media_asset_id
+          ) AS resolved_media_asset_id
+        FROM ordered_raw_events
+        LEFT JOIN site_video_metric_lineage metric_lineage
+          ON metric_lineage.site_id = ordered_raw_events.site_id
+          AND metric_lineage.block_id = ordered_raw_events.block_id
+          AND metric_lineage.asset_id = ordered_raw_events.raw_resolved_media_asset_id
+        ${resolvedAssetWhere}
       ),
       normalized_events AS (
         SELECT

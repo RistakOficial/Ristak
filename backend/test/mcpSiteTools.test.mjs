@@ -70,6 +70,32 @@ test('el módulo MCP de Sites no consulta tablas ni duplica SQL de negocio', asy
   assert.match(source, /from ['"]\.\.\/controllers\/sitesController\.js['"]/)
 })
 
+test('sites_replace_video exige que la persona decida qué pasa con las métricas', async () => {
+  const replaceTool = tool('sites_replace_video')
+  assert.match(replaceTool.description, /debes preguntarle/i)
+  assert.deepEqual(replaceTool.inputSchema.properties.metricsMode.enum, ['preserve', 'reset'])
+  assert.ok(replaceTool.inputSchema.required.includes('metricsMode'))
+  assert.equal(replaceTool.scope, 'ristak.execute')
+  assert.equal(replaceTool.risk, 'high')
+  assert.equal(replaceTool.idempotencyRequired, true)
+  assert.equal(replaceTool.outputSchema.additionalProperties, false)
+
+  const callRecorder = recorder()
+  await replaceTool.execute(callRecorder.context, {
+    siteId: 'site_1',
+    blockId: 'block_1',
+    replacementMediaAssetId: 'asset_2',
+    metricsMode: 'preserve',
+    idempotencyKey: 'replace-video-001'
+  })
+  assert.equal(callRecorder.calls[0].handler, 'replaceSiteVideoHandler')
+  assert.deepEqual(callRecorder.calls[0].request.params, { siteId: 'site_1', blockId: 'block_1' })
+  assert.deepEqual(callRecorder.calls[0].request.body, {
+    replacementMediaAssetId: 'asset_2',
+    metricsMode: 'preserve'
+  })
+})
+
 test('crear e importar siempre fuerza un borrador y no propaga controles MCP al controller', async () => {
   const createRecorder = recorder()
   await tool('sites_create_draft').execute(createRecorder.context, {

@@ -66,7 +66,7 @@ test('MCP expone la matriz operativa de pagos sin endpoints de secretos ni check
   assert.ok(paymentCapabilityToolSpecs.every(tool => !/config|secret|webhook|public_card|intent/i.test(tool.name)))
 
   const registry = getMcpRegistrySummary()
-  assert.ok(registry.toolCount >= 373)
+  assert.ok(registry.toolCount >= 375)
   assert.ok(registry.toolsByDomain.payments >= 61)
 })
 

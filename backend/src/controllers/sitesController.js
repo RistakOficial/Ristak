@@ -89,6 +89,7 @@ import {
   renderMetaPrivacyPolicyHtml
 } from '../services/publicMetaPrivacyPolicyService.js'
 import { getVideoPlaybackAggregate, getVideoPlaybackViewers } from '../services/videoTrackingService.js'
+import { replaceSiteVideo } from '../services/siteVideoReplacementService.js'
 import { logger } from '../utils/logger.js'
 import { requestHasNoTrack } from '../utils/noTracking.js'
 import { attachmentDisposition } from '../utils/contentDisposition.js'
@@ -530,6 +531,23 @@ export async function getSitesVideoAssetsHandler(req, res) {
   } catch (error) {
     logger.error(`Error listando videos de sites: ${error.message}`)
     sendError(res, error, 'Error listando videos de sites')
+  }
+}
+
+export async function replaceSiteVideoHandler(req, res) {
+  try {
+    const result = await replaceSiteVideo({
+      siteId: req.params.siteId,
+      blockId: req.params.blockId || req.body?.blockId || req.body?.block_id,
+      replacementMediaAssetId:
+        req.body?.replacementMediaAssetId || req.body?.replacement_media_asset_id,
+      metricsMode: req.body?.metricsMode || req.body?.metrics_mode,
+      requestedByUserId: req.user?.userId || req.user?.id || req.user?.email
+    })
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error reemplazando video de Site: ${error.message}`)
+    sendError(res, error, 'No se pudo reemplazar el video')
   }
 }
 

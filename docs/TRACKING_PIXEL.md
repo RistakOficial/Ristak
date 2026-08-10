@@ -832,6 +832,23 @@ puede recuperar el asset desde el bloque actual únicamente si el evento ocurri�
 después de `public_site_blocks.updated_at`; nunca atribuye actividad anterior a
 una reasociación posterior.
 
+El editor distingue **reemplazar el archivo** de **reiniciar la analítica**. Si
+un bloque nativo ya tiene video, el control muestra `Reemplazar video` y, antes
+de abrir Media, exige elegir entre conservar métricas o empezar desde cero. La
+mutación canónica cambia el bloque y guarda la decisión dentro de la misma
+transacción. No borra el asset anterior ni modifica eventos históricos.
+
+Cuando se elige conservar, `site_video_metric_lineage` resuelve el asset viejo y
+cualquier reemplazo previo hacia el asset nuevo dentro del mismo Site y bloque;
+otro Site que reutilice ese asset conserva su propia identidad. El ledger sigue
+inmutable, pero agregados, rankings y detalle del video nuevo agrupan todo el
+linaje. Cuando se
+elige empezar desde cero, el asset nuevo queda como identidad canónica propia y
+el histórico anterior sigue consultable bajo su identidad previa. Cada decisión
+queda auditada en `site_video_replacements`. Un video externo sin asset de Media
+puede reiniciarse, pero falla cerrado si se intenta conservar métricas porque no
+existe una identidad histórica segura que enlazar.
+
 El histórico previo a v2 puede sumar retries dos veces en la proyección y, al
 mismo tiempo, perder segundos o eventos repetidos en el ledger. No se debe
 backfillear una fuente desde la otra. La respuesta declara `quality` como

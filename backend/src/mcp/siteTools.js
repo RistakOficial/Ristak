@@ -15,6 +15,7 @@ import {
   previewSiteHandler,
   removeSitesPublicDomainByIdHandler,
   reorderBlocksHandler,
+  replaceSiteVideoHandler,
   restoreBlocksHandler,
   saveSiteContentAssetHandler,
   setSitesPublicDomainDefaultRouteHandler,
@@ -281,6 +282,45 @@ const HTML_LIVE_PREVIEW_OUTPUT_SCHEMA = {
         'refreshIntervalMs',
         'trackingEnabled',
         'mutationsEnabled'
+      ],
+      additionalProperties: false
+    }
+  },
+  required: ['success', 'data'],
+  additionalProperties: false
+}
+
+const SITE_VIDEO_REPLACEMENT_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    success: { type: 'boolean' },
+    data: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        siteId: { type: 'string' },
+        blockId: { type: 'string' },
+        previousMediaAssetId: { type: ['string', 'null'] },
+        replacementMediaAssetId: { type: 'string' },
+        replacementUrl: { type: 'string' },
+        replacementFilename: { type: 'string' },
+        metricsMode: { type: 'string', enum: ['preserve', 'reset'] },
+        historicalMetricsPreserved: { type: 'boolean' },
+        canonicalMediaAssetId: { type: 'string' },
+        settings: STRUCTURED_OBJECT_SCHEMA
+      },
+      required: [
+        'id',
+        'siteId',
+        'blockId',
+        'previousMediaAssetId',
+        'replacementMediaAssetId',
+        'replacementUrl',
+        'replacementFilename',
+        'metricsMode',
+        'historicalMetricsPreserved',
+        'canonicalMediaAssetId',
+        'settings'
       ],
       additionalProperties: false
     }
@@ -1455,6 +1495,42 @@ export const siteToolSpecs = Object.freeze([
       return call(context, getSiteContentAssetsHandler, {
         method: 'GET',
         params: { siteId: args.siteId }
+      })
+    }
+  }),
+  spec({
+    name: 'sites_replace_video',
+    description: 'Reemplaza el archivo de un bloque de video nativo sin borrar su historial. Antes de llamar esta tool debes preguntarle a la persona si quiere conservar las métricas anteriores (metricsMode=preserve) o empezar el video nuevo con métricas desde cero (metricsMode=reset). Usa un replacementMediaAssetId público y listo de Media; si el archivo todavía está en la computadora, súbelo primero con el flujo MCP de Media.',
+    inputSchema: makeInputSchema({
+      siteId: SITE_ID_SCHEMA,
+      blockId: SITE_ID_SCHEMA,
+      replacementMediaAssetId: { type: 'string', minLength: 1, maxLength: 180 },
+      metricsMode: {
+        type: 'string',
+        enum: ['preserve', 'reset'],
+        description: 'Decisión explícita de la persona: preserve conserva el historial; reset inicia métricas independientes.'
+      },
+      ...dangerousControlProperties
+    }, writeRequirements([
+      'siteId',
+      'blockId',
+      'replacementMediaAssetId',
+      'metricsMode'
+    ], { confirmRequired: false })),
+    access: 'write',
+    scope: 'ristak.execute',
+    risk: 'high',
+    confirmRequired: false,
+    idempotencyRequired: true,
+    outputSchema: SITE_VIDEO_REPLACEMENT_OUTPUT_SCHEMA,
+    async execute(context, args) {
+      return call(context, replaceSiteVideoHandler, {
+        method: 'POST',
+        params: { siteId: args.siteId, blockId: args.blockId },
+        body: {
+          replacementMediaAssetId: args.replacementMediaAssetId,
+          metricsMode: args.metricsMode
+        }
       })
     }
   }),

@@ -125,6 +125,7 @@ import {
   type PaymentGateConfig as CommonPaymentGateConfig,
   CustomSelect,
   SearchField,
+  SelectionGrid,
   Table,
   TableSelectionToolbar,
   type Column,
@@ -190,7 +191,8 @@ import {
   type SiteTemplateMeta,
   type SiteTemplateId,
   type SiteTheme,
-  type SiteType
+  type SiteType,
+  type SiteVideoMetricsMode
 } from '@/services/sitesService'
 import { aiRuntimeService } from '@/services/aiRuntimeService'
 import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
@@ -4439,6 +4441,7 @@ const withUploadedVideoSettings = (
   return {
     ...withDefaultVideoPlayerSettings(settings),
     mediaUrl,
+    ...(asset?.id ? { mediaAssetId: asset.id } : {}),
     videoDurationSource: mediaUrl,
     videoDurationSeconds: Number.isFinite(assetDuration) && assetDuration > 0
       ? roundVideoPreviewSecond(assetDuration)
@@ -31059,26 +31062,93 @@ const MediaUploadControl: React.FC<{
   label?: string
   moduleEntityId?: string
   currentUrl?: string
+  videoReplacement?: {
+    siteId: string
+    blockId: string
+  }
   onUploaded: (url: string, asset?: MediaAsset) => void
   onCommit?: () => void
-}> = ({ kind, label, moduleEntityId, currentUrl, onUploaded, onCommit }) => {
+}> = ({ kind, label, moduleEntityId, currentUrl, videoReplacement, onUploaded, onCommit }) => {
   const [pickerOpen, setPickerOpen] = useState(false)
-  const buttonLabel = label || (currentUrl ? (kind === 'image' ? 'Cambiar imagen' : 'Cambiar video') : (kind === 'image' ? 'Elegir imagen' : 'Elegir video'))
+  const [replacementChoiceOpen, setReplacementChoiceOpen] = useState(false)
+  const [metricsMode, setMetricsMode] = useState<SiteVideoMetricsMode>('preserve')
+  const { showToast } = useNotification()
+  const hasExistingVideo = kind === 'video' && Boolean(currentUrl)
+  const isVideoReplacement = kind === 'video' && Boolean(currentUrl && videoReplacement)
+  const buttonLabel = hasExistingVideo
+    ? 'Reemplazar video'
+    : label || (currentUrl ? (kind === 'image' ? 'Cambiar imagen' : 'Cambiar video') : (kind === 'image' ? 'Elegir imagen' : 'Elegir video'))
+
+  const openMediaFlow = () => {
+    if (isVideoReplacement) {
+      setMetricsMode('preserve')
+      setReplacementChoiceOpen(true)
+      return
+    }
+    setPickerOpen(true)
+  }
 
   return (
     <div className={styles.mediaUploadControl}>
-      <button type="button" onClick={() => setPickerOpen(true)}>
+      <button type="button" onClick={openMediaFlow}>
         {kind === 'image' ? <Image size={14} /> : <Video size={14} />}
         <span>{buttonLabel}</span>
       </button>
+      <Modal
+        isOpen={replacementChoiceOpen}
+        onClose={() => setReplacementChoiceOpen(false)}
+        title="¿Qué hacemos con las métricas?"
+        subtitle="Elige cómo debe comenzar el video nuevo antes de seleccionar el archivo."
+        type="confirm"
+        size="md"
+        confirmText="Elegir video nuevo"
+        cancelText="Cancelar"
+        onConfirm={() => setPickerOpen(true)}
+      >
+        <SelectionGrid
+          ariaLabel="Métricas del video reemplazado"
+          value={metricsMode}
+          onChange={(value) => setMetricsMode(value as SiteVideoMetricsMode)}
+          options={[
+            {
+              id: 'preserve',
+              title: 'Conservar métricas',
+              description: 'El video nuevo continúa con reproducciones, tiempo visto, retención y espectadores del anterior.'
+            },
+            {
+              id: 'reset',
+              title: 'Empezar desde cero',
+              description: 'El video nuevo tendrá métricas independientes. El historial anterior no se borra.'
+            }
+          ]}
+        />
+      </Modal>
       {pickerOpen && (
         <SitesMediaPickerModal
           kind={kind}
           moduleEntityId={moduleEntityId}
           onClose={() => setPickerOpen(false)}
-          onSelect={(url, asset) => {
+          onSelect={async (url, asset) => {
+            if (isVideoReplacement && videoReplacement) {
+              if (!asset?.id) {
+                throw new Error('Selecciona un video válido de Media para reemplazarlo.')
+              }
+              await sitesService.replaceVideo(videoReplacement.siteId, videoReplacement.blockId, {
+                replacementMediaAssetId: asset.id,
+                metricsMode
+              })
+            }
             onUploaded(url, asset)
             window.setTimeout(() => onCommit?.(), 0)
+            if (isVideoReplacement) {
+              showToast(
+                'success',
+                'Video reemplazado',
+                metricsMode === 'preserve'
+                  ? 'El video nuevo ya conserva el historial de métricas.'
+                  : 'El video nuevo empezó con métricas desde cero.'
+              )
+            }
           }}
         />
       )}
@@ -46594,6 +46664,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
           label={mediaKind === 'image' ? 'Elegir imagen' : 'Elegir video'}
           moduleEntityId={site.id}
           currentUrl={getSettingString(settings, 'mediaUrl')}
+          videoReplacement={mediaKind === 'video' ? { siteId: site.id, blockId: block.id } : undefined}
           onUploaded={(url, asset) => onPatchSettings(mediaKind === 'video'
             ? withUploadedVideoSettings(settings, url, asset)
             : { mediaUrl: url })}
