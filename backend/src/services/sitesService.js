@@ -30493,7 +30493,19 @@ function getFieldOwnStyleClass(block) {
 
 // Pixel base de Meta (bootstrap + init + PageView). Va en el <head> para que el
 // Meta Pixel Helper lo detecte aunque la página no tenga eventos de conversión.
-function buildMetaPixelBaseScript(pixelId) {
+// Si PageView también viaja por CAPI, el navegador crea aquí la llave compartida
+// y el body la reutiliza para que Meta reciba una pareja realmente deduplicable.
+function buildMetaPixelBaseScript(pixelId, { pageViewEventIdPrefix = '' } = {}) {
+  const normalizedPageViewEventIdPrefix = cleanString(pageViewEventIdPrefix)
+  const pageViewScript = normalizedPageViewEventIdPrefix
+    ? `window.ristakMetaPageViewEventId = [
+      ${JSON.stringify(normalizedPageViewEventIdPrefix)},
+      Date.now(),
+      Math.random().toString(16).slice(2)
+    ].join('_');
+    fbq('track', 'PageView', {}, { eventID: window.ristakMetaPageViewEventId });`
+    : "fbq('track', 'PageView');"
+
   return `
   <script>
     !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
@@ -30502,7 +30514,7 @@ function buildMetaPixelBaseScript(pixelId) {
     t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}
     (window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
     fbq('init', ${JSON.stringify(pixelId)});
-    fbq('track', 'PageView');
+    ${pageViewScript}
     (function(){
       var KEY = 'rstk_meta_deferred';
       var STD = ['Lead','Schedule','Purchase','ViewContent','CompleteRegistration','Contact'];
@@ -30548,7 +30560,8 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null, p
   const submitCondition = getFormSubmitMetaCondition(site)
   const pageMeta = getPageMetaConfig(site, activePage?.id)
   const pageViewEventName = pageMeta?.trigger === 'page_view' ? pageMeta.eventName : ''
-  const trackPageViewInBrowser = Boolean(pageViewEventName && pageViewEventName !== SITE_META_PAGE_VIEW_EVENT_NAME)
+  const pairsBasePageViewWithCapi = pageViewEventName === SITE_META_PAGE_VIEW_EVENT_NAME
+  const trackPageEventInBody = Boolean(pageViewEventName && !pairsBasePageViewWithCapi)
   const submitConfiguredCustomData = buildSiteMetaConfiguredCustomData(
     getFormSubmitMetaEventParameters(site, activePage?.id, submitEventName),
     submitEventName
@@ -30668,7 +30681,7 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null, p
     };
     ${pageViewEventName ? `
     try {
-      const pageEventId = [
+      const pageEventId = ${pairsBasePageViewWithCapi ? 'window.ristakMetaPageViewEventId || ' : ''}[
         'site_page',
         ${JSON.stringify(site.id)},
         ${JSON.stringify(activePage?.id || '')},
@@ -30681,7 +30694,7 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null, p
         public_page_title: ${JSON.stringify(activePage?.title || '')}
       };
       Object.assign(pageData, ${scriptJson(pageConfiguredCustomData)});
-      ${trackPageViewInBrowser ? `
+      ${trackPageEventInBody ? `
       window.ristakMetaTrackSiteEvent(${JSON.stringify(pageViewEventName)}, pageEventId, pageData);
       ` : ''}
       window.ristakMetaSendServerEvent({
@@ -30696,7 +30709,14 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null, p
     ` : ''}
   </script>`
 
-  return { head: buildMetaPixelBaseScript(pixelId), body }
+  const pageViewEventIdPrefix = pairsBasePageViewWithCapi
+    ? ['site_page', site.id, activePage?.id || ''].join('_')
+    : ''
+
+  return {
+    head: buildMetaPixelBaseScript(pixelId, { pageViewEventIdPrefix }),
+    body
+  }
 }
 
 function getCalendarSiteMetaEventConfig(calendar = {}, siteOverride = null) {

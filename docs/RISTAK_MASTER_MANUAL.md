@@ -6135,10 +6135,11 @@ Ristak usa Meta en varias areas:
   acciones y pagos del formulario.
 - Cuando Meta ya tiene dataset/pixel y token guardado, las nuevas superficies nacen
   con Meta encendido por default: Sites/landings y paginas nuevas usan solo el
-  `PageView` base al aterrizar (browser Pixel + CAPI server-side, sin `ViewContent`
-  ni otra conversion extra), formularios usan `Lead` al enviar y calendarios usan
-  `Schedule` al agendar. Bloques de calendario embebido tambien crean su trigger
-  `Schedule` al agregarse. El usuario puede apagarlos manualmente despues.
+  `PageView` base al aterrizar (un solo evento browser Pixel con `eventID` + CAPI
+  server-side con el mismo `event_id`, sin `ViewContent` ni otra conversion extra),
+  formularios usan `Lead` al enviar y calendarios usan `Schedule` al agendar.
+  Bloques de calendario embebido tambien crean su trigger `Schedule` al agregarse.
+  El usuario puede apagarlos manualmente despues.
 - Las conversiones server-side de mensajeria Meta comparten el mismo servicio:
   WhatsApp, Messenger e Instagram usan `action_source=business_messaging` con
   `messaging_channel` segun el canal real. `Purchase` conserva `event_name=Purchase`
@@ -6546,7 +6547,9 @@ motor no admite `ADD COLUMN IF NOT EXISTS`.
 Cuando Meta ya tiene dataset/pixel y token guardado, los sitios nuevos activan
 Meta CAPI por default. Las landings nuevas y las paginas nuevas creadas dentro de
 una landing existente nacen con solo `PageView` al aterrizar la pagina (browser
-Pixel + CAPI server-side, sin `ViewContent` por default); los formularios
+Pixel + CAPI server-side, sin `ViewContent` por default). El renderer crea una
+sola llave `site_page_*`: el Pixel la manda como `eventID` y CAPI como `event_id`,
+sin disparar un segundo `PageView` de navegador. Los formularios
 nativos/importados/creados por IA encienden `Lead` al enviar. Los bloques de
 calendario embebido nuevos nacen con `Schedule`. Las actualizaciones de sitios
 existentes no reactivan eventos que el usuario apago manualmente.

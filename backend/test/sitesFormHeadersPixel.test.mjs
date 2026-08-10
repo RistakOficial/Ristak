@@ -153,6 +153,9 @@ test('standard form public pages render global/page headers and page Meta Pixel 
       }
 
       assert.match(html, /connect\.facebook\.net\/en_US\/fbevents\.js/)
+      assert.equal((html.match(/fbq\('track', 'PageView'/g) || []).length, 1)
+      assert.match(html, /fbq\('track', 'PageView'\);/)
+      assert.doesNotMatch(html, /window\.ristakMetaPageViewEventId/)
       assert.match(html, new RegExp(`window\\.ristakMetaTrackSiteEvent\\("${item.eventName}"`))
       assert.match(html, new RegExp(`public_page_id: "${item.pageId}"`))
       assert.match(html, new RegExp(`public_page_title: "${item.pageTitle}"`))
@@ -570,7 +573,7 @@ test('imported HTML asset response resolves variable fields only in its managed 
   }
 })
 
-test('page Meta default renders base browser PageView and server CAPI PageView only', async () => {
+test('page Meta default pairs one browser PageView with server CAPI using the same event id', async () => {
   const previousPixelId = process.env.META_PIXEL_ID
   process.env.META_PIXEL_ID = '1234567890'
 
@@ -588,10 +591,27 @@ test('page Meta default renders base browser PageView and server CAPI PageView o
       preview: false
     })
 
-    assert.match(html, /fbq\('track', 'PageView'\)/)
+    assert.equal((html.match(/fbq\('track', 'PageView'/g) || []).length, 1)
+    assert.doesNotMatch(html, /fbq\('track', 'PageView'\);/)
+    assert.match(html, /window\.ristakMetaPageViewEventId = \[/)
+    assert.match(html, /"site_page_site_form_headers_pixel_page-1"/)
+    assert.match(html, /fbq\('track', 'PageView', \{\}, \{ eventID: window\.ristakMetaPageViewEventId \}\)/)
+    assert.match(html, /const pageEventId = window\.ristakMetaPageViewEventId \|\| \[/)
     assert.doesNotMatch(html, /window\.ristakMetaTrackSiteEvent\("PageView"/)
+    assert.match(html, /eventId: pageEventId/)
     assert.match(html, /eventName: "PageView"/)
     assert.match(html, /fetch\('\/api\/sites\/public\/meta-event'/)
+
+    const pairedMetaScripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+      .map(match => match[1])
+      .filter(script => (
+        script.includes('ristakMetaPageViewEventId') ||
+        script.includes('ristakMetaSendServerEvent')
+      ))
+    assert.ok(pairedMetaScripts.length >= 2)
+    for (const script of pairedMetaScripts) {
+      assert.doesNotThrow(() => new Function(script))
+    }
   } finally {
     if (previousPixelId === undefined) {
       delete process.env.META_PIXEL_ID

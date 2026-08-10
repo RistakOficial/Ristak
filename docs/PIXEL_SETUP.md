@@ -28,6 +28,12 @@ El snippet queda parecido a:
 
 Si hay Meta Pixel configurado y la preferencia está activa, el snippet generado también puede incluir Meta Pixel.
 
+Este snippet es para páginas externas. Un Site publicado por Ristak ya trae su
+tracking nativo y no debe cargar además `snip.js`: hacerlo duplica señales. En
+Sites, cuando `PageView` se envía por Pixel y CAPI, Ristak genera automáticamente
+un solo identificador compartido para que Meta deduplique ambos eventos; no
+agregues otro `fbq('track', 'PageView')` manual.
+
 ## Opción HighLevel Opcional
 
 Si el sitio o funnel vive en HighLevel, puedes sincronizar el snippet como custom value:
