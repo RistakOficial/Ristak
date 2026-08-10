@@ -43,6 +43,10 @@ import automationsService, {
   type FlowSettings
 } from '@/services/automationsService'
 import { getFormFieldCatalog, resetCatalogCache, type CatalogOption } from '@/services/automationCatalogsService'
+import {
+  AI_RUNTIME_CONFIG_CHANGED_EVENT,
+  aiRuntimeService
+} from '@/services/aiRuntimeService'
 import { AutomationCanvas, type PendingEdge, type PickerRequest } from './AutomationCanvas'
 import { StepPickerBubble } from './StepPickerBubble'
 import { NodeConfigBubble } from './NodeConfigBubble'
@@ -285,6 +289,7 @@ export const AutomationEditor: React.FC = () => {
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [statusBusy, setStatusBusy] = useState(false)
   const [canvasChromeReady, setCanvasChromeReady] = useState(false)
+  const [appointmentConfirmationAIReady, setAppointmentConfirmationAIReady] = useState(false)
 
   const viewportRef = useRef<AutomationViewport>({ x: 0, y: 0, zoom: 1 })
   const [configViewport, setConfigViewport] = useState<AutomationViewport>(viewportRef.current)
@@ -325,6 +330,28 @@ export const AutomationEditor: React.FC = () => {
   }, [automation])
 
   const { nodes, edges } = state.present
+
+  useEffect(() => {
+    let cancelled = false
+    const refreshAIAvailability = () => {
+      void aiRuntimeService.getConfig()
+        .then((status) => {
+          if (!cancelled) {
+            setAppointmentConfirmationAIReady(Boolean(status.configured && !status.needsReconnect))
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setAppointmentConfirmationAIReady(false)
+        })
+    }
+
+    refreshAIAvailability()
+    window.addEventListener(AI_RUNTIME_CONFIG_CHANGED_EVENT, refreshAIAvailability)
+    return () => {
+      cancelled = true
+      window.removeEventListener(AI_RUNTIME_CONFIG_CHANGED_EVENT, refreshAIAvailability)
+    }
+  }, [])
 
   const selectedTriggerFormIds = useMemo(() => {
     const startNode = nodes.find(isStartNode)
@@ -1017,8 +1044,11 @@ export const AutomationEditor: React.FC = () => {
   )
 
   const canUseNodeDefinition = useCallback(
-    (definition: NodeDefinition) => !definition.requiredFeature || hasLicenseFeature(user, [definition.requiredFeature]),
-    [user]
+    (definition: NodeDefinition) => (
+      (!definition.requiredFeature || hasLicenseFeature(user, [definition.requiredFeature])) &&
+      (!definition.requiresConnectedAI || appointmentConfirmationAIReady)
+    ),
+    [appointmentConfirmationAIReady, user]
   )
 
   // ------------------------------------------------------------------

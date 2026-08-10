@@ -262,12 +262,13 @@ puede usar el texto renderizado bajo sus reglas existentes.
 - **Mensaje de respuesta al confirmar** permite guardar un texto opcional de
   hasta 4096 caracteres. Después de que la IA clasifica `confirmed`, Ristak lo
   renderiza con las variables del contacto y de esa cita y lo manda como texto
-  libre por la misma línea nativa de WhatsApp que recibió el último mensaje. No
-  usa plantilla: la respuesta acaba de abrir la ventana de conversación. Si el
-  inbound más reciente pertenece a correo, Instagram, Messenger o HighLevel, no
-  desvía la cortesía a WhatsApp. Cada envío de confirmación la manda como máximo
-  una vez; un fallo del proveedor se registra pero no revierte la cita ni deja la
-  ventana de IA atorada.
+  libre por el mismo canal que recibió el último mensaje: WhatsApp API/QR,
+  correo, Instagram DM o Messenger. No usa plantilla: la respuesta entrante ya
+  abrió la conversación correspondiente. La ventana sólo consume respuestas
+  del canal configurado; un DM o correo ajeno no confirma por accidente una
+  solicitud enviada por otro canal. Cada envío de confirmación manda la cortesía
+  como máximo una vez; un fallo del proveedor se registra pero no revierte la
+  cita ni deja la ventana de IA atorada.
 - El push de confirmaciones se procesa por defecto al confirmar, detectar una
   respuesta no afirmativa, vencer el plazo o requerir revisión. Su única
   compuerta de producto está en **Configuración → Notificaciones →

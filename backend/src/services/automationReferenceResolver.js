@@ -700,7 +700,18 @@ function inspectNodeConfig({ node, catalogs, issues, seen }) {
     })
   })
 
+  const isAppointmentConfirmation = cleanString(node.type) === 'action-appointment-confirmation'
+  const appointmentConfirmationChannel = cleanString(config.channel).toLowerCase() || 'whatsapp'
+  const appointmentConfirmationUsesWhatsApp = ['whatsapp', 'whatsapp_qr'].includes(
+    appointmentConfirmationChannel
+  )
+
   for (const key of ['calendar', 'assignedUser', 'user', 'phoneNumberId', 'senderNumberId', 'senderPhoneNumberId']) {
+    if (
+      isAppointmentConfirmation &&
+      !appointmentConfirmationUsesWhatsApp &&
+      ['phoneNumberId', 'senderNumberId', 'senderPhoneNumberId'].includes(key)
+    ) continue
     const catalog = key === 'calendar'
       ? 'calendars'
       : key === 'phoneNumberId' || key === 'senderNumberId' || key === 'senderPhoneNumberId'
@@ -776,7 +787,7 @@ function inspectNodeConfig({ node, catalogs, issues, seen }) {
     })
   }
 
-  if (cleanString(config.templateId)) {
+  if (cleanString(config.templateId) && (!isAppointmentConfirmation || appointmentConfirmationChannel === 'whatsapp')) {
     addCatalogIssue({
       catalogs,
       issues,
@@ -789,7 +800,7 @@ function inspectNodeConfig({ node, catalogs, issues, seen }) {
     })
   }
 
-  if (cleanString(config.template)) {
+  if (cleanString(config.template) && (!isAppointmentConfirmation || appointmentConfirmationChannel === 'whatsapp')) {
     addCatalogIssue({
       catalogs,
       issues,

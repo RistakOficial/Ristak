@@ -54,6 +54,7 @@ import {
   DEFAULT_ONE_HOUR_REMINDER_TEXT,
   LEGACY_DEFAULT_APPOINTMENT_NOTICE_TEXT
 } from './appointmentMessageDefaults.js'
+import { requireOpenAIApiKey } from './aiRuntimeService.js'
 
 export {
   DEFAULT_APPOINTMENT_NOTICE_TEXT,
@@ -949,15 +950,6 @@ function buildReminderDeliveryHealth(reminder, template, senders = [], channelSt
     : null
 
   if (channel === 'whatsapp_qr') {
-    const effectiveSender = selectedSender || senders[0] || null
-    if (effectiveSender?.apiEnabled) {
-      warnings.push('Este número tiene WhatsApp API activa; el envío usará la API y QR quedará sólo como respaldo.')
-      return {
-        status: 'warning',
-        message: warnings[0],
-        details: warnings
-      }
-    }
     if (contentMode === 'template' && !template) {
       errors.push('Selecciona un mensaje de WhatsApp para renderizarlo por QR.')
     }
@@ -1598,7 +1590,8 @@ async function resolveSenderPhone(reminder, contact) {
 
   const route = await resolveWhatsAppOutboundRoute({
     phoneNumberId: cleanString(row.id),
-    fromPhone: cleanString(row.phone_number)
+    fromPhone: cleanString(row.phone_number),
+    preferredTransport: cleanString(reminder?.channel) === 'whatsapp_qr' ? 'qr' : undefined
   })
   return {
     fromPhone: route.fromPhone,
@@ -2120,7 +2113,10 @@ async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, ti
   const text = await getReminderPlainText(reminder, appointment, timezone)
   if (!text) throw new Error('Escribe el mensaje directo que se enviará en este recordatorio.')
 
-  if (!sender.apiEnabled && sender.qrReady) {
+  if (cleanString(reminder.channel) === 'whatsapp_qr') {
+    if (!sender.qrReady) {
+      throw new Error('Conecta WhatsApp QR para enviar este recordatorio por QR.')
+    }
     return sendWhatsAppApiTextMessage({
       to: appointment.phone,
       text,
@@ -2130,6 +2126,7 @@ async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, ti
       externalId: buildAppointmentReminderExternalId(reminder, appointment, attemptCount),
       transport: 'qr',
       allowQrFallback: false,
+      forceRequestedTransport: true,
       variablesResolved: true
     })
   }
@@ -2316,6 +2313,7 @@ function reminderSendSourceSnapshot(reminder = {}) {
     sourceConfig: sourceType === 'automation'
       ? JSON.stringify({
           calendarId: cleanString(reminder.calendarId),
+          channel: cleanString(reminder.channel) || 'whatsapp',
           noConfirmAction: normalizeNoConfirmAction(reminder.noConfirmAction),
           bypassAutomations: reminder.bypassAutomations === true || Number(reminder.bypassAutomations || 0) === 1,
           confirmationSuccessAction: serializeConfirmationSuccessActions(
@@ -2678,19 +2676,23 @@ function automationConfirmationReminderInput(config = {}, calendarId = '') {
     timing.offsetUnit
   )
   const configuredTimeoutValue = Number(config.confirmationTimeoutValue)
+  const rawChannel = cleanString(config.channel).toLowerCase()
+  const channel = REAL_REMINDER_CHANNELS.includes(rawChannel) ? rawChannel : 'whatsapp'
+  const contentMode = channel === 'whatsapp' ? 'template' : 'direct'
   return {
     calendarId,
     name: cleanString(config.name) || 'Confirmación de cita desde automatización',
     enabled: true,
     messageType: 'confirmation',
     aiEnabled: true,
-    channel: 'whatsapp',
+    channel,
     senderMode: cleanString(config.senderMode || config.sender) || 'contact',
     senderPhoneNumberId: cleanString(config.senderPhoneNumberId || config.senderNumberId) || null,
-    templateId: cleanString(config.template || config.templateId) || null,
-    templateName: cleanString(config.templateName || config.templateIdName),
+    templateId: contentMode === 'template' ? cleanString(config.template || config.templateId) || null : null,
+    templateName: contentMode === 'template' ? cleanString(config.templateName || config.templateIdName) : '',
     templateLanguage: cleanString(config.templateLanguage) || 'es_MX',
-    contentMode: 'template',
+    contentMode,
+    messageText: cleanString(config.messageText) || DEFAULT_CONFIRMATION_TEXT,
     timingAnchor: timing.timingAnchor,
     offsetValue: timing.offsetValue,
     offsetUnit: timing.offsetUnit,
@@ -2770,6 +2772,12 @@ export async function executeAutomationAppointmentConfirmation({
       sendAt: sendAt.toISO(),
       timingAnchor: reminder.timingAnchor
     }
+  }
+
+  // No se pide al contacto que confirme si el clasificador que debe atender su
+  // respuesta dejó de estar conectado después de publicar la automatización.
+  if (!automationAppointmentConfirmationSenderForTest) {
+    await requireOpenAIApiKey()
   }
 
   const claim = await claimSend({

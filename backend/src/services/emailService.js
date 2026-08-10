@@ -15,6 +15,10 @@ import { buildConversationalAgentMessageMetadata } from '../utils/conversational
 import { withConversationalInboundCommitLock } from './conversationalInboundCommitLockService.js'
 import { createTemplateVariableRenderer } from './templateVariablesService.js'
 import {
+  handleInboundForConfirmation,
+  maybeConfirmAppointmentFromReply
+} from './appointmentConfirmationService.js'
+import {
   formatContactName,
   splitContactName as splitFormattedContactName
 } from '../utils/contactNameFormatter.js'
@@ -1213,14 +1217,36 @@ async function saveInboundEmailFromImap({ imapMessage, parsed, config }) {
       logger.warn(`[Correo IMAP] No se pudo notificar ${localMessageId}: ${error.message}`)
     })
 
-    import('../agents/conversational/runner.js')
-      .then(runner => runner.handleInboundConversationalEmailMessage({
-        contactId: contact.id,
-        messageId: localMessageId
-      }))
-      .catch(error => {
-        logger.warn(`[Agente conversacional] Correo IMAP no atendido: ${error.message}`)
-      })
+    let confirmationWindow = { windowActive: false, bypassAutomations: false }
+    await handleInboundForConfirmation({
+      contactId: contact.id,
+      text: text || subject,
+      receivedAt: messageTimestamp,
+      messageId: localMessageId,
+      channel: 'email'
+    }).then(window => {
+      confirmationWindow = window
+    }).catch(error => {
+      logger.warn(`[Citas] Error en ventana de confirmación (correo): ${error.message}`)
+    })
+
+    if (!confirmationWindow.windowActive) {
+      await maybeConfirmAppointmentFromReply({ contactId: contact.id, text: text || subject })
+        .catch(error => {
+          logger.warn(`[Citas] No se pudo evaluar confirmación automática (correo): ${error.message}`)
+        })
+    }
+
+    if (!(confirmationWindow.windowActive && confirmationWindow.bypassAutomations)) {
+      import('../agents/conversational/runner.js')
+        .then(runner => runner.handleInboundConversationalEmailMessage({
+          contactId: contact.id,
+          messageId: localMessageId
+        }))
+        .catch(error => {
+          logger.warn(`[Agente conversacional] Correo IMAP no atendido: ${error.message}`)
+        })
+    }
   }
 
   publishChatMessageEvent({

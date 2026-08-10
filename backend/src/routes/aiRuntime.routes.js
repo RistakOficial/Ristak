@@ -36,7 +36,7 @@ function transcribeAudioBody(req, res, next) {
 }
 
 router.use(requireAuth)
-router.use(requireAnyModuleAccess(['ai_agent', 'sites']))
+router.use(requireAnyModuleAccess(['ai_agent', 'sites', 'appointments']))
 router.get('/config', getConfig)
 router.post('/transcribe', requireOpenAIConfigured, transcribeAudioBody, transcribeVoice)
 

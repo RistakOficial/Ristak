@@ -443,6 +443,8 @@ export interface NodeDefinition {
   hiddenFromPicker?: boolean
   /** Permiso de producto necesario para crear este nodo nuevo */
   requiredFeature?: string
+  /** La acción sólo aparece en el selector cuando OpenAI está conectado */
+  requiresConnectedAI?: boolean
   /** Validación específica además de los campos requeridos */
   validate?: (config: Record<string, unknown>) => string[]
   /** Datos que este bloque puede exponer como variables para pasos posteriores */
@@ -3419,11 +3421,15 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     description: 'Programa y envía una solicitud de confirmación para la cita del contacto',
     icon: BellRing,
     accent: 'teal',
-    requiredFeature: 'whatsapp',
+    requiredFeature: 'appointments',
+    requiresConnectedAI: true,
     addButtonLabel: 'Configurar confirmación',
     defaultConfig: () => ({
       calendar: '',
       calendarName: '',
+      channel: 'whatsapp',
+      contentMode: 'template',
+      messageText: 'Hola {{contact.first_name}}, queremos confirmar tu asistencia a la cita del {{cita.fecha}} a las {{cita.hora}}. ¿Nos confirmas, por favor?',
       timingAnchor: 'before_appointment',
       offsetValue: 1,
       offsetUnit: 'days',
@@ -3454,6 +3460,19 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         type: 'catalogSelect',
         catalog: 'calendars',
         help: 'Se usa como filtro de seguridad. La cita que inició el flujo tiene prioridad.'
+      },
+      {
+        key: 'channel',
+        label: 'Canal de confirmación',
+        type: 'select',
+        options: [
+          { value: 'whatsapp', label: 'WhatsApp API' },
+          { value: 'whatsapp_qr', label: 'WhatsApp QR' },
+          { value: 'email', label: 'Correo electrónico' },
+          { value: 'instagram', label: 'Instagram DM' },
+          { value: 'messenger', label: 'Messenger' }
+        ],
+        help: 'La solicitud, la respuesta que interpreta la IA y el mensaje final permanecen en este mismo canal.'
       },
       {
         key: 'timingAnchor',
@@ -3492,13 +3511,25 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         label: 'Plantilla de confirmación',
         type: 'catalogSelect',
         catalog: 'whatsappTemplates',
-        required: true
+        required: true,
+        showIf: (config) => (str(config.channel) || 'whatsapp') === 'whatsapp',
+        help: 'WhatsApp API usa la plantilla aprobada y respeta la configuración de envío definida en Meta.'
+      },
+      {
+        key: 'messageText',
+        label: 'Mensaje para solicitar la confirmación',
+        type: 'textarea',
+        showVariables: true,
+        required: true,
+        showIf: (config) => (str(config.channel) || 'whatsapp') !== 'whatsapp',
+        help: 'Se envía como mensaje directo por el canal elegido. Puedes usar variables del contacto y de la cita.'
       },
       {
         key: 'senderMode',
         label: 'Número remitente',
         type: 'select',
         advanced: true,
+        showIf: (config) => ['whatsapp', 'whatsapp_qr'].includes(str(config.channel) || 'whatsapp'),
         options: [
           { value: 'contact', label: 'Número asignado al contacto' },
           { value: 'default', label: 'Número principal' },
@@ -3511,7 +3542,10 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         type: 'catalogSelect',
         catalog: 'whatsappNumbers',
         advanced: true,
-        showIf: (config) => str(config.senderMode) === 'specific'
+        showIf: (config) => (
+          ['whatsapp', 'whatsapp_qr'].includes(str(config.channel) || 'whatsapp') &&
+          str(config.senderMode) === 'specific'
+        )
       },
       { key: 'smartEnabled', label: 'Respetar horario de envío', type: 'toggle', advanced: true },
       {
@@ -3579,7 +3613,6 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         key: 'noConfirmAction',
         label: 'Si no confirma a tiempo',
         type: 'select',
-        advanced: true,
         options: [
           { value: 'no_action', label: 'Conservar la cita y avisar' },
           { value: 'cancel_appointment', label: 'Cancelar la cita' }
@@ -3590,10 +3623,10 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         label: 'Respuesta al confirmar',
         type: 'textarea',
         showVariables: true,
-        advanced: true
+        help: 'Cuando la IA confirme la asistencia, Ristak enviará este mensaje por el mismo canal. Déjalo vacío si no quieres responder.'
       },
-      { key: 'createChatCard', label: 'Mostrar tarjeta de confirmación en el chat', type: 'toggle', advanced: true },
-      { key: 'createChatBadge', label: 'Mostrar distintivo de cita confirmada', type: 'toggle', advanced: true },
+      { key: 'createChatCard', label: 'Al confirmar: mostrar tarjeta en el chat', type: 'toggle' },
+      { key: 'createChatBadge', label: 'Al confirmar: mostrar distintivo de cita confirmada', type: 'toggle' },
       { key: 'bypassAutomations', label: 'No disparar otras automatizaciones con esta respuesta', type: 'toggle', advanced: true }
     ],
     outputs: () => SINGLE_OUTPUT,
@@ -3602,9 +3635,20 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       const timingAnchor = str(config.timingAnchor) || 'before_appointment'
       const offsetValue = Number(config.offsetValue)
       const offsetUnit = str(config.offsetUnit)
-      if (!str(config.template)) errors.push('Selecciona una plantilla de confirmación')
-      if (str(config.senderMode) === 'specific' && !str(config.senderPhoneNumberId)) {
+      const channel = str(config.channel) || 'whatsapp'
+      const supportedChannels = ['whatsapp', 'whatsapp_qr', 'email', 'instagram', 'messenger']
+      if (!supportedChannels.includes(channel)) errors.push('Selecciona un canal de confirmación válido')
+      if (channel === 'whatsapp' && !str(config.template)) {
+        errors.push('Selecciona una plantilla de confirmación para WhatsApp API')
+      }
+      if (channel !== 'whatsapp' && !str(config.messageText)) {
+        errors.push('Escribe el mensaje que solicitará la confirmación')
+      }
+      if (['whatsapp', 'whatsapp_qr'].includes(channel) && str(config.senderMode) === 'specific' && !str(config.senderPhoneNumberId)) {
         errors.push('Selecciona el número de WhatsApp remitente')
+      }
+      if (str(config.confirmationReplyText).length > 4096) {
+        errors.push('La respuesta al confirmar no puede superar 4096 caracteres')
       }
       if (timingAnchor === 'after_booking') {
         const unitMs: Record<string, number> = { seconds: 1000, minutes: 60_000, hours: 3_600_000 }
@@ -3644,10 +3688,20 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     }),
     summary: (config) => {
       const anchor = str(config.timingAnchor) === 'after_booking' ? 'después de agendar' : 'antes de la cita'
-      const template = str(config.templateName) || str(config.template)
+      const channel = str(config.channel) || 'whatsapp'
+      const channelLabel: Record<string, string> = {
+        whatsapp: 'WhatsApp API',
+        whatsapp_qr: 'WhatsApp QR',
+        email: 'Correo',
+        instagram: 'Instagram DM',
+        messenger: 'Messenger'
+      }
+      const message = channel === 'whatsapp'
+        ? str(config.templateName) || str(config.template)
+        : str(config.messageText)
       return {
-        text: `${Number(config.offsetValue) || 0} ${str(config.offsetUnit) || 'días'} ${anchor}`,
-        box: template || undefined,
+        text: `${channelLabel[channel] || 'Canal'} · ${Number(config.offsetValue) || 0} ${str(config.offsetUnit) || 'días'} ${anchor}`,
+        box: message || undefined,
         empty: 'Configura la confirmación de cita'
       }
     }

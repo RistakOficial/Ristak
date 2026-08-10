@@ -96,6 +96,7 @@ async function withConfirmationFixture({
   aiEnabled = true,
   bypassAutomations = true,
   confirmationReplyText = '',
+  channel = 'whatsapp',
   appointmentStatus = 'pending',
   reminderCalendarId = TEST_CALENDAR_ID,
   appointmentCalendarId = reminderCalendarId
@@ -118,9 +119,13 @@ async function withConfirmationFixture({
     }
 
     await db.run(`
-      INSERT INTO contacts (id, phone, first_name, full_name)
-      VALUES (?, ?, 'Ana', 'Ana Confirmacion')
-    `, [contactId, `+52155${Date.now().toString().slice(-8)}${suffix.slice(0, 4)}`])
+      INSERT INTO contacts (id, phone, email, first_name, full_name)
+      VALUES (?, ?, ?, 'Ana', 'Ana Confirmacion')
+    `, [
+      contactId,
+      `+52155${Date.now().toString().slice(-8)}${suffix.slice(0, 4)}`,
+      `ana-${suffix}@example.test`
+    ])
 
     await db.run(`
       INSERT INTO appointments (
@@ -144,6 +149,9 @@ async function withConfirmationFixture({
       name: `Confirmacion IA ${suffix}`,
       messageType: 'confirmation',
       aiEnabled,
+      channel,
+      contentMode: channel === 'whatsapp' ? 'template' : 'direct',
+      messageText: '¿Confirmas tu cita?',
       ...(confirmationSuccessActions
         ? { confirmationSuccessActions }
         : { confirmationSuccessAction }),
@@ -349,6 +357,107 @@ test('confirmacion IA envia una sola respuesta libre por la misma linea de Whats
     assert.equal(Number(terminalWindow.message_revision), 1)
     assert.deepEqual(storedMessageTexts(terminalWindow.accumulated_messages), ['Sí confirmo'])
   })
+})
+
+test('confirmacion IA respeta el canal elegido y responde por correo', async () => {
+  await withConfirmationFixture({
+    channel: 'email',
+    confirmationReplyText: 'Gracias {{contact.first_name}}, tu cita quedó confirmada.'
+  }, async ({ contactId, appointmentId, sendId }) => {
+    const captures = []
+    const contact = await db.get('SELECT email FROM contacts WHERE id = ?', [contactId])
+
+    setAppointmentConfirmationClassifierForTest(async () => ({
+      result: 'confirmed',
+      confidence: 'high',
+      reason: 'Confirmó por correo'
+    }))
+    setAppointmentConfirmationReplySenderForTest(async (payload) => {
+      captures.push(payload)
+      return { id: 'email_confirmation_reply' }
+    })
+
+    const wrongChannel = await handleInboundForConfirmation({
+      contactId,
+      text: 'Sí, ahí estaré',
+      messageId: `messenger_inbound_${randomUUID()}`,
+      channel: 'messenger'
+    })
+    assert.equal(wrongChannel.windowActive, false)
+
+    const emailMessageId = `email_inbound_${randomUUID()}`
+    const emailInbound = await handleInboundForConfirmation({
+      contactId,
+      text: 'Sí, confirmo por correo',
+      receivedAt: isoAgo(3 * 60 * 1000),
+      messageId: emailMessageId,
+      channel: 'email'
+    })
+    assert.equal(emailInbound.windowActive, true)
+
+    const window = await db.get(
+      'SELECT id, accumulated_messages FROM appointment_confirmation_windows WHERE appointment_id = ?',
+      [appointmentId]
+    )
+    assert.equal(JSON.parse(window.accumulated_messages)[0].channel, 'email')
+    await expireWindow(window.id)
+    await processExpiredConfirmationWindows()
+
+    assert.equal(captures.length, 1)
+    assert.equal(captures[0].to, contact.email)
+    assert.equal(captures[0].channel, 'email')
+    assert.match(captures[0].subject, /Cita confirmada/)
+    assert.match(captures[0].text, /Gracias Ana/)
+
+    const send = await db.get(
+      'SELECT confirmation_reply_sent_at, confirmation_reply_message_id FROM appointment_reminder_sends WHERE id = ?',
+      [sendId]
+    )
+    assert.ok(send.confirmation_reply_sent_at)
+    assert.equal(send.confirmation_reply_message_id, 'email_confirmation_reply')
+  })
+})
+
+test('confirmacion IA responde por la misma conversación de Instagram o Messenger', async () => {
+  for (const channel of ['instagram', 'messenger']) {
+    await withConfirmationFixture({
+      channel,
+      confirmationReplyText: 'Gracias {{contact.first_name}}, nos vemos en tu cita.'
+    }, async ({ contactId, appointmentId }) => {
+      const captures = []
+
+      setAppointmentConfirmationClassifierForTest(async () => ({
+        result: 'confirmed',
+        confidence: 'high',
+        reason: `Confirmó por ${channel}`
+      }))
+      setAppointmentConfirmationReplySenderForTest(async (payload) => {
+        captures.push(payload)
+        return { id: `${channel}_confirmation_reply` }
+      })
+
+      const inbound = await handleInboundForConfirmation({
+        contactId,
+        text: 'Sí, confirmo',
+        receivedAt: isoAgo(3 * 60 * 1000),
+        messageId: `${channel}_inbound_${randomUUID()}`,
+        channel
+      })
+      assert.equal(inbound.windowActive, true)
+
+      const window = await db.get(
+        'SELECT id FROM appointment_confirmation_windows WHERE appointment_id = ?',
+        [appointmentId]
+      )
+      await expireWindow(window.id)
+      await processExpiredConfirmationWindows()
+
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].platform, channel)
+      assert.equal(captures[0].channel, channel)
+      assert.match(captures[0].message, /Gracias Ana/)
+    })
+  }
 })
 
 test('confirmacion IA terminada no reabre la ventana ni repite el push con mensajes posteriores', async () => {

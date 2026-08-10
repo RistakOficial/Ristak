@@ -3990,7 +3990,7 @@ async function findQrFallbackPhoneRowForSender({ phoneNumberId, fromPhone, phone
  * una conexión QR. QR sólo queda como transporte primario si no hay API oficial
  * disponible, y como respaldo únicamente cuando pertenece al mismo teléfono.
  */
-export async function resolveWhatsAppOutboundRoute({ phoneNumberId, fromPhone } = {}) {
+export async function resolveWhatsAppOutboundRoute({ phoneNumberId, fromPhone, preferredTransport = '' } = {}) {
   let config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone })
 
   // Algunas automatizaciones antiguas no guardaron un remitente explícito. En
@@ -4021,6 +4021,17 @@ export async function resolveWhatsAppOutboundRoute({ phoneNumberId, fromPhone } 
     fromPhone: config.senderPhone || fromPhone,
     phoneRow
   })
+
+  if (cleanString(preferredTransport).toLowerCase() === 'qr' && qrRow?.id) {
+    return {
+      available: true,
+      transport: 'qr',
+      provider: 'qr',
+      phoneNumberId: cleanString(qrRow.id) || null,
+      fromPhone: cleanString(qrRow.phone_number || qrRow.display_phone_number || qrRow.qr_connected_phone) || null,
+      qrFallbackAvailable: false
+    }
+  }
 
   if (officialAvailable) {
     return {
@@ -4327,6 +4338,7 @@ async function getOfficialApiFallbackDecision({
 
 async function shouldPreferOfficialApiOverRequestedQr({
   cleanTransport,
+  forceRequestedTransport = false,
   config,
   fromPhone,
   phoneNumberId,
@@ -4334,6 +4346,7 @@ async function shouldPreferOfficialApiOverRequestedQr({
   contactId
 } = {}) {
   if (cleanTransport !== 'qr') return false
+  if (forceRequestedTransport) return false
   const officialApiAvailable = config?.officialApiAvailable !== undefined
     ? config.officialApiAvailable
     : config?.provider === META_DIRECT_PROVIDER_NAME || Boolean(config?.enabled && config?.apiKey)
@@ -10105,7 +10118,8 @@ export async function captureQrChatMessage({
       contactId: result.contactId,
       text: result.messageText,
       receivedAt: result.messageTimestamp,
-      messageId: result.messageId
+      messageId: result.messageId,
+      channel: String(result.transport || '').toLowerCase() === 'qr' ? 'whatsapp_qr' : 'whatsapp'
     }).then(w => { confirmWindow = w }).catch(error => {
       logger.warn(`[Citas] Error en ventana de confirmación (QR): ${error.message}`)
     })
@@ -11260,7 +11274,8 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
           contactId: result.contactId,
           text: result.messageText,
           receivedAt: result.messageTimestamp,
-          messageId: result.messageId
+          messageId: result.messageId,
+          channel: String(result.transport || '').toLowerCase() === 'qr' ? 'whatsapp_qr' : 'whatsapp'
         })
         confirmWindows.set(result.contactId, window)
       } catch (error) {
@@ -12337,7 +12352,8 @@ async function processMetaDirectInboundSideEffects(inboundResults = []) {
         contactId: result.contactId,
         text: result.messageText,
         receivedAt: result.messageTimestamp,
-        messageId: result.messageId
+        messageId: result.messageId,
+        channel: String(result.transport || '').toLowerCase() === 'qr' ? 'whatsapp_qr' : 'whatsapp'
       })
       confirmWindows.set(result.contactId, window)
     } catch (error) {
@@ -14651,6 +14667,7 @@ export async function sendWhatsAppApiTextMessage({
   replyToMessageId = '',
   replyToProviderMessageId = '',
   preferOfficialApiWhenReplyWindowOpen = false,
+  forceRequestedTransport = false,
   skipQrSendProtection = false,
   agentId,
   variablesResolved = false
@@ -14683,6 +14700,7 @@ export async function sendWhatsAppApiTextMessage({
   if (await shouldPreferOfficialApiOverRequestedQr({
     cleanTransport,
     preferOfficialApiWhenReplyWindowOpen,
+    forceRequestedTransport,
     config,
     fromPhone,
     phoneNumberId,

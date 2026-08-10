@@ -208,6 +208,7 @@ test('Confirmar cita espera su horario, envía una sola vez y guarda la configur
           label: 'Confirmar cita',
           config: {
             calendar: calendarId,
+            channel: 'whatsapp',
             timingAnchor: 'after_booking',
             offsetValue: 10,
             offsetUnit: 'minutes',
@@ -283,6 +284,7 @@ test('Confirmar cita espera su horario, envía una sola vez y guarda la configur
     assert.equal(send.source_id, `${automationId}:confirm-appointment`)
     assert.deepEqual(JSON.parse(send.source_config), {
       calendarId,
+      channel: 'whatsapp',
       noConfirmAction: 'cancel_appointment',
       bypassAutomations: true,
       confirmationSuccessAction: '["chat_card","chat_badge","mark_confirmed"]',

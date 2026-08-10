@@ -5142,7 +5142,8 @@ export async function processMetaSocialWebhook({
               contactId: result.contactId,
               text: result.messageText,
               receivedAt: result.timestamp,
-              messageId: result.messageId
+              messageId: result.messageId,
+              channel: channelForAutomation
             })
               .then(w => { confirmWindow = w })
               .catch(error => {
