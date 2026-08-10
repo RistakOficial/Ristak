@@ -4,9 +4,21 @@ import { randomUUID } from 'node:crypto'
 import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
+  buildInboundMediaFilename,
   captureQrChatMessage,
   getWhatsAppApiConfigKeys
 } from '../src/services/whatsappApiService.js'
+
+test('expone el generador de nombre que usa la descarga QR de medios entrantes', () => {
+  assert.equal(
+    buildInboundMediaFilename({
+      mediaId: '3AAAAE172A3CB644E9E9',
+      messageType: 'audio',
+      mimeType: 'audio/ogg; codecs=opus'
+    }),
+    'whatsapp-audio-3CB644E9E9.ogg'
+  )
+})
 
 async function snapshotAppConfig(keys = [], callback) {
   const uniqueKeys = [...new Set(keys)]
