@@ -27,7 +27,7 @@ test('module access checks the commercial plan before exposing a module', async 
   assert.match(userAccessMiddleware, /code: 'feature_not_available'/)
   assert.match(userAccessMiddleware, /module: moduleKey/)
   assert.match(userAccessMiddleware, /export function requireAnyModuleAccess\(moduleKeys = \[\]\)/)
-  assert.match(aiRuntimeRoutes, /router\.use\(requireAnyModuleAccess\(\['ai_agent', 'sites'\]\)\)/)
+  assert.match(aiRuntimeRoutes, /router\.use\(requireAnyModuleAccess\(\['ai_agent', 'sites', 'appointments'\]\)\)/)
 })
 
 test('developer surfaces are gated by Developers and by resource features', async () => {

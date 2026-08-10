@@ -21,6 +21,7 @@ import {
 import { CALENDAR_DEFAULT_FORM_SITE_ID } from './localCalendarService.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { getAccountTimezone, normalizeToUtcIso } from '../utils/dateUtils.js'
+import { getAIRuntimeStatus } from './aiRuntimeService.js'
 import {
   formatContactName,
   normalizeContactNameFields,
@@ -238,6 +239,26 @@ async function assertAutomationFlowFeatureAccess(flow) {
       throw featureNotAvailable('La automatización usa pasos que no están incluidos en tu plan actual.', featureKey)
     }
   }
+}
+
+async function assertAutomationRuntimePrerequisites(flow) {
+  const needsAppointmentConfirmationAI = Array.isArray(flow?.nodes) && flow.nodes.some(
+    (node) => String(node?.type || '') === 'action-appointment-confirmation'
+  )
+  if (!needsAppointmentConfirmationAI) return
+
+  const status = await getAIRuntimeStatus({})
+  if (status?.configured && !status?.needsReconnect) return
+
+  const error = conflict(
+    status?.needsReconnect
+      ? 'Reconecta OpenAI antes de publicar una confirmación de cita con IA.'
+      : 'Conecta OpenAI antes de publicar una confirmación de cita con IA.'
+  )
+  error.code = status?.connectionIssueCode || 'OPENAI_CREDENTIAL_REQUIRED'
+  error.needsOpenAIConfig = !status?.needsReconnect
+  error.needsReconnect = Boolean(status?.needsReconnect)
+  throw error
 }
 
 function normalizeName(rawName, fallback) {
@@ -662,6 +683,7 @@ export async function updateAutomation(automationId, input = {}) {
     status = input.status
 
     if (status === 'published') {
+      await assertAutomationRuntimePrerequisites(flow)
       const errors = validateFlowForPublish(flow)
       if (errors.length > 0) {
         const error = badRequest(errors.join('. '))
@@ -1047,6 +1069,7 @@ async function getSavedAutomationForTestRun(automationId) {
 
   const flow = normalizeFlow(parseFlow(automation.flow))
   await assertAutomationFlowFeatureAccess(flow)
+  await assertAutomationRuntimePrerequisites(flow)
   const validationErrors = validateFlowForPublish(flow)
   if (validationErrors.length > 0) {
     const error = badRequest(validationErrors.join('. '))

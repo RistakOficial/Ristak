@@ -595,7 +595,8 @@ async function triggerAutomationsForInboundMessage({
     contactId: contact.id,
     text,
     receivedAt: messageTimestamp,
-    messageId
+    messageId,
+    channel
   })
     .then(w => { confirmWindow = w })
     .catch(error => {

@@ -179,7 +179,7 @@ const AUTOMATION_NODE_REQUIRED_FEATURES = {
   'channel-comment-dm-reply': ['campaigns'],
   'action-change-whatsapp-number': ['whatsapp'],
   'action-appointment-upsert': ['appointments'],
-  'action-appointment-confirmation': ['appointments', 'whatsapp'],
+  'action-appointment-confirmation': ['appointments'],
   'action-webhook': ['developers'],
   'ai-step': ['ai_agent'],
   'ai-gpt-openai': ['ai_agent']
@@ -228,6 +228,12 @@ export function getAutomationTriggerRequiredFeatures(trigger = {}) {
 
 export function getAutomationNodeRequiredFeatures(node = {}) {
   const features = [...(AUTOMATION_NODE_REQUIRED_FEATURES[String(node?.type || '')] || [])]
+  if (String(node?.type || '') === 'action-appointment-confirmation') {
+    const channel = String(node?.config?.channel || 'whatsapp').trim().toLowerCase()
+    if (channel === 'whatsapp' || channel === 'whatsapp_qr') features.push('whatsapp')
+    if (channel === 'messenger' || channel === 'instagram') features.push('campaigns')
+    if (channel === 'email') features.push('email')
+  }
   if (String(node?.type || '') === 'action-set-default-reply-channel') {
     const channel = String(node?.config?.channel || '').trim().toLowerCase()
     if (channel === 'whatsapp') features.push('whatsapp')
@@ -726,14 +732,26 @@ function validateGoalNode(node, errors) {
 
 function validateAppointmentConfirmationNode(node, errors) {
   const config = isPlainObject(node.config) ? node.config : {}
-  if (!String(config.template || config.templateId || '').trim()) {
-    errors.push('La acción Confirmar cita necesita una plantilla de WhatsApp')
+  const channel = String(config.channel || 'whatsapp').trim().toLowerCase()
+  const supportedChannels = new Set(['whatsapp', 'whatsapp_qr', 'email', 'messenger', 'instagram'])
+  if (!supportedChannels.has(channel)) {
+    errors.push('La acción Confirmar cita necesita un canal válido')
+  }
+  if (channel === 'whatsapp' && !String(config.template || config.templateId || '').trim()) {
+    errors.push('La acción Confirmar cita necesita una plantilla de WhatsApp API')
+  }
+  if (channel !== 'whatsapp' && !String(config.messageText || '').trim()) {
+    errors.push('La acción Confirmar cita necesita el mensaje que solicitará la confirmación')
   }
   if (
+    (channel === 'whatsapp' || channel === 'whatsapp_qr') &&
     String(config.senderMode || config.sender || '') === 'specific' &&
     !String(config.senderPhoneNumberId || config.senderNumberId || '').trim()
   ) {
     errors.push('La acción Confirmar cita necesita el número de WhatsApp remitente')
+  }
+  if (String(config.confirmationReplyText || '').trim().length > 4096) {
+    errors.push('La respuesta de la acción Confirmar cita no puede superar 4096 caracteres')
   }
 
   const timingAnchor = String(config.timingAnchor || 'before_appointment')
@@ -922,17 +940,22 @@ export function validateFlowForPublish(flow) {
 
   // Canales no soportados (SMS, Email…) en cualquier configuración
   const invalidChannels = new Set()
-  const collectChannels = (config) => {
+  const collectChannels = (config, allowedChannels = ALLOWED_CHANNELS) => {
     if (!isPlainObject(config)) return
     CHANNEL_CONFIG_KEYS.forEach((key) => {
       const value = config[key]
-      if (typeof value === 'string' && value && value !== 'any' && !ALLOWED_CHANNELS.includes(value)) {
+      if (typeof value === 'string' && value && value !== 'any' && !allowedChannels.includes(value)) {
         invalidChannels.add(value)
       }
     })
   }
   nodes.forEach((node) => {
-    collectChannels(node.config)
+    const allowedChannels = node.type === 'action-appointment-confirmation'
+      ? ['whatsapp', 'whatsapp_qr', 'email', 'messenger', 'instagram']
+      : node.type === 'action-set-default-reply-channel'
+        ? ['whatsapp', 'email', 'messenger', 'instagram']
+        : ALLOWED_CHANNELS
+    collectChannels(node.config, allowedChannels)
     asArray(node.config?.triggers).forEach((trigger) => collectChannels(trigger?.config))
   })
   if (invalidChannels.size > 0) {

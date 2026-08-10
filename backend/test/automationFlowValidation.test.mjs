@@ -88,9 +88,10 @@ test('publicar acepta la acción de cita y exige la función de citas', () => {
   assert.deepEqual(getAutomationNodeRequiredFeatures(appointmentAction), ['appointments'])
 })
 
-test('publicar acepta Confirmar cita y exige citas más WhatsApp', () => {
+test('publicar acepta Confirmar cita y exige la licencia del canal elegido', () => {
   const confirmation = actionNode('confirmation', 'action-appointment-confirmation')
   confirmation.config = {
+    channel: 'whatsapp',
     timingAnchor: 'after_booking',
     offsetValue: 10,
     offsetUnit: 'minutes',
@@ -111,6 +112,21 @@ test('publicar acepta Confirmar cita y exige citas más WhatsApp', () => {
 
   confirmation.config.template = ''
   assert.match(validateFlowForPublish(flow).join(' '), /plantilla de WhatsApp/i)
+
+  confirmation.config = {
+    ...confirmation.config,
+    channel: 'email',
+    messageText: '¿Confirmas tu cita?',
+    template: ''
+  }
+  assert.deepEqual(validateFlowForPublish(flow), [])
+  assert.deepEqual(getAutomationNodeRequiredFeatures(confirmation), ['appointments', 'email'])
+
+  confirmation.config.channel = 'instagram'
+  assert.deepEqual(getAutomationNodeRequiredFeatures(confirmation), ['appointments', 'campaigns'])
+
+  confirmation.config.channel = 'whatsapp_qr'
+  assert.deepEqual(getAutomationNodeRequiredFeatures(confirmation), ['appointments', 'whatsapp'])
 })
 
 test('el enlace de disparo exige la función de trigger links y no Formularios', () => {

@@ -40,6 +40,29 @@ function parseReminderSendSourceConfig(value) {
   }
 }
 
+function normalizeConfirmationChannel(value = '') {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (normalized === 'whatsapp_qr' || normalized === 'qr') return 'whatsapp_qr'
+  if (normalized.includes('whatsapp')) return 'whatsapp'
+  if (normalized.includes('instagram')) return 'instagram'
+  if (normalized.includes('messenger') || normalized === 'facebook') return 'messenger'
+  if (normalized.includes('email') || normalized.includes('correo') || normalized === 'mail') return 'email'
+  if (normalized === 'booking_channel' || normalized === 'available_channel') return normalized
+  return ''
+}
+
+function confirmationChannelMatches(expectedChannel, inboundChannel) {
+  const rawInbound = String(inboundChannel || '').trim()
+  const expected = normalizeConfirmationChannel(expectedChannel)
+  const inbound = normalizeConfirmationChannel(inboundChannel)
+  if (!rawInbound) return true
+  if (!inbound) return false
+  if (!expected || expected === 'booking_channel' || expected === 'available_channel') return true
+  const whatsappChannels = new Set(['whatsapp', 'whatsapp_qr'])
+  if (whatsappChannels.has(expected) && whatsappChannels.has(inbound)) return true
+  return expected === inbound
+}
+
 function reminderSendSetting(row, configKey, legacyKey = configKey) {
   const sourceConfig = parseReminderSendSourceConfig(row?.source_config)
   if (Object.prototype.hasOwnProperty.call(sourceConfig, configKey)) {
@@ -101,6 +124,7 @@ function parseStoredMessages(raw) {
         return {
           text,
           messageId: String(entry?.messageId || '').trim(),
+          channel: normalizeConfirmationChannel(entry?.channel),
           receivedAtMs: Number.isNaN(receivedAtMs) ? null : receivedAtMs,
           index
         }
@@ -124,7 +148,7 @@ function parseStoredMessages(raw) {
   }
 }
 
-function buildStoredMessage({ text, receivedAt, messageId, fallbackReceivedAt }) {
+function buildStoredMessage({ text, receivedAt, messageId, channel, fallbackReceivedAt }) {
   const messageText = String(text || '').trim()
   if (!messageText) return null
 
@@ -138,6 +162,8 @@ function buildStoredMessage({ text, receivedAt, messageId, fallbackReceivedAt })
   }
   const cleanMessageId = String(messageId || '').trim()
   if (cleanMessageId) stored.messageId = cleanMessageId
+  const cleanChannel = normalizeConfirmationChannel(channel)
+  if (cleanChannel) stored.channel = cleanChannel
   return stored
 }
 
@@ -258,7 +284,8 @@ export async function handleInboundForConfirmation({
   contactId,
   text,
   receivedAt,
-  messageId
+  messageId,
+  channel
 } = {}) {
   const id = String(contactId || '').trim()
   if (!id) return { windowActive: false }
@@ -268,13 +295,14 @@ export async function handleInboundForConfirmation({
     text,
     receivedAt,
     messageId,
+    channel,
     fallbackReceivedAt: now
   })
 
   const activeWindow = await db.transaction(async (transaction) => {
     // El mismo envío se bloquea al recibir y al vencer el ultimátum. Así una
     // respuesta y una cancelación no pueden ganar simultáneamente.
-    const pending = await transaction.get(`
+    const pendingCandidates = await transaction.all(`
       SELECT
         s.id AS send_id,
         s.appointment_id,
@@ -282,6 +310,7 @@ export async function handleInboundForConfirmation({
         s.source_config,
         r.bypass_automations,
         r.confirmation_success_action,
+        r.channel AS reminder_channel,
         a.title
       FROM appointment_reminder_sends s
       JOIN appointments a ON a.id = s.appointment_id
@@ -304,9 +333,14 @@ export async function handleInboundForConfirmation({
           'cancelled', 'canceled', 'showed', 'noshow', 'invalid'
         )
       ORDER BY s.sent_at DESC
-      LIMIT 1
+      LIMIT 20
       ${databaseDialect === 'postgres' ? 'FOR UPDATE OF s' : ''}
     `, [id, now])
+
+    const pending = pendingCandidates.find(candidate => confirmationChannelMatches(
+      reminderSendSetting(candidate, 'channel', 'reminder_channel'),
+      channel
+    ))
 
     if (!pending) return null
 
@@ -761,6 +795,7 @@ async function processConfirmationWindow(candidate, cutoff) {
       r.confirmation_reply_text,
       s.confirmation_reply_sent_at,
       c.phone,
+      c.email,
       c.first_name
     FROM appointment_reminder_sends s
     LEFT JOIN appointment_reminders r ON r.id = s.reminder_id
@@ -896,7 +931,7 @@ async function processConfirmationWindow(candidate, cutoff) {
       reminderData
     }).then(outcome => {
       if (outcome?.sent) {
-        logger.info(`[Confirmación IA] Mensaje de respuesta enviado por WhatsApp para cita ${appointmentId}`)
+        logger.info(`[Confirmación IA] Mensaje de respuesta enviado por ${outcome.channel || 'el canal de origen'} para cita ${appointmentId}`)
       } else if (String(reminderData?.confirmation_reply_text || '').trim()) {
         logger.info(`[Confirmación IA] Mensaje de respuesta omitido para cita ${appointmentId}: ${outcome?.reason || 'ruta no disponible'}`)
       }
@@ -979,30 +1014,7 @@ async function sendConfiguredConfirmationReply({
     .find(entry => String(entry?.messageId || '').trim())
   if (!latestMessage) return { sent: false, reason: 'la respuesta no tiene identidad de mensaje' }
 
-  // La respuesta sólo sale si el último inbound que confirmó la cita pertenece
-  // a la tubería nativa de WhatsApp. Así no desviamos confirmaciones de correo,
-  // Instagram, Messenger o HighLevel hacia un teléfono por accidente.
-  const inbound = await db.get(`
-    SELECT
-      id,
-      business_phone_number_id,
-      phone,
-      from_phone,
-      to_phone,
-      business_phone,
-      transport
-    FROM whatsapp_api_messages
-    WHERE id = ?
-      AND contact_id = ?
-      AND LOWER(COALESCE(direction, '')) = 'inbound'
-    LIMIT 1
-  `, [latestMessage.messageId, contactId])
-  if (!inbound) return { sent: false, reason: 'la confirmación llegó por otro canal' }
-
-  const destinationPhone = String(inbound.from_phone || inbound.phone || reminderData?.phone || '').trim()
-  if (!destinationPhone) return { sent: false, reason: 'la respuesta no tiene teléfono destino' }
-
-  const businessPhone = String(inbound.to_phone || inbound.business_phone || '').trim()
+  const replyChannel = normalizeConfirmationChannel(latestMessage.channel)
   const timezone = await getAccountTimezone()
   const renderedText = renderMessageText(configuredText, {
     contact: {
@@ -1010,27 +1022,83 @@ async function sendConfiguredConfirmationReply({
       first_name: appointment?.first_name || reminderData?.first_name,
       last_name: appointment?.last_name,
       full_name: appointment?.full_name,
-      phone: destinationPhone
+      phone: appointment?.phone || reminderData?.phone,
+      email: appointment?.email || reminderData?.email
     },
     appointment: appointment || { id: appointmentId },
     timezone
   })
   if (!renderedText) return { sent: false, reason: 'el texto quedó vacío al renderizarse' }
 
-  const sendText = confirmationReplySenderForTest || (await import('./whatsappApiService.js'))
-    .sendWhatsAppApiTextMessage
-  const response = await sendText({
-    to: destinationPhone,
-    text: renderedText,
-    from: businessPhone || undefined,
-    contactId,
-    phoneNumberId: inbound.business_phone_number_id || undefined,
-    transport: String(inbound.transport || '').toLowerCase() === 'qr' ? 'qr' : 'api',
-    allowQrFallback: true,
-    preferOfficialApiWhenReplyWindowOpen: true,
-    externalId: `appointment_confirmation_reply_${reminderSendId || windowId}`,
-    variablesResolved: true
-  })
+  const externalId = `appointment_confirmation_reply_${reminderSendId || windowId}`
+  let response = null
+
+  if (replyChannel === 'email') {
+    const destinationEmail = String(appointment?.email || reminderData?.email || '').trim()
+    if (!destinationEmail) return { sent: false, reason: 'la respuesta no tiene correo destino' }
+    const sendEmail = confirmationReplySenderForTest || (await import('./emailService.js')).sendEmailToContact
+    response = await sendEmail({
+      contactId,
+      to: destinationEmail,
+      subject: `Cita confirmada${appointment?.title ? `: ${appointment.title}` : ''}`,
+      text: renderedText,
+      externalId,
+      includeSignature: true,
+      variablesResolved: true,
+      channel: 'email'
+    })
+  } else if (replyChannel === 'instagram' || replyChannel === 'messenger') {
+    const sendMeta = confirmationReplySenderForTest || (await import('./metaSocialMessagingService.js')).sendMetaSocialTextMessage
+    response = await sendMeta({
+      contactId,
+      platform: replyChannel,
+      message: renderedText,
+      externalId,
+      variablesResolved: true,
+      channel: replyChannel
+    })
+  } else {
+    // WhatsApp API y WhatsApp QR conservan la identidad exacta del inbound para
+    // responder en la misma conversación y por el mismo número del negocio.
+    const inbound = await db.get(`
+      SELECT
+        id,
+        business_phone_number_id,
+        phone,
+        from_phone,
+        to_phone,
+        business_phone,
+        transport
+      FROM whatsapp_api_messages
+      WHERE id = ?
+        AND contact_id = ?
+        AND LOWER(COALESCE(direction, '')) = 'inbound'
+      LIMIT 1
+    `, [latestMessage.messageId, contactId])
+    if (!inbound) return { sent: false, reason: 'la confirmación llegó por otro canal' }
+
+    const destinationPhone = String(inbound.from_phone || inbound.phone || reminderData?.phone || '').trim()
+    if (!destinationPhone) return { sent: false, reason: 'la respuesta no tiene teléfono destino' }
+
+    const businessPhone = String(inbound.to_phone || inbound.business_phone || '').trim()
+    const replyTransport = String(inbound.transport || '').toLowerCase() === 'qr' ? 'qr' : 'api'
+    const sendText = confirmationReplySenderForTest || (await import('./whatsappApiService.js'))
+      .sendWhatsAppApiTextMessage
+    response = await sendText({
+      to: destinationPhone,
+      text: renderedText,
+      from: businessPhone || undefined,
+      contactId,
+      phoneNumberId: inbound.business_phone_number_id || undefined,
+      transport: replyTransport,
+      allowQrFallback: true,
+      preferOfficialApiWhenReplyWindowOpen: true,
+      forceRequestedTransport: replyTransport === 'qr',
+      externalId,
+      variablesResolved: true,
+      channel: replyTransport === 'qr' ? 'whatsapp_qr' : 'whatsapp'
+    })
+  }
 
   const messageId = response?.localMessageId || response?.id || null
   await db.run(`
@@ -1043,7 +1111,8 @@ async function sendConfiguredConfirmationReply({
 
   return {
     sent: true,
-    messageId
+    messageId,
+    channel: replyChannel || 'whatsapp'
   }
 }
 
@@ -1062,7 +1131,8 @@ async function executeConfirmationSuccessActions({ contactId, appointmentId, act
       c.first_name,
       c.last_name,
       c.full_name,
-      c.phone
+      c.phone,
+      c.email
     FROM appointments a
     LEFT JOIN contacts c ON c.id = a.contact_id
     WHERE a.id = ?

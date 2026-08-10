@@ -1507,18 +1507,27 @@ La accion **Confirmar cita** programa y envía una solicitud de confirmación so
 la cita exacta que inició la ejecución; si el flujo no nació de una cita, usa la
 próxima cita activa del contacto y permite limitarla por calendario. El mismo
 nodo configura si sale antes del inicio o después de agendar, cantidad y unidad,
-plantilla de WhatsApp, remitente, horario inteligente de envío, plazo/horario de
-respuesta, política ante silencio, respuesta posterior, tarjeta/distintivo y
-aislamiento de otras automatizaciones. No requiere agregar un bloque `Esperar`:
+canal, contenido, remitente cuando aplica, horario inteligente de envío,
+plazo/horario de respuesta, política ante silencio, respuesta posterior,
+tarjeta/distintivo y aislamiento de otras automatizaciones. Los canales
+explícitos son WhatsApp API, WhatsApp QR, correo, Instagram DM y Messenger.
+WhatsApp API exige una plantilla aprobada y conserva el ruteo API/QR automático
+de la configuración de Meta; WhatsApp QR fuerza el transporte QR. Los demás
+canales usan texto directo. No existe una opción separada llamada "fallback".
+No requiere agregar un bloque `Esperar`:
 el motor conserva la ejecución en el nodo hasta el instante UTC calculado con la
 zona horaria del negocio. Para un ancla anterior al inicio, una reprogramación de
 la misma cita vuelve a calcular el instante antes de enviar; para
 `after_booking`, se conserva el momento original de reserva.
 
-El envío usa el mismo clasificador y las mismas acciones de confirmación que los
-mensajes automáticos de Citas. Se reclama de forma idempotente por automatización,
+El nodo sólo aparece en el selector cuando OpenAI está conectado. Publicar o
+probar el flujo vuelve a validar esa conexión y, si OpenAI se desconecta después,
+el runtime no envía una solicitud que no podrá clasificar. El envío usa el mismo
+clasificador y las mismas acciones de confirmación que los mensajes automáticos
+de Citas. La respuesta entrante debe corresponder al canal configurado; cuando la
+IA confirma, la cortesía opcional sale por ese mismo canal. Se reclama de forma idempotente por automatización,
 nodo y cita, y guarda en `appointment_reminder_sends.source_type = automation`
-un snapshot `source_config` con calendario y políticas. Por eso las respuestas y
+un snapshot `source_config` con calendario, canal y políticas. Por eso las respuestas y
 ultimátums siguen funcionando aunque no exista una fila visible en
 `appointment_reminders`; el editor de Citas no muestra reglas fantasma creadas
 por Automatizaciones. Citas y Automatizaciones pueden conservar mensajes
@@ -5360,13 +5369,13 @@ plantilla; no recorta simplemente la tercera variable ni guarda una vista previa
 engañosa con placeholders. Las cuentas cuya plantilla remota sí usa tres
 variables continúan enviando nombre, fecha y hora sin cambios.
 
-Si solo hay WhatsApp QR conectado, recordatorios y avisos de cita envian el
-texto renderizado del mensaje por QR aunque la plantilla de WhatsApp API este
-pendiente o no exista remotamente. Si hay API y QR conectados para el mismo
-teléfono, API sigue como ruta principal incluso si una configuración histórica
-guardó `whatsapp_qr`; QR entra sólo ante indisponibilidad real. La autorización
-la agrega automáticamente el servicio de Citas y la capa central verifica que
-el QR pertenezca al mismo número.
+Si sólo hay WhatsApp QR conectado, recordatorios y avisos de cita envían el
+texto renderizado del mensaje por QR aunque la plantilla de WhatsApp API esté
+pendiente o no exista remotamente. Si el usuario elige explícitamente
+`whatsapp_qr`, Ristak fuerza QR incluso cuando el mismo teléfono también tiene
+API. Si elige `whatsapp`, API permanece como ruta principal y QR sólo entra como
+respaldo autorizado ante indisponibilidad real. La capa central verifica que el
+QR pertenezca al mismo número.
 
 Los mensajes directos por WhatsApp API en citas tambien dependen de ventana de
 conversacion abierta de 24 horas. Si no existe una respuesta reciente del
@@ -5391,7 +5400,8 @@ usan `appointment_reminder` y continúan leyendo su fila canónica; la acción
 **Confirmar cita** de Automatizaciones usa `automation` y guarda también
 `source_config`. El procesamiento de respuestas y vencimientos lee ese snapshot
 cuando no existe una regla visible en Citas, sin inventar una fila fantasma en
-`appointment_reminders`.
+`appointment_reminders`. El snapshot incluye el canal para impedir que una
+respuesta recibida por otra conversación consuma por accidente la confirmación.
 
 Los intentos físicos se conservan en `whatsapp_api_messages` para auditoría,
 pero el chat sólo proyecta la copia vigente. Cuando el segundo intento genera un

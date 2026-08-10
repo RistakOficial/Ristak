@@ -1201,10 +1201,9 @@ test('recordatorios con canal QR no brincan una API activa del mismo número', a
 
       assert.equal(result.sent, 1)
       assert.equal(result.errors, 0)
-      assert.equal(captures.length, 1)
-      assert.equal(captures[0].type, 'text')
-      assert.match(captures[0].text.body, /QR solo para Ana/)
-      assert.equal(sentMessages.length, 0)
+      assert.equal(captures.length, 0)
+      assert.equal(sentMessages.length, 1)
+      assert.match(sentMessages[0].payload.text, /QR solo para Ana/)
 
       const send = await db.get(
         'SELECT status, sent_message_id, error_message FROM appointment_reminder_sends WHERE appointment_id = ?',
@@ -1212,12 +1211,11 @@ test('recordatorios con canal QR no brincan una API activa del mismo número', a
       )
       assert.equal(send.status, 'sent')
       assert.equal(send.error_message, null)
-      assert.equal(send.sent_message_id, 'ycloud_appointment_msg_1')
+      assert.equal(send.sent_message_id, 'qr_appointment_msg_1')
 
       const overview = await getAppointmentRemindersOverview()
       const overviewReminder = overview.reminders.find((item) => item.id === reminder.id)
-      assert.equal(overviewReminder?.deliveryHealth?.status, 'warning')
-      assert.match(overviewReminder?.deliveryHealth?.message || '', /API activa/)
+      assert.equal(overviewReminder?.deliveryHealth?.status, 'ready')
     })
   })
 })

@@ -888,7 +888,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                       <ExpandableTextareaField
                         id="appointment-confirmation-reply-text"
                         label="Mensaje de respuesta al confirmar (opcional)"
-                        description="Cuando la IA confirme la cita, Ristak enviará este texto por la misma conversación de WhatsApp que recibió la respuesta. Es un mensaje normal, sin plantilla. Si la confirmación llegó por otro canal, no se enviará."
+                        description="Cuando la IA confirme la cita, Ristak enviará este texto por el mismo canal donde recibió la respuesta. Es un mensaje normal, sin plantilla."
                         value={draft.confirmationReplyText || ''}
                         onChange={(value) => set('confirmationReplyText', value)}
                         expandedTitle="Editar mensaje de respuesta al confirmar"
