@@ -752,6 +752,21 @@ test('reparación de desconexión elimina filas YCloud muertas y conserva respal
       assert.equal(Number(qr.qr_send_enabled), 1)
       assert.match(qr.raw_payload_json, /qr_only_after_ycloud_disconnect/)
       assert.equal(contact.preferred_whatsapp_phone_number_id, replacementId)
+
+      await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [qrId])
+      await db.run(
+        "UPDATE whatsapp_qr_sessions SET status = 'reconnecting', updated_at = CURRENT_TIMESTAMP WHERE phone_number_id = ?",
+        [qrId]
+      )
+      await db.run(
+        "UPDATE whatsapp_api_phone_numbers SET qr_status = 'reconnecting', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        [qrId]
+      )
+
+      const orphanResult = await repairDisconnectedYCloudPhoneRows()
+      const orphanQr = await db.get('SELECT id FROM whatsapp_api_phone_numbers WHERE id = ?', [qrId])
+      assert.equal(orphanResult.removed, 1)
+      assert.equal(orphanQr, null)
     } finally {
       await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
       await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id IN (?, ?, ?)', [deadId, qrId, replacementId]).catch(() => undefined)

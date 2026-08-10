@@ -796,6 +796,9 @@ no puede reactivar YCloud sin integración y credencial activas; una conexión
 explícita posterior vuelve a crear/sincronizar las filas vigentes del proveedor.
 Al arrancar, una reparación idempotente retira filas YCloud heredadas que ya no
 tienen credenciales y conserva únicamente sus QR recuperables como filas QR.
+Una fila convertida a QR que después quede `reconnecting` sin auth guardado se
+considera huérfana y también se elimina, aunque conserve el marcador histórico
+de su conversión desde YCloud.
 También revisa el último resultado operativo de Meta: si quedó persistido un
 `133010` sin un éxito posterior, marca `reconnect_required` antes de habilitar
 crones o nuevos envíos.

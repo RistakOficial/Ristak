@@ -123,7 +123,7 @@ const GENERIC_CONTACT_NAME = GENERIC_WHATSAPP_API_CONTACT_NAME
 const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY = 'whatsapp_protocol_identity_repair_version'
 const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION = '2026-08-06-v4'
 const YCLOUD_DISCONNECTED_PHONE_CLEANUP_CONFIG_KEY = 'whatsapp_ycloud_disconnected_phone_cleanup_version'
-const YCLOUD_DISCONNECTED_PHONE_CLEANUP_VERSION = 'v1'
+const YCLOUD_DISCONNECTED_PHONE_CLEANUP_VERSION = 'v2'
 const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-images')
 let ycloudFetch = nodeFetch
 let metaDirectFetch = nodeFetch
@@ -3636,9 +3636,8 @@ function isRecoverableQrConnection({ phone = {}, session = {}, authItems = 0 } =
   ) {
     return false
   }
-  return Number(authItems || 0) > 0 || [
-    'starting',
-    'qr_pending',
+  if (['starting', 'qr_pending'].includes(status)) return true
+  return Number(authItems || 0) > 0 && [
     'connected',
     'reconnecting',
     'restarting',
@@ -3708,6 +3707,7 @@ async function retireDisconnectedYCloudPhone(phone = {}) {
   ])
 
   if (isRecoverableQrConnection({ phone, session, authItems: authCount?.total })) {
+    if (cleanString(phone.provider).toLowerCase() === 'qr') return 'kept_qr'
     await db.run(`
       UPDATE whatsapp_api_phone_numbers
       SET provider = 'qr',
@@ -3742,6 +3742,10 @@ export async function repairDisconnectedYCloudPhoneRows({ force = false } = {}) 
     SELECT ${BUSINESS_PHONE_ROW_SELECT}, verified_name, label
     FROM whatsapp_api_phone_numbers
     WHERE LOWER(COALESCE(provider, ?)) = ?
+      OR (
+        LOWER(COALESCE(provider, '')) = 'qr'
+        AND COALESCE(raw_payload_json, '') LIKE '%qr_only_after_ycloud_disconnect%'
+      )
     ORDER BY updated_at DESC
   `, [PROVIDER_NAME, PROVIDER_NAME]).catch(() => [])
 
@@ -3751,15 +3755,17 @@ export async function repairDisconnectedYCloudPhoneRows({ force = false } = {}) 
 
   let removed = 0
   let convertedToQr = 0
+  let keptQr = 0
   for (const phone of rows) {
     const outcome = await retireDisconnectedYCloudPhone(phone)
     if (outcome === 'converted_to_qr') convertedToQr += 1
     if (outcome === 'removed') removed += 1
+    if (outcome === 'kept_qr') keptQr += 1
   }
 
   await selectNextDefaultWhatsAppPhone()
   await setAppConfig(YCLOUD_DISCONNECTED_PHONE_CLEANUP_CONFIG_KEY, YCLOUD_DISCONNECTED_PHONE_CLEANUP_VERSION)
-  return { repaired: removed > 0 || convertedToQr > 0, removed, convertedToQr }
+  return { repaired: removed > 0 || convertedToQr > 0, removed, convertedToQr, keptQr }
 }
 
 export async function setWhatsAppApiDefaultPhoneNumber({ phoneNumberId } = {}) {

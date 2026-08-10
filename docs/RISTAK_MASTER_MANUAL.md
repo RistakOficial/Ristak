@@ -2897,7 +2897,10 @@ local responde `200` sin guardar evento, mensaje ni contacto, para que un webhoo
 remoto huérfano no reviva una integración desconectada ni genere duplicados.
 Una reparación idempotente de arranque limpia instalaciones antiguas que ya
 habían borrado las credenciales pero conservaban números YCloud fantasma. En el
-mismo arranque, si el último resultado de envío del número Meta activo fue un
+mismo saneamiento elimina un QR heredado de YCloud que diga estar reconectando
+pero ya no tenga credenciales QR reales; ese estado no es recuperable y no debe
+seguir apareciendo como otro número. En el mismo arranque, si el último resultado
+de envío del número Meta activo fue un
 `133010`, la conexión queda en `reconnect_required` antes de arrancar sus tareas.
 
 La sección **Números** muestra la búsqueda, el resumen y la tabla operativa a todo
