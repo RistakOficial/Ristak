@@ -11,6 +11,17 @@ export interface ChatMessageChannelSignals {
   hasEmail?: boolean
 }
 
+export interface ChatMessageRoutingPresentationSignals {
+  direction?: unknown
+  transport?: unknown
+  routingReason?: unknown
+}
+
+export interface ChatMessageRoutingPresentation {
+  badgeLabel: string
+  reason: string
+}
+
 export type ChatCommentPlatform = 'instagram' | 'messenger'
 
 const COMMENT_MESSAGE_TYPES = new Set([
@@ -25,6 +36,41 @@ function normalizeSignal(value: unknown) {
 
 function containsAny(value: string, needles: string[]) {
   return needles.some((needle) => value.includes(needle))
+}
+
+function isReplyWindowQrFallbackReason(reason: string) {
+  const normalized = reason.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  if (!normalized.includes('respaldo qr')) return false
+
+  return (
+    normalized.includes('mas de 24 horas') ||
+    (
+      normalized.includes('no hay una respuesta reciente') &&
+      normalized.includes('ventana de whatsapp api')
+    )
+  )
+}
+
+/**
+ * Convierte el motivo técnico del fallback por ventana de respuesta en una
+ * señal breve para el historial. Los demás motivos se conservan completos.
+ */
+export function getChatMessageRoutingPresentation(
+  signals: ChatMessageRoutingPresentationSignals
+): ChatMessageRoutingPresentation {
+  if (normalizeSignal(signals.direction) !== 'outbound') return { badgeLabel: '', reason: '' }
+
+  const reason = String(signals.routingReason || '').trim()
+  if (isReplyWindowQrFallbackReason(reason)) {
+    return { badgeLabel: '+24 h · Se usó QR', reason: '' }
+  }
+
+  if (normalizeSignal(signals.transport) === 'qr') return { badgeLabel: '', reason: '' }
+
+  return {
+    badgeLabel: '',
+    reason: reason === 'Capturado desde la sesión de WhatsApp Web.' ? '' : reason
+  }
 }
 
 function isHighLevelMessage(signals: ChatMessageChannelSignals) {

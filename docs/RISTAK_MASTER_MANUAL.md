@@ -3037,6 +3037,10 @@ salientes y a la derecha para entrantes), con ancho limitado al viewport. Al
 tocar el indicador, el detalle queda abierto por encima de las columnas del chat
 hasta que el usuario toca fuera o presiona `Escape`; interactuar con el panel no
 lo cierra y su texto se puede seleccionar y copiar.
+Cuando un mensaje libre supera la ventana de respuesta y sale por el respaldo QR,
+`/chat` desktop no muestra el motivo técnico completo debajo del globo. Presenta
+la etiqueta compacta `+24 h · Se usó QR` inmediatamente antes del canal y conserva
+el motivo original en los datos de auditoría.
 
 En `/chat` desktop y `/movil`, el avatar del contacto no debe llevar aro,
 contorno ni relleno coloreado por red social. La identidad del canal vive en el

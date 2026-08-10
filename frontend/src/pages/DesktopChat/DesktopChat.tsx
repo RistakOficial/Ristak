@@ -105,6 +105,7 @@ import {
   shouldHideEmptyChatControlMessage
 } from '@/utils/chatMessageContent'
 import {
+  getChatMessageRoutingPresentation,
   getChatMessageSourceLabel,
   getChatBubbleColorChannel,
   resolveChatCommentPlatform,
@@ -3103,18 +3104,16 @@ function getMessageSourceLabel(message: DesktopChatMessage) {
   })
 }
 
-function isQrTransport(value?: string | null) {
-  return String(value || '').trim().toLowerCase() === 'qr'
-}
-
 function getMessageRoutingDetails(message: DesktopChatMessage) {
   const label = getMessageSourceLabel(message)
-  if (message.direction !== 'outbound') return { label, reason: '' }
-  if (isQrTransport(message.transport)) return { label, reason: '' }
-
-  const reason = String(message.routingReason || '').trim()
-  const cleanReason = reason === 'Capturado desde la sesión de WhatsApp Web.' ? '' : reason
-  return { label, reason: cleanReason }
+  return {
+    label,
+    ...getChatMessageRoutingPresentation({
+      direction: message.direction,
+      transport: message.transport,
+      routingReason: message.routingReason
+    })
+  }
 }
 
 interface MessageErrorBadgeProps {
@@ -9218,13 +9217,14 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     )
   }
 
-  const renderMessageMeta = (message: DesktopChatMessage, transportLabel = '') => {
+  const renderMessageMeta = (message: DesktopChatMessage, transportLabel = '', routingBadgeLabel = '') => {
     const status = String(message.status || '').trim().toLowerCase()
     const failed = isOutboundChatMessageFailure(message)
     const scheduled = isMessageScheduled(message)
     const sending = message.direction === 'outbound' && isChatMessageSendInFlight(status) && !scheduled && !failed
     return (
       <span className={styles.messageMeta}>
+        {routingBadgeLabel ? <em className={styles.messageTransport}>{routingBadgeLabel}</em> : null}
         {transportLabel ? <em className={styles.messageTransport}>{transportLabel}</em> : null}
         {formatMessageTime(message.date)}
         {message.direction === 'outbound' && !failed && !scheduled && !sending ? <CheckCheck size={13} /> : null}
@@ -10007,7 +10007,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
                                         })()
                                       ) : null}
                                       {message.text ? <WhatsAppFormattedText text={message.text} className={styles.commentBody} /> : null}
-                                      {renderMessageMeta(message, routingDetails.label)}
+                                      {renderMessageMeta(message, routingDetails.label, routingDetails.badgeLabel)}
                                       {message.direction === 'inbound' && !message.commentReplyMode && message.commentId ? (
                                         <button
                                           type="button"
@@ -10050,7 +10050,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
                               </div>
                               {renderMessageReactions(message)}
                               {routingDetails.reason ? <small className={styles.messageRoutingNote}>{routingDetails.reason}</small> : null}
-                              {!message.isComment ? renderMessageMeta(message, routingDetails.label) : null}
+                              {!message.isComment ? renderMessageMeta(message, routingDetails.label, routingDetails.badgeLabel) : null}
                             </div>
                           </div>
                         )

@@ -8,6 +8,7 @@ const compiled = await transform(source, { loader: 'ts', format: 'esm', target: 
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled.code).toString('base64')}`
 const {
   getChatBubbleColorChannel,
+  getChatMessageRoutingPresentation,
   getChatMessageSourceLabel,
   resolveChatCommentPlatform,
   resolveChatMessageChannel
@@ -66,6 +67,41 @@ assert.equal(getChatMessageSourceLabel({ eventType: 'whatsapp_message', transpor
 assert.equal(getChatMessageSourceLabel({ channel: 'messenger', messageType: 'comment', commentPlatform: 'facebook' }), 'Facebook')
 assert.equal(getChatMessageSourceLabel({}), 'Sin canal')
 
+assert.deepEqual(
+  getChatMessageRoutingPresentation({
+    direction: 'outbound',
+    transport: 'api',
+    routingReason: 'La conversación lleva más de 24 horas sin respuesta del cliente; Ristak usó el respaldo QR del mismo número.'
+  }),
+  { badgeLabel: '+24 h · Se usó QR', reason: '' }
+)
+assert.deepEqual(
+  getChatMessageRoutingPresentation({
+    direction: 'outbound',
+    transport: 'qr',
+    routingReason: 'No hay una respuesta reciente del cliente que abra la ventana de WhatsApp API; Ristak usó el respaldo QR del mismo número.'
+  }),
+  { badgeLabel: '+24 h · Se usó QR', reason: '' },
+  'el historial recargado debe conservar la etiqueta aunque ya conozca el transporte QR real'
+)
+assert.deepEqual(
+  getChatMessageRoutingPresentation({
+    direction: 'outbound',
+    transport: 'api',
+    routingReason: 'WhatsApp API perdió autorización o conexión para este número.'
+  }),
+  { badgeLabel: '', reason: 'WhatsApp API perdió autorización o conexión para este número.' },
+  'otros motivos de enrutamiento siguen visibles'
+)
+assert.deepEqual(
+  getChatMessageRoutingPresentation({
+    direction: 'inbound',
+    transport: 'api',
+    routingReason: 'Motivo interno que no corresponde a un envío.'
+  }),
+  { badgeLabel: '', reason: '' }
+)
+
 const globalStyles = await readFile(new URL('../src/styles/index.css', import.meta.url), 'utf8')
 assert.match(globalStyles, /--chat-bubble-inbound:\s*#ffffff;/)
 assert.match(globalStyles, /--chat-bubble-outbound-whatsapp-api:\s*#d9fdd3;/)
@@ -82,7 +118,8 @@ assert.match(globalStyles, /body\.dark\s*\{[^}]*--chat-bubble-meta:\s*#b7b7bd;/s
 const desktopChatSource = await readFile(new URL('../src/pages/DesktopChat/DesktopChat.tsx', import.meta.url), 'utf8')
 const phoneChatSource = await readFile(new URL('../src/pages/PhoneChat/PhoneChat.tsx', import.meta.url), 'utf8')
 assert.match(desktopChatSource, /getChatMessageSourceLabel\(\{[\s\S]*?transport:\s*message\.transport,[\s\S]*?provider:\s*message\.provider,/)
-assert.match(desktopChatSource, /if \(message\.direction !== 'outbound'\) return \{ label, reason: '' \}/)
+assert.match(desktopChatSource, /getChatMessageRoutingPresentation\(\{[\s\S]*?routingReason:\s*message\.routingReason/)
+assert.match(desktopChatSource, /routingBadgeLabel[\s\S]*?transportLabel/)
 assert.match(phoneChatSource, /getChatMessageSourceLabel\(\{[\s\S]*?transport:\s*message\.transport,[\s\S]*?provider:\s*message\.provider,/)
 
 console.log('chat message channel colors and source labels OK')
