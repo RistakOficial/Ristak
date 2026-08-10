@@ -148,21 +148,24 @@ ventana de 24 horas cerrada/desconocida para contenido libre. El preflight evita
 tocar la API cuando la evidencia local ya lo demuestra; si el proveedor devuelve
 `131047` después de aceptar el request, Ristak conserva la autorización original,
 reclama el mensaje con una barrera `at-most-once` y lo manda por QR durante los
-primeros 15 minutos. No aplica a plantilla no aprobada, destinatario, contenido,
-`131053`, timeout, red ni HTTP 5xx. Campañas/broadcasts siempre usan
-`allowQrFallback=false`. Existe otra excepción deliberadamente estrecha para una
-plantilla que la API aceptó y el proveedor después rechazó por validación
-estructural de variables, cuerpo, componentes o idioma. El código numérico no
-decide porque cambia entre proveedores y versiones: el mensaje del fallo debe
-contener tanto el elemento estructural como una señal inequívoca de desajuste,
-ausencia o invalidez. Si el intento original autorizó QR, tiene texto
-renderizado, ocurrió hace menos de 15 minutos y el respaldo está listo, Ristak
-manda ese mismo texto por QR.
+primeros 15 minutos. No aplica a plantilla no aprobada, destinatario bloqueado u
+opt-out, contenido, `131053`, timeout, red ni HTTP 5xx. Campañas/broadcasts
+siempre usan `allowQrFallback=false`. Existe otra excepción deliberadamente
+estrecha para una plantilla que la API aceptó y el proveedor después rechazó por
+validación estructural de variables, cuerpo, componentes o idioma. En esa
+clasificación semántica el código numérico no decide porque cambia entre
+proveedores y versiones: el mensaje del fallo debe contener tanto el elemento
+estructural como una señal inequívoca de desajuste, ausencia o invalidez.
+Además, `130472` es una excepción explícita: confirma que Meta no entregó la
+plantilla por su experimento de destinatarios y autoriza el mismo respaldo QR;
+no debe confundirse con un bloqueo u opt-out sólo porque el texto diga `User`.
+Si el intento original autorizó QR, tiene texto renderizado, ocurrió hace menos
+de 15 minutos y el respaldo está listo, Ristak manda ese mismo texto por QR.
 
 La excepción semántica de plantilla excluye expresamente timeout, red, HTTP
 408/429/5xx, errores temporales o reintentables, ventana de conversación,
-destinatario y multimedia. La ventana tiene su propio fallback anterior y nunca
-convierte una plantilla inválida en texto. También se excluye el estado local
+destinatario bloqueado/opt-out y multimedia. La ventana tiene su propio fallback
+anterior y nunca convierte una plantilla inválida en texto. También se excluye el estado local
 pendiente/rechazado/no aprobado de una plantilla: el fallback no sirve para
 saltarse la revisión de Meta. Un código desconocido con un error estructural
 definitivo sí puede aplicar; un código conocido con texto ambiguo no.
@@ -566,12 +569,13 @@ nuevo sigue el flujo estándar de Cloud API.
    pero solo un proveedor API debe ser el remitente activo para un número en un
    momento dado. No se debe enviar el mismo request por ambos “por seguridad”.
 7. Baileys puede ser fallback explícito. El resultado final debe registrar
-   `transport=qr` y `source_adapter=baileys`. Para `131047` en texto libre o un
-   rechazo asíncrono estructural y definitivo de plantilla, debe actualizar la
-   misma fila canónica, preservar el ID oficial en
+   `transport=qr` y `source_adapter=baileys`. Para `131047` en texto libre, el
+   `130472` explícito o un rechazo asíncrono estructural y definitivo de
+   plantilla, debe actualizar la misma fila canónica, preservar el ID oficial en
    `ycloud_message_id`/`meta_message_id` y reclamar primero
    `whatsapp_api_qr_fallback_attempts`. El código identifica la ventana; en la
-   excepción de plantilla se audita, pero no gobierna la clasificación.
+   excepción semántica de plantilla se audita, pero no gobierna la
+   clasificación; `130472` sí es una excepción exacta y deliberada.
 8. La preferencia global del tenant no decide el proveedor de salida. Cada
    mensaje usa el proveedor de la fila `phoneNumberId` elegida.
 9. Al arrancar una versión que introduce la identidad de protocolo, Ristak

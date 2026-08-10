@@ -290,6 +290,9 @@ const TEMPLATE_FALLBACK_AMBIGUOUS_ERROR_PATTERN = /\b(408|429|5\d\d|TIMEOUT|TIME
 const TEMPLATE_FALLBACK_NON_TEXT_ERROR_PATTERN = /\b(131047|131053|24.?HOUR|CUSTOMER SERVICE WINDOW|OUTSIDE (?:THE )?WINDOW|MEDIA|AUDIO|VIDEO|IMAGE|DOCUMENT|STICKER|MIME(?:TYPE)?|DOWNLOAD|UPLOAD|VENTANA DE (?:ATENCI[ÓO]N|CONVERSACI[ÓO]N)|FUERA DE (?:LA )?VENTANA|MULTIMEDIA|IMAGEN|DOCUMENTO|DESCARGA)\b/i
 const TEMPLATE_FALLBACK_RECIPIENT_ERROR_PATTERN = /\b(DESTINATARI[OA]S?|CLIENTE|USUARI[OA]S?|N[ÚU]MERO DE DESTINO|DIO DE BAJA|BLOQUEAD[OA] POR (?:EL )?USUARIO)\b/i
 const TEMPLATE_REJECTION_QR_FALLBACK_REASON = 'WhatsApp rechazó definitivamente la plantilla antes de entregarla; Ristak la envió como texto por el respaldo QR.'
+const TEMPLATE_EXPERIMENT_QR_FALLBACK_ERROR_CODES = new Set(['130472'])
+const TEMPLATE_EXPERIMENT_QR_FALLBACK_REASON =
+  'WhatsApp no entregó la plantilla porque el destinatario está incluido en el experimento 130472; Ristak la envió como texto por el respaldo QR.'
 const ASYNC_QR_FALLBACK_MAX_AGE_MS = 15 * 60 * 1000
 
 const REQUIRED_WEBHOOK_EVENTS = [
@@ -4250,6 +4253,15 @@ function isDeterministicTemplatePreDeliveryFailure({
     return false
   }
 
+  // 130472 confirma que Meta no entregó la plantilla por su experimento de
+  // destinatarios. No es opt-out ni bloqueo del usuario y reintentar la misma
+  // ruta oficial no cambia el resultado, por lo que el QR explícitamente
+  // autorizado sí puede rescatar este envío. Debe evaluarse antes del filtro
+  // genérico de "USER", que existe para impedir bypass de bloqueos reales.
+  if (TEMPLATE_EXPERIMENT_QR_FALLBACK_ERROR_CODES.has(cleanString(errorCode))) {
+    return true
+  }
+
   const failureText = `${cleanString(errorCode)} ${cleanString(errorMessage)}`.trim()
   if (
     !failureText ||
@@ -4265,6 +4277,12 @@ function isDeterministicTemplatePreDeliveryFailure({
     TEMPLATE_STRUCTURE_CONTEXT_PATTERN.test(failureText) &&
     TEMPLATE_VALIDATION_REJECTION_PATTERN.test(failureText)
   )
+}
+
+function getDeterministicTemplateQrFallbackReason({ errorCode } = {}) {
+  return TEMPLATE_EXPERIMENT_QR_FALLBACK_ERROR_CODES.has(cleanString(errorCode))
+    ? TEMPLATE_EXPERIMENT_QR_FALLBACK_REASON
+    : TEMPLATE_REJECTION_QR_FALLBACK_REASON
 }
 
 async function findAuthorizedTemplateSendForProviderMessage({
@@ -4629,6 +4647,9 @@ async function maybeFallbackRejectedTemplateViaQr({
     stored.provider_message_id ||
     stored.wamid
   )
+  const fallbackReason = getDeterministicTemplateQrFallbackReason({
+    errorCode: errorCode || stored.error_code
+  })
   const claim = await db.run(`
     INSERT INTO whatsapp_api_qr_fallback_attempts (
       api_message_id, provider, provider_message_id, error_code, error_message,
@@ -4641,7 +4662,7 @@ async function maybeFallbackRejectedTemplateViaQr({
     cleanProviderMessageId || null,
     cleanString(errorCode || stored.error_code) || null,
     cleanString(errorMessage || stored.error_message) || null,
-    TEMPLATE_REJECTION_QR_FALLBACK_REASON,
+    fallbackReason,
     fallbackPhoneRow.id
   ])
 
@@ -4671,7 +4692,7 @@ async function maybeFallbackRejectedTemplateViaQr({
       body: stored.message_text,
       externalId: `template-qr-fallback:${messageId}`,
       contactId: stored.contact_id,
-      fallbackReason: TEMPLATE_REJECTION_QR_FALLBACK_REASON,
+      fallbackReason,
       persist: false
     })
     const qrMessageId = cleanString(qrResponse.id || qrResponse.wamid)
@@ -4692,7 +4713,7 @@ async function maybeFallbackRejectedTemplateViaQr({
       },
       qrFallback: {
         applied: true,
-        reason: TEMPLATE_REJECTION_QR_FALLBACK_REASON,
+        reason: fallbackReason,
         phoneNumberId: fallbackPhoneRow.id,
         messageId: qrMessageId || null,
         status: qrStatus
@@ -4721,7 +4742,7 @@ async function maybeFallbackRejectedTemplateViaQr({
         qrMessageId || null,
         qrWamid || null,
         protocolMessageKeyId || null,
-        TEMPLATE_REJECTION_QR_FALLBACK_REASON,
+        fallbackReason,
         qrStatus,
         rawPayload,
         messageId

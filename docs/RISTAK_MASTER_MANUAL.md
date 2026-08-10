@@ -2648,8 +2648,9 @@ respaldo QR listo, el mensaje puede salir por QR únicamente cuando la solicitud
 lo autorizó. La ventana de 24 horas cerrada o desconocida para contenido libre
 también autoriza Baileys del mismo número; el preflight evita tocar la API y un
 `131047` posterior usa un claim `at-most-once` durante 15 minutos. Una plantilla
-no aprobada, errores de contenido o destinatario, `131053`, timeout, red o HTTP
-5xx jamás autorizan Baileys. También permite el respaldo una indisponibilidad
+no aprobada, errores de contenido o destinatario bloqueado/opt-out, `131053`,
+timeout, red o HTTP 5xx jamás autorizan Baileys. También permite el respaldo una
+indisponibilidad
 inequívoca del transporte (desconexión, autorización perdida,
 suspensión/restricción o límite confirmado). Cuando Meta pierde permisos, sólo
 su fila queda inactiva y YCloud/QR continúan operando. La
@@ -2657,11 +2658,14 @@ su fila queda inactiva y YCloud/QR continúan operando. La
 validación estructural inequívoca de variables, cuerpo, componentes o idioma.
 Como ese mensaje nunca pudo entregarse, Ristak puede enviar su texto renderizado
 por QR si la solicitud original lo autorizó, el QR está listo y no han pasado
-15 minutos. El código numérico se conserva para auditoría, pero no decide: puede
-variar entre proveedor y versión. Timeouts, red, HTTP 408/429/5xx, fallos
-temporales, destinatario y multimedia quedan fuera aunque el texto también
-mencione una plantilla. La ventana usa su propia regla anterior y nunca sirve
-para saltarse la aprobación de una plantilla.
+15 minutos. El código numérico se conserva para auditoría y normalmente no
+decide porque puede variar entre proveedor y versión. La excepción explícita es
+`130472`: Meta confirma que no entregó la plantilla por su experimento de
+destinatarios, por lo que Ristak puede rescatarla con el QR autorizado del mismo
+número sin tratar la palabra `User` como un bloqueo real. Timeouts, red, HTTP
+408/429/5xx, fallos temporales, destinatario bloqueado/opt-out y multimedia
+quedan fuera aunque el texto también mencione una plantilla. La ventana usa su
+propia regla anterior y nunca sirve para saltarse la aprobación de una plantilla.
 
 Los chats de escritorio y móvil sólo bloquean el texto libre fuera de la ventana
 cuando el remitente seleccionado no tiene un QR compatible listo. Si API y QR
