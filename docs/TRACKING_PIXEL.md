@@ -143,6 +143,28 @@ declara `tracking_source = 'native_site'`. Una conversión válida puede generar
 `native_site_conversion`, pero sólo cuando el envío es final y no quedó
 descalificado.
 
+#### Deduplicación de `PageView` entre Meta Pixel y CAPI
+
+Cuando una página publicada tiene el evento Meta de aterrizaje configurado como
+`PageView`, el renderer crea una sola llave `site_page_*` en el `<head>`. El
+Pixel del navegador dispara exactamente un `PageView` con esa llave en la opción
+`eventID`; el envío server-side reutiliza el mismo valor como `event_id`. Nombre
+e identificador deben coincidir en ambos carriles o Meta no puede deduplicarlos.
+
+No debe coexistir otro `fbq('track', 'PageView')` sin identificador en esa misma
+carga. Si el navegador bloquea el Pixel, CAPI conserva el ID generado como
+fallback y puede registrar la visita server-side, aunque naturalmente no habrá
+una pareja de navegador para deduplicar. El `<noscript>` se mantiene como
+fallback exclusivo para navegadores sin JavaScript y no corre junto al flujo
+normal.
+
+Si la página configura una conversión distinta al aterrizar, por ejemplo
+`ViewContent`, el `PageView` base sigue siendo una señal de navegador separada y
+la conversión personalizada usa su propia pareja Pixel+CAPI. Calendarios que sólo
+cargan el Pixel base también conservan su `PageView` de navegador. Preview y
+editor siguen sin emitir tracking real; `notrack`/`no_track` también lo omiten,
+salvo durante una ventana explícita y vigente de Meta Test Events.
+
 Los formularios HTML importados leen `ristakNativeIdentity()` y
 `ristakNativeBuildData()` en el instante de cada submit. No deben copiar la
 identidad al cargar la página ni depender de un objeto global alterno: el
