@@ -144,9 +144,11 @@ Usa estos formatos de forma intencional:
   después del instante calculado. No la apliques cuando una espera iniciada a
   tiempo vence normalmente: el scheduler debe liberarla por su salida normal.
   Sólo cuando ya no existe una ejecución activa correspondiente, la
-  reprogramación puede iniciar una vuelta nueva según
-  los disparadores de la automatización, incluso si el reingreso histórico está
-  desactivado. Al cancelar la cita, cualquier ejecución activa ligada sale del
+  reprogramación puede iniciar una vuelta nueva si los disparadores y la
+  configuración de reingreso de la automatización lo permiten. Cuando
+  **Permitir reingreso** está desactivado, una cita reprogramada no crea una
+  excepción: el contacto no vuelve a entrar después de haber completado o salido
+  del flujo. Al cancelar la cita, cualquier ejecución activa ligada sale del
   flujo y no revive la hora anterior. Si una integración sustituye el ID, exige
   una relación explícita con la cita reemplazada y nunca la infieras sólo por
   contacto, calendario o cercanía de horarios. Antes de liberar cualquier

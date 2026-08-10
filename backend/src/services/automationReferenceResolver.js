@@ -700,10 +700,10 @@ function inspectNodeConfig({ node, catalogs, issues, seen }) {
     })
   })
 
-  for (const key of ['calendar', 'assignedUser', 'user', 'phoneNumberId', 'senderNumberId']) {
+  for (const key of ['calendar', 'assignedUser', 'user', 'phoneNumberId', 'senderNumberId', 'senderPhoneNumberId']) {
     const catalog = key === 'calendar'
       ? 'calendars'
-      : key === 'phoneNumberId' || key === 'senderNumberId'
+      : key === 'phoneNumberId' || key === 'senderNumberId' || key === 'senderPhoneNumberId'
         ? 'whatsappNumbers'
         : 'users'
     addCatalogIssue({
@@ -785,6 +785,19 @@ function inspectNodeConfig({ node, catalogs, issues, seen }) {
       catalog: 'whatsappTemplates',
       fieldPath: 'templateId',
       value: config.templateId,
+      label: config.templateName
+    })
+  }
+
+  if (cleanString(config.template)) {
+    addCatalogIssue({
+      catalogs,
+      issues,
+      seen,
+      nodeId: node.id,
+      catalog: 'whatsappTemplates',
+      fieldPath: 'template',
+      value: config.template,
       label: config.templateName
     })
   }

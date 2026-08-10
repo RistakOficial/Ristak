@@ -151,7 +151,36 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
   }
 
   const setValue = (key: string, value: unknown) => {
-    onChange(withCommentReplySanitizer({ ...config, [key]: value }))
+    let next = { ...config, [key]: value }
+    if (definition.type === 'action-appointment-confirmation' && key === 'timingAnchor') {
+      next = value === 'after_booking'
+        ? {
+            ...next,
+            offsetValue: 0,
+            offsetUnit: 'minutes',
+            confirmationTimeoutValue: 6,
+            confirmationTimeoutUnit: 'hours',
+            confirmationTimeoutMode: 'response_window'
+          }
+        : {
+            ...next,
+            offsetValue: 1,
+            offsetUnit: 'days',
+            confirmationTimeoutValue: 6,
+            confirmationTimeoutUnit: 'hours',
+            confirmationTimeoutMode: 'response_window'
+          }
+    }
+    if (
+      definition.type === 'action-appointment-confirmation' &&
+      key === 'confirmationTimeoutMode' &&
+      value === 'response_window' &&
+      next.confirmationTimeoutUnit === 'days'
+    ) {
+      next.confirmationTimeoutValue = 6
+      next.confirmationTimeoutUnit = 'hours'
+    }
+    onChange(withCommentReplySanitizer(next))
   }
 
   const visibleTriggerFilters = definition.type === 'trigger-form-submitted'

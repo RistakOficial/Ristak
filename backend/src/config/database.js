@@ -8364,6 +8364,9 @@ async function initTablesUnlocked() {
         confirmation_reply_sent_at DATETIME,
         confirmation_reply_message_id TEXT,
         attempt_count INTEGER NOT NULL DEFAULT 1,
+        source_type TEXT DEFAULT 'appointment_reminder',
+        source_id TEXT,
+        source_config TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(reminder_id, appointment_id)
       )
@@ -8505,6 +8508,18 @@ async function initTablesUnlocked() {
 
     try {
       await db.run('ALTER TABLE appointment_reminder_sends ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 1')
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run("ALTER TABLE appointment_reminder_sends ADD COLUMN source_type TEXT DEFAULT 'appointment_reminder'")
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminder_sends ADD COLUMN source_id TEXT')
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminder_sends ADD COLUMN source_config TEXT')
     } catch (_) { /* columna ya existe */ }
 
     await db.run(`

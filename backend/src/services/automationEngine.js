@@ -73,6 +73,7 @@ const WAIT_KIND_TRIGGER_LINK_CLICK = 'trigger-link-click'
 const WAIT_KIND_EVENT_ACTION = 'event-action'
 const WAIT_KIND_CONDITION = 'condition'
 const WAIT_KIND_APPOINTMENT = 'appointment'
+const WAIT_KIND_APPOINTMENT_CONFIRMATION = 'appointment-confirmation'
 const APPOINTMENT_PAST_DUE_ACTIONS = new Set(['auto', 'continue', 'next_wait', 'specific_node', 'exit'])
 const WAIT_KIND_GOAL = 'goal'
 const WAIT_KIND_DRIP = 'drip'
@@ -2131,11 +2132,6 @@ const APPOINTMENT_STATUS_ALIASES = {
 }
 const CANCELLED_APPOINTMENT_WAIT_STATUSES = new Set(['cancelled', 'deleted', 'invalid'])
 const APPOINTMENT_AUTOMATION_EVENT_TYPES = new Set(['appointment-booked', 'appointment-status'])
-const APPOINTMENT_TRIGGER_NODE_TYPES = new Set([
-  'trigger-appointment-booked',
-  'trigger-appointment-status'
-])
-
 function triggerMatches(trigger, eventType, ctx) {
   const config = trigger.config || {}
   const matchCtx = trigger.type === 'trigger-contact-updated' ? withContactChangeContext(eventType, ctx) : ctx
@@ -6197,6 +6193,51 @@ async function executeAppointmentAction(node, ctx, enrollment = {}) {
   }
 }
 
+async function executeAppointmentConfirmationAction(node, ctx, enrollment = {}) {
+  const config = node.config || {}
+  const appointment = await loadAutomationAppointmentTarget(config, ctx)
+  const { executeAutomationAppointmentConfirmation } = await import('./appointmentRemindersService.js')
+  const result = await executeAutomationAppointmentConfirmation({
+    automationId: enrollment.automationId || ctx.automationId,
+    nodeId: node.id,
+    appointmentId: appointment.id,
+    config
+  })
+
+  if (result.status === 'scheduled') {
+    return {
+      wait: {
+        kind: WAIT_KIND_APPOINTMENT_CONFIRMATION,
+        resumeAt: result.sendAt,
+        context: {
+          waitExpectedAction: 'appointment_confirmation',
+          waitAppointmentId: appointment.id,
+          waitActionResource: node.id,
+          waitActionResourceName: node.label || 'Confirmar cita'
+        }
+      },
+      detail: `Confirmación programada para ${result.sendAt}`
+    }
+  }
+
+  const detail = result.status === 'sent'
+    ? 'Solicitud de confirmación de cita enviada'
+    : result.status === 'duplicate'
+      ? 'La solicitud de confirmación de esta cita ya había sido procesada'
+      : `Solicitud de confirmación omitida${result.reason ? `: ${result.reason}` : ''}`
+  return {
+    handle: 'out',
+    detail,
+    output: {
+      id_cita: appointment.id,
+      estado: result.status,
+      fecha_envio: result.sendAt || '',
+      id_mensaje: result.sentMessageId || ''
+    },
+    outputBaseId: 'confirmar_cita'
+  }
+}
+
 /**
  * Ejecuta un nodo. Devuelve:
  *  { handle, detail }            → continuar por esa salida
@@ -6571,6 +6612,9 @@ async function executeResolvedNode(node, ctx, enrollment) {
 
     case 'action-appointment-upsert':
       return executeAppointmentAction(node, ctx, enrollment)
+
+    case 'action-appointment-confirmation':
+      return executeAppointmentConfirmationAction(node, ctx, enrollment)
 
     case 'action-system-notification':
       return executeSystemNotification(node, ctx, enrollment)
@@ -7594,6 +7638,24 @@ function waitingNodeEventMatch(node, enrollment, eventType, ctx = {}) {
       ? { handle: 'out', detail: eventCompletionDetail(eventType, ctx) }
       : null
   }
+  if (
+    node?.type === 'action-appointment-confirmation' &&
+    enrollment.waitKind === WAIT_KIND_APPOINTMENT_CONFIRMATION
+  ) {
+    const lifecycleMatch = appointmentLifecycleEventMatch(
+      enrollment.context || {},
+      eventType,
+      ctx
+    )
+    return lifecycleMatch
+      ? {
+          appointmentRecheck: true,
+          detail: lifecycleMatch.rescheduled
+            ? 'La cita fue reprogramada; se recalculó el momento de la confirmación'
+            : 'La cita cambió; se revalidó el momento de la confirmación'
+        }
+      : null
+  }
   if (node?.type !== 'logic-wait') return null
 
   const mode = str(config.mode)
@@ -8008,7 +8070,6 @@ async function enrollMatching(
   baseCtx,
   {
     skipAutomationIds = new Set(),
-    allowAppointmentLifecycleReentry = false,
     allowedTriggerTypes = null
   } = {}
 ) {
@@ -8034,9 +8095,6 @@ async function enrollMatching(
     if (eventType === 'comment-received' && await commentTriggerShouldSkip(matched, baseCtx)) continue
 
     const settings = flow.settings || {}
-    const appointmentLifecycleReentryAllowed =
-      allowAppointmentLifecycleReentry &&
-      APPOINTMENT_TRIGGER_NODE_TYPES.has(matched.type)
     if (contact.id && settings.preventDuplicateActiveEnrollment !== false) {
       const active = await db.get(
         `SELECT id FROM automation_enrollments WHERE automation_id = ? AND contact_id = ? AND status IN (${ACTIVE_ENROLLMENT_STATUS_SQL})`,
@@ -8044,7 +8102,7 @@ async function enrollMatching(
       )
       if (active) continue
     }
-    if (contact.id && settings.allowReentry === false && !appointmentLifecycleReentryAllowed) {
+    if (contact.id && settings.allowReentry === false) {
       const any = await db.get(
         `SELECT id FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?`,
         [automation.id, contact.id]
@@ -8620,8 +8678,7 @@ export async function handleAutomationEvent(eventType, data = {}) {
     const automations = await listPublishedAutomations({ eventType, endpointId: eventData.endpointId })
     const consumedAutomationIds = await processActiveEnrollmentEvent(eventType, ctx)
     const enrolledAutomationIds = await enrollMatching(automations, eventType, ctx, {
-      skipAutomationIds: consumedAutomationIds,
-      allowAppointmentLifecycleReentry: appointmentWasRescheduled
+      skipAutomationIds: consumedAutomationIds
     })
     if (appointmentWasRescheduled) {
       const bookedAutomations = await listPublishedAutomations({
@@ -8636,7 +8693,6 @@ export async function handleAutomationEvent(eventType, data = {}) {
           ...consumedAutomationIds,
           ...enrolledAutomationIds
         ]),
-        allowAppointmentLifecycleReentry: true,
         allowedTriggerTypes: new Set(['trigger-appointment-booked'])
       })
     }
@@ -9077,6 +9133,13 @@ export async function processDueResumes() {
           detail: 'Reintentando paso que falló temporalmente'
         })
         await runFrom(automation.flow, enrollment, retryNodeId, ctx)
+        continue
+      }
+      if (
+        row.wait_kind === WAIT_KIND_APPOINTMENT_CONFIRMATION &&
+        currentNode?.type === 'action-appointment-confirmation'
+      ) {
+        await runFrom(automation.flow, enrollment, currentNode.id, ctx)
         continue
       }
       const wasReplyTimeout = row.wait_kind === WAIT_KIND_REPLY

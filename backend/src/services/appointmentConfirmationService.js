@@ -31,6 +31,23 @@ function nowIso() {
   return new Date().toISOString()
 }
 
+function parseReminderSendSourceConfig(value) {
+  try {
+    const parsed = JSON.parse(value || '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function reminderSendSetting(row, configKey, legacyKey = configKey) {
+  const sourceConfig = parseReminderSendSourceConfig(row?.source_config)
+  if (Object.prototype.hasOwnProperty.call(sourceConfig, configKey)) {
+    return sourceConfig[configKey]
+  }
+  return row?.[legacyKey]
+}
+
 function publishAppointmentChanged(contactId, appointmentId) {
   publishChatDataChangedEvent({
     contactId,
@@ -262,12 +279,13 @@ export async function handleInboundForConfirmation({
         s.id AS send_id,
         s.appointment_id,
         s.reminder_id,
+        s.source_config,
         r.bypass_automations,
         r.confirmation_success_action,
         a.title
       FROM appointment_reminder_sends s
       JOIN appointments a ON a.id = s.appointment_id
-      JOIN appointment_reminders r ON r.id = s.reminder_id
+      LEFT JOIN appointment_reminders r ON r.id = s.reminder_id
       WHERE s.contact_id = ?
         AND s.status = 'sent'
         AND s.message_type = 'confirmation'
@@ -292,7 +310,20 @@ export async function handleInboundForConfirmation({
 
     if (!pending) return null
 
-    const bypassAutomations = Number(pending.bypass_automations || 0) === 1
+    const bypassAutomations = reminderSendSetting(
+      pending,
+      'bypassAutomations',
+      'bypass_automations'
+    ) === true || Number(reminderSendSetting(
+      pending,
+      'bypassAutomations',
+      'bypass_automations'
+    ) || 0) === 1
+    const confirmationSuccessAction = reminderSendSetting(
+      pending,
+      'confirmationSuccessAction',
+      'confirmation_success_action'
+    )
 
     // Una sola escritura atómica crea o agrega el mensaje. Antes se hacía
     // SELECT + UPDATE/UPSERT y dos mensajes entregados en el mismo lote podían
@@ -342,7 +373,7 @@ export async function handleInboundForConfirmation({
       JSON.stringify(storedMessage ? [storedMessage] : []),
       bypassAutomations ? 1 : 0,
       serializeConfirmationSuccessActions(
-        pending.confirmation_success_action,
+        confirmationSuccessAction,
         LEGACY_CONFIRMATION_SUCCESS_ACTIONS
       ),
       now, now, now
@@ -466,6 +497,7 @@ async function processConfirmationTimeout(sendId, currentTime) {
         s.contact_id,
         s.confirmation_deadline_at,
         s.confirmation_timeout_status,
+        s.source_config,
         r.no_confirm_action,
         r.calendar_id AS reminder_calendar_id,
         a.title,
@@ -477,7 +509,7 @@ async function processConfirmationTimeout(sendId, currentTime) {
         c.first_name,
         c.full_name
       FROM appointment_reminder_sends s
-      JOIN appointment_reminders r ON r.id = s.reminder_id
+      LEFT JOIN appointment_reminders r ON r.id = s.reminder_id
       JOIN appointments a ON a.id = s.appointment_id
       LEFT JOIN contacts c ON c.id = s.contact_id
       WHERE s.id = ?
@@ -496,7 +528,11 @@ async function processConfirmationTimeout(sendId, currentTime) {
     // Una confirmación creada antes del alcance por calendario pudo quedar
     // ligada a una cita ajena. Nunca ejecutes su acción diferida (en especial
     // cancelar): se desactiva al detectarla y se conserva la fila como auditoría.
-    const reminderCalendarId = String(send.reminder_calendar_id || '').trim()
+    const reminderCalendarId = String(reminderSendSetting(
+      send,
+      'calendarId',
+      'reminder_calendar_id'
+    ) || '').trim()
     const appointmentCalendarId = String(send.calendar_id || '').trim()
     if (!reminderCalendarId || !appointmentCalendarId || reminderCalendarId !== appointmentCalendarId) {
       await transaction.run(`
@@ -572,7 +608,11 @@ async function processConfirmationTimeout(sendId, currentTime) {
       }
     }
 
-    const configuredAction = String(send.no_confirm_action || '').trim()
+    const configuredAction = String(reminderSendSetting(
+      send,
+      'noConfirmAction',
+      'no_confirm_action'
+    ) || '').trim()
     const shouldCancel = configuredAction === 'cancel_appointment'
     if (!shouldCancel) {
       await transaction.run(`
@@ -714,6 +754,7 @@ async function processConfirmationWindow(candidate, cutoff) {
   // Obtener datos del recordatorio para la acción configurada.
   const reminderData = await db.get(`
     SELECT
+      s.source_config,
       r.no_confirm_action,
       r.bypass_automations,
       r.confirmation_success_action,
@@ -722,10 +763,32 @@ async function processConfirmationWindow(candidate, cutoff) {
       c.phone,
       c.first_name
     FROM appointment_reminder_sends s
-    JOIN appointment_reminders r ON r.id = s.reminder_id
+    LEFT JOIN appointment_reminders r ON r.id = s.reminder_id
     JOIN contacts c ON c.id = s.contact_id
     WHERE s.id = ?
   `, [win.reminder_send_id])
+  if (reminderData) {
+    reminderData.no_confirm_action = reminderSendSetting(
+      reminderData,
+      'noConfirmAction',
+      'no_confirm_action'
+    )
+    reminderData.bypass_automations = reminderSendSetting(
+      reminderData,
+      'bypassAutomations',
+      'bypass_automations'
+    )
+    reminderData.confirmation_success_action = reminderSendSetting(
+      reminderData,
+      'confirmationSuccessAction',
+      'confirmation_success_action'
+    )
+    reminderData.confirmation_reply_text = reminderSendSetting(
+      reminderData,
+      'confirmationReplyText',
+      'confirmation_reply_text'
+    )
+  }
 
   const appointmentState = await db.get(`
     SELECT appointment_status, status, start_time

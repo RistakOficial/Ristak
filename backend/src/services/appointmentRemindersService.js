@@ -90,6 +90,7 @@ const ERROR_RETRY_MS = 15 * 60 * 1000
 // Un intento inicial y un único reintento automático. Los errores históricos
 // se migran como agotados porque no existe un contador fiable anterior.
 const MAX_SEND_ATTEMPTS = 2
+let automationAppointmentConfirmationSenderForTest = null
 
 const MESSAGE_TYPES = new Set(['reminder', 'confirmation'])
 // Ancla de envío: 'before_appointment' = X antes del inicio de la cita (clásico);
@@ -2279,6 +2280,10 @@ async function sendAppointmentReminderByChannel({ reminder, appointment, timezon
   return sendReminderViaWhatsAppDirect({ reminder, appointment, sender, timezone, attemptCount })
 }
 
+export function setAutomationAppointmentConfirmationSenderForTest(sender = null) {
+  automationAppointmentConfirmationSenderForTest = typeof sender === 'function' ? sender : null
+}
+
 // (APT-003) Al reprogramar una cita (cambia start_time) hay que olvidar los envíos ya
 // registrados para que el cron vuelva a calcular y reenviar el recordatorio en la nueva
 // fecha. La llave de dedup es (reminder_id|appointment_id) y no incluye start_time, así que
@@ -2303,17 +2308,40 @@ export async function clearAppointmentReminderSends(appointmentId) {
   return Number(res?.changes || 0)
 }
 
+function reminderSendSourceSnapshot(reminder = {}) {
+  const sourceType = cleanString(reminder.sourceType) || 'appointment_reminder'
+  return {
+    sourceType,
+    sourceId: cleanString(reminder.sourceId || reminder.id) || null,
+    sourceConfig: sourceType === 'automation'
+      ? JSON.stringify({
+          calendarId: cleanString(reminder.calendarId),
+          noConfirmAction: normalizeNoConfirmAction(reminder.noConfirmAction),
+          bypassAutomations: reminder.bypassAutomations === true || Number(reminder.bypassAutomations || 0) === 1,
+          confirmationSuccessAction: serializeConfirmationSuccessActions(
+            reminder.confirmationSuccessActions ?? reminder.confirmationSuccessAction,
+            DEFAULT_CONFIRMATION_SUCCESS_ACTIONS
+          ),
+          confirmationReplyText: cleanString(reminder.confirmationReplyText)
+        })
+      : null
+  }
+}
+
 async function recordSend({ reminder, appointment, status, sendAt, sentMessageId = '', errorMessage = '' }) {
+  const source = reminderSendSourceSnapshot(reminder)
   await db.run(`
     INSERT INTO appointment_reminder_sends (
       id, reminder_id, appointment_id, contact_id, status, message_type,
-      ai_enabled, sent_message_id, error_message, send_at, sent_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ai_enabled, sent_message_id, error_message, send_at, sent_at,
+      source_type, source_id, source_config
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     createSendId(), reminder.id, appointment.id, cleanString(appointment.contact_id) || null,
     status, reminder.messageType, reminder.aiEnabled ? 1 : 0,
     cleanString(sentMessageId) || null, cleanString(errorMessage) || null,
-    sendAt ? sendAt.toISO() : null, ['sent', 'error', 'skipped'].includes(status) ? nowIso() : null
+    sendAt ? sendAt.toISO() : null, ['sent', 'error', 'skipped'].includes(status) ? nowIso() : null,
+    source.sourceType, source.sourceId, source.sourceConfig
   ])
 }
 
@@ -2321,37 +2349,45 @@ async function recordSend({ reminder, appointment, status, sendAt, sentMessageId
 // estado 'sending' aprovechando el UNIQUE(reminder_id, appointment_id); si otra instancia
 // ya la insertó, el ON CONFLICT DO NOTHING deja changes=0 y NO enviamos (evita doble
 // mensaje al cliente). Solo el proceso que gana el claim (changes>0) procede a enviar.
-async function claimSend({ reminder, appointment, sendAt }) {
+async function claimSend({ reminder, appointment, sendAt, retryCooldownMs = ERROR_RETRY_MS }) {
+  const source = reminderSendSourceSnapshot(reminder)
   const res = await db.run(`
     INSERT INTO appointment_reminder_sends (
       id, reminder_id, appointment_id, contact_id, status, message_type,
-      ai_enabled, sent_message_id, error_message, send_at, sent_at, attempt_count
-    ) VALUES (?, ?, ?, ?, 'sending', ?, ?, NULL, NULL, ?, NULL, 1)
+      ai_enabled, sent_message_id, error_message, send_at, sent_at, attempt_count,
+      source_type, source_id, source_config
+    ) VALUES (?, ?, ?, ?, 'sending', ?, ?, NULL, NULL, ?, NULL, 1, ?, ?, ?)
     ON CONFLICT (reminder_id, appointment_id) DO NOTHING
   `, [
     createSendId(), reminder.id, appointment.id, cleanString(appointment.contact_id) || null,
     reminder.messageType, reminder.aiEnabled ? 1 : 0,
-    sendAt ? sendAt.toISO() : null
+    sendAt ? sendAt.toISO() : null,
+    source.sourceType, source.sourceId, source.sourceConfig
   ])
   if (Number(res?.changes || 0) > 0) {
-    return { claimed: true, attemptCount: 1, previousMessageId: '' }
+    return { claimed: true, attemptCount: 1, previousMessageId: '', status: 'sending' }
   }
 
   const previous = await db.get(`
-    SELECT sent_message_id, COALESCE(attempt_count, 1) AS attempt_count
+    SELECT status, sent_message_id, COALESCE(attempt_count, 1) AS attempt_count
     FROM appointment_reminder_sends
     WHERE reminder_id = ? AND appointment_id = ?
     LIMIT 1
   `, [reminder.id, appointment.id])
   const previousAttemptCount = Math.max(1, Number(previous?.attempt_count || 1))
   if (!previous || previousAttemptCount >= MAX_SEND_ATTEMPTS) {
-    return { claimed: false, attemptCount: previousAttemptCount, previousMessageId: '' }
+    return {
+      claimed: false,
+      attemptCount: previousAttemptCount,
+      previousMessageId: '',
+      status: cleanString(previous?.status)
+    }
   }
 
   // Si el intento anterior terminó en error y ya pasó el enfriamiento, reclamamos
   // la misma fila de forma atómica para reintentar. Los estados sent/skipped/sending
   // siguen siendo terminales para no duplicar mensajes.
-  const retryCutoff = DateTime.utc().minus({ milliseconds: ERROR_RETRY_MS }).toISO()
+  const retryCutoff = DateTime.utc().minus({ milliseconds: Math.max(0, Number(retryCooldownMs) || 0) }).toISO()
   const retryCutoffExpression = appointmentReminderRetryCutoffExpression()
   const retry = await db.run(`
     UPDATE appointment_reminder_sends
@@ -2365,7 +2401,10 @@ async function claimSend({ reminder, appointment, sendAt }) {
         attempt_count = COALESCE(attempt_count, 1) + 1,
         confirmation_deadline_at = NULL,
         confirmation_timeout_status = NULL,
-        confirmation_timeout_processed_at = NULL
+        confirmation_timeout_processed_at = NULL,
+        source_type = ?,
+        source_id = ?,
+        source_config = ?
     WHERE reminder_id = ?
       AND appointment_id = ?
       AND status = 'error'
@@ -2376,18 +2415,27 @@ async function claimSend({ reminder, appointment, sendAt }) {
     reminder.messageType,
     reminder.aiEnabled ? 1 : 0,
     sendAt ? sendAt.toISO() : null,
+    source.sourceType,
+    source.sourceId,
+    source.sourceConfig,
     reminder.id,
     appointment.id,
     MAX_SEND_ATTEMPTS,
     retryCutoff
   ])
   if (Number(retry?.changes || 0) === 0) {
-    return { claimed: false, attemptCount: previousAttemptCount, previousMessageId: '' }
+    return {
+      claimed: false,
+      attemptCount: previousAttemptCount,
+      previousMessageId: '',
+      status: cleanString(previous.status)
+    }
   }
   return {
     claimed: true,
     attemptCount: previousAttemptCount + 1,
-    previousMessageId: cleanString(previous.sent_message_id)
+    previousMessageId: cleanString(previous.sent_message_id),
+    status: 'sending'
   }
 }
 
@@ -2578,6 +2626,227 @@ async function finalizeSend({
       messageTimestamp: hiddenFailure.message_timestamp || hiddenFailure.created_at,
       isNew: false
     })
+  }
+}
+
+function automationConfirmationReminderId(automationId, nodeId) {
+  const cleanAutomationId = cleanString(automationId)
+  const cleanNodeId = cleanString(nodeId)
+  if (!cleanAutomationId || !cleanNodeId) {
+    throw createServiceError('La acción de confirmación no tiene una identidad válida.')
+  }
+  return `automation-confirmation:${cleanAutomationId}:${cleanNodeId}`
+}
+
+async function loadAutomationConfirmationAppointment(appointmentId) {
+  const id = cleanString(appointmentId)
+  if (!id) throw createServiceError('La acción de confirmación necesita una cita identificada.')
+  const appointment = await db.get(`
+    SELECT
+      a.id, a.calendar_id, a.title, a.start_time, a.date_added, a.source,
+      a.booking_channel, a.appointment_status, a.status, a.contact_id,
+      a.deleted_at, COALESCE(a.is_test, 0) AS is_test,
+      c.phone, c.email, c.first_name, c.last_name, c.full_name,
+      c.preferred_whatsapp_phone_number_id,
+      tl.public_id AS meeting_trigger_link_public_id
+    FROM appointments a
+    JOIN contacts c ON c.id = a.contact_id
+    LEFT JOIN trigger_links tl
+      ON tl.system_scope = 'calendar_meeting'
+      AND tl.owner_id = a.calendar_id
+      AND tl.active = 1
+      AND tl.archived = 0
+    WHERE a.id = ?
+    LIMIT 1
+  `, [id])
+  if (!appointment || appointment.deleted_at) {
+    throw createServiceError('La cita seleccionada ya no existe.', 404)
+  }
+  return appointment
+}
+
+function automationConfirmationReminderInput(config = {}, calendarId = '') {
+  const timing = normalizeOffsetForAnchor(
+    cleanString(config.timingAnchor) === 'after_booking' ? 'after_booking' : 'before_appointment',
+    config.offsetUnit,
+    config.offsetValue,
+    { clampMax: true }
+  )
+  const timeoutDefaults = getDefaultConfirmationTimeout(
+    timing.timingAnchor,
+    timing.offsetValue,
+    timing.offsetUnit
+  )
+  const configuredTimeoutValue = Number(config.confirmationTimeoutValue)
+  return {
+    calendarId,
+    name: cleanString(config.name) || 'Confirmación de cita desde automatización',
+    enabled: true,
+    messageType: 'confirmation',
+    aiEnabled: true,
+    channel: 'whatsapp',
+    senderMode: cleanString(config.senderMode || config.sender) || 'contact',
+    senderPhoneNumberId: cleanString(config.senderPhoneNumberId || config.senderNumberId) || null,
+    templateId: cleanString(config.template || config.templateId) || null,
+    templateName: cleanString(config.templateName || config.templateIdName),
+    templateLanguage: cleanString(config.templateLanguage) || 'es_MX',
+    contentMode: 'template',
+    timingAnchor: timing.timingAnchor,
+    offsetValue: timing.offsetValue,
+    offsetUnit: timing.offsetUnit,
+    smartEnabled: config.smartEnabled !== false,
+    smartStart: cleanString(config.smartStart) || '09:00',
+    smartEnd: cleanString(config.smartEnd) || '21:00',
+    smartOverflow: cleanString(config.smartOverflow) || 'before',
+    noConfirmAction: cleanString(config.noConfirmAction) || 'no_action',
+    confirmationTimeoutValue: Number.isInteger(configuredTimeoutValue) && configuredTimeoutValue > 0
+      ? configuredTimeoutValue
+      : timeoutDefaults.confirmationTimeoutValue,
+    confirmationTimeoutUnit: cleanString(config.confirmationTimeoutUnit) || timeoutDefaults.confirmationTimeoutUnit,
+    confirmationTimeoutMode: cleanString(config.confirmationTimeoutMode) || timeoutDefaults.confirmationTimeoutMode,
+    confirmationResponseStart: cleanString(config.confirmationResponseStart) || timeoutDefaults.confirmationResponseStart,
+    confirmationResponseEnd: cleanString(config.confirmationResponseEnd) || timeoutDefaults.confirmationResponseEnd,
+    confirmationReplyText: cleanString(config.confirmationReplyText),
+    confirmationSuccessActions: [
+      'mark_confirmed',
+      ...(config.createChatCard !== false ? ['chat_card'] : []),
+      ...(config.createChatBadge !== false ? ['chat_badge'] : [])
+    ],
+    bypassAutomations: config.bypassAutomations === true
+  }
+}
+
+/**
+ * Acción de Automatizaciones que combina programación y envío de una solicitud
+ * de confirmación. Si todavía no toca, devuelve `scheduled`; el motor conserva
+ * la inscripción en el mismo nodo y vuelve a evaluarlo en el instante indicado.
+ */
+export async function executeAutomationAppointmentConfirmation({
+  automationId,
+  nodeId,
+  appointmentId,
+  config = {}
+} = {}) {
+  const appointment = await loadAutomationConfirmationAppointment(appointmentId)
+  const configuredCalendarId = cleanString(config.calendar)
+  const calendarId = cleanString(appointment.calendar_id)
+  if (configuredCalendarId && configuredCalendarId !== calendarId) {
+    throw createServiceError('La cita seleccionada pertenece a otro calendario.', 409)
+  }
+  if (Number(appointment.is_test || 0) === 1) {
+    return { status: 'skipped', reason: 'test_appointment', appointmentId: appointment.id }
+  }
+
+  const status = cleanString(appointment.appointment_status || appointment.status).toLowerCase()
+  if (['cancelled', 'canceled', 'showed', 'noshow', 'no_show', 'invalid', 'deleted'].includes(status)) {
+    return { status: 'skipped', reason: 'terminal_appointment', appointmentId: appointment.id }
+  }
+
+  const prepared = await resolveReminderTemplateSelection(sanitizeReminderInput(
+    automationConfirmationReminderInput(config, calendarId)
+  ))
+  const reminder = {
+    ...prepared,
+    id: automationConfirmationReminderId(automationId, nodeId),
+    sourceType: 'automation',
+    sourceId: `${cleanString(automationId)}:${cleanString(nodeId)}`
+  }
+  const timezone = await getAccountTimezone()
+  const sendAt = computeReminderSendAt(
+    appointment.start_time,
+    reminder,
+    timezone,
+    appointment.date_added
+  )
+  if (!sendAt?.isValid) {
+    throw createServiceError('No se pudo calcular cuándo enviar la confirmación de cita.')
+  }
+
+  const now = DateTime.utc()
+  if (sendAt > now) {
+    return {
+      status: 'scheduled',
+      appointmentId: appointment.id,
+      sendAt: sendAt.toISO(),
+      timingAnchor: reminder.timingAnchor
+    }
+  }
+
+  const claim = await claimSend({
+    reminder,
+    appointment,
+    sendAt,
+    retryCooldownMs: 0
+  })
+  if (!claim.claimed) {
+    if (['sent', 'skipped'].includes(claim.status)) {
+      return { status: 'duplicate', appointmentId: appointment.id, sendAt: sendAt.toISO() }
+    }
+    throw createServiceError('La confirmación de cita no pudo reclamar un nuevo intento de envío.')
+  }
+
+  const bookedAt = parseStoredUtcDateTime(appointment.date_added)
+  const appointmentStart = parseStoredUtcDateTime(appointment.start_time)
+  let skipReason = ''
+  if (appointmentStart && appointmentStart <= now) {
+    skipReason = 'La cita ya comenzó; no se envió la solicitud de confirmación.'
+  } else if (reminder.timingAnchor !== 'after_booking' && bookedAt && sendAt < bookedAt) {
+    skipReason = 'La cita se agendó después del momento programado para confirmar.'
+  } else if (now.toMillis() - sendAt.toMillis() > SEND_GRACE_MS) {
+    skipReason = 'La solicitud de confirmación quedó fuera de la ventana de envío.'
+  }
+
+  if (skipReason) {
+    await finalizeSend({
+      reminder,
+      appointment,
+      status: 'skipped',
+      errorMessage: skipReason,
+      timezone,
+      attemptCount: claim.attemptCount,
+      previousMessageId: claim.previousMessageId
+    })
+    return { status: 'skipped', reason: skipReason, appointmentId: appointment.id }
+  }
+
+  try {
+    const missingTarget = getMissingReminderTarget(reminder, appointment)
+    if (missingTarget) throw createServiceError(missingTarget)
+    const sender = automationAppointmentConfirmationSenderForTest || sendAppointmentReminderByChannel
+    const response = await sender({
+      reminder,
+      appointment,
+      timezone,
+      attemptCount: claim.attemptCount
+    })
+    const sentMessageId = getSentMessageId(response)
+    await finalizeSend({
+      reminder,
+      appointment,
+      status: 'sent',
+      sentMessageId,
+      timezone,
+      attemptCount: claim.attemptCount,
+      previousMessageId: claim.previousMessageId
+    })
+    return {
+      status: 'sent',
+      appointmentId: appointment.id,
+      sendAt: sendAt.toISO(),
+      sentMessageId
+    }
+  } catch (error) {
+    await finalizeSend({
+      reminder,
+      appointment,
+      status: 'error',
+      sentMessageId: getFailedMessageId(error),
+      errorMessage: error.message,
+      timezone,
+      attemptCount: claim.attemptCount,
+      previousMessageId: claim.previousMessageId
+    })
+    throw error
   }
 }
 
