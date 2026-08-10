@@ -2867,20 +2867,26 @@ dentro del WABA. Los tokens de Meta Ads/Facebook/Instagram permanecen separados
 y no pueden reemplazar la credencial `whatsapp_meta_direct_*`. Si Meta retira el
 activo después, Ristak marca esa fila como `reconnect_required`, apaga su envío
 API y pide reconectar con un mensaje legible; el historial y la configuración de
-YCloud/QR permanecen intactos.
+YCloud/QR permanecen intactos. El rechazo `133010 Account not registered` se
+trata como pérdida de registro del número, no como un fallo pasajero ni como
+token vencido: detiene nuevos intentos y solicita volver a vincular Meta mediante
+Embedded Signup.
 
 Cada número tiene en la última columna acciones separadas para **Meta Directo**,
 **YCloud** y **QR**. Desconectar ahí sólo retira esa conexión de Ristak: no borra
 ni desregistra el número real en Meta, YCloud o WhatsApp. Una fila oficial puede
 conservar su respaldo QR, o viceversa, sin mezclar credenciales ni apagar la otra
-conexión. Los mensajes, contactos y plantillas históricas permanecen; los nuevos
-eventos API de una fila retirada se ignoran localmente hasta que el usuario la
-conecte otra vez de forma explícita.
+conexión. Al retirar YCloud, su identidad operativa local sí desaparece: si el QR
+de esa fila sigue siendo recuperable se transforma en una fila sólo QR; si está
+muerto, también se eliminan la fila y su sesión local. Los mensajes, contactos y
+plantillas históricas permanecen y una conexión explícita posterior vuelve a
+crear sólo los números que YCloud entregue como vigentes.
 
 Cuando se retira el último número YCloud, Ristak apaga primero la entrada local y
-marca todas las filas YCloud como inactivas. Luego pide a YCloud deshabilitar el
+deshabilita el envío de todas sus filas. Luego pide a YCloud deshabilitar el
 endpoint remoto y sólo borra API key, secreto e IDs después de recibir una
-confirmación compatible. Si el proveedor falla, el webhook queda
+confirmación compatible; entonces retira las filas YCloud locales o conserva sus
+respaldos recuperables ya convertidos a QR. Si el proveedor falla, el webhook queda
 `disconnect_pending`, las credenciales se conservan para reintentar y la API
 responde que la limpieza remota sigue pendiente; aun así, ningún webhook nuevo
 entra al CRM. El receptor público exige integración habilitada, API key,
@@ -2889,6 +2895,10 @@ un ID de endpoint, además debe coincidir. La identidad criptográfica se compru
 con `YCloud-Signature` cuando existe el secreto del endpoint. Si falla la barrera
 local responde `200` sin guardar evento, mensaje ni contacto, para que un webhook
 remoto huérfano no reviva una integración desconectada ni genere duplicados.
+Una reparación idempotente de arranque limpia instalaciones antiguas que ya
+habían borrado las credenciales pero conservaban números YCloud fantasma. En el
+mismo arranque, si el último resultado de envío del número Meta activo fue un
+`133010`, la conexión queda en `reconnect_required` antes de arrancar sus tareas.
 
 La sección **Números** muestra la búsqueda, el resumen y la tabla operativa a todo
 el ancho. No agrega un panel lateral de filtros que repita estados ya visibles en

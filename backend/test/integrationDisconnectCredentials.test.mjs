@@ -11,6 +11,7 @@ import {
   getWhatsAppApiConfigKeys,
   getWhatsAppApiStatus,
   previewWhatsAppApiPhoneNumbers,
+  repairDisconnectedYCloudPhoneRows,
   setYCloudFetchForTest
 } from '../src/services/whatsappApiService.js'
 import { handleYCloudWhatsAppApiWebhook } from '../src/controllers/whatsappApiController.js'
@@ -186,14 +187,13 @@ test('desconectar YCloud confirma el webhook remoto antes de borrar sus credenci
 
       const disconnected = await disconnectWhatsAppApi()
       const localPhone = await db.get(
-        'SELECT api_send_enabled, is_default_sender FROM whatsapp_api_phone_numbers WHERE id = ?',
+        'SELECT id FROM whatsapp_api_phone_numbers WHERE id = ?',
         [phoneId]
       )
 
       assert.equal(requests.length, 1)
       assert.deepEqual(requests[0].body, { status: 'disabled' })
-      assert.equal(Number(localPhone.api_send_enabled), 0)
-      assert.equal(Number(localPhone.is_default_sender), 0)
+      assert.equal(localPhone, null)
       assert.equal(disconnected.connected, false)
       assert.equal(await countExistingAppConfig(deletedOnDisconnect), 0)
       assert.equal((await getYCloudWebhookIngressDecision({ endpointId: 'webhook_verified_disconnect' })).allowed, false)
@@ -643,12 +643,11 @@ test('desconectar una fila YCloud solo retira ese número de Ristak', async () =
 
         const status = await disconnectWhatsAppPhoneNumber({ phoneNumberId: firstId, connection: 'api' })
         const [first, second] = await Promise.all([
-          db.get('SELECT api_send_enabled, is_default_sender FROM whatsapp_api_phone_numbers WHERE id = ?', [firstId]),
+          db.get('SELECT id FROM whatsapp_api_phone_numbers WHERE id = ?', [firstId]),
           db.get('SELECT api_send_enabled, is_default_sender FROM whatsapp_api_phone_numbers WHERE id = ?', [secondId])
         ])
 
-        assert.equal(Number(first.api_send_enabled), 0)
-        assert.equal(Number(first.is_default_sender), 0)
+        assert.equal(first, null)
         assert.equal(Number(second.api_send_enabled), 1)
         assert.equal(Number(second.is_default_sender), 1)
         assert.equal(status.phoneNumbers.some(phone => phone.id === firstId), false)
@@ -681,4 +680,81 @@ test('desconectar una fila YCloud solo retira ese número de Ristak', async () =
       await db.run('UPDATE whatsapp_api_phone_numbers SET is_default_sender = 1 WHERE id = ?', [row.id])
     }
   }
+})
+
+test('reparación de desconexión elimina filas YCloud muertas y conserva respaldos QR sin identidad YCloud', async () => {
+  const deadId = 'test_ycloud_stale_dead_row'
+  const qrId = 'test_ycloud_stale_qr_row'
+  const replacementId = 'test_meta_replacement_row'
+  const contactId = 'test_ycloud_stale_contact'
+  const cleanupKey = 'whatsapp_ycloud_disconnected_phone_cleanup_version'
+
+  await initializeMasterKey()
+  await snapshotAppConfig([
+    'whatsapp_api_enabled',
+    'whatsapp_api_ycloud_api_key_encrypted',
+    'whatsapp_api_provider',
+    'whatsapp_api_phone_number_id',
+    'whatsapp_api_sender_phone',
+    'whatsapp_api_waba_id',
+    cleanupKey
+  ], async () => {
+    try {
+      await setAppConfig('whatsapp_api_enabled', '0')
+      await setAppConfig('whatsapp_api_provider', 'meta_direct')
+      await setAppConfig(cleanupKey, 'v1')
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          status, api_send_enabled, qr_send_enabled, qr_status, is_default_sender
+        ) VALUES
+          (?, 'ycloud', 'waba_dead', '+526561119901', '+52 656 111 9901', 'YCloud muerto', 'CONNECTED', 0, 1, 'disconnected_428', 0),
+          (?, 'ycloud', 'waba_qr', '+526561119902', '+52 656 111 9902', 'YCloud con QR', 'CONNECTED', 0, 1, 'qr_repair_required', 0),
+          (?, 'meta_direct', 'waba_meta', '+526561119901', '+52 656 111 9901', 'Meta sano', 'CONNECTED', 1, 0, 'disconnected', 1)
+      `, [deadId, qrId, replacementId])
+      await db.run(`
+        INSERT INTO whatsapp_qr_sessions (
+          id, phone_number_id, expected_phone, status, consent_accepted, last_error
+        ) VALUES
+          (?, ?, '+526561119901', 'disconnected_428', 1, 'Connection Terminated by Server'),
+          (?, ?, '+526561119902', 'qr_repair_required', 1, 'Vuelve a vincular')
+      `, [`session_${deadId}`, deadId, `session_${qrId}`, qrId])
+      await db.run(
+        'INSERT INTO whatsapp_qr_auth_state (phone_number_id, auth_key, value_json) VALUES (?, ?, ?)',
+        [qrId, 'creds', '{"registered":true}']
+      )
+      await db.run(
+        'INSERT INTO whatsapp_qr_auth_state (phone_number_id, auth_key, value_json) VALUES (?, ?, ?)',
+        [deadId, 'creds', '{"registered":true}']
+      )
+      await db.run(`
+        INSERT INTO contacts (id, phone, full_name, source, preferred_whatsapp_phone_number_id)
+        VALUES (?, '+526561110099', 'Contacto reparación YCloud', 'test', ?)
+      `, [contactId, deadId])
+
+      const result = await repairDisconnectedYCloudPhoneRows()
+      const [dead, qr, contact] = await Promise.all([
+        db.get('SELECT id FROM whatsapp_api_phone_numbers WHERE id = ?', [deadId]),
+        db.get(`
+          SELECT provider, waba_id, status, api_send_enabled, qr_send_enabled, raw_payload_json
+          FROM whatsapp_api_phone_numbers WHERE id = ?
+        `, [qrId]),
+        db.get('SELECT preferred_whatsapp_phone_number_id FROM contacts WHERE id = ?', [contactId])
+      ])
+
+      assert.equal(result.removed, 1)
+      assert.equal(result.convertedToQr, 1)
+      assert.equal(dead, null)
+      assert.equal(qr.provider, 'qr')
+      assert.equal(qr.waba_id, null)
+      assert.equal(qr.status, 'QR_ONLY')
+      assert.equal(Number(qr.api_send_enabled), 0)
+      assert.equal(Number(qr.qr_send_enabled), 1)
+      assert.match(qr.raw_payload_json, /qr_only_after_ycloud_disconnect/)
+      assert.equal(contact.preferred_whatsapp_phone_number_id, replacementId)
+    } finally {
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id IN (?, ?, ?)', [deadId, qrId, replacementId]).catch(() => undefined)
+    }
+  })
 })

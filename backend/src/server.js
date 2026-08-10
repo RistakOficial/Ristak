@@ -53,7 +53,10 @@ import {
   renderDatabaseStorageErrorHtml
 } from './services/sitesService.js'
 import { shutdownWhatsAppQrService } from './services/whatsappQrService.js'
-import { repairWhatsAppProtocolMessageIdentities } from './services/whatsappApiService.js'
+import {
+  repairWhatsAppProtocolMessageIdentities,
+  repairWhatsAppProviderConnectionStates
+} from './services/whatsappApiService.js'
 import { startMetaOAuthPendingSessionCleanupScheduler } from './services/metaOAuthService.js'
 import { startMetaOAuthIntegrationCleanupScheduler } from './services/metaOAuthIntegrationService.js'
 import { scheduleAutomationTriggerIndexBootstrap } from './services/automationTriggerIndexService.js'
@@ -762,6 +765,13 @@ async function startRuntimeServices() {
 
   // Inicializar clave maestra de encriptación (DEBE ser lo primero)
   await initializeMasterKey()
+
+  // Una desconexión de proveedor debe retirar sus filas locales, no dejarlas
+  // como números fantasma. También corta Meta si el último envío probó que el
+  // número ya no está registrado, para evitar reintentos inútiles al arrancar.
+  await repairWhatsAppProviderConnectionStates().catch(error => {
+    logger.warn(`No se pudo reconciliar el estado local de WhatsApp: ${error.message}`)
+  })
 
   // El calendario semilla se crea una sola vez antes de aceptar tráfico. Nunca
   // se inicializa desde GET /api/calendars: abrir dos clientes en paralelo no

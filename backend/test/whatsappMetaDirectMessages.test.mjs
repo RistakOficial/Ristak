@@ -16,6 +16,8 @@ import {
   processMetaDirectInboundEnrichmentJob,
   requeueEphemeralMetaDirectMediaBatch,
   repairWhatsAppProtocolMessageIdentities,
+  repairWhatsAppProviderConnectionStates,
+  sendMetaDirectTestMessage,
   sendWhatsAppApiReactionMessage,
   sendWhatsAppApiTemplateMessage,
   sendWhatsAppApiTextMessage,
@@ -861,6 +863,81 @@ test('un rechazo ambiguo al marcar leído no desconecta Meta, pero un token inv�
   } finally {
     await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('Meta 133010 marca el número para reconexión y detiene nuevos envíos oficiales', async () => {
+  const suffix = randomUUID()
+  const phoneNumberId = `meta_phone_unregistered_${suffix}`
+  const wabaId = `meta_waba_unregistered_${suffix}`
+  const businessPhone = `+1557${Date.now().toString().slice(-7)}`
+  const customerPhone = `+5257${Date.now().toString().slice(-8)}`
+  const keys = getWhatsAppApiConfigKeys()
+
+  await withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, async () => {
+    setMetaDirectFetchForTest(async () => graphResponse({
+      error: {
+        code: 133010,
+        message: '(#133010) Account not registered'
+      }
+    }, 400))
+
+    await assert.rejects(
+      () => sendMetaDirectTestMessage({ to: customerPhone, text: 'Prueba de registro' }),
+      /dejó de estar registrado/
+    )
+
+    const [metaStatus, metaLastError, phone] = await Promise.all([
+      db.get('SELECT config_value FROM app_config WHERE config_key = ?', [keys.metaStatus]),
+      db.get('SELECT config_value FROM app_config WHERE config_key = ?', [keys.metaLastError]),
+      db.get('SELECT status, api_send_enabled FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+    ])
+    assert.equal(metaStatus.config_value, 'reconnect_required')
+    assert.match(metaLastError.config_value, /dejó de estar registrado/)
+    assert.deepEqual(phone, { status: 'AUTHORIZATION_REQUIRED', api_send_enabled: 0 })
+  })
+})
+
+test('reparación de arranque detecta un 133010 persistido como último resultado de Meta', async () => {
+  const suffix = randomUUID()
+  const phoneNumberId = `meta_phone_startup_repair_${suffix}`
+  const wabaId = `meta_waba_startup_repair_${suffix}`
+  const businessPhone = `+1558${Date.now().toString().slice(-7)}`
+  const customerPhone = `+5258${Date.now().toString().slice(-8)}`
+  const messageId = `meta_failed_startup_${suffix}`
+  const cleanupKey = 'whatsapp_ycloud_disconnected_phone_cleanup_version'
+  const previousCleanupVersion = await db.get(
+    'SELECT config_value FROM app_config WHERE config_key = ?',
+    [cleanupKey]
+  )
+
+  try {
+    await setAppConfig(cleanupKey, 'v1')
+    await withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, async () => {
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, source_adapter, business_phone_number_id, phone,
+          from_phone, to_phone, business_phone, transport, direction,
+          message_type, status, error_code, error_message, message_timestamp
+        ) VALUES (?, 'meta_direct', 'meta_direct', ?, ?, ?, ?, ?, 'api', 'outbound',
+          'text', 'failed', '400', '(#133010) Account not registered', CURRENT_TIMESTAMP)
+      `, [messageId, phoneNumberId, customerPhone, businessPhone, customerPhone, businessPhone])
+
+      const result = await repairWhatsAppProviderConnectionStates()
+      const phone = await db.get(
+        'SELECT status, api_send_enabled FROM whatsapp_api_phone_numbers WHERE id = ?',
+        [phoneNumberId]
+      )
+      assert.equal(result.metaRegistrationRequired, true)
+      assert.deepEqual(phone, { status: 'AUTHORIZATION_REQUIRED', api_send_enabled: 0 })
+    })
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_messages WHERE id = ?', [messageId]).catch(() => undefined)
+    if (previousCleanupVersion) {
+      await setAppConfig(cleanupKey, previousCleanupVersion.config_value)
+    } else {
+      await db.run('DELETE FROM app_config WHERE config_key = ?', [cleanupKey])
+    }
   }
 })
 

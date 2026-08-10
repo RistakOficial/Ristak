@@ -122,6 +122,8 @@ const WEBHOOK_DESCRIPTION = 'Ristak WhatsApp API'
 const GENERIC_CONTACT_NAME = GENERIC_WHATSAPP_API_CONTACT_NAME
 const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY = 'whatsapp_protocol_identity_repair_version'
 const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION = '2026-08-06-v4'
+const YCLOUD_DISCONNECTED_PHONE_CLEANUP_CONFIG_KEY = 'whatsapp_ycloud_disconnected_phone_cleanup_version'
+const YCLOUD_DISCONNECTED_PHONE_CLEANUP_VERSION = 'v1'
 const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-images')
 let ycloudFetch = nodeFetch
 let metaDirectFetch = nodeFetch
@@ -3625,6 +3627,141 @@ async function selectNextDefaultWhatsAppPhone() {
   return null
 }
 
+function isRecoverableQrConnection({ phone = {}, session = {}, authItems = 0 } = {}) {
+  if (Number(phone.qr_send_enabled || 0) !== 1) return false
+  const status = cleanString(session.status || phone.qr_status).toLowerCase()
+  if (
+    status.startsWith('disconnected') ||
+    ['logged_out', 'bad_session', 'number_mismatch'].includes(status)
+  ) {
+    return false
+  }
+  return Number(authItems || 0) > 0 || [
+    'starting',
+    'qr_pending',
+    'connected',
+    'reconnecting',
+    'restarting',
+    'connection_replaced',
+    'qr_repair_required'
+  ].includes(status)
+}
+
+async function findReplacementWhatsAppPhone(phone = {}) {
+  const matchPhones = getPhoneRowMatchValues(phone)
+  if (!matchPhones.length) return null
+
+  const candidates = await db.all(`
+    SELECT ${BUSINESS_PHONE_ROW_SELECT}
+    FROM whatsapp_api_phone_numbers
+    WHERE id != ?
+      AND LOWER(COALESCE(provider, '')) != ?
+    ORDER BY api_send_enabled DESC, is_default_sender DESC, updated_at DESC
+  `, [phone.id, PROVIDER_NAME]).catch(() => [])
+
+  return candidates.find(candidate => rowMatchesAnyPhone(candidate, matchPhones)) || null
+}
+
+async function removeDisconnectedYCloudPhoneRow(phone = {}) {
+  const replacement = await findReplacementWhatsAppPhone(phone)
+  const replacementId = cleanString(replacement?.id) || null
+
+  if (Number(phone.qr_send_enabled || 0) === 1) {
+    await disconnectWhatsAppQrConnection({ phoneNumberId: phone.id }).catch(error => {
+      logger.warn(`WhatsApp: no se pudo cerrar el QR retirado de YCloud ${phone.id}: ${error.message}`)
+    })
+  }
+
+  await db.run(
+    'UPDATE contacts SET preferred_whatsapp_phone_number_id = ?, updated_at = CURRENT_TIMESTAMP WHERE preferred_whatsapp_phone_number_id = ?',
+    [replacementId, phone.id]
+  ).catch(() => undefined)
+  await db.run(
+    'UPDATE scheduled_chat_messages SET business_phone_number_id = ?, updated_at = CURRENT_TIMESTAMP WHERE business_phone_number_id = ?',
+    [replacementId, phone.id]
+  ).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phone.id]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phone.id]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_labels WHERE phone_number_id = ?', [phone.id]).catch(() => undefined)
+  await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phone.id}`]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phone.id])
+
+  logger.info(
+    `WhatsApp: fila desconectada de YCloud retirada: ${phone.phone_number || phone.display_phone_number || phone.id}` +
+    `${replacementId ? `; referencias movidas a ${replacementId}` : ''}.`
+  )
+}
+
+async function retireDisconnectedYCloudPhone(phone = {}) {
+  const [session, authCount] = await Promise.all([
+    db.get(`
+      SELECT status, connected_phone
+      FROM whatsapp_qr_sessions
+      WHERE phone_number_id = ?
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `, [phone.id]).catch(() => null),
+    db.get(
+      'SELECT COUNT(*) AS total FROM whatsapp_qr_auth_state WHERE phone_number_id = ?',
+      [phone.id]
+    ).catch(() => ({ total: 0 }))
+  ])
+
+  if (isRecoverableQrConnection({ phone, session, authItems: authCount?.total })) {
+    await db.run(`
+      UPDATE whatsapp_api_phone_numbers
+      SET provider = 'qr',
+          waba_id = NULL,
+          business_profile_json = NULL,
+          quality_rating = NULL,
+          messaging_limit = NULL,
+          status = 'QR_ONLY',
+          api_send_enabled = 0,
+          raw_payload_json = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [safeJson({ source: 'qr_only_after_ycloud_disconnect' }), phone.id])
+    logger.info(`WhatsApp: respaldo QR conservado sin YCloud para ${phone.phone_number || phone.id}.`)
+    return 'converted_to_qr'
+  }
+
+  await removeDisconnectedYCloudPhoneRow(phone)
+  return 'removed'
+}
+
+export async function repairDisconnectedYCloudPhoneRows({ force = false } = {}) {
+  const [cleanupVersion, config] = await Promise.all([
+    getAppConfig(YCLOUD_DISCONNECTED_PHONE_CLEANUP_CONFIG_KEY),
+    loadConfig()
+  ])
+  if (config.enabled && config.hasApiKey) {
+    return { repaired: false, skipped: 'ycloud_connected', removed: 0, convertedToQr: 0 }
+  }
+
+  const rows = await db.all(`
+    SELECT ${BUSINESS_PHONE_ROW_SELECT}, verified_name, label
+    FROM whatsapp_api_phone_numbers
+    WHERE LOWER(COALESCE(provider, ?)) = ?
+    ORDER BY updated_at DESC
+  `, [PROVIDER_NAME, PROVIDER_NAME]).catch(() => [])
+
+  if (!rows.length && !force && cleanupVersion === YCLOUD_DISCONNECTED_PHONE_CLEANUP_VERSION) {
+    return { repaired: false, skipped: 'already_repaired', removed: 0, convertedToQr: 0 }
+  }
+
+  let removed = 0
+  let convertedToQr = 0
+  for (const phone of rows) {
+    const outcome = await retireDisconnectedYCloudPhone(phone)
+    if (outcome === 'converted_to_qr') convertedToQr += 1
+    if (outcome === 'removed') removed += 1
+  }
+
+  await selectNextDefaultWhatsAppPhone()
+  await setAppConfig(YCLOUD_DISCONNECTED_PHONE_CLEANUP_CONFIG_KEY, YCLOUD_DISCONNECTED_PHONE_CLEANUP_VERSION)
+  return { repaired: removed > 0 || convertedToQr > 0, removed, convertedToQr }
+}
+
 export async function setWhatsAppApiDefaultPhoneNumber({ phoneNumberId } = {}) {
   const cleanPhoneNumberId = cleanString(phoneNumberId)
   if (!cleanPhoneNumberId) {
@@ -5265,6 +5402,8 @@ export async function disconnectWhatsAppPhoneNumber({ phoneNumberId, connection 
       if (metaDirect.connected) {
         await setAppConfig(CONFIG_KEYS.provider, META_DIRECT_PROVIDER_NAME)
       }
+    } else {
+      await retireDisconnectedYCloudPhone(phone)
     }
   } else {
     throw new Error('El proveedor oficial de ese número no es compatible')
@@ -6063,6 +6202,7 @@ export async function disconnectWhatsAppApi() {
   }
 
   await clearYCloudConnectionConfig()
+  await repairDisconnectedYCloudPhoneRows({ force: true })
   const nextDefault = await selectFallbackProvider()
   if (!nextDefault) {
     // selectNextDefaultWhatsAppPhone mantiene compatibilidad escribiendo
@@ -11581,13 +11721,26 @@ export async function setWhatsAppActiveProvider({ provider } = {}) {
 }
 
 const META_DIRECT_RECONNECT_MESSAGE = 'La conexión de WhatsApp API perdió permisos en Meta. Vuelve a conectarla desde Configuración > WhatsApp.'
+const META_DIRECT_REGISTRATION_MESSAGE = 'El número dejó de estar registrado en WhatsApp API. Vuelve a vincular Meta desde Configuración > WhatsApp para registrarlo otra vez.'
+
+function isMetaDirectRegistrationError(error) {
+  const graphCode = Number(error?.graphCode || error?.code || 0)
+  const text = cleanString(error?.graphMessage || error?.message)
+  return graphCode === 133010 || /(?:#|\b)133010\b|account not registered/i.test(text)
+}
+
+function getMetaDirectReconnectMessage(error) {
+  return isMetaDirectRegistrationError(error)
+    ? META_DIRECT_REGISTRATION_MESSAGE
+    : META_DIRECT_RECONNECT_MESSAGE
+}
 
 function isMetaDirectAuthorizationError(error, { authorizationPolicy = 'full' } = {}) {
   const graphCode = Number(error?.graphCode || error?.code || 0)
   const graphSubcode = Number(error?.graphSubcode || error?.errorSubcode || 0)
   if (graphCode === 190) return true
   if (authorizationPolicy === 'token_only') return false
-  return graphCode === 200 || (graphCode === 100 && graphSubcode === 33) ||
+  return isMetaDirectRegistrationError(error) || graphCode === 200 || (graphCode === 100 && graphSubcode === 33) ||
     cleanString(error?.code) === 'META_PHONE_NOT_AUTHORIZED'
 }
 
@@ -11598,9 +11751,10 @@ async function markMetaDirectAuthorizationRequired({
 } = {}) {
   if (!isMetaDirectAuthorizationError(error, { authorizationPolicy })) return false
   const configuredPhoneNumberId = cleanString(phoneNumberId) || cleanString(await getAppConfig(CONFIG_KEYS.metaPhoneNumberId))
+  const reconnectMessage = getMetaDirectReconnectMessage(error)
   await Promise.all([
     setAppConfig(CONFIG_KEYS.metaStatus, 'reconnect_required'),
-    setAppConfig(CONFIG_KEYS.metaLastError, META_DIRECT_RECONNECT_MESSAGE),
+    setAppConfig(CONFIG_KEYS.metaLastError, reconnectMessage),
     configuredPhoneNumberId
       ? db.run(`
           UPDATE whatsapp_api_phone_numbers
@@ -11702,7 +11856,7 @@ async function metaDirectGraphRequest(path, {
     error.graphMessage = baseMessage
     error.graphDetails = actionableDetail || null
     if (isMetaDirectAuthorizationError(error, { authorizationPolicy })) {
-      error.message = META_DIRECT_RECONNECT_MESSAGE
+      error.message = getMetaDirectReconnectMessage(error)
     }
     if (operational) {
       await markMetaDirectAuthorizationRequired({ error, phoneNumberId, authorizationPolicy })
@@ -11710,6 +11864,40 @@ async function metaDirectGraphRequest(path, {
     throw error
   }
   return data
+}
+
+export async function repairWhatsAppProviderConnectionStates() {
+  const ycloud = await repairDisconnectedYCloudPhoneRows()
+  const metaDirect = await loadMetaDirectConfig()
+  let metaRegistrationRequired = false
+
+  if (metaDirect.connected && metaDirect.phoneNumberId) {
+    const latestOperationalResult = await db.get(`
+      SELECT status, error_message
+      FROM whatsapp_api_messages
+      WHERE business_phone_number_id = ?
+        AND LOWER(COALESCE(direction, '')) = 'outbound'
+        AND (
+          LOWER(COALESCE(status, '')) IN ('sent', 'delivered', 'read', 'failed')
+          OR LOWER(COALESCE(error_message, '')) LIKE '%account not registered%'
+          OR COALESCE(error_message, '') LIKE '%133010%'
+        )
+      ORDER BY COALESCE(message_timestamp, created_at, updated_at) DESC
+      LIMIT 1
+    `, [metaDirect.phoneNumberId]).catch(() => null)
+
+    if (
+      cleanString(latestOperationalResult?.status).toLowerCase() === 'failed' &&
+      /(?:#|\b)133010\b|account not registered/i.test(cleanString(latestOperationalResult?.error_message))
+    ) {
+      const error = new Error(cleanString(latestOperationalResult.error_message))
+      error.graphCode = 133010
+      await markMetaDirectAuthorizationRequired({ error, phoneNumberId: metaDirect.phoneNumberId })
+      metaRegistrationRequired = true
+    }
+  }
+
+  return { ycloud, metaRegistrationRequired }
 }
 
 async function validateMetaDirectOperationalAccess({ wabaId, phoneNumberId, token, operational = false } = {}) {

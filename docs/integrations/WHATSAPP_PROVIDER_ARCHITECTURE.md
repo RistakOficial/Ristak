@@ -678,10 +678,13 @@ de Meta Ads, Facebook o Instagram nunca puede sustituir el token cifrado de
 `whatsapp_meta_direct_*`, aunque pertenezca a la misma app y al mismo negocio.
 
 Meta puede retirar permisos o acceso al activo después del onboarding. Si Graph
-responde `code=100/subcode=33`, `code=190` o un error de permisos equivalente al
-operar el WABA/número o hacer un envío real, Ristak cambia la conexión a
+responde `code=100/subcode=33`, `code=190`, `code=133010` (`Account not
+registered`) o un error equivalente al operar el WABA/número o hacer un envío
+real, Ristak cambia la conexión a
 `reconnect_required`, desactiva el envío API de esa fila y muestra una instrucción
-corta para reconectar. Las operaciones auxiliares no tienen esa autoridad: un
+corta para reconectar. `133010` no se presenta como un token vencido: indica que
+el número debe volver a vincularse/registrarse mediante Embedded Signup. Las
+operaciones auxiliares no tienen esa autoridad: un
 `100/33` aislado al marcar un mensaje como leído puede referirse sólo a ese WAMID
 o a su contexto de Coexistence y no debe apagar el remitente. En esa ruta sólo un
 `code=190`, que confirma que el token dejó de ser válido, cambia el estado global.
@@ -766,9 +769,13 @@ autoridad para retirar una conexión individual. La acción siempre nombra el
 proveedor o transporte y exige escribir `DESCONECTAR`. En este flujo
 **desconectar no significa borrar ni dar de baja el número real**:
 
-- YCloud: se marca sólo esa fila con `api_send_enabled=0`, deja de ofrecerse
-  para enviar y sus nuevos eventos de mensajes se ignoran localmente. Ristak no
-  llama una operación remota de borrado. Si era el último número YCloud activo,
+- YCloud: la fila deja de ofrecerse para enviar y sus nuevos eventos se ignoran
+  localmente. Ristak no llama una operación remota para borrar el número real.
+  Si todavía tiene un QR recuperable, la fila se convierte en `provider=qr` y
+  pierde WABA, métricas, payload e identidad YCloud; si no tiene QR recuperable,
+  la fila local y su sesión/auth QR muerta se eliminan. Las preferencias de
+  contactos y mensajes programados se mueven a una fila oficial del mismo
+  teléfono cuando existe. Si era el último número YCloud activo,
   primero bloquea globalmente la entrada YCloud y deshabilita todas sus filas;
   después exige que el endpoint remoto confirme `disabled`/`inactive` antes de
   limpiar la API key, secreto e identificadores locales. Si YCloud falla, la
@@ -784,9 +791,14 @@ proveedor o transporte y exige escribir `DESCONECTAR`. En este flujo
   acciones separadas. Retirar QR no toca API; retirar API no toca el QR.
 
 Mensajes, contactos, plantillas, eventos e IDs históricos permanecen para
-auditoría. Las filas oficiales desactivadas se conservan como tombstone local
-para impedir que una sincronización normal de YCloud las reactive; una conexión
-explícita posterior sí puede reactivarlas.
+auditoría aunque desaparezca la fila operativa YCloud. Una sincronización normal
+no puede reactivar YCloud sin integración y credencial activas; una conexión
+explícita posterior vuelve a crear/sincronizar las filas vigentes del proveedor.
+Al arrancar, una reparación idempotente retira filas YCloud heredadas que ya no
+tienen credenciales y conserva únicamente sus QR recuperables como filas QR.
+También revisa el último resultado operativo de Meta: si quedó persistido un
+`133010` sin un éxito posterior, marca `reconnect_required` antes de habilitar
+crones o nuevos envíos.
 
 El receptor público YCloud responde de forma inerte y no persiste evento,
 mensaje ni contacto cuando falta cualquiera de estas condiciones locales:
