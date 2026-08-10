@@ -80,5 +80,5 @@ test('Meta Direct persiste inbound antes de enriquecer media y acota ambas desca
   assert.match(source, /onInboundPersisted\(buildResult\(\)\)/)
   assert.match(source, /throwOnError:\s*true/)
   assert.match(source, /jobKind:\s*CHAT_DELIVERY_JOB_KIND\.META_ENRICHMENT/)
-  assert.match(source, /WHERE id = \? AND COALESCE\(media_url, ''\) = ''/)
+  assert.match(source, /WHERE id = \? AND COALESCE\(media_url, ''\) = \?/)
 })

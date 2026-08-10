@@ -14,6 +14,7 @@ import {
   processMetaDirectWebhookPayload,
   processMetaDirectWebhookRelay,
   processMetaDirectInboundEnrichmentJob,
+  requeueEphemeralMetaDirectMediaBatch,
   repairWhatsAppProtocolMessageIdentities,
   sendWhatsAppApiReactionMessage,
   sendWhatsAppApiTemplateMessage,
@@ -995,6 +996,107 @@ test('Meta direct confirma fila y callback antes de hidratar media, luego actual
         (await db.get('SELECT COUNT(*) AS total FROM whatsapp_api_messages WHERE wamid = ?', [wamid])).total,
         1
       )
+    })
+  } finally {
+    resetMetaDirectChatDeliveryHandlersForTest()
+    setMetaDirectInboundMediaHydratorForTest(null)
+    await db.run('DELETE FROM chat_delivery_outbox WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_attribution WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR wamid = ?', [contactId || '', wamid]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
+    await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
+  }
+})
+
+test('Meta direct rescata links temporales ya confirmados y los reemplaza en la misma burbuja', async () => {
+  const suffix = randomUUID()
+  const phoneNumberId = `meta_media_temporary_phone_${suffix}`
+  const wabaId = `meta_media_temporary_waba_${suffix}`
+  const businessPhone = `+1554${Date.now().toString().slice(-7)}`
+  const customerPhone = `+5254${Date.now().toString().slice(-8)}`
+  const wamid = `wamid.meta.media.temporary.${suffix}`
+  const mediaId = `meta_media_temporary_${suffix}`
+  const temporaryUrl = `https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=${mediaId}`
+  const stableUrl = `/media/assets/${mediaId}/file`
+  let contactId = ''
+  let hydrationCallCount = 0
+
+  try {
+    await withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, async () => {
+      setMetaDirectChatDeliveryHandlersForTest({
+        connectionChecker: async () => false,
+        pushSender: async () => ({ sent: 1 })
+      })
+      setMetaDirectInboundMediaHydratorForTest(async ({ media }) => {
+        hydrationCallCount += 1
+        return {
+          ...media,
+          mediaUrl: stableUrl,
+          mediaMimeType: 'audio/ogg',
+          mediaFilename: 'nota-de-voz.ogg'
+        }
+      })
+
+      const [received] = await processMetaDirectWebhookPayload({
+        payload: webhookEnvelope({
+          wabaId,
+          phoneNumberId,
+          businessPhone,
+          contacts: [{ wa_id: customerPhone, profile: { name: 'Cliente Media Temporal' } }],
+          messages: [{
+            id: wamid,
+            from: customerPhone,
+            timestamp: String(Math.floor(Date.now() / 1000)),
+            type: 'audio',
+            audio: {
+              id: mediaId,
+              mime_type: 'audio/ogg; codecs=opus',
+              link: temporaryUrl
+            }
+          }]
+        }),
+        eventRowId: `evt-media-temporary-${suffix}`
+      })
+      contactId = received.contactId
+
+      assert.equal((await db.get(
+        'SELECT media_url FROM whatsapp_api_messages WHERE id = ?',
+        [received.messageId]
+      )).media_url, temporaryUrl)
+
+      // Reproduce el estado observado en producción: el outbox viejo marcó el
+      // enriquecimiento como completado sólo porque media_url no estaba vacío.
+      await db.run(`
+        UPDATE chat_delivery_outbox
+        SET status = 'completed', completed_at = CURRENT_TIMESTAMP
+        WHERE job_kind = 'meta_enrichment' AND message_id = ?
+      `, [received.messageId])
+
+      const repair = await requeueEphemeralMetaDirectMediaBatch({ limit: 25 })
+      assert.equal(repair.requeued, 1)
+      assert.equal((await getChatDeliveryJob({
+        jobKind: CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT,
+        messageId: received.messageId
+      })).status, 'pending')
+
+      const drained = await drainMetaDirectChatDeliveryJobs({
+        requireConnected: false,
+        jobKinds: [CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT],
+        retryDelayMs: 0
+      })
+      assert.equal(drained.completed, 1)
+      assert.equal(hydrationCallCount, 1)
+
+      const repaired = await db.get(
+        'SELECT media_url, media_mime_type, media_filename FROM whatsapp_api_messages WHERE id = ?',
+        [received.messageId]
+      )
+      assert.deepEqual(repaired, {
+        media_url: stableUrl,
+        media_mime_type: 'audio/ogg',
+        media_filename: 'nota-de-voz.ogg'
+      })
     })
   } finally {
     resetMetaDirectChatDeliveryHandlersForTest()

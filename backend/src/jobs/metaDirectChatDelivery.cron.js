@@ -35,6 +35,7 @@ let pushSenderForTest = null
 let enrichmentProcessorForTest = null
 let connectionCheckerForTest = null
 let lastDeliveryCleanupAt = 0
+let legacyMediaRepairCompleted = false
 
 async function cleanupChatDeliveryOutboxIfDue() {
   const now = Date.now()
@@ -85,6 +86,17 @@ async function runEnrichmentJob(job) {
     messageId: job.message_id,
     payload: job.payload
   })
+}
+
+async function requeueLegacyEphemeralMediaIfNeeded() {
+  if (legacyMediaRepairCompleted) return null
+  const { requeueEphemeralMetaDirectMediaBatch } = await import('../services/whatsappApiService.js')
+  const result = await requeueEphemeralMetaDirectMediaBatch()
+  legacyMediaRepairCompleted = result.completed === true
+  if (result.requeued > 0) {
+    logger.info(`[Meta directo] ${result.requeued} adjunto(s) temporal(es) regresaron al outbox para conservarlos en storage.`)
+  }
+  return result
 }
 
 async function isDeliveryEnabled() {
@@ -211,6 +223,9 @@ async function runDeliveryLane(jobKind, reason) {
         `meta-direct-chat-delivery:${jobKind}`,
         DELIVERY_INTERVAL_MS,
         async () => {
+          if (jobKind === CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT) {
+            await requeueLegacyEphemeralMediaIfNeeded()
+          }
           const result = await drainMetaDirectChatDeliveryJobs({
             requireConnected: false,
             jobKinds: [jobKind],

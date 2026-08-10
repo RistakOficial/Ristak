@@ -3294,6 +3294,10 @@ y la app iOS puedan volver a reproducir audios salientes despues de recargar. El
 mismo contrato aplica a la media entrante: YCloud se descarga en backend con la
 API key cifrada, Meta directo con su token y QR desde Baileys; después se guarda
 por `mediaStorageService` y el cliente recibe únicamente la URL pública estable.
+Aunque el relay de Meta incluya un enlace firmado de `lookaside`, ese enlace no
+se considera estable ni puede cerrar el enriquecimiento. El outbox lo sustituye
+por la copia de storage y, para filas antiguas afectadas, revive el job terminal
+y actualiza la misma burbuja sin duplicarla.
 La cuenta Bunny.net conectada por el negocio tiene prioridad. Las claves de
 idempotencia por mensaje evitan duplicados ante webhooks o HistorySync repetidos,
 y una URL temporal devuelta después de un envío no puede reemplazar el preview

@@ -72,7 +72,8 @@ export async function enqueueChatDeliveryJob({
   provider = '',
   payload = {},
   database = db,
-  availableAt = ''
+  availableAt = '',
+  reviveCompleted = false
 } = {}) {
   const cleanJobKind = cleanString(jobKind)
   const cleanMessageId = cleanString(messageId)
@@ -97,7 +98,7 @@ export async function enqueueChatDeliveryJob({
       failed_at = NULL,
       updated_at = excluded.updated_at
     WHERE chat_delivery_outbox.job_kind = 'meta_enrichment'
-      AND chat_delivery_outbox.status = 'failed'
+      AND chat_delivery_outbox.status IN (${reviveCompleted ? "'failed', 'completed'" : "'failed'"})
   `, [
     id,
     cleanJobKind,

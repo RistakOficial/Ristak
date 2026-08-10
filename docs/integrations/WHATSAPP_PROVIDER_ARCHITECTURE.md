@@ -408,6 +408,16 @@ Meta entrega el envelope `object=whatsapp_business_account` con
   desde la app WhatsApp Business durante Coexistence.
 - `value.history[]`: lotes históricos aceptados durante onboarding.
 
+Un mensaje multimedia puede llegar con su ID y además con una URL firmada de
+`lookaside.fbsbx.com`/CDN de Meta. Esa URL no cuenta como media persistida: es
+temporal, requiere autorización fuera del navegador y debe resolverse de nuevo
+con el token de Meta para copiar el archivo a `mediaStorageService`. El outbox
+`meta_enrichment` sólo considera completada la media cuando `media_url` ya apunta
+a storage estable. El mismo worker detecta filas antiguas que terminaron con URL
+temporal, revive únicamente su job terminal y reemplaza la URL en la misma fila;
+no crea otra burbuja ni otro cron y sólo corre mientras Meta directo siga
+conectado.
+
 `value.statuses[]` es un recibo de entrega, no un mensaje visible. Debe buscar la
 fila saliente por `wamid`/`meta_message_id`, actualizar únicamente estado y error,
 y publicar un refresh con `isNew=false`. Nunca debe pasar por el alta normal de

@@ -6627,6 +6627,23 @@ export function isYCloudInboundMediaUrl(value = '') {
   }
 }
 
+export function isEphemeralMetaDirectMediaUrl(value = '') {
+  const cleanUrl = cleanString(value)
+  if (!cleanUrl || !/^https:\/\//i.test(cleanUrl)) return false
+
+  try {
+    const hostname = new URL(cleanUrl).hostname.toLowerCase()
+    return hostname === 'lookaside.fbsbx.com' ||
+      hostname.endsWith('.fbsbx.com') ||
+      hostname === 'fbcdn.net' ||
+      hostname.endsWith('.fbcdn.net') ||
+      hostname === 'cdninstagram.com' ||
+      hostname.endsWith('.cdninstagram.com')
+  } catch {
+    return false
+  }
+}
+
 const QR_MEDIA_MESSAGE_TYPES = new Set(['image', 'video', 'audio', 'voice', 'document', 'sticker'])
 
 // Traduce el tipo de mensaje a la clave que `extractMessageMedia` sabe leer en el objeto
@@ -6660,7 +6677,7 @@ export function getInboundMediaExtension({ messageType = '', mimeType = '', file
   return DOCUMENT_EXTENSION_BY_MIME[cleanMime] || 'bin'
 }
 
-function buildInboundMediaFilename({ mediaId = '', messageType = '', mimeType = '', filename = '' } = {}) {
+export function buildInboundMediaFilename({ mediaId = '', messageType = '', mimeType = '', filename = '' } = {}) {
   const provided = cleanString(filename).split(/[\\/]/).pop()
   if (provided && /\.[a-z0-9]{2,8}$/i.test(provided)) return provided.slice(0, 180)
 
@@ -6916,8 +6933,13 @@ async function hydrateInboundMessageMedia(
     }
   }
 
-  if (media.mediaUrl) return media
   if (provider !== META_DIRECT_PROVIDER_NAME) return media
+
+  // Los webhooks/relays de Meta pueden incluir una URL firmada de lookaside.
+  // Que exista no significa que el archivo ya sea durable: expira y además el
+  // navegador no lleva el bearer de WhatsApp. Sólo hacemos no-op si la URL ya
+  // dejó de pertenecer al CDN temporal de Meta (por ejemplo, Bunny de Ristak).
+  if (media.mediaUrl && !isEphemeralMetaDirectMediaUrl(media.mediaUrl)) return media
 
   if (!mediaId) return media
 
@@ -9593,7 +9615,9 @@ export async function processMetaDirectInboundEnrichmentJob({ messageId = '', pa
   }
 
   stored = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ? LIMIT 1', [cleanMessageId]) || stored
-  if (payload.hasMedia === true && !cleanString(stored.media_url) && getMessageMediaId(normalizedMessage)) {
+  const storedMediaUrl = cleanString(stored.media_url)
+  const storedMediaNeedsPersistence = !storedMediaUrl || isEphemeralMetaDirectMediaUrl(storedMediaUrl)
+  if (payload.hasMedia === true && storedMediaNeedsPersistence && getMessageMediaId(normalizedMessage)) {
     const existingRawPayload = parseJsonValue(stored.raw_payload_json, {}) || {}
     const existingMedia = extractMessageMedia(normalizedMessage)
     const hydratedMedia = await hydrateInboundMessageMedia(
@@ -9614,14 +9638,15 @@ export async function processMetaDirectInboundEnrichmentJob({ messageId = '', pa
             media_duration_ms = COALESCE(?, media_duration_ms),
             raw_payload_json = ?,
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND COALESCE(media_url, '') = ''
+        WHERE id = ? AND COALESCE(media_url, '') = ?
       `, [
         hydratedMedia.mediaUrl,
         hydratedMedia.mediaMimeType || '',
         hydratedMedia.mediaFilename || '',
         hydratedMedia.mediaDurationMs,
         safeJson({ ...existingRawPayload, ...normalizedMessage }),
-        cleanMessageId
+        cleanMessageId,
+        storedMediaUrl
       ])
       enrichmentChanged = Number(result?.changes || 0) === 1 || enrichmentChanged
     }
@@ -9644,6 +9669,73 @@ export async function processMetaDirectInboundEnrichmentJob({ messageId = '', pa
   }
 
   return { skipped: false, changed: enrichmentChanged, messageId: cleanMessageId }
+}
+
+export async function requeueEphemeralMetaDirectMediaBatch({ limit = 100 } = {}) {
+  const batchLimit = Math.max(1, Math.min(Number(limit) || 100, 250))
+  const rows = await db.all(`
+    SELECT m.id, m.contact_id, m.business_phone_number_id, m.media_url, m.raw_payload_json
+    FROM whatsapp_api_messages m
+    LEFT JOIN chat_delivery_outbox o
+      ON o.job_kind = 'meta_enrichment' AND o.message_id = m.id
+    WHERE LOWER(COALESCE(m.provider, '')) = 'meta_direct'
+      AND LOWER(COALESCE(m.direction, '')) = 'inbound'
+      AND LOWER(COALESCE(m.message_type, '')) IN ('audio', 'voice', 'image', 'video', 'document', 'sticker')
+      AND (
+        LOWER(COALESCE(m.media_url, '')) LIKE '%fbsbx.com%'
+        OR LOWER(COALESCE(m.media_url, '')) LIKE '%fbcdn.net%'
+        OR LOWER(COALESCE(m.media_url, '')) LIKE '%cdninstagram.com%'
+      )
+      AND (o.id IS NULL OR o.status IN ('completed', 'failed'))
+    ORDER BY COALESCE(m.message_timestamp, m.created_at) ASC, m.id ASC
+    LIMIT ?
+  `, [batchLimit])
+
+  let requeued = 0
+  let skipped = 0
+  for (const row of rows) {
+    const normalizedMessage = normalizeWebhookMessage(parseJsonValue(row.raw_payload_json, {}) || {})
+    if (!getMessageMediaId(normalizedMessage) || !isEphemeralMetaDirectMediaUrl(row.media_url)) {
+      skipped += 1
+      continue
+    }
+
+    await enqueueChatDeliveryJob({
+      jobKind: CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT,
+      messageId: row.id,
+      contactId: row.contact_id,
+      provider: META_DIRECT_PROVIDER_NAME,
+      payload: {
+        attribution: {},
+        businessPhoneNumberId: cleanString(row.business_phone_number_id),
+        shouldHydrateAttributionPreview: false,
+        hasMedia: true
+      },
+      reviveCompleted: true
+    })
+    requeued += 1
+  }
+
+  const outstanding = await db.get(`
+    SELECT COUNT(*) AS total
+    FROM whatsapp_api_messages
+    WHERE LOWER(COALESCE(provider, '')) = 'meta_direct'
+      AND LOWER(COALESCE(direction, '')) = 'inbound'
+      AND LOWER(COALESCE(message_type, '')) IN ('audio', 'voice', 'image', 'video', 'document', 'sticker')
+      AND (
+        LOWER(COALESCE(media_url, '')) LIKE '%fbsbx.com%'
+        OR LOWER(COALESCE(media_url, '')) LIKE '%fbcdn.net%'
+        OR LOWER(COALESCE(media_url, '')) LIKE '%cdninstagram.com%'
+      )
+  `)
+
+  return {
+    scanned: rows.length,
+    requeued,
+    skipped,
+    outstanding: Number(outstanding?.total || 0),
+    completed: Number(outstanding?.total || 0) === 0
+  }
 }
 
 // (WA-009) Persiste en el chat un envío saliente por API que falló y NO tuvo

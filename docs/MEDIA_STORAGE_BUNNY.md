@@ -36,6 +36,14 @@ existente `whatsapp-api-history-backfill` intenta rescatar por lotes las imágen
 y stickers YCloud históricos que aún estén dentro de la retención del proveedor;
 su cursor queda en `whatsapp_api_ycloud_media_rehost_state` y no agrega otro cron.
 
+Meta directo puede recibir desde el relay una URL firmada de `lookaside` junto
+con el ID del adjunto. Tener esa URL no significa que el archivo esté guardado:
+el enriquecimiento vuelve a obtenerlo con el token de WhatsApp, lo sube a Bunny
+y actualiza `media_url` en la misma fila. El worker existente
+`meta-direct-chat-delivery` revive por lotes los enriquecimientos históricos que
+se marcaron completos conservando una URL de Meta; no crea mensajes duplicados y
+deja de revisar cuando ya no quedan enlaces temporales.
+
 Los assets existentes se migran en segundo plano y por lotes, sin un cron
 permanente. Cada archivo se transmite sin materializarlo completo en RAM, se
 verifica por tamaño en el destino, se actualiza la fila canónica y sólo entonces se
