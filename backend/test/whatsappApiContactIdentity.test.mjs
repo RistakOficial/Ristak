@@ -1856,13 +1856,14 @@ test('fallos gen√©ricos o de restricci√≥n reportados por API no originan un segu
   }
 })
 
-test('rechazos definitivos de plantilla usan QR una sola vez aunque cambie el c√≥digo', async () => {
+test('rechazos definitivos y el experimento 130472 usan QR una sola vez', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52992${suffix}`
   const semanticPhone = `+52994${suffix}`
   const ambiguousPhone = `+52995${suffix}`
   const recipientPhone = `+52996${suffix}`
+  const experimentPhone = `+52997${suffix}`
   const blockedPhone = `+52993${suffix}`
   const businessPhone = `+52657${suffix}`
   const connectedJid = `${normalizeDigits(businessPhone)}@s.whatsapp.net`
@@ -1871,6 +1872,7 @@ test('rechazos definitivos de plantilla usan QR una sola vez aunque cambie el c√
   const semanticContactId = `rstk_contact_template_semantic_${id}`
   const ambiguousContactId = `rstk_contact_template_ambiguous_${id}`
   const recipientContactId = `rstk_contact_template_recipient_${id}`
+  const experimentContactId = `rstk_contact_template_experiment_${id}`
   const blockedContactId = `rstk_contact_template_132000_blocked_${id}`
   const templateId = `template_132000_${id}`
   const templateName = `seguimiento_132000_${id.replace(/-/g, '_')}`
@@ -1878,6 +1880,7 @@ test('rechazos definitivos de plantilla usan QR una sola vez aunque cambie el c√
   const semanticProviderMessageId = `ycloud_template_semantic_${id}`
   const ambiguousProviderMessageId = `ycloud_template_ambiguous_${id}`
   const recipientProviderMessageId = `ycloud_template_recipient_${id}`
+  const experimentProviderMessageId = `ycloud_template_experiment_${id}`
   const blockedProviderMessageId = `ycloud_template_132000_blocked_${id}`
   const errorMessage = 'body: number of localizable_params (1) does not match the expected number of params (2)'
   const renderedText = 'Hola Eduardo, oye una pregunta... ¬øen d√≥nde me encontraste?'
@@ -1935,6 +1938,7 @@ test('rechazos definitivos de plantilla usan QR una sola vez aunque cambie el c√
   await cleanup({ contactId: semanticContactId, phone: semanticPhone })
   await cleanup({ contactId: ambiguousContactId, phone: ambiguousPhone })
   await cleanup({ contactId: recipientContactId, phone: recipientPhone })
+  await cleanup({ contactId: experimentContactId, phone: experimentPhone })
   await cleanup({ contactId: blockedContactId, phone: blockedPhone })
   await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
@@ -2170,6 +2174,39 @@ test('rechazos definitivos de plantilla usan QR una sola vez aunque cambie el c√
         WHERE ycloud_message_id = ?
       `, [recipientProviderMessageId]).then(row => row?.transport), 'api')
 
+      nextProviderMessageId = experimentProviderMessageId
+      await sendWhatsAppApiTemplateMessage({
+        to: experimentPhone,
+        from: businessPhone,
+        templateId,
+        variables: { 1: 'Eduardo' },
+        contactId: experimentContactId,
+        phoneNumberId,
+        allowQrFallback: true
+      })
+      await processFailure({
+        eventId: `evt_template_experiment_${id}`,
+        messageId: experimentProviderMessageId,
+        toPhone: experimentPhone,
+        errorCode: '130472',
+        failureMessage: "User's number is part of an experiment"
+      })
+      assert.equal(sentMessages.length, 3)
+      assert.equal(sentMessages[2].payload.text, renderedText)
+      const experimentRow = await db.get(`
+        SELECT source_adapter, transport, routing_reason, status,
+               error_code, error_message, raw_payload_json
+        FROM whatsapp_api_messages
+        WHERE ycloud_message_id = ?
+      `, [experimentProviderMessageId])
+      assert.equal(experimentRow.source_adapter, 'baileys')
+      assert.equal(experimentRow.transport, 'qr')
+      assert.match(experimentRow.routing_reason, /experimento 130472/i)
+      assert.ok(['sent', 'delivered'].includes(experimentRow.status))
+      assert.equal(experimentRow.error_code, null)
+      assert.equal(experimentRow.error_message, null)
+      assert.equal(JSON.parse(experimentRow.raw_payload_json).apiFailure.errorCode, '130472')
+
       nextProviderMessageId = blockedProviderMessageId
       await sendWhatsAppApiTemplateMessage({
         to: blockedPhone,
@@ -2191,7 +2228,7 @@ test('rechazos definitivos de plantilla usan QR una sola vez aunque cambie el c√
         messageId: blockedProviderMessageId,
         toPhone: blockedPhone
       })
-      assert.equal(sentMessages.length, 2)
+      assert.equal(sentMessages.length, 3)
 
       const blockedRow = await db.get(`
         SELECT id, transport, status, error_code, error_message
@@ -2225,6 +2262,7 @@ test('rechazos definitivos de plantilla usan QR una sola vez aunque cambie el c√
     await cleanup({ contactId: semanticContactId, phone: semanticPhone })
     await cleanup({ contactId: ambiguousContactId, phone: ambiguousPhone })
     await cleanup({ contactId: recipientContactId, phone: recipientPhone })
+    await cleanup({ contactId: experimentContactId, phone: experimentPhone })
     await cleanup({ contactId: blockedContactId, phone: blockedPhone })
   }
 })
