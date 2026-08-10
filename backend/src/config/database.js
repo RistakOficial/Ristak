@@ -4301,6 +4301,7 @@ async function initTablesUnlocked() {
         google_sync_status TEXT,
         google_sync_error TEXT,
         google_synced_at DATETIME,
+        follow_up_from_appointment_id TEXT,
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
       )
     `)
@@ -4464,6 +4465,7 @@ async function initTablesUnlocked() {
       ['google_sync_status', 'TEXT'],
       ['google_sync_error', 'TEXT'],
       ['google_synced_at', 'DATETIME'],
+      ['follow_up_from_appointment_id', 'TEXT'],
       ['booking_channel', 'TEXT'],
       ['is_test', 'INTEGER NOT NULL DEFAULT 0'],
       ['test_run_id', 'TEXT'],
@@ -4484,6 +4486,7 @@ async function initTablesUnlocked() {
       await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_google ON appointments(google_event_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_google_sync_status ON appointments(google_sync_status)')
       await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_google_unique ON appointments(google_event_id) WHERE google_event_id IS NOT NULL AND google_event_id != ''")
+      await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_follow_up_from ON appointments(follow_up_from_appointment_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_test_cleanup ON appointments(test_expires_at) WHERE is_test = 1')
       await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_test_effect_unique ON appointments(test_effect_id) WHERE test_effect_id IS NOT NULL AND test_effect_id != ''")
     } catch (err) {

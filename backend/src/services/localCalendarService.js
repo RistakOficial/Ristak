@@ -4,7 +4,13 @@ import { databaseDialect, db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
-import { DEFAULT_TIMEZONE, normalizeToUtcIso, getAccountTimezone, isValidTimezone } from '../utils/dateUtils.js'
+import {
+  DEFAULT_TIMEZONE,
+  normalizeToUtcIso,
+  getAccountTimezone,
+  isValidTimezone,
+  parseStoredUtcDateTime
+} from '../utils/dateUtils.js'
 import {
   isRistakContactId,
   linkContactToGhl,
@@ -126,6 +132,9 @@ const MONTH_APPOINTMENT_PREVIEW_DEFAULT_LIMIT = 3
 const MONTH_APPOINTMENT_PREVIEW_MAX_LIMIT = 5
 const APPOINTMENTS_OVERVIEW_DEFAULT_LIMIT = 5
 const APPOINTMENTS_OVERVIEW_MAX_LIMIT = 20
+const GOOGLE_EXTERNAL_MOVE_ATTENDED_STATUSES = new Set(['showed', 'show', 'attended', 'completed', 'complete'])
+const GOOGLE_EXTERNAL_MOVE_TERMINAL_STATUSES = new Set(['cancelled', 'canceled', 'invalid', 'deleted'])
+const GOOGLE_HISTORY_ONLY_SYNC_STATUS = 'history_only'
 const isPostgresDatabase = databaseDialect === 'postgres'
 let defaultLocalCalendarBootstrapPromise = null
 
@@ -4930,6 +4939,7 @@ function appointmentRowToApi(row = {}) {
     googleSyncStatus: row.google_sync_status || null,
     googleSyncError: row.google_sync_error || null,
     googleSyncedAt: normalizeToUtcIso(row.google_synced_at, 'UTC') || null,
+    followUpFromAppointmentId: row.follow_up_from_appointment_id || null,
     isTest: Number(row.is_test || 0) === 1,
     testRunId: row.test_run_id || null,
     testEffectId: row.test_effect_id || null,
@@ -4953,6 +4963,10 @@ function normalizeAppointmentRecord(raw = {}, options = {}) {
     options.googleMirrorGeneration ?? options.google_mirror_generation ??
     appointment.googleMirrorGeneration ?? appointment.google_mirror_generation ?? 0
   ) || 0))
+  const followUpFromAppointmentId = cleanString(
+    options.followUpFromAppointmentId || options.follow_up_from_appointment_id ||
+    appointment.followUpFromAppointmentId || appointment.follow_up_from_appointment_id
+  ) || null
   const appointmentStatus = cleanString(appointment.appointmentStatus || appointment.appointment_status || appointment.status || 'confirmed') || 'confirmed'
   const id = cleanString(options.id || appointment.localId || appointment.local_id || appointment.id) || makeId(LOCAL_APPOINTMENT_PREFIX)
   const isTest = normalizeTestFlag(options.isTest ?? options.is_test ?? appointment.isTest ?? appointment.is_test)
@@ -4972,6 +4986,7 @@ function normalizeAppointmentRecord(raw = {}, options = {}) {
     googleEventId,
     googleProviderCalendarId,
     googleMirrorGeneration,
+    followUpFromAppointmentId,
     calendarId: cleanString(options.calendarId || appointment.calendarId || appointment.calendar_id || ''),
     contactId: cleanString(appointment.contactId || appointment.contact_id || '') || null,
     locationId: cleanString(options.locationId || appointment.locationId || appointment.location_id || '') || null,
@@ -5703,8 +5718,8 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
       appointment_status, assigned_user_id, notes, address, start_time, end_time,
       date_added, date_updated, source, booking_channel, sync_status, sync_error, synced_at,
       google_sync_status, google_sync_error, google_synced_at,
-      is_test, test_run_id, test_effect_id, test_expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      follow_up_from_appointment_id, is_test, test_run_id, test_effect_id, test_expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET
       ghl_appointment_id = COALESCE(excluded.ghl_appointment_id, appointments.ghl_appointment_id),
       google_event_id = COALESCE(excluded.google_event_id, appointments.google_event_id),
@@ -5735,6 +5750,7 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
       google_sync_status = COALESCE(excluded.google_sync_status, appointments.google_sync_status),
       google_sync_error = excluded.google_sync_error,
       google_synced_at = CASE WHEN excluded.google_sync_status = 'synced' THEN CURRENT_TIMESTAMP ELSE appointments.google_synced_at END,
+      follow_up_from_appointment_id = COALESCE(excluded.follow_up_from_appointment_id, appointments.follow_up_from_appointment_id),
       is_test = CASE WHEN appointments.is_test = 1 THEN 1 ELSE excluded.is_test END,
       test_run_id = COALESCE(appointments.test_run_id, excluded.test_run_id),
       test_effect_id = COALESCE(appointments.test_effect_id, excluded.test_effect_id),
@@ -5767,6 +5783,7 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
     normalized.googleSyncStatus,
     normalized.googleSyncError,
     normalized.googleSyncStatus === 'synced' ? new Date().toISOString() : null,
+    normalized.followUpFromAppointmentId,
     normalized.isTest ? 1 : 0,
     normalized.testRunId,
     normalized.testEffectId,
@@ -7184,6 +7201,12 @@ export async function updateLocalAppointment(appointmentId, updates = {}, { sync
   const existing = await getLocalAppointment(appointmentId)
   if (!existing) return null
 
+  const canonicalGoogleMirrorChanged = Boolean(
+    existing.googleEventId &&
+    existing.googleSyncStatus !== GOOGLE_HISTORY_ONLY_SYNC_STATUS &&
+    (cleanString(existing.source).toLowerCase() === 'ristak' || cleanString(existing.id).startsWith(LOCAL_APPOINTMENT_PREFIX))
+  )
+
   const result = await upsertLocalAppointment({
     ...existing,
     ...updates,
@@ -7193,6 +7216,8 @@ export async function updateLocalAppointment(appointmentId, updates = {}, { sync
     contactId: updates.contactId || updates.contact_id || existing.contactId,
     locationId: updates.locationId || updates.location_id || existing.locationId,
     source: existing.source || 'ristak',
+    googleSyncStatus: canonicalGoogleMirrorChanged ? 'pending' : existing.googleSyncStatus,
+    googleSyncError: canonicalGoogleMirrorChanged ? null : existing.googleSyncError,
     dateUpdated: new Date().toISOString()
   }, {
     syncStatus
@@ -7212,6 +7237,245 @@ export async function updateLocalAppointment(appointmentId, updates = {}, { sync
   }
 
   return result
+}
+
+function storedUtcMillis(value) {
+  return parseStoredUtcDateTime(value)?.toMillis() ?? Number.NaN
+}
+
+/**
+ * Aplica exclusivamente un cambio horario fresco que nació en Google sobre una
+ * cita canónica de Ristak. Los demás campos locales siguen mandando.
+ *
+ * - Una cita atendida queda congelada como historial y el evento de Google se
+ *   transfiere a una cita nueva de seguimiento.
+ * - Cualquier cita no atendida y todavía recuperable conserva su ID, cambia a
+ *   `rescheduled` y adopta el horario nuevo.
+ * - Estados terminales, citas de prueba y ecos remotos viejos no se reactivan.
+ */
+export async function applyFreshGoogleTimeChangeToCanonicalAppointment({
+  appointmentId,
+  googleEventId,
+  googleProviderCalendarId,
+  startTime,
+  endTime,
+  remoteUpdatedAt,
+  nextStatus = 'confirmed'
+} = {}) {
+  const normalizedAppointmentId = cleanString(appointmentId)
+  const normalizedGoogleEventId = cleanString(googleEventId)
+  const normalizedProviderCalendarId = cleanString(googleProviderCalendarId)
+  const normalizedStartTime = normalizeToUtcIso(startTime, 'UTC')
+  const normalizedEndTime = normalizeToUtcIso(endTime, 'UTC')
+  const normalizedRemoteUpdatedAt = normalizeToUtcIso(remoteUpdatedAt, 'UTC')
+  const startMs = Date.parse(normalizedStartTime)
+  const endMs = Date.parse(normalizedEndTime)
+  const remoteUpdatedMs = Date.parse(normalizedRemoteUpdatedAt)
+
+  if (
+    !normalizedAppointmentId ||
+    !normalizedGoogleEventId ||
+    !Number.isFinite(startMs) ||
+    !Number.isFinite(endMs) ||
+    endMs <= startMs ||
+    !Number.isFinite(remoteUpdatedMs)
+  ) {
+    return { applied: false, reason: 'invalid_google_time_change' }
+  }
+
+  const transactionResult = await db.transaction(async transaction => {
+    const row = await transaction.get(`
+      SELECT *
+      FROM appointments
+      WHERE id = ?
+      ${isPostgresDatabase ? 'FOR UPDATE' : ''}
+    `, [normalizedAppointmentId])
+
+    if (!row) return { applied: false, reason: 'appointment_not_found' }
+    if (cleanString(row.google_event_id) !== normalizedGoogleEventId) {
+      return { applied: false, reason: 'google_event_owner_changed' }
+    }
+    const storedProviderCalendarId = cleanString(row.google_provider_calendar_id)
+    if (
+      storedProviderCalendarId &&
+      normalizedProviderCalendarId &&
+      storedProviderCalendarId.toLowerCase() !== normalizedProviderCalendarId.toLowerCase()
+    ) {
+      return { applied: false, reason: 'google_calendar_owner_changed' }
+    }
+    if (Number(row.is_test || 0) === 1) {
+      return { applied: false, reason: 'test_appointment' }
+    }
+
+    const previousStartMs = storedUtcMillis(row.start_time)
+    const previousEndMs = storedUtcMillis(row.end_time || row.start_time)
+    if (previousStartMs === startMs && previousEndMs === endMs) {
+      return { applied: false, reason: 'time_unchanged' }
+    }
+
+    const localVersionCandidates = [
+      storedUtcMillis(row.date_updated),
+      storedUtcMillis(row.google_synced_at)
+    ].filter(Number.isFinite)
+    const localVersionMs = localVersionCandidates.length
+      ? Math.max(...localVersionCandidates)
+      : Number.NaN
+    if (Number.isFinite(localVersionMs) && remoteUpdatedMs <= localVersionMs) {
+      return { applied: false, reason: 'stale_google_change' }
+    }
+
+    const previousStatus = cleanString(row.appointment_status || row.status).toLowerCase()
+    if (GOOGLE_EXTERNAL_MOVE_TERMINAL_STATUSES.has(previousStatus)) {
+      return { applied: false, reason: 'terminal_appointment', previousStatus }
+    }
+
+    if (GOOGLE_EXTERNAL_MOVE_ATTENDED_STATUSES.has(previousStatus)) {
+      const followUpAppointmentId = makeId(LOCAL_APPOINTMENT_PREFIX)
+      const providerCalendarId = normalizedProviderCalendarId || storedProviderCalendarId || null
+      const followUpStatus = cleanString(nextStatus).toLowerCase() === 'pending' ? 'pending' : 'confirmed'
+
+      await transaction.run(`
+        UPDATE appointments
+        SET google_event_id = NULL,
+            google_sync_status = ?,
+            google_sync_error = NULL,
+            google_synced_at = CURRENT_TIMESTAMP,
+            date_updated = CURRENT_TIMESTAMP
+        WHERE id = ? AND google_event_id = ?
+      `, [GOOGLE_HISTORY_ONLY_SYNC_STATUS, row.id, normalizedGoogleEventId])
+
+      await transaction.run(`
+        INSERT INTO appointments (
+          id, ghl_appointment_id, google_event_id, google_provider_calendar_id, google_mirror_generation,
+          calendar_id, contact_id, location_id, title, status, appointment_status,
+          assigned_user_id, notes, address, start_time, end_time, booking_channel,
+          date_added, date_updated, source, sync_status, sync_error, synced_at,
+          google_sync_status, google_sync_error, google_synced_at,
+          follow_up_from_appointment_id, is_test, test_run_id, test_effect_id, test_expires_at,
+          deleted_at
+        ) VALUES (
+          ?, NULL, ?, ?, 0,
+          ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?,
+          ?, ?, 'ristak', 'pending', NULL, NULL,
+          'pending', NULL, NULL,
+          ?, 0, NULL, NULL, NULL,
+          NULL
+        )
+      `, [
+        followUpAppointmentId,
+        normalizedGoogleEventId,
+        providerCalendarId,
+        row.calendar_id,
+        row.contact_id,
+        row.location_id,
+        row.title,
+        followUpStatus,
+        followUpStatus,
+        row.assigned_user_id,
+        row.notes,
+        row.address,
+        normalizedStartTime,
+        normalizedEndTime,
+        row.booking_channel,
+        normalizedRemoteUpdatedAt,
+        normalizedRemoteUpdatedAt,
+        row.id
+      ])
+
+      const participants = await transaction.all(`
+        SELECT role, position, contact_id, name_snapshot, phone_snapshot,
+               email_snapshot, relation_snapshot
+        FROM appointment_participants
+        WHERE appointment_id = ?
+        ORDER BY role, position
+      `, [row.id])
+      for (const participant of participants) {
+        await transaction.run(`
+          INSERT INTO appointment_participants (
+            id, appointment_id, role, position, contact_id,
+            name_snapshot, phone_snapshot, email_snapshot, relation_snapshot,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `, [
+          makeId('appointment_participant'),
+          followUpAppointmentId,
+          participant.role,
+          participant.position,
+          participant.contact_id,
+          participant.name_snapshot,
+          participant.phone_snapshot,
+          participant.email_snapshot,
+          participant.relation_snapshot
+        ])
+      }
+
+      return {
+        applied: true,
+        mode: 'follow_up_created',
+        appointmentId: followUpAppointmentId,
+        previousAppointmentId: row.id,
+        previousStatus,
+        previousStartTime: parseStoredUtcDateTime(row.start_time)?.toISO() || null,
+        previousEndTime: parseStoredUtcDateTime(row.end_time || row.start_time)?.toISO() || null,
+        affectedContactIds: [
+          row.contact_id,
+          ...participants.map(participant => participant.contact_id)
+        ].filter(Boolean)
+      }
+    }
+
+    await transaction.run(`
+      UPDATE appointments
+      SET start_time = ?,
+          end_time = ?,
+          status = 'rescheduled',
+          appointment_status = 'rescheduled',
+          date_updated = ?,
+          sync_status = CASE
+            WHEN COALESCE(ghl_appointment_id, '') != '' THEN 'pending'
+            ELSE sync_status
+          END,
+          google_sync_status = 'synced',
+          google_sync_error = NULL,
+          google_synced_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND google_event_id = ?
+    `, [
+      normalizedStartTime,
+      normalizedEndTime,
+      normalizedRemoteUpdatedAt,
+      row.id,
+      normalizedGoogleEventId
+    ])
+
+    return {
+      applied: true,
+      mode: 'rescheduled',
+      appointmentId: row.id,
+      previousAppointmentId: row.id,
+      previousStatus,
+      previousStartTime: parseStoredUtcDateTime(row.start_time)?.toISO() || null,
+      previousEndTime: parseStoredUtcDateTime(row.end_time || row.start_time)?.toISO() || null,
+      affectedContactIds: [row.contact_id].filter(Boolean)
+    }
+  })
+
+  if (!transactionResult?.applied) return transactionResult
+
+  for (const contactId of [...new Set(transactionResult.affectedContactIds || [])]) {
+    await updateContactAppointmentDate(contactId)
+  }
+
+  const appointment = await getLocalAppointment(transactionResult.appointmentId)
+  const previousAppointment = transactionResult.previousAppointmentId === transactionResult.appointmentId
+    ? appointment
+    : await getLocalAppointment(transactionResult.previousAppointmentId)
+
+  return {
+    ...transactionResult,
+    appointment,
+    previousAppointment
+  }
 }
 
 export async function deleteLocalAppointment(appointmentId, { markPendingDelete = false } = {}) {

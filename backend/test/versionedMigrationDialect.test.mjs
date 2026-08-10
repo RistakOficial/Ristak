@@ -133,6 +133,41 @@ test('la migración PostgreSQL instala public_sites.public_domain en bases exist
   )
 })
 
+test('la migración 158 enlaza seguimientos de Google sin repetir la columna reparada por SQLite', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-google-follow-up-'))
+  const database = openMemoryDatabase()
+  const migrationName = '158_appointment_google_follow_up.sqlite.sql'
+
+  try {
+    await database.exec(`
+      CREATE TABLE appointments (
+        id TEXT PRIMARY KEY,
+        follow_up_from_appointment_id TEXT
+      );
+    `)
+    await copyFile(
+      new URL(`../migrations/versioned/${migrationName}`, import.meta.url),
+      join(directory, migrationName)
+    )
+
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 1, skipped: 0 }
+    )
+
+    const indexes = await database.all("PRAGMA index_list('appointments')")
+    assert.ok(indexes.some(index => index.name === 'idx_appointments_follow_up_from'))
+
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 0, skipped: 0 }
+    )
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('SQLite repara el contador de intentos y la visibilidad del chat antes de migrar', async () => {
   const database = openMemoryDatabase()
 

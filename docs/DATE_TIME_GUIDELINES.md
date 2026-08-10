@@ -198,6 +198,19 @@ vienen de la base usa `parseStoredUtcDateTime()`.
 
 - Google Calendar / HighLevel Calendar: convierte rangos `YYYY-MM-DD` a inicio y
   fin de día en la zona del negocio antes de pedir slots o eventos.
+- Un cambio horario fresco hecho en Google Calendar —incluido uno iniciado desde
+  Apple Calendar sincronizado con Google— sí puede entrar a Ristak. Si la cita
+  todavía no fue atendida, conserva el mismo ID, adopta los nuevos instantes UTC
+  y queda `rescheduled`; esto incluye una cita `noshow`. Si ya estaba `showed`,
+  `attended` o `completed`, la fila histórica no cambia de horario ni de estado:
+  el evento remoto pasa a una nueva cita de seguimiento ligada por
+  `follow_up_from_appointment_id`. Las citas canceladas, inválidas, eliminadas o
+  de prueba nunca se reactivan por un movimiento externo.
+- La reconciliación Google debe comparar `event.updated` contra `date_updated` y
+  `google_synced_at`. Un evento remoto viejo no pisa una edición local pendiente.
+  El pull horario corre antes del push: acepta únicamente la hora remota más
+  fresca y después el push conserva título, notas, ubicación, participantes y
+  demás campos canónicos de Ristak.
 - Las colas offline de citas guardan `startTime`/`endTime` como instantes UTC y
   conservan explícitamente `timeZone=account_timezone` para agrupar y validar al
   reintentar. Nunca reconstruyen el instante desde la zona del dispositivo ni

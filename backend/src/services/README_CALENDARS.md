@@ -128,6 +128,29 @@ Google o HighLevel dentro del GET. El contrato para volumen alto es:
   el histórico para calcular tres tarjetas y una lista corta.
 - `events/summary` calcula los KPIs mensuales en SQL y se resuelve aparte del
   camino crítico que pinta la agenda.
+
+## Reagenda Bidireccional Desde Google
+
+`syncGoogleIntegrationNow` importa cambios antes de publicar pendientes. Sólo
+adopta una hora remota cuando `event.updated` es posterior a `date_updated` y
+`google_synced_at`; los ecos viejos quedan pendientes para que Ristak repare el
+espejo.
+
+Al mover un evento desde Google Calendar o desde Apple Calendar sincronizado:
+
+- `noshow`, `confirmed`, `pending` y `rescheduled` conservan la misma fila, toman
+  el nuevo rango UTC y quedan `rescheduled`;
+- `showed`, `show`, `attended`, `completed` y `complete` conservan intacta la
+  fila histórica y crean una cita nueva con
+  `follow_up_from_appointment_id=<cita histórica>`;
+- `cancelled`, `canceled`, `invalid`, `deleted` y las citas de prueba no se
+  reactivan.
+
+La cita histórica atendida libera `google_event_id` y queda
+`google_sync_status=history_only`. El seguimiento recibe el evento remoto,
+conserva contacto y participantes, y repara la metadata privada de Google con su
+nuevo ID. Los replays son idempotentes: no crean otro seguimiento ni vuelven a
+publicar la cita histórica.
 - `upcoming` pagina próximas citas por el mismo orden estable, con límite 20 por
   default y 100 máximo.
 

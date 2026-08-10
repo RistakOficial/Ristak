@@ -4420,9 +4420,22 @@ Reglas base:
 - Las creaciones locales desde calendario publico, admin o agente disparan los
   eventos `appointment-booked` y `appointment-status` del motor de
   Automatizaciones despues de persistir la cita. Los cambios de estado desde
-  esas superficies disparan `appointment-status`; las sincronizaciones de
-  Google/HighLevel no deben tratarse como si el cliente hubiera agendado en
-  Ristak.
+  esas superficies disparan `appointment-status`; una importación ordinaria de
+  Google/HighLevel no se trata como si el cliente hubiera agendado en Ristak.
+  La excepción es mover en Google —también desde Apple Calendar sincronizado—
+  el espejo de una cita ya atendida: la cita histórica conserva hora y estado,
+  nace una cita de seguimiento con `follow_up_from_appointment_id`, el evento de
+  Google cambia su dueño al seguimiento y esa cita nueva sí dispara el contrato
+  normal de creación. Si la cita no fue atendida, incluida `noshow`, conserva su
+  ID, adopta la nueva hora y queda `rescheduled`; dispara sólo el cambio de estado
+  con las horas anteriores para que recordatorios y esperas se recalculen.
+- La sincronización Google procesa primero el pull y después el push. Sólo acepta
+  un cambio horario cuyo `event.updated` sea posterior a la versión local; una
+  edición local pendiente sigue mandando en título, notas, ubicación,
+  participantes y cualquier campo no horario. Canceladas, inválidas, eliminadas
+  y citas de prueba no se reviven desde Google. La fila atendida que cedió su
+  evento queda `google_sync_status=history_only`, por lo que el reconciliador no
+  vuelve a publicar la cita histórica ni crea un duplicado remoto.
 - En `ios/app`, los snapshots de citas usan una clave compuesta por calendario y
   mes. Cambiar calendario vacia las filas anteriores antes de hidratar la clave
   correcta, y volver a foreground fuerza la revalidacion del calendario activo.

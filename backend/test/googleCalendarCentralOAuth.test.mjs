@@ -1742,3 +1742,200 @@ test('OAuth Google permite varios calendarios Ristak por destino sin duplicar la
     restoreEnv(previousEnv)
   }
 })
+
+test('mover una cita canónica desde Google reagenda el no-show y crea seguimiento si ya asistió', async () => {
+  await initializeMasterKey()
+  const previousEnv = snapshotEnv()
+  const requests = []
+  const googleRequests = []
+  const previousFetch = global.fetch
+  const { server, baseUrl } = await startLicenseServer(requests)
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_google_bidirectional_${suffix}`
+  const contactId = `rstk_contact_google_bidirectional_${suffix}`
+  const noShowAppointmentId = `rstk_appt_google_noshow_${suffix}`
+  const attendedAppointmentId = `rstk_appt_google_attended_${suffix}`
+  const staleAppointmentId = `rstk_appt_google_stale_${suffix}`
+  const noShowEventId = `google_noshow_${suffix}`
+  const attendedEventId = `google_attended_${suffix}`
+  const staleEventId = `google_stale_${suffix}`
+  let db = null
+  let googleCalendarService = null
+
+  try {
+    process.env.LICENSE_SERVER_URL = baseUrl
+    process.env.CLIENT_ID = 'cli_google_oauth'
+    process.env.LICENSE_KEY = 'RSTK-GOOGLE-TEST'
+    process.env.INSTALLATION_ID = 'inst_google_oauth'
+    process.env.APP_URL = 'https://demo.onrender.com'
+    process.env.APP_VERSION = '1.0.0'
+    process.env.OWNER_EMAIL = 'dueno@negocio.test'
+
+    const googleFetch = createGoogleRelinkFetchMock(googleRequests)
+    global.fetch = (url, options) => String(url).startsWith(baseUrl)
+      ? previousFetch(url, options)
+      : googleFetch(url, options)
+
+    ;({ db } = await import('../src/config/database.js'))
+    const localCalendarService = await import('../src/services/localCalendarService.js')
+    googleCalendarService = await import('../src/services/googleCalendarService.js')
+    await googleCalendarService.claimGoogleCalendarOAuthHandoff('google_handoff_test')
+
+    await localCalendarService.createLocalCalendar({
+      id: calendarId,
+      name: 'Agenda bidireccional',
+      googleCalendarId: googleFetch.calendarA,
+      googleAccessRole: 'owner',
+      googleCalendarSummary: 'Google A',
+      googleCalendarTimeZone: 'America/Ciudad_Juarez'
+    }, { allowGoogleSyncMetadata: true })
+    await db.run(
+      'INSERT INTO contacts (id, full_name, email, created_at, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, 'Cliente de agenda bidireccional', `calendar-${suffix}@example.test`]
+    )
+
+    const participants = [
+      { role: 'requester', contactId },
+      { role: 'primary_attendee', contactId }
+    ]
+    await localCalendarService.createLocalAppointment({
+      id: noShowAppointmentId,
+      calendarId,
+      contactId,
+      participants,
+      googleEventId: noShowEventId,
+      googleProviderCalendarId: googleFetch.calendarA,
+      googleSyncStatus: 'synced',
+      title: 'Cita que no ocurrió',
+      appointmentStatus: 'noshow',
+      status: 'noshow',
+      startTime: '2030-09-01T17:00:00.000Z',
+      endTime: '2030-09-01T18:00:00.000Z',
+      dateUpdated: '2030-09-01T18:05:00.000Z'
+    }, { syncStatus: 'synced' })
+    await localCalendarService.createLocalAppointment({
+      id: attendedAppointmentId,
+      calendarId,
+      contactId,
+      participants,
+      googleEventId: attendedEventId,
+      googleProviderCalendarId: googleFetch.calendarA,
+      googleSyncStatus: 'synced',
+      title: 'Videollamada realizada',
+      appointmentStatus: 'showed',
+      status: 'showed',
+      startTime: '2030-09-02T17:00:00.000Z',
+      endTime: '2030-09-02T18:00:00.000Z',
+      dateUpdated: '2030-09-02T18:05:00.000Z'
+    }, { syncStatus: 'synced' })
+    await localCalendarService.createLocalAppointment({
+      id: staleAppointmentId,
+      calendarId,
+      contactId,
+      participants,
+      googleEventId: staleEventId,
+      googleProviderCalendarId: googleFetch.calendarA,
+      googleSyncStatus: 'synced',
+      title: 'Edición local más nueva',
+      appointmentStatus: 'confirmed',
+      status: 'confirmed',
+      startTime: '2030-09-03T17:00:00.000Z',
+      endTime: '2030-09-03T18:00:00.000Z',
+      dateUpdated: '2040-09-03T18:05:00.000Z'
+    }, { syncStatus: 'synced' })
+
+    const providerEvents = googleFetch.eventsByCalendar.get(googleFetch.calendarA)
+    providerEvents.set(noShowEventId, {
+      id: noShowEventId,
+      summary: 'Cita que no ocurrió',
+      status: 'confirmed',
+      updated: '2031-09-01T20:00:00.000Z',
+      start: { dateTime: '2031-09-05T17:00:00.000Z' },
+      end: { dateTime: '2031-09-05T18:00:00.000Z' },
+      extendedProperties: { private: { ristakAppointmentId: noShowAppointmentId, ristakCalendarId: calendarId } }
+    })
+    providerEvents.set(attendedEventId, {
+      id: attendedEventId,
+      summary: 'Videollamada realizada',
+      status: 'confirmed',
+      updated: '2031-09-02T20:00:00.000Z',
+      start: { dateTime: '2031-09-08T17:00:00.000Z' },
+      end: { dateTime: '2031-09-08T18:00:00.000Z' },
+      extendedProperties: { private: { ristakAppointmentId: attendedAppointmentId, ristakCalendarId: calendarId } }
+    })
+    providerEvents.set(staleEventId, {
+      id: staleEventId,
+      summary: 'Edición remota vieja',
+      status: 'confirmed',
+      updated: '2039-09-03T20:00:00.000Z',
+      start: { dateTime: '2031-09-09T17:00:00.000Z' },
+      end: { dateTime: '2031-09-09T18:00:00.000Z' },
+      extendedProperties: { private: { ristakAppointmentId: staleAppointmentId, ristakCalendarId: calendarId } }
+    })
+
+    const firstSync = await googleCalendarService.syncGoogleEventsToLocal({
+      calendarId,
+      startTime: '2030-01-01T00:00:00.000Z',
+      endTime: '2032-01-01T00:00:00.000Z'
+    })
+    assert.equal(firstSync.saved, 3)
+
+    const rescheduledNoShow = await localCalendarService.getLocalAppointment(noShowAppointmentId)
+    assert.equal(rescheduledNoShow.appointmentStatus, 'rescheduled')
+    assert.equal(rescheduledNoShow.startTime, '2031-09-05T17:00:00.000Z')
+    assert.equal(rescheduledNoShow.googleEventId, noShowEventId)
+
+    const attendedHistory = await localCalendarService.getLocalAppointment(attendedAppointmentId)
+    assert.equal(attendedHistory.appointmentStatus, 'showed')
+    assert.equal(attendedHistory.startTime, '2030-09-02T17:00:00.000Z')
+    assert.equal(attendedHistory.googleEventId, null)
+    assert.equal(attendedHistory.googleSyncStatus, 'history_only')
+
+    const followUpRow = await db.get(
+      'SELECT id FROM appointments WHERE follow_up_from_appointment_id = ?',
+      [attendedAppointmentId]
+    )
+    assert.ok(followUpRow?.id)
+    const followUp = await localCalendarService.getLocalAppointment(followUpRow.id)
+    assert.equal(followUp.appointmentStatus, 'confirmed')
+    assert.equal(followUp.startTime, '2031-09-08T17:00:00.000Z')
+    assert.equal(followUp.googleEventId, attendedEventId)
+    assert.equal(followUp.followUpFromAppointmentId, attendedAppointmentId)
+    assert.equal(followUp.participants.length, 2)
+    assert.equal(followUp.participants.every(participant => participant.contactId === contactId), true)
+
+    const repairedRemoteFollowUp = providerEvents.get(attendedEventId)
+    assert.equal(repairedRemoteFollowUp.extendedProperties.private.ristakAppointmentId, followUp.id)
+    assert.equal(repairedRemoteFollowUp.extendedProperties.private.ristakCalendarId, calendarId)
+
+    const staleLocal = await localCalendarService.getLocalAppointment(staleAppointmentId)
+    assert.equal(staleLocal.startTime, '2030-09-03T17:00:00.000Z')
+    assert.equal(staleLocal.appointmentStatus, 'confirmed')
+    assert.equal(staleLocal.googleSyncStatus, 'pending')
+
+    const outbound = await googleCalendarService.syncLocalAppointmentsToGoogle({ calendarId })
+    assert.equal(outbound.total, 1, 'sólo la edición local vieja debe repararse; el historial atendido no se republica')
+
+    await googleCalendarService.syncGoogleEventsToLocal({
+      calendarId,
+      startTime: '2030-01-01T00:00:00.000Z',
+      endTime: '2032-01-01T00:00:00.000Z'
+    })
+    const rowsAfterReplay = await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ?',
+      [calendarId]
+    )
+    assert.equal(Number(rowsAfterReplay.total), 4, 'un replay no debe crear otro seguimiento')
+  } finally {
+    if (db) {
+      await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+      await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    }
+    await googleCalendarService?.deleteGoogleCalendarConfig?.().catch(() => undefined)
+    global.fetch = previousFetch
+    server.closeAllConnections?.()
+    server.close()
+    restoreEnv(previousEnv)
+  }
+})

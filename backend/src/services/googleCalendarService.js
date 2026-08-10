@@ -9,7 +9,10 @@ import {
   claimCentralOAuthHandoff,
   refreshCentralGoogleCalendarToken
 } from './licenseService.js'
-import { dispatchAppointmentAutomationEvent } from './appointmentAutomationService.js'
+import {
+  dispatchAppointmentAutomationEvent,
+  dispatchAppointmentCreatedAutomations
+} from './appointmentAutomationService.js'
 
 const CONFIG_KEY = 'google_calendar_service_account_config'
 const GOOGLE_CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3'
@@ -512,6 +515,13 @@ function mapGoogleEventStatus(event = {}) {
   return 'confirmed'
 }
 
+function mapLocalAppointmentStatusToGoogle(appointment = {}) {
+  const status = cleanString(appointment.appointmentStatus || appointment.status).toLowerCase()
+  if (status === 'cancelled' || status === 'canceled') return 'cancelled'
+  if (status === 'pending') return 'pending'
+  return 'confirmed'
+}
+
 function googleEventDateToIso(value = {}, fallback = null, timezone = 'UTC') {
   // (GCAL-004) Eventos all-day de Google solo traen `date` (YYYY-MM-DD) sin hora ni zona.
   // Anclar la medianoche a la zona de la cuenta (no a UTC) para que el día no se desfase
@@ -628,13 +638,19 @@ function googleMirrorMatchesCanonicalAppointment(event = {}, appointment = {}) {
   }
   const remoteStart = googleEventDateToIso(event.start, null, 'UTC')
   const remoteEnd = googleEventDateToIso(event.end, remoteStart, 'UTC')
+  const privateProps = event.extendedProperties?.private || {}
+  const metadataMatches = (
+    cleanString(privateProps.ristakAppointmentId) === cleanString(appointment.id) &&
+    cleanString(privateProps.ristakCalendarId) === cleanString(appointment.calendarId)
+  )
   return (
     cleanString(event.summary || 'Cita') === cleanString(appointment.title || 'Cita') &&
     cleanString(event.description) === cleanString(appointment.notes) &&
     cleanString(event.location) === cleanString(appointment.address) &&
-    mapGoogleEventStatus(event) === cleanString(appointment.appointmentStatus || appointment.status || 'confirmed').toLowerCase() &&
+    mapGoogleEventStatus(event) === mapLocalAppointmentStatusToGoogle(appointment) &&
     sameInstant(remoteStart, appointment.startTime) &&
-    sameInstant(remoteEnd, appointment.endTime)
+    sameInstant(remoteEnd, appointment.endTime) &&
+    metadataMatches
   )
 }
 
@@ -648,8 +664,8 @@ async function deleteLocalAppointmentForCancelledGoogleEvent(event = {}, {
   const embeddedOwnerMismatch = Boolean(targetCalendarId && embeddedCalendarId && embeddedCalendarId !== targetCalendarId)
   const embeddedOwnerMatchesTarget = !embeddedOwnerMismatch
   const candidateIds = [
+    cleanString(event.id),
     embeddedOwnerMatchesTarget ? cleanString(privateProps.ristakAppointmentId) : '',
-    embeddedOwnerMatchesTarget ? cleanString(event.id) : '',
     cleanString(event.id) ? localIdForGoogleEvent(event.id) : '',
     cleanString(event.id) ? localIdForGoogleOwnershipShadow(event.id, targetCalendarId) : ''
   ].filter(Boolean)
@@ -902,6 +918,59 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
             }
             existingAppointment = await localCalendarService.getLocalAppointment(appointment.id).catch(() => null)
           } else {
+            const googleTimeChange = await localCalendarService.applyFreshGoogleTimeChangeToCanonicalAppointment({
+              appointmentId: existingAppointment.id,
+              googleEventId: event.id,
+              googleProviderCalendarId: targetGroup.googleCalendarId,
+              startTime: appointment.startTime,
+              endTime: appointment.endTime,
+              remoteUpdatedAt: event.updated,
+              nextStatus: mapGoogleEventStatus(event)
+            })
+
+            if (googleTimeChange?.applied) {
+              if (googleTimeChange.mode === 'follow_up_created') {
+                await dispatchAppointmentCreatedAutomations(googleTimeChange.appointment, {
+                  appointmentChange: 'follow_up_after_attendance',
+                  followUpFromAppointmentId: googleTimeChange.previousAppointmentId,
+                  previousStartTime: googleTimeChange.previousStartTime,
+                  previousEndTime: googleTimeChange.previousEndTime,
+                  source: 'google_calendar_move'
+                })
+
+                // El evento remoto todavía trae el ristakAppointmentId histórico.
+                // Reparamos esa metadata inmediatamente para que un tombstone o
+                // sync posterior resuelva al seguimiento nuevo. Si Google falla,
+                // la fila queda pending/error y el cron normal lo reintenta.
+                try {
+                  await syncAppointmentToGoogle(googleTimeChange.appointment)
+                } catch (error) {
+                  logger.warn(`[Google Calendar] El seguimiento ${googleTimeChange.appointment?.id} quedó creado, pero su metadata remota sigue pendiente: ${error.message}`)
+                }
+              } else {
+                await dispatchAppointmentAutomationEvent('appointment-status', googleTimeChange.appointment, {
+                  previousStatus: googleTimeChange.previousStatus || null,
+                  appointmentChange: 'rescheduled',
+                  previousAppointmentId: googleTimeChange.previousAppointmentId,
+                  previousStartTime: googleTimeChange.previousStartTime,
+                  previousEndTime: googleTimeChange.previousEndTime,
+                  source: 'google_calendar_move'
+                })
+
+                if (!googleMirrorMatchesCanonicalAppointment(event, googleTimeChange.appointment)) {
+                  await markGoogleMirrorPending(
+                    googleTimeChange.appointment.id,
+                    event.id,
+                    targetGroup.googleCalendarId,
+                    'Google movió la cita y Ristak conservó sus demás datos locales; la copia se terminará de conciliar.',
+                    { expectedAppointment: googleTimeChange.appointment }
+                  )
+                }
+              }
+              saved += 1
+              continue
+            }
+
             if (googleMirrorMatchesCanonicalAppointment(event, existingAppointment)) {
               await markGoogleSyncSuccess(existingAppointment.id, event.id, targetGroup.googleCalendarId, {
                 expectedAppointment: existingAppointment,
@@ -1022,14 +1091,15 @@ export async function syncGoogleIntegrationNow({ startTime = null, endTime = nul
 
   try {
     const availableCalendars = await listGoogleCalendarOptions({ config })
-    // Ristak manda: primero publicamos/migramos las citas canónicas y después
-    // importamos ocupación externa. Así un pull nunca roba la procedencia A→B.
-    const outboundResult = await syncLocalAppointmentsToGoogle()
+    // El pull corre primero para aceptar una reagenda horaria realmente más
+    // nueva hecha en Google/Apple Calendar. Los cambios locales pendientes
+    // conservan su versión por timestamp y el push posterior repara el espejo.
     const eventsResult = await syncGoogleEventsToLocal({
       startTime: syncStart,
       endTime: syncEnd,
       config
     })
+    const outboundResult = await syncLocalAppointmentsToGoogle()
     const linkedCalendars = Number(eventsResult.linkedCalendars || outboundResult.linkedCalendars || 0)
     const syncedEvents = Number(eventsResult.saved || 0) + Number(outboundResult.synced || 0)
     const deletedEvents = Number(eventsResult.deleted || 0)
@@ -1485,6 +1555,14 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
     return { enabled: true, appointment: null }
   }
 
+  if (cleanString(appointment.googleSyncStatus).toLowerCase() === 'history_only') {
+    return {
+      enabled: false,
+      reason: 'appointment_history_only',
+      appointment
+    }
+  }
+
   try {
     const localCalendar = await localCalendarService.getLocalCalendar(appointment.calendarId)
     const targetGoogleCalendarId = googleCalendarIdFromLocalCalendar(localCalendar)
@@ -1733,6 +1811,7 @@ export async function syncLocalAppointmentsToGoogle({ calendarId = null, limit =
   const conditions = [
     'deleted_at IS NULL',
     "COALESCE(sync_status, '') != 'pending_delete'",
+    "COALESCE(google_sync_status, '') != 'history_only'",
     `(
       (
         (COALESCE(source, 'ristak') = 'ristak' OR id LIKE 'rstk_appt_%')
