@@ -337,6 +337,48 @@ test('imported HTML form titles ignore nearby Ristak technical snippets', async 
   }
 })
 
+test('imported HTML forms read native tracking identity at submit time', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  let siteId = ''
+  const sourceFormIds = []
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'tracking-identity.html',
+      name: `Tracking identity ${suffix}`,
+      siteType: 'landing_page',
+      fileBase64: Buffer.from(`<!doctype html><html><body>
+        <form data-rstk-form-id="lead-principal">
+          <input name="email" type="email" data-rstk-field-id="correo">
+          <button type="submit">Enviar</button>
+        </form>
+      </body></html>`, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    sourceFormIds.push(...created.import.formMappings.map(mapping => mapping.formSiteId).filter(Boolean))
+
+    const rendered = await renderPublicSiteHtml({ ...created.site, status: 'published' }, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+    const submitListenerIndex = rendered.indexOf("form.addEventListener('submit'")
+    const liveIdentityIndex = rendered.indexOf('const nativeIdentity = getNativeIdentity();', submitListenerIndex)
+
+    assert.ok(submitListenerIndex >= 0)
+    assert.ok(liveIdentityIndex > submitListenerIndex, 'la identidad debe leerse dentro de cada submit')
+    assert.match(rendered, /window\.ristakNativeIdentity = \(\) =>/)
+    assert.match(rendered, /window\.ristakNativeBuildData = buildTrackingData/)
+    assert.match(rendered, /visitorId: nativeIdentity\.visitorId \|\| null/)
+    assert.match(rendered, /sessionId: nativeIdentity\.sessionId \|\| null/)
+    assert.match(rendered, /tracking: nativeTracking/)
+    assert.doesNotMatch(rendered, /const TRACKING = window\.ristakNativeTracking/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+    await deleteSites(sourceFormIds)
+  }
+})
+
 test('imported HTML rejects explicit unknown or dormant form ids instead of routing to another form', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const previousConfig = {

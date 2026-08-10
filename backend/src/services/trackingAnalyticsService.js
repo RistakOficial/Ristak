@@ -20,7 +20,7 @@ import {
 } from '../utils/hiddenContactsFilter.js'
 import {
   getTrackingConversionProjectionStatus,
-  linkedWebSessionEvidenceCondition,
+  linkedWebAcquisitionEvidenceCondition,
   queryTrackingConversionProjection,
   webEvidenceCausalityCondition
 } from './trackingConversionProjectionService.js'
@@ -839,7 +839,7 @@ async function querySessionMetrics(range, filters, groupBy, { includeSeries, hid
 }
 
 function contactAnalyticsSourceCondition(alias = 'c') {
-  return linkedWebSessionEvidenceCondition(alias, 'web_evidence')
+  return linkedWebAcquisitionEvidenceCondition(alias, 'web_evidence', 'site_submission')
 }
 
 function emptyConversionMetrics() {

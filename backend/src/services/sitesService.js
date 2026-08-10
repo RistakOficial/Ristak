@@ -30874,7 +30874,6 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
       const SITE_ID = ${scriptJson(site.id)};
       const FORMS = ${scriptJson(mappings)};
       const DEFAULT_FORM_ID = ${scriptJson(mappings[0]?.formId || 'form_1')};
-      const TRACKING = window.ristakNativeTracking || {};
 
       const cssEscape = (value) => String(value || '').replace(/["\\\\]/g, '\\\\$&');
       const readCookie = (name) => {
@@ -30890,6 +30889,24 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
           current = Object.fromEntries(new URL(window.location.href).searchParams.entries());
         } catch (_) {}
         return Object.assign({}, stored, current);
+      };
+      const getNativeIdentity = () => {
+        try {
+          return typeof window.ristakNativeIdentity === 'function'
+            ? window.ristakNativeIdentity() || {}
+            : {};
+        } catch (_) {
+          return {};
+        }
+      };
+      const getNativeTracking = (extra) => {
+        try {
+          return typeof window.ristakNativeBuildData === 'function'
+            ? window.ristakNativeBuildData(extra || {}) || {}
+            : {};
+        } catch (_) {
+          return {};
+        }
       };
       const getStableFieldId = (field) => (
         field.getAttribute('data-rstk-field-id') ||
@@ -31474,6 +31491,12 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
             const rawFields = collectRawFields(form);
             const selectedChoiceActions = collectSelectedChoiceActions(form);
             const importedConversion = collectImportedConversion(form, submitter);
+            const nativeIdentity = getNativeIdentity();
+            const nativeTracking = getNativeTracking({
+              conversion_type: importedConversion && importedConversion.conversionType
+                ? importedConversion.conversionType
+                : 'form_submit'
+            });
             const disqualifyingAction = selectedChoiceActions.find(item => item.action === 'disqualify' || item.action === 'disqualify_after_submit') || null;
             // "Descalificar en esta página" corta el flujo al enviar (oculta el form);
             // "al terminar formulario" deja terminar y registra al contacto como no calificado.
@@ -31492,9 +31515,9 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
                   referrer: document.referrer,
                   params: getParams(),
                   eventTime: Date.now(),
-                  visitorId: TRACKING.visitorId || null,
-                  sessionId: TRACKING.sessionId || null,
-                  tracking: TRACKING,
+                  visitorId: nativeIdentity.visitorId || null,
+                  sessionId: nativeIdentity.sessionId || null,
+                  tracking: nativeTracking,
                   fbp: readCookie('_fbp'),
                   fbc: readCookie('_fbc'),
                   importedChoiceActions: selectedChoiceActions,

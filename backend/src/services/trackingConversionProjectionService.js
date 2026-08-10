@@ -16,7 +16,7 @@ import { canRunBackgroundJob } from './licenseService.js'
 import { invalidateTrackingAnalyticsCache } from './trackingAnalyticsCache.js'
 import { getTrackingAnalyticsProjectionStatus } from './trackingAnalyticsProjectionService.js'
 
-export const TRACKING_CONVERSION_PROJECTION_VERSION = 2
+export const TRACKING_CONVERSION_PROJECTION_VERSION = 3
 
 const PROJECTION_STATE_ID = 1
 const WEB_EVIDENCE_CLOCK_SKEW_MINUTES = 5
@@ -150,6 +150,58 @@ export function linkedWebSessionEvidenceCondition(contactAlias = 'c', sessionAli
           `${contactAlias}.created_at`
         )}
     )
+  )`
+}
+
+/**
+ * Un submission enlazado al contacto es evidencia first-party determinista de
+ * adquisición por Sites, incluso si un runtime antiguo perdió visitor_id al
+ * enviar el formulario. La ventana simétrica evita que un formulario posterior
+ * reclame como adquisición web a un contacto histórico ya existente.
+ *
+ * public_site_submissions.created_at conserva UTC en una columna timestamp sin
+ * zona en PostgreSQL; se interpreta explícitamente como UTC antes de compararla
+ * con contacts.created_at (timestamptz).
+ */
+export function linkedSiteSubmissionEvidenceCondition(
+  contactAlias = 'c',
+  submissionAlias = 'site_submission'
+) {
+  const submittedAt = databaseDialect === 'postgres'
+    ? `(${submissionAlias}.created_at AT TIME ZONE 'UTC')`
+    : `julianday(${submissionAlias}.created_at)`
+  const contactCreatedAt = databaseDialect === 'postgres'
+    ? `${contactAlias}.created_at`
+    : `julianday(${contactAlias}.created_at)`
+  const causalWindow = databaseDialect === 'postgres'
+    ? `${submittedAt} BETWEEN ${contactCreatedAt} - INTERVAL '${WEB_EVIDENCE_CLOCK_SKEW_MINUTES} minutes'
+      AND ${contactCreatedAt} + INTERVAL '${WEB_EVIDENCE_CLOCK_SKEW_MINUTES} minutes'`
+    : `${submittedAt} BETWEEN ${contactCreatedAt} - (${WEB_EVIDENCE_CLOCK_SKEW_MINUTES}.0 / 1440.0)
+      AND ${contactCreatedAt} + (${WEB_EVIDENCE_CLOCK_SKEW_MINUTES}.0 / 1440.0)`
+
+  return `EXISTS (
+    SELECT 1
+    FROM public_site_submissions ${submissionAlias}
+    WHERE ${submissionAlias}.contact_id = ${contactAlias}.id
+      AND ${submissionAlias}.created_at IS NOT NULL
+      AND ${causalWindow}
+  )`
+}
+
+/**
+ * El contacto pertenece a la cohorte web cuando conserva una vista causal con
+ * el mismo visitor_id o cuando Sites dejó un submission causal explícitamente
+ * enlazado. La segunda vía recupera históricos sin inferir por IP, nombre,
+ * correo ni mera cercanía temporal entre filas no relacionadas.
+ */
+export function linkedWebAcquisitionEvidenceCondition(
+  contactAlias = 'c',
+  sessionAlias = 'web_evidence',
+  submissionAlias = 'site_submission'
+) {
+  return `(
+    ${linkedWebSessionEvidenceCondition(contactAlias, sessionAlias)}
+    OR ${linkedSiteSubmissionEvidenceCondition(contactAlias, submissionAlias)}
   )`
 }
 
@@ -304,7 +356,7 @@ async function readSourceRowsByIds(transaction, ids) {
         c.id AS contact_id,
         c.created_at,
         COALESCE(cla.purchases_count, 0) AS purchases_count,
-        CASE WHEN ${linkedWebSessionEvidenceCondition('c', 'web_evidence')}
+        CASE WHEN ${linkedWebAcquisitionEvidenceCondition('c', 'web_evidence', 'site_submission')}
           THEN 1 ELSE 0 END AS eligible,
         CASE
           WHEN c.appointment_date IS NOT NULL THEN 1

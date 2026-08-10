@@ -18,7 +18,7 @@ import {
 } from '../src/services/trackingAnalyticsProjectionService.js'
 import {
   getTrackingConversionProjectionStatus,
-  linkedWebSessionEvidenceCondition,
+  linkedWebAcquisitionEvidenceCondition,
   queryTrackingConversionProjection,
   runTrackingConversionProjectionBackfill,
   supportsTrackingConversionProjectionFilters,
@@ -32,6 +32,8 @@ import {
 const postgresConnectionString = process.env.RISTAK_TEST_POSTGRES_URL || ''
 const sqliteMigrationUrl = new URL('../migrations/versioned/116_tracking_conversion_projection.sqlite.sql', import.meta.url)
 const postgresMigrationUrl = new URL('../migrations/versioned/116a_tracking_conversion_projection.postgres.sql', import.meta.url)
+const sqliteSiteSubmissionMigrationUrl = new URL('../migrations/versioned/157_tracking_conversion_site_submissions.sqlite.sql', import.meta.url)
+const postgresSiteSubmissionMigrationUrl = new URL('../migrations/versioned/157a_tracking_conversion_site_submissions.postgres.sql', import.meta.url)
 
 const SUCCESS_STATUSES = ['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success']
 const INACTIVE_APPOINTMENT_STATUSES = [
@@ -123,7 +125,7 @@ async function queryLegacyConversionSql(range, { groupBy = 'day', includeSeries 
       FROM contacts c
       WHERE c.created_at >= ?
         AND c.created_at < ?
-        AND ${linkedWebSessionEvidenceCondition('c', 'legacy_web_evidence')}
+        AND ${linkedWebAcquisitionEvidenceCondition('c', 'legacy_web_evidence', 'legacy_site_submission')}
     ),
     payment_facts AS (
       SELECT p.contact_id, COUNT(*) AS payment_count
@@ -190,6 +192,8 @@ async function queryLegacyConversionSql(range, { groupBy = 'day', includeSeries 
 }
 
 async function cleanup(prefix) {
+  await db.run('DELETE FROM public_site_submissions WHERE contact_id LIKE ? OR id LIKE ?', [`${prefix}%`, `${prefix}%`])
+  await db.run('DELETE FROM public_sites WHERE id LIKE ?', [`${prefix}%`])
   await db.run('DELETE FROM whatsapp_api_attribution WHERE contact_id LIKE ?', [`${prefix}%`])
   await db.run('DELETE FROM whatsapp_attribution WHERE contact_id LIKE ?', [`${prefix}%`])
   await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id LIKE ?', [`${prefix}%`])
@@ -255,16 +259,22 @@ async function convergeConversionProjection() {
   assert.equal((await getTrackingConversionProjectionStatus()).ready, true)
 }
 
-test('116 separa dialectos y los triggers sólo coalescen la llave en la cola', async () => {
-  assert.equal(TRACKING_CONVERSION_PROJECTION_VERSION, 2)
+test('116/157 separan dialectos y los triggers sólo coalescen la llave en la cola', async () => {
+  assert.equal(TRACKING_CONVERSION_PROJECTION_VERSION, 3)
   assert.equal(migrationRunsForDialect('116_tracking_conversion_projection.sqlite.sql', 'sqlite'), true)
   assert.equal(migrationRunsForDialect('116_tracking_conversion_projection.sqlite.sql', 'postgres'), false)
   assert.equal(migrationRunsForDialect('116a_tracking_conversion_projection.postgres.sql', 'postgres'), true)
   assert.equal(migrationRunsForDialect('116a_tracking_conversion_projection.postgres.sql', 'sqlite'), false)
+  assert.equal(migrationRunsForDialect('157_tracking_conversion_site_submissions.sqlite.sql', 'sqlite'), true)
+  assert.equal(migrationRunsForDialect('157_tracking_conversion_site_submissions.sqlite.sql', 'postgres'), false)
+  assert.equal(migrationRunsForDialect('157a_tracking_conversion_site_submissions.postgres.sql', 'postgres'), true)
+  assert.equal(migrationRunsForDialect('157a_tracking_conversion_site_submissions.postgres.sql', 'sqlite'), false)
 
-  const [sqliteSql, postgresSql, serviceSource] = await Promise.all([
+  const [sqliteSql, postgresSql, sqliteSiteSql, postgresSiteSql, serviceSource] = await Promise.all([
     readFile(sqliteMigrationUrl, 'utf8'),
     readFile(postgresMigrationUrl, 'utf8'),
+    readFile(sqliteSiteSubmissionMigrationUrl, 'utf8'),
+    readFile(postgresSiteSubmissionMigrationUrl, 'utf8'),
     readFile(new URL('../src/services/trackingConversionProjectionService.js', import.meta.url), 'utf8')
   ])
   for (const sql of [sqliteSql, postgresSql]) {
@@ -290,12 +300,18 @@ test('116 separa dialectos y los triggers sólo coalescen la llave en la cola', 
   assert.match(sourceBatch, /active_appointments_count/i)
   assert.match(sourceBatch, /WHEN COALESCE\(cla\.active_appointments_count, 0\) <= 0 THEN 0/i)
   assert.match(sourceBatch, /FROM appointments exceptional_no_show[\s\S]*= 'no-show'/i)
-  assert.match(sourceBatch, /linkedWebSessionEvidenceCondition\('c', 'web_evidence'\)/i)
+  assert.match(sourceBatch, /linkedWebAcquisitionEvidenceCondition\('c', 'web_evidence', 'site_submission'\)/i)
   assert.match(serviceSource, /FROM sessions \$\{sessionAlias\}/i)
   assert.match(serviceSource, /sessionAlias\}\.visitor_id = \$\{contactAlias\}\.visitor_id/i)
+  assert.match(serviceSource, /FROM public_site_submissions \$\{submissionAlias\}/i)
   assert.match(serviceSource, /WEB_VIEW_EVENT_SQL = [^\n]*'native_site_view'/i)
   assert.doesNotMatch(sourceBatch, /whatsapp_(?:api_)?(?:messages|attribution)/i)
   assert.doesNotMatch(sourceBatch, /NOT IN\s*\(/i, 'el backfill no repite un probe general de citas por contacto')
+
+  assert.match(sqliteSiteSql, /AFTER INSERT ON public_site_submissions/i)
+  assert.match(sqliteSiteSql, /AFTER UPDATE OF contact_id, created_at ON public_site_submissions/i)
+  assert.match(sqliteSiteSql, /AFTER DELETE ON public_site_submissions/i)
+  assert.match(postgresSiteSql, /enqueue_tracking_conversion_related_change\(\)/i)
 })
 
 test('116a usa tipos PostgreSQL y no pierde una mutación concurrente durante el lock del worker', {
@@ -622,6 +638,88 @@ test('23 contactos web no se contaminan con 483 contactos de WhatsApp', async ()
       allowStale: false
     })
     assert.equal(legacy.metrics.current.registrations, 23)
+  } finally {
+    clearTrackingAnalyticsSummaryCache()
+    await cleanup(prefix)
+    await convergeConversionProjection()
+  }
+})
+
+test('un submission causal recupera contactos de Sites sin inventar atribución histórica', async () => {
+  await runVersionedMigrations()
+  await setTimezone('UTC')
+
+  const prefix = uniquePrefix()
+  const contactId = `${prefix}_site_contact`
+  const lateContactId = `${prefix}_late_contact`
+  const submissionId = `${prefix}_submission`
+  const siteId = `${prefix}_site`
+  const contactAt = '2095-02-14T12:00:00.000Z'
+  const lateContactAt = '2095-02-14T13:00:00.000Z'
+  const currentRange = businessRange('2095-02-14', '2095-02-15', 'UTC')
+  const previousRange = businessRange('2095-02-13', '2095-02-14', 'UTC')
+  const read = () => queryTrackingConversionProjection({ currentRange, previousRange })
+
+  await cleanup(prefix)
+  clearTrackingAnalyticsSummaryCache()
+  try {
+    await insertContact({ id: contactId, timestamp: contactAt, source: 'ristak_site:fixture', visitor: false })
+    await insertContact({ id: lateContactId, timestamp: lateContactAt, source: 'manual', visitor: false })
+    await runCrmListProjectionBackfill({ batchSize: 100, yieldMs: 0 })
+    await convergeConversionProjection()
+    assert.equal((await read()).current.metrics.registrations, 0)
+
+    await db.run(`
+      INSERT INTO public_sites(id, name, slug, site_type, status)
+      VALUES (?, ?, ?, 'landing_page', 'published')
+    `, [siteId, siteId, siteId])
+
+    await db.run(`
+      INSERT INTO public_site_submissions(id, site_id, contact_id, response_json, status, created_at)
+      VALUES (?, ?, ?, '{}', 'received', ?)
+    `, [submissionId, siteId, contactId, '2095-02-14 12:02:00'])
+
+    const queued = await db.get(`
+      SELECT revision FROM tracking_conversion_change_queue WHERE contact_id = ?
+    `, [contactId])
+    assert.ok(Number(queued?.revision || 0) > 0, 'insertar el submission debe encolar al contacto ligado')
+
+    await convergeConversionProjection()
+    assert.equal((await read()).current.metrics.registrations, 1)
+
+    const legacy = await getTrackingAnalyticsSummary({
+      start: '2095-02-14',
+      end: '2095-02-14',
+      groupBy: 'day',
+      filters: {},
+      includeFacets: true,
+      allowStale: false
+    })
+    assert.equal(legacy.metrics.current.registrations, 1)
+
+    await db.run(`
+      UPDATE public_site_submissions
+      SET contact_id = ?, created_at = '2095-02-14 14:00:00'
+      WHERE id = ?
+    `, [lateContactId, submissionId])
+    await convergeConversionProjection()
+    assert.equal(
+      (await read()).current.metrics.registrations,
+      0,
+      'un vínculo real pero muy posterior no reescribe la adquisición del contacto'
+    )
+
+    await db.run(`
+      UPDATE public_site_submissions
+      SET created_at = '2095-02-14 13:03:00'
+      WHERE id = ?
+    `, [submissionId])
+    await convergeConversionProjection()
+    assert.equal((await read()).current.metrics.registrations, 1)
+
+    await db.run('DELETE FROM public_site_submissions WHERE id = ?', [submissionId])
+    await convergeConversionProjection()
+    assert.equal((await read()).current.metrics.registrations, 0)
   } finally {
     clearTrackingAnalyticsSummaryCache()
     await cleanup(prefix)

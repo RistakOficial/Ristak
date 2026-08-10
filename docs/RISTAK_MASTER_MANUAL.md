@@ -499,12 +499,18 @@ Los contratos son:
 
 El contrato web `includeFacets=false` se calcula exclusivamente desde
 `tracking_analytics_range_delta` / `tracking_analytics_presence` (proyeccion 113)
-y `tracking_conversion_daily_rollup` (proyeccion 116, modelo 2). Un contacto sólo
+y `tracking_conversion_daily_rollup` (proyeccion 116, modelo 3). Un contacto
 entra en `registrations` si conserva `visitor_id` y existe una vista web real del
 mismo visitante ocurrida antes de su alta, con una tolerancia técnica máxima de
-cinco minutos. El texto de `contacts.source`, la existencia de mensajes o una
-atribución WhatsApp no califican como evidencia web; una visita futura tampoco
-puede apropiarse de una conversión pasada. Esa lectura nunca cae de
+cinco minutos. También califica cuando una fila de
+`public_site_submissions` está enlazada por `contact_id` y ocurrió dentro de
+cinco minutos de su creación; ese vínculo first-party recupera formularios de
+Sites cuyo runtime histórico perdió la identidad. El texto de `contacts.source`,
+la existencia de mensajes, una atribución WhatsApp, una coincidencia por IP o
+una submission tardía no califican como evidencia web; una visita futura tampoco
+puede apropiarse de una conversión pasada. Los filtros por dimensiones web
+siguen exigiendo sesión real y nunca fabrican campaña, página o dispositivo para
+el fallback. Esa lectura nunca cae de
 regreso a scans de `sessions`, `contacts`, `payments` o `appointments`: si cualquiera de
 las dos proyecciones todavia no converge para la zona horaria de la cuenta,
 responde `503 tracking_analytics_projection_warming` o
@@ -6487,6 +6493,15 @@ order id y payment id; la moneda enviada a Meta sigue saliendo de
 `account_currency`, no del HTML externo. Un HTML externo no debe marcar
 `Purchase` en clicks o intentos de pago: solo en confirmacion real/pagina de
 gracias.
+El runtime del formulario consulta `ristakNativeIdentity()` y
+`ristakNativeBuildData()` al momento exacto de enviar, no al cargar la página.
+Así el contacto y la submission conservan el `visitor_id`, `session_id` y
+contexto first-party vigentes aunque la identidad se haya creado después de
+inyectar el script. Como reparación compatible, el modelo 3 de la proyección de
+conversiones acepta una submission enlazada por `contact_id` dentro de cinco
+minutos de la creación del contacto. Las migraciones `157*` encolan cambios de
+ese vínculo para recalcularlo sin barridos completos; una submission tardía no
+reclasifica contactos históricos y tampoco inventa dimensiones web ausentes.
 Esta ruta aplica a formularios HTML independientes. El
 `<form data-rstk-calendar-book-form>` que vive dentro de un calendario custom es
 parte del calendario y queda fuera del submit generico: no crea submission de

@@ -143,6 +143,14 @@ declara `tracking_source = 'native_site'`. Una conversión válida puede generar
 `native_site_conversion`, pero sólo cuando el envío es final y no quedó
 descalificado.
 
+Los formularios HTML importados leen `ristakNativeIdentity()` y
+`ristakNativeBuildData()` en el instante de cada submit. No deben copiar la
+identidad al cargar la página ni depender de un objeto global alterno: el
+`visitor_id` y el `session_id` pueden materializarse después de que el script del
+formulario fue creado. El payload final conserva esa identidad first-party para
+que la submission, la conversión y la visita pertenezcan a la misma persona y
+sesión.
+
 #### Personalización first-party por contacto
 
 Un Site publicado puede materializar `{{contact.*}}`,
@@ -1002,6 +1010,18 @@ cuenta, responde `503` con
 `tracking_conversion_projection_warming` y `Retry-After: 2`. El navegador
 reintenta un maximo de tres intentos, respeta cancelacion y nunca reintenta por
 `busy` o `deadline`.
+
+La proyección de conversiones modelo 3 considera adquisición web por dos vías
+deterministas: una vista causal del mismo `visitor_id`, o una fila de
+`public_site_submissions` enlazada por `contact_id` y creada dentro de cinco
+minutos de la alta del contacto. La segunda vía recupera formularios históricos
+de Sites cuyo runtime perdió la identidad; no infiere por IP, nombre, correo ni
+proximidad entre filas sin vínculo. Una submission posterior a esa ventana no
+reescribe el origen de un contacto existente. Los filtros por página, campaña,
+dispositivo y demás dimensiones web siguen exigiendo evidencia real de sesión:
+el fallback repara el total general de contactos del sitio, pero no fabrica una
+atribución que nunca se registró. Las migraciones `157*` encolan inserts,
+updates y deletes de submissions para mantener esta proyección incremental.
 
 Excepcion de privacidad: si existen reglas activas en
 `hidden_contact_filters`, la proyeccion agregada no tiene identidad suficiente
