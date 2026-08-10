@@ -1486,6 +1486,28 @@ correo exige una direccion. La preferencia vive en
 de la ruta. La accion historica **Cambiar numero de WhatsApp** sigue ejecutandose
 en flujos existentes, pero ya no se ofrece al crear nodos nuevos.
 
+La accion **Confirmar cita** programa y envía una solicitud de confirmación sobre
+la cita exacta que inició la ejecución; si el flujo no nació de una cita, usa la
+próxima cita activa del contacto y permite limitarla por calendario. El mismo
+nodo configura si sale antes del inicio o después de agendar, cantidad y unidad,
+plantilla de WhatsApp, remitente, horario inteligente de envío, plazo/horario de
+respuesta, política ante silencio, respuesta posterior, tarjeta/distintivo y
+aislamiento de otras automatizaciones. No requiere agregar un bloque `Esperar`:
+el motor conserva la ejecución en el nodo hasta el instante UTC calculado con la
+zona horaria del negocio. Para un ancla anterior al inicio, una reprogramación de
+la misma cita vuelve a calcular el instante antes de enviar; para
+`after_booking`, se conserva el momento original de reserva.
+
+El envío usa el mismo clasificador y las mismas acciones de confirmación que los
+mensajes automáticos de Citas. Se reclama de forma idempotente por automatización,
+nodo y cita, y guarda en `appointment_reminder_sends.source_type = automation`
+un snapshot `source_config` con calendario y políticas. Por eso las respuestas y
+ultimátums siguen funcionando aunque no exista una fila visible en
+`appointment_reminders`; el editor de Citas no muestra reglas fantasma creadas
+por Automatizaciones. Citas y Automatizaciones pueden conservar mensajes
+distintos para la misma agenda, pero el administrador debe evitar programar dos
+solicitudes de confirmación equivalentes.
+
 ### Ejecuciones, reingreso y eventos dentro de Automatizaciones
 
 Cada entrada de un contacto a una automatizacion es una ejecucion independiente
@@ -1498,6 +1520,11 @@ la fila esta `active`, `waiting` o `paused`. Las migraciones `132*` retiran la
 unicidad historica por contacto y la sustituyen por
 `uq_automation_enrollments_active_contact`, un indice parcial sobre
 `dedupe_contact_id`.
+Cuando **Permitir reingreso** está apagado, el bloqueo cubre también una cita
+reprogramada después de que la vuelta anterior terminó: la reprogramación no es
+una excepción escondida que cree otra ejecución. Si la ejecución de esa misma
+cita todavía está activa o esperando, el evento actualiza su contexto y conserva
+el progreso en lugar de duplicarla.
 
 Un evento del CRM se entrega primero a las ejecuciones que ya estaban activas y
 despues se evalua como posible disparador de entrada. Si el evento completa una
@@ -5341,6 +5368,13 @@ mandar un mensaje tarde. El enfriamiento se compara en UTC con SQL nativo del
 motor activo; PostgreSQL no ejecuta funciones exclusivas de SQLite durante este
 reclamo. Cada intento usa una identidad externa distinta y estable para impedir
 que el proveedor confunda el reintento con la solicitud original.
+
+Los envíos nuevos guardan además `source_type` y `source_id`. Las reglas normales
+usan `appointment_reminder` y continúan leyendo su fila canónica; la acción
+**Confirmar cita** de Automatizaciones usa `automation` y guarda también
+`source_config`. El procesamiento de respuestas y vencimientos lee ese snapshot
+cuando no existe una regla visible en Citas, sin inventar una fila fantasma en
+`appointment_reminders`.
 
 Los intentos físicos se conservan en `whatsapp_api_messages` para auditoría,
 pero el chat sólo proyecta la copia vigente. Cuando el segundo intento genera un

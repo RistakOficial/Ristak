@@ -3658,7 +3658,7 @@ test('una reprogramación tardía pausada salta a la siguiente espera al reanuda
   }
 })
 
-test('reprogramar una cita crea una vuelta nueva sólo cuando la anterior ya terminó', async () => {
+test('reprogramar una cita respeta que el contacto no pueda volver a entrar', async () => {
   const suffix = randomUUID()
   const automationId = `automation_reschedule_after_completion_${suffix}`
   const contactId = `contact_reschedule_after_completion_${suffix}`
@@ -3754,17 +3754,9 @@ test('reprogramar una cita crea una vuelta nueva sólo cuando la anterior ya ter
        ORDER BY entered_at ASC, id ASC`,
       [automationId, contactId]
     )
-    assert.equal(enrollments.length, 2)
-    assert.equal(enrollments.filter(row => row.id === originalEnrollmentId).length, 1)
-    const newEnrollment = enrollments.find(row => row.id !== originalEnrollmentId)
-    assert.equal(newEnrollment.status, 'completed')
-    const context = JSON.parse(newEnrollment.context)
-    assert.equal(context.startTime, rescheduledStart)
-    assert.equal(context.appointmentLifecycleAppointmentId, appointmentId)
-    const log = JSON.parse(newEnrollment.log)
-    assert.equal(log.filter(entry => entry.nodeId === 'start').length, 1)
-    assert.ok(log.some(entry => entry.detail.includes('reprogramó una cita')))
-    assert.equal(log.some(entry => entry.detail.includes('reinició')), false)
+    assert.equal(enrollments.length, 1)
+    assert.equal(enrollments[0].id, originalEnrollmentId)
+    assert.equal(enrollments[0].status, 'completed')
   } finally {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])

@@ -1111,6 +1111,71 @@ test('una falla técnica del clasificador conserva la cita al vencer el ultimát
   })
 })
 
+test('un ultimátum creado por Automatizaciones usa su snapshot sin una regla visible en Citas', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_auto_timeout_${suffix}`
+  const appointmentId = `appointment_auto_timeout_${suffix}`
+  const sendId = `send_auto_timeout_${suffix}`
+  try {
+    await db.run(`
+      INSERT INTO contacts (id, phone, first_name, full_name)
+      VALUES (?, ?, 'Ana', 'Ana Automatización')
+    `, [contactId, `+52155${Date.now().toString().slice(-8)}${suffix.slice(0, 4)}`])
+    await db.run(`
+      INSERT INTO appointments (
+        id, calendar_id, contact_id, title, status, appointment_status,
+        start_time, end_time, date_added, date_updated
+      ) VALUES (?, ?, ?, 'Consulta automatizada', 'confirmed', 'confirmed', ?, ?, ?, ?)
+    `, [
+      appointmentId,
+      TEST_CALENDAR_ID,
+      contactId,
+      isoFromNow(60 * 60 * 1000),
+      isoFromNow(2 * 60 * 60 * 1000),
+      isoAgo(10 * 60 * 1000),
+      isoAgo(10 * 60 * 1000)
+    ])
+    await db.run(`
+      INSERT INTO appointment_reminder_sends (
+        id, reminder_id, appointment_id, contact_id, status, message_type,
+        ai_enabled, send_at, sent_at, confirmation_deadline_at,
+        confirmation_timeout_status, source_type, source_id, source_config
+      ) VALUES (?, ?, ?, ?, 'sent', 'confirmation', 1, ?, ?, ?, 'pending',
+        'automation', ?, ?)
+    `, [
+      sendId,
+      `automation-confirmation:${suffix}`,
+      appointmentId,
+      contactId,
+      isoAgo(10 * 60 * 1000),
+      isoAgo(10 * 60 * 1000),
+      isoAgo(60 * 1000),
+      `automation:${suffix}`,
+      JSON.stringify({
+        calendarId: TEST_CALENDAR_ID,
+        noConfirmAction: 'cancel_appointment',
+        bypassAutomations: true,
+        confirmationSuccessAction: '["chat_card","mark_confirmed"]',
+        confirmationReplyText: 'Confirmada.'
+      })
+    ])
+
+    const result = await processExpiredConfirmationTimeouts()
+    assert.equal(result.processed, 1)
+    assert.equal(result.cancelled, 1)
+    const appointment = await db.get(
+      'SELECT appointment_status FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    assert.equal(appointment.appointment_status, 'cancelled')
+  } finally {
+    await db.run('DELETE FROM appointment_confirmation_windows WHERE appointment_id = ?', [appointmentId]).catch(() => undefined)
+    await db.run('DELETE FROM appointment_reminder_sends WHERE id = ?', [sendId]).catch(() => undefined)
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
 test('la acción legacy notify_push se trata como conservar y el push sigue siendo global', async () => {
   await withConfirmationFixture({
     confirmationSuccessAction: 'chat_badge',

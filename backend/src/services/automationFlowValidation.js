@@ -106,6 +106,7 @@ const EXECUTABLE_NODE_TYPES = new Set([
   'action-assign-user',
   'action-unassign-user',
   'action-appointment-upsert',
+  'action-appointment-confirmation',
   'action-system-notification'
 ])
 
@@ -178,6 +179,7 @@ const AUTOMATION_NODE_REQUIRED_FEATURES = {
   'channel-comment-dm-reply': ['campaigns'],
   'action-change-whatsapp-number': ['whatsapp'],
   'action-appointment-upsert': ['appointments'],
+  'action-appointment-confirmation': ['appointments', 'whatsapp'],
   'action-webhook': ['developers'],
   'ai-step': ['ai_agent'],
   'ai-gpt-openai': ['ai_agent']
@@ -722,6 +724,66 @@ function validateGoalNode(node, errors) {
   validateGoalFilters(config, errors)
 }
 
+function validateAppointmentConfirmationNode(node, errors) {
+  const config = isPlainObject(node.config) ? node.config : {}
+  if (!String(config.template || config.templateId || '').trim()) {
+    errors.push('La acción Confirmar cita necesita una plantilla de WhatsApp')
+  }
+  if (
+    String(config.senderMode || config.sender || '') === 'specific' &&
+    !String(config.senderPhoneNumberId || config.senderNumberId || '').trim()
+  ) {
+    errors.push('La acción Confirmar cita necesita el número de WhatsApp remitente')
+  }
+
+  const timingAnchor = String(config.timingAnchor || 'before_appointment')
+  const offsetUnit = String(config.offsetUnit || (timingAnchor === 'after_booking' ? 'minutes' : 'days'))
+  const offsetValue = Number(config.offsetValue)
+  const validInteger = Number.isInteger(offsetValue)
+  if (timingAnchor === 'after_booking') {
+    const unitMs = { seconds: 1000, minutes: 60_000, hours: 3_600_000 }[offsetUnit]
+    if (!validInteger || offsetValue < 0 || !unitMs || offsetValue * unitMs > 86_400_000) {
+      errors.push('Después de agendar, la confirmación debe programarse entre 0 y 24 horas')
+    }
+  } else if (
+    timingAnchor !== 'before_appointment' ||
+    !validInteger ||
+    offsetValue < 1 ||
+    offsetValue > 60 ||
+    !['minutes', 'hours', 'days'].includes(offsetUnit)
+  ) {
+    errors.push('Antes de la cita, define un tiempo válido entre 1 y 60 minutos, horas o días')
+  }
+
+  const timeoutValue = Number(config.confirmationTimeoutValue)
+  const timeoutUnit = String(config.confirmationTimeoutUnit || '')
+  const timeoutMode = String(config.confirmationTimeoutMode || 'response_window')
+  const timeoutUnitMs = { minutes: 60_000, hours: 3_600_000, days: 86_400_000 }[timeoutUnit]
+  if (
+    !Number.isInteger(timeoutValue) ||
+    timeoutValue < 1 ||
+    !timeoutUnitMs ||
+    timeoutValue * timeoutUnitMs > 30 * 86_400_000 ||
+    (timeoutMode === 'response_window' && timeoutUnit === 'days')
+  ) {
+    errors.push('La acción Confirmar cita necesita un plazo de respuesta válido')
+  }
+  const responseStart = String(config.confirmationResponseStart || '')
+  const responseEnd = String(config.confirmationResponseEnd || '')
+  if (
+    timeoutMode === 'response_window' &&
+    (!/^\d{2}:\d{2}$/.test(responseStart) || !/^\d{2}:\d{2}$/.test(responseEnd) || responseStart === responseEnd)
+  ) {
+    errors.push('La acción Confirmar cita necesita un horario de respuesta válido')
+  }
+  if (timeoutMode === 'elapsed' && timingAnchor === 'before_appointment') {
+    const offsetUnitMs = { minutes: 60_000, hours: 3_600_000, days: 86_400_000 }[offsetUnit]
+    if (timeoutUnitMs && offsetUnitMs && timeoutValue * timeoutUnitMs >= offsetValue * offsetUnitMs) {
+      errors.push('El plazo para confirmar debe terminar antes de que comience la cita')
+    }
+  }
+}
+
 /**
  * Validación estructural mínima antes de publicar una automatización.
  * La validación detallada por tipo de paso vive en el editor (frontend);
@@ -806,6 +868,10 @@ export function validateFlowForPublish(flow) {
         errors.push('La acción Cambiar canal de respuesta necesita un número de WhatsApp conectado')
       }
     })
+
+  nodes
+    .filter((node) => node.type === 'action-appointment-confirmation')
+    .forEach((node) => validateAppointmentConfirmationNode(node, errors))
 
   nodes
     .filter((node) => node.type === 'logic-wait')

@@ -3412,6 +3412,247 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     }
   },
   {
+    type: 'action-appointment-confirmation',
+    kind: 'action',
+    label: 'Confirmar cita',
+    category: 'action-data',
+    description: 'Programa y envía una solicitud de confirmación para la cita del contacto',
+    icon: BellRing,
+    accent: 'teal',
+    requiredFeature: 'whatsapp',
+    addButtonLabel: 'Configurar confirmación',
+    defaultConfig: () => ({
+      calendar: '',
+      calendarName: '',
+      timingAnchor: 'before_appointment',
+      offsetValue: 1,
+      offsetUnit: 'days',
+      template: '',
+      templateName: '',
+      templateLanguage: 'es_MX',
+      senderMode: 'contact',
+      senderPhoneNumberId: '',
+      smartEnabled: true,
+      smartStart: '09:00',
+      smartEnd: '21:00',
+      smartOverflow: 'before',
+      confirmationTimeoutValue: 6,
+      confirmationTimeoutUnit: 'hours',
+      confirmationTimeoutMode: 'response_window',
+      confirmationResponseStart: '09:00',
+      confirmationResponseEnd: '21:00',
+      noConfirmAction: 'no_action',
+      confirmationReplyText: '¡Perfecto! Te esperamos en tu cita. Nos vemos pronto.',
+      createChatCard: true,
+      createChatBadge: true,
+      bypassAutomations: false
+    }),
+    fields: [
+      {
+        key: 'calendar',
+        label: 'Calendario (opcional)',
+        type: 'catalogSelect',
+        catalog: 'calendars',
+        help: 'Se usa como filtro de seguridad. La cita que inició el flujo tiene prioridad.'
+      },
+      {
+        key: 'timingAnchor',
+        label: 'Cuándo se enviará',
+        type: 'select',
+        options: [
+          { value: 'before_appointment', label: 'Antes de la cita' },
+          { value: 'after_booking', label: 'Después de agendar' }
+        ]
+      },
+      { key: 'offsetValue', label: 'Cantidad', type: 'number', placeholder: '1' },
+      {
+        key: 'offsetUnit',
+        label: 'Unidad',
+        type: 'select',
+        showIf: (config) => str(config.timingAnchor) !== 'after_booking',
+        options: [
+          { value: 'minutes', label: 'Minutos' },
+          { value: 'hours', label: 'Horas' },
+          { value: 'days', label: 'Días' }
+        ]
+      },
+      {
+        key: 'offsetUnit',
+        label: 'Unidad',
+        type: 'select',
+        showIf: (config) => str(config.timingAnchor) === 'after_booking',
+        options: [
+          { value: 'seconds', label: 'Segundos' },
+          { value: 'minutes', label: 'Minutos' },
+          { value: 'hours', label: 'Horas' }
+        ]
+      },
+      {
+        key: 'template',
+        label: 'Plantilla de confirmación',
+        type: 'catalogSelect',
+        catalog: 'whatsappTemplates',
+        required: true
+      },
+      {
+        key: 'senderMode',
+        label: 'Número remitente',
+        type: 'select',
+        advanced: true,
+        options: [
+          { value: 'contact', label: 'Número asignado al contacto' },
+          { value: 'default', label: 'Número principal' },
+          { value: 'specific', label: 'Elegir un número' }
+        ]
+      },
+      {
+        key: 'senderPhoneNumberId',
+        label: 'Número de WhatsApp',
+        type: 'catalogSelect',
+        catalog: 'whatsappNumbers',
+        advanced: true,
+        showIf: (config) => str(config.senderMode) === 'specific'
+      },
+      { key: 'smartEnabled', label: 'Respetar horario de envío', type: 'toggle', advanced: true },
+      {
+        key: 'smartStart',
+        label: 'Inicio del horario de envío',
+        type: 'time',
+        advanced: true,
+        showIf: (config) => config.smartEnabled !== false
+      },
+      {
+        key: 'smartEnd',
+        label: 'Fin del horario de envío',
+        type: 'time',
+        advanced: true,
+        showIf: (config) => config.smartEnabled !== false
+      },
+      {
+        key: 'smartOverflow',
+        label: 'Si cae fuera del horario',
+        type: 'select',
+        advanced: true,
+        showIf: (config) => config.smartEnabled !== false,
+        options: [
+          { value: 'before', label: 'Adelantar al cierre' },
+          { value: 'next_day', label: 'Mover al siguiente inicio' }
+        ]
+      },
+      {
+        key: 'confirmationTimeoutMode',
+        label: 'Cómo contar el plazo para responder',
+        type: 'select',
+        advanced: true,
+        options: [
+          { value: 'response_window', label: 'Solo dentro del horario de respuesta' },
+          { value: 'elapsed', label: 'Tiempo corrido' }
+        ]
+      },
+      { key: 'confirmationTimeoutValue', label: 'Plazo para responder', type: 'number', placeholder: '6', advanced: true },
+      {
+        key: 'confirmationTimeoutUnit',
+        label: 'Unidad del plazo',
+        type: 'select',
+        advanced: true,
+        options: [
+          { value: 'minutes', label: 'Minutos' },
+          { value: 'hours', label: 'Horas' },
+          { value: 'days', label: 'Días' }
+        ]
+      },
+      {
+        key: 'confirmationResponseStart',
+        label: 'Inicio del horario de respuesta',
+        type: 'time',
+        advanced: true,
+        showIf: (config) => str(config.confirmationTimeoutMode) === 'response_window'
+      },
+      {
+        key: 'confirmationResponseEnd',
+        label: 'Fin del horario de respuesta',
+        type: 'time',
+        advanced: true,
+        showIf: (config) => str(config.confirmationTimeoutMode) === 'response_window'
+      },
+      {
+        key: 'noConfirmAction',
+        label: 'Si no confirma a tiempo',
+        type: 'select',
+        advanced: true,
+        options: [
+          { value: 'no_action', label: 'Conservar la cita y avisar' },
+          { value: 'cancel_appointment', label: 'Cancelar la cita' }
+        ]
+      },
+      {
+        key: 'confirmationReplyText',
+        label: 'Respuesta al confirmar',
+        type: 'textarea',
+        showVariables: true,
+        advanced: true
+      },
+      { key: 'createChatCard', label: 'Mostrar tarjeta de confirmación en el chat', type: 'toggle', advanced: true },
+      { key: 'createChatBadge', label: 'Mostrar distintivo de cita confirmada', type: 'toggle', advanced: true },
+      { key: 'bypassAutomations', label: 'No disparar otras automatizaciones con esta respuesta', type: 'toggle', advanced: true }
+    ],
+    outputs: () => SINGLE_OUTPUT,
+    validate: (config) => {
+      const errors: string[] = []
+      const timingAnchor = str(config.timingAnchor) || 'before_appointment'
+      const offsetValue = Number(config.offsetValue)
+      const offsetUnit = str(config.offsetUnit)
+      if (!str(config.template)) errors.push('Selecciona una plantilla de confirmación')
+      if (str(config.senderMode) === 'specific' && !str(config.senderPhoneNumberId)) {
+        errors.push('Selecciona el número de WhatsApp remitente')
+      }
+      if (timingAnchor === 'after_booking') {
+        const unitMs: Record<string, number> = { seconds: 1000, minutes: 60_000, hours: 3_600_000 }
+        if (!Number.isInteger(offsetValue) || offsetValue < 0 || !unitMs[offsetUnit] || offsetValue * unitMs[offsetUnit] > 86_400_000) {
+          errors.push('El tiempo después de agendar debe estar entre 0 y 24 horas')
+        }
+      } else if (!Number.isInteger(offsetValue) || offsetValue < 1 || offsetValue > 60 || !['minutes', 'hours', 'days'].includes(offsetUnit)) {
+        errors.push('Define entre 1 y 60 minutos, horas o días antes de la cita')
+      }
+      const timeoutValue = Number(config.confirmationTimeoutValue)
+      const timeoutUnit = str(config.confirmationTimeoutUnit)
+      const timeoutMode = str(config.confirmationTimeoutMode) || 'response_window'
+      const timeoutMs: Record<string, number> = { minutes: 60_000, hours: 3_600_000, days: 86_400_000 }
+      if (!Number.isInteger(timeoutValue) || timeoutValue < 1 || !timeoutMs[timeoutUnit] || timeoutValue * timeoutMs[timeoutUnit] > 30 * 86_400_000 || (timeoutMode === 'response_window' && timeoutUnit === 'days')) {
+        errors.push('Define un plazo válido para responder')
+      }
+      if (timeoutMode === 'response_window' && (!str(config.confirmationResponseStart) || !str(config.confirmationResponseEnd) || str(config.confirmationResponseStart) === str(config.confirmationResponseEnd))) {
+        errors.push('Define un horario de respuesta válido')
+      }
+      if (timeoutMode === 'elapsed' && timingAnchor === 'before_appointment') {
+        const offsetMs: Record<string, number> = { minutes: 60_000, hours: 3_600_000, days: 86_400_000 }
+        if (timeoutMs[timeoutUnit] && offsetMs[offsetUnit] && timeoutValue * timeoutMs[timeoutUnit] >= offsetValue * offsetMs[offsetUnit]) {
+          errors.push('El plazo para confirmar debe terminar antes de la cita')
+        }
+      }
+      return errors
+    },
+    variableOutput: () => ({
+      baseId: 'confirmar_cita',
+      baseLabel: 'Confirmar cita',
+      fields: [
+        field('ID de cita', 'id_cita'),
+        field('Estado del envío', 'estado'),
+        field('Fecha de envío', 'fecha_envio'),
+        field('ID de mensaje', 'id_mensaje')
+      ]
+    }),
+    summary: (config) => {
+      const anchor = str(config.timingAnchor) === 'after_booking' ? 'después de agendar' : 'antes de la cita'
+      const template = str(config.templateName) || str(config.template)
+      return {
+        text: `${Number(config.offsetValue) || 0} ${str(config.offsetUnit) || 'días'} ${anchor}`,
+        box: template || undefined,
+        empty: 'Configura la confirmación de cita'
+      }
+    }
+  },
+  {
     type: 'extra-comment',
     kind: 'action',
     label: 'Post-it',

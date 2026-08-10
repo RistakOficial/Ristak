@@ -88,6 +88,31 @@ test('publicar acepta la acción de cita y exige la función de citas', () => {
   assert.deepEqual(getAutomationNodeRequiredFeatures(appointmentAction), ['appointments'])
 })
 
+test('publicar acepta Confirmar cita y exige citas más WhatsApp', () => {
+  const confirmation = actionNode('confirmation', 'action-appointment-confirmation')
+  confirmation.config = {
+    timingAnchor: 'after_booking',
+    offsetValue: 10,
+    offsetUnit: 'minutes',
+    template: 'template_123',
+    confirmationTimeoutValue: 6,
+    confirmationTimeoutUnit: 'hours',
+    confirmationTimeoutMode: 'response_window',
+    confirmationResponseStart: '09:00',
+    confirmationResponseEnd: '21:00'
+  }
+  const flow = {
+    nodes: [startNode(), confirmation],
+    edges: [edge('e1', 'start', 'confirmation')]
+  }
+
+  assert.deepEqual(validateFlowForPublish(flow), [])
+  assert.deepEqual(getAutomationNodeRequiredFeatures(confirmation), ['appointments', 'whatsapp'])
+
+  confirmation.config.template = ''
+  assert.match(validateFlowForPublish(flow).join(' '), /plantilla de WhatsApp/i)
+})
+
 test('el enlace de disparo exige la función de trigger links y no Formularios', () => {
   assert.deepEqual(
     getAutomationTriggerRequiredFeatures({ type: 'trigger-activation-link' }),
