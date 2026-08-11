@@ -154,7 +154,7 @@ async function deliverMeetingJoinNotification(appointment = {}, calendar = {}) {
   }
   const targets = await resolveNotificationDeliveryTargetsForEvent('appointment_joined')
   const bell = targets.configured ? targets.bell : { userIds: null }
-  const push = targets.configured ? targets.push : { userIds: [] }
+  const push = targets.configured ? targets.push : { userIds: null }
 
   if (bell.userIds === null || bell.userIds.length > 0) {
     await createInternalNotification({

@@ -105,7 +105,13 @@ guarda la señal idempotente `contact_id + appointment_id` en
 `appointment_attendance_signals`; después dispara automatizaciones,
 sincronización de Google y el aviso de ingreso. El evento configurable
 `appointment_joined` permite elegir campanita, push, ambos o apagado por
-destinatario. Clics repetidos conservan la asistencia sin duplicar el aviso.
+destinatario. Mientras la cuenta todavía no haya guardado una matriz explícita,
+el default es campanita + push para todos los dispositivos activos; al guardar
+Configuración → Notificaciones, esa selección se vuelve la fuente de verdad.
+Clics repetidos conservan la asistencia sin duplicar el aviso. El arranque
+repara `internal_notifications.dedupe_key` y `notification_read_states` antes del
+fast-path del bootstrap para que las instalaciones existentes no pierdan el
+aviso de campanita por traer un esquema anterior.
 Cambiar el calendario a presencial desactiva la regla y archiva el enlace
 interno; eliminarlo limpia además sus mensajes automáticos.
 

@@ -180,7 +180,7 @@ const getFallbackChannel = (
   if (eventKey === 'agent_priority') return legacyPush.conversations ? 'push' : 'off'
   if (eventKey === 'appointment_booked') return legacyPush.appointments ? 'push' : 'off'
   if (eventKey === 'appointment_confirmed') return legacyPush.appointments ? 'push' : 'off'
-  if (eventKey === 'appointment_joined') return recipientId === 'all' ? 'app' : 'off'
+  if (eventKey === 'appointment_joined') return recipientId === 'all' ? 'app_push' : 'off'
   if (eventKey === 'payments') return legacyPush.payments ? 'push' : 'off'
   if (recipientId === 'all' && eventKey === 'system') return 'app'
   if (recipientId === 'admins' && eventKey === 'automation_internal') return 'app'

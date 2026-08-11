@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 
-import { db } from '../src/config/database.js'
+import { db, setAppConfig } from '../src/config/database.js'
 import {
   createLocalAppointment,
   createLocalCalendar,
@@ -21,6 +21,18 @@ import {
   recordTriggerLinkRecipientClick
 } from '../src/services/triggerLinksService.js'
 import { readTriggerLinkRecipientToken } from '../src/services/triggerLinkRecipientTokenService.js'
+import { setAppNotificationPayloadSenderForTest } from '../src/services/pushNotificationsService.js'
+
+const NOTIFICATION_PREFERENCES_CONFIG_KEY = 'notification_preferences_matrix'
+
+async function waitFor(condition, timeoutMs = 1500) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (condition()) return
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  assert.fail('La notificación de ingreso no se entregó dentro del tiempo esperado.')
+}
 
 test('una cita en línea usa enlace opaco, oculta el destino interno y marca asistencia exacta', async () => {
   const suffix = randomUUID().replace(/-/g, '')
@@ -30,8 +42,18 @@ test('una cita en línea usa enlace opaco, oculta el destino interno y marca asi
   const concurrentAppointmentId = `appointment_meeting_concurrent_${suffix}`
   const customTemplateName = `acceso_videollamada_personalizado_${suffix}`
   let customTemplateId = ''
+  const pushDeliveries = []
+  const previousNotificationPreferences = await db.get(
+    'SELECT config_value FROM app_config WHERE config_key = ?',
+    [NOTIFICATION_PREFERENCES_CONFIG_KEY]
+  )
 
   try {
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [NOTIFICATION_PREFERENCES_CONFIG_KEY])
+    setAppNotificationPayloadSenderForTest(async (payload, options) => {
+      pushDeliveries.push({ payload, options })
+      return { sent: 1, nativeSent: 1, webSent: 0, skipped: false }
+    })
     await db.run(
       'INSERT INTO contacts (id, full_name, first_name, phone) VALUES (?, ?, ?, ?)',
       [contactId, 'María Reunión', 'María', '+526560000099']
@@ -175,6 +197,10 @@ test('una cita en línea usa enlace opaco, oculta el destino interno y marca asi
     assert.equal(click.destinationUrl, 'https://meet.google.com/abc-defg-hij')
     const stored = await getLocalAppointment(appointmentId)
     assert.equal(stored.appointmentStatus, 'showed')
+    await waitFor(() => pushDeliveries.length > 0)
+    assert.equal(pushDeliveries[0].payload.category, 'appointment_joined')
+    assert.match(pushDeliveries[0].payload.title, /María Reunión ingresó a la videollamada/)
+    assert.equal(pushDeliveries[0].options.userIds, null)
     assert.ok(await db.get(
       'SELECT id FROM appointment_attendance_signals WHERE contact_id = ? AND appointment_id = ?',
       [contactId, appointmentId]
@@ -201,6 +227,12 @@ test('una cita en línea usa enlace opaco, oculta el destino interno y marca asi
     assert.equal(concurrentResults.filter(result => result.marked).length, 1)
     assert.equal((await getLocalAppointment(concurrentAppointmentId)).appointmentStatus, 'showed')
   } finally {
+    setAppNotificationPayloadSenderForTest(null)
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [NOTIFICATION_PREFERENCES_CONFIG_KEY]).catch(() => undefined)
+    if (previousNotificationPreferences) {
+      await setAppConfig(NOTIFICATION_PREFERENCES_CONFIG_KEY, previousNotificationPreferences.config_value).catch(() => undefined)
+    }
+    await db.run("DELETE FROM internal_notifications WHERE category = 'appointment_joined' AND contact_id = ?", [contactId]).catch(() => undefined)
     await db.run('DELETE FROM appointment_reminder_sends WHERE appointment_id = ?', [appointmentId]).catch(() => undefined)
     await db.run('DELETE FROM appointment_reminder_sends WHERE appointment_id = ?', [concurrentAppointmentId]).catch(() => undefined)
     await db.run('DELETE FROM appointment_attendance_signals WHERE appointment_id = ?', [appointmentId]).catch(() => undefined)

@@ -1947,7 +1947,10 @@ La identidad combina el evento explícito o, cuando aplica, categoría, contacto
 automatización, nodo e inscripción; una repetición del mismo evento actualiza la
 fila existente y no vuelve a disparar campana ni push. La colección final también
 deduplica por esa identidad antes de ordenar y limitar, incluyendo filas legacy
-que todavía no tenían `dedupe_key` persistido.
+que todavía no tenían `dedupe_key` persistido. La reparación idempotente de este
+esquema y de `notification_read_states` corre antes de omitir el replay legacy
+por `core_schema_bootstrap_version`; una instalación ya inicializada no puede
+quedarse sin esas piezas al actualizar.
 
 El shell de `/mdp-program` consulta su navegacion remota una sola vez por
 montaje. Cuando el iframe sincroniza la URL de `/mdp-program` a un item interno,
@@ -2315,7 +2318,10 @@ conserva la entrega configurada por el negocio.
 
 El evento **Ingreso a videollamada** (`appointment_joined`) de Configuración →
 Notificaciones permite escoger por destinatario campanita, push, ambos o
-apagado. Cambiar el calendario a presencial desactiva su regla de diez minutos y
+apagado. Si la cuenta todavía no ha guardado esa matriz, Ristak usa
+**campanita + push** para todos los dispositivos activos; la primera selección
+guardada reemplaza por completo ese default. Cambiar el calendario a presencial
+desactiva su regla de diez minutos y
 archiva el enlace interno, lo que invalida los tokens ya emitidos. Si ya existe
 otra regla en el mismo horario, Ristak responde
 `calendar_online_reminder_conflict` y no pisa el mensaje del usuario.

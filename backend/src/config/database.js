@@ -37,6 +37,7 @@ import {
 import {
   ensureSqliteSitesPublicationDomainSchema
 } from '../startup/sitesPublicationDomainSchemaCompatibility.js'
+import { ensureNotificationPersistenceSchema } from '../startup/notificationSchemaCompatibility.js'
 import { ensureSharedReportTableConfig } from '../utils/reportTableConfig.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -2589,6 +2590,16 @@ async function initTablesUnlocked() {
       )
     }
 
+    // Debe correr antes del fast-path del bootstrap: una instalación ya
+    // inicializada también necesita piezas de notificaciones agregadas después.
+    const notificationSchemaRepair = await ensureNotificationPersistenceSchema({ database: db })
+    if (notificationSchemaRepair.addedColumns.length > 0) {
+      logger.info(
+        '[Esquema] Compatibilidad de notificaciones reparada: ' +
+        `${notificationSchemaRepair.addedColumns.length} columna(s).`
+      )
+    }
+
     const schemaBootstrap = await db.get(
       'SELECT config_value FROM app_config WHERE config_key = ? LIMIT 1',
       [CORE_SCHEMA_BOOTSTRAP_CONFIG_KEY]
@@ -2648,44 +2659,6 @@ async function initTablesUnlocked() {
       )
     `)
 
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS internal_notifications (
-        id TEXT PRIMARY KEY,
-        recipient_user_id TEXT,
-        source TEXT DEFAULT 'Ristak',
-        severity TEXT DEFAULT 'info',
-        title TEXT NOT NULL,
-        message TEXT,
-        action_url TEXT,
-        action_label TEXT,
-        category TEXT DEFAULT 'internal',
-        contact_id TEXT,
-        automation_id TEXT,
-        automation_node_id TEXT,
-        enrollment_id TEXT,
-        metadata_json TEXT,
-        dedupe_key TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
-
-    await ensureTableColumns('internal_notifications', [
-      ['dedupe_key', 'TEXT']
-    ])
-
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS notification_read_states (
-        user_id TEXT NOT NULL,
-        notification_key TEXT NOT NULL,
-        notification_version TEXT NOT NULL,
-        read_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (user_id, notification_key)
-      )
-    `)
-
     try {
       await db.run('CREATE INDEX IF NOT EXISTS idx_push_subscriptions_enabled ON push_subscriptions(enabled)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)')
@@ -2698,14 +2671,6 @@ async function initTablesUnlocked() {
         ['client_type', 'TEXT'],
         ['app_package', 'TEXT']
       ])
-      await db.run('CREATE INDEX IF NOT EXISTS idx_internal_notifications_recipient ON internal_notifications(recipient_user_id, updated_at)')
-      await db.run('CREATE INDEX IF NOT EXISTS idx_internal_notifications_contact ON internal_notifications(contact_id, updated_at)')
-      await db.run('CREATE INDEX IF NOT EXISTS idx_internal_notifications_automation ON internal_notifications(automation_id, updated_at)')
-      await db.run(`
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_internal_notifications_dedupe
-        ON internal_notifications(COALESCE(recipient_user_id, ''), dedupe_key)
-      `)
-      await db.run('CREATE INDEX IF NOT EXISTS idx_notification_read_states_read_at ON notification_read_states(user_id, read_at)')
     } catch (err) {
       logger.warn('Advertencia al crear índices de avisos push:', err.message)
     }
