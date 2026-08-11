@@ -8101,15 +8101,20 @@ La compuerta de licencia `canRunAutomationFlow` se conserva despues del lookup.
 `Contacto modificado` evalua el estado final ya persistido del contacto. Sus
 filtros de nombre, fuente y demas datos estandar comparan el valor actual; el
 filtro de etiqueta comprueba pertenencia real por ID o alias legible, no una
-cadena armada con todas las etiquetas. Los eventos de etiqueta, cita y pago se
-consideran cambios de contacto y vuelven a pasar por esos filtros. `Pipeline /
-etapa` representa el ciclo comercial calculado por Ristak y se configura desde
-una lista cerrada: `lead`, `appointment`, `attended` y `customer`, mostrados con
-los labels de cuenta como Interesado/Prospecto, Agendo cita, Asistio a cita y
-Cliente. Pagos exitosos tienen prioridad sobre asistencia, y asistencia sobre
-una cita activa. Pagos y cambios de cita marcan tambien `stage` dentro de
-`changedFields`, por lo que el filtro `Detalle que cambio = Pipeline / etapa`
-puede combinarse con la etapa final deseada sin crear otro disparador.
+cadena armada con todas las etiquetas. Los eventos relacionados de etiqueta,
+cita y pago sólo pueden entrar por este disparador cuando el flujo los pide de
+forma explícita mediante `Detalle que cambio`/`Origen del cambio`, o cuando un
+filtro legacy de etapa coincide con una transición comercial que ocurrió de
+verdad. Así una cita nueva de alguien que ya era cliente no vuelve a ejecutar
+una automatización de conversión sólo porque su estado final siga siendo
+Cliente. `Pipeline / etapa` representa el ciclo comercial calculado por Ristak y
+se configura desde una lista cerrada: `lead`, `appointment`, `attended` y
+`customer`, mostrados con los labels de cuenta como Interesado/Prospecto, Agendo
+cita, Asistio a cita y Cliente. Pagos exitosos tienen prioridad sobre asistencia,
+y asistencia sobre una cita activa. Pagos y cambios de cita agregan `stage` a
+`changedFields` únicamente cuando el hecho actual cambia esa etapa canónica; por
+eso `Detalle que cambio = Pipeline / etapa` puede combinarse con la etapa final
+deseada sin disparos repetidos por citas, estados o pagos posteriores.
 
 Los webhooks entrantes productivos siempre hacen match exacto por `endpoint_id`:
 un endpoint vacio no es comodin. La captura de muestra del editor usa una llave

@@ -673,6 +673,126 @@ const CHANGE_SOURCE_BY_EVENT = {
   'appointment-status': 'appointment'
 }
 
+const LIFECYCLE_INACTIVE_APPOINTMENT_STATUSES = new Set([
+  'cancelled',
+  'canceled',
+  'no_show',
+  'no-show',
+  'noshow',
+  'deleted',
+  'invalid'
+])
+const LIFECYCLE_ATTENDED_APPOINTMENT_STATUSES = new Set([
+  'showed',
+  'show',
+  'attended',
+  'completed',
+  'complete'
+])
+
+function lifecycleAppointmentStatusFlags(value) {
+  const status = normalizeText(value)
+  return {
+    active: !LIFECYCLE_INACTIVE_APPOINTMENT_STATUSES.has(status),
+    attended: LIFECYCLE_ATTENDED_APPOINTMENT_STATUSES.has(status)
+  }
+}
+
+function contactWithLifecycleDeltas(contact = {}, {
+  activeAppointments = 0,
+  attendedAppointments = 0,
+  purchases = 0,
+  totalPaid = 0
+} = {}) {
+  const activeAppointmentsCount = Math.max(
+    0,
+    Number(contact.activeAppointmentsCount ?? contact.active_appointments_count ?? 0) + activeAppointments
+  )
+  const attendedAppointmentsCount = Math.max(
+    0,
+    Number(contact.attendedAppointmentsCount ?? contact.attended_appointments_count ?? 0) + attendedAppointments
+  )
+  const purchasesCount = Math.max(
+    0,
+    Number(contact.purchasesCount ?? contact.purchases_count ?? 0) + purchases
+  )
+  const adjustedTotalPaid = Math.max(
+    0,
+    Number(contact.totalPaid ?? contact.total_paid ?? 0) + totalPaid
+  )
+  return {
+    ...contact,
+    // `lifecycleStage` llega ya calculada con el estado final. Al reconstruir
+    // el estado anterior no podemos reciclarla o la comparación siempre vería
+    // la etapa nueva en ambos lados; volvemos al valor explícito legacy y
+    // dejamos que resolveContactLifecycleStage derive la etapa con los
+    // contadores ajustados.
+    lifecycleStage: contact.stage || '',
+    activeAppointmentsCount,
+    active_appointments_count: activeAppointmentsCount,
+    attendedAppointmentsCount,
+    attended_appointments_count: attendedAppointmentsCount,
+    hasActiveAppointment: activeAppointmentsCount > 0,
+    hasAttendedAppointment: attendedAppointmentsCount > 0,
+    hasShowedAppointment: attendedAppointmentsCount > 0,
+    purchasesCount,
+    purchases_count: purchasesCount,
+    totalPaid: adjustedTotalPaid,
+    total_paid: adjustedTotalPaid
+  }
+}
+
+/**
+ * Decide si el hecho relacional que acaba de guardarse cambió de verdad la
+ * etapa comercial canónica. Citas y pagos se publican después del commit, así
+ * que `contact` ya contiene el estado final; reconstruimos únicamente el estado
+ * anterior al hecho actual para no anunciar "cambió stage" en cada cita de un
+ * cliente que ya llevaba meses siendo cliente.
+ */
+function lifecycleStageChangedForEvent(eventType, ctx = {}, contact = {}) {
+  const afterStage = resolveContactLifecycleStage(contact)
+  let beforeContact = null
+
+  if (eventType === 'appointment-booked') {
+    if (normalizeText(ctx.appointmentChange || ctx.appointment_change) === 'rescheduled') return false
+    const current = lifecycleAppointmentStatusFlags(
+      ctx.appointmentStatus || ctx.appointment_status || ctx.status
+    )
+    beforeContact = contactWithLifecycleDeltas(contact, {
+      activeAppointments: current.active ? -1 : 0,
+      attendedAppointments: current.attended ? -1 : 0
+    })
+  } else if (eventType === 'appointment-status') {
+    const previousStatus = cleanString(ctx.previousStatus || ctx.previous_status)
+    if (!previousStatus) return false
+    const previous = lifecycleAppointmentStatusFlags(previousStatus)
+    const current = lifecycleAppointmentStatusFlags(
+      ctx.appointmentStatus || ctx.appointment_status || ctx.status
+    )
+    beforeContact = contactWithLifecycleDeltas(contact, {
+      activeAppointments: Number(previous.active) - Number(current.active),
+      attendedAppointments: Number(previous.attended) - Number(current.attended)
+    })
+  } else if (eventType === 'payment-received') {
+    if (paymentActionFromContext(ctx, eventType) !== 'successful') return false
+    const amount = Math.max(0, Number(ctx.amount) || 0)
+    beforeContact = contactWithLifecycleDeltas(contact, {
+      purchases: amount > 0 ? -1 : 0,
+      totalPaid: -amount
+    })
+  } else if (eventType === 'refund') {
+    const amount = Math.max(0, Number(ctx.amount) || 0)
+    beforeContact = contactWithLifecycleDeltas(contact, {
+      purchases: amount > 0 ? 1 : 0,
+      totalPaid: amount
+    })
+  }
+
+  return beforeContact
+    ? resolveContactLifecycleStage(beforeContact) !== afterStage
+    : false
+}
+
 function changeFieldCandidates(value) {
   const raw = cleanString(value)
   if (!raw) return []
@@ -714,13 +834,16 @@ function contactChangeFieldsForEvent(eventType, ctx = {}) {
   if (CONTACT_CHANGE_EVENT_TYPES.has(eventType)) fields.push('updatedAt')
   if (eventType === 'tag-changed') fields.push('tags')
   if (eventType === 'payment-received' || eventType === 'refund') {
-    fields.push('payments', 'paymentsCount', 'totalPaid', 'purchasesCount', 'lastPurchaseDate', 'stage')
+    fields.push('payments', 'paymentsCount', 'totalPaid', 'purchasesCount', 'lastPurchaseDate')
+    if (ctx.lifecycleStageChanged === true) fields.push('stage')
   }
   if (eventType === 'appointment-booked') {
-    fields.push('appointments', 'appointmentsCount', 'activeAppointmentsCount', 'activeAppointment', 'appointmentStatus', 'appointmentCalendar', 'appointmentDate', 'stage')
+    fields.push('appointments', 'appointmentsCount', 'activeAppointmentsCount', 'activeAppointment', 'appointmentStatus', 'appointmentCalendar', 'appointmentDate')
+    if (ctx.lifecycleStageChanged === true) fields.push('stage')
   }
   if (eventType === 'appointment-status') {
-    fields.push('appointments', 'activeAppointment', 'appointmentStatus', 'stage')
+    fields.push('appointments', 'activeAppointment', 'appointmentStatus')
+    if (ctx.lifecycleStageChanged === true) fields.push('stage')
   }
   return [...new Set(fields.map(cleanString).filter(Boolean))]
 }
@@ -733,6 +856,23 @@ function withContactChangeContext(eventType, ctx = {}) {
     contactChangeEventType: eventType,
     contactChangeSource: ctx.contactChangeSource || ctx.changeSource || CHANGE_SOURCE_BY_EVENT[eventType] || 'webhook'
   }
+}
+
+function contactUpdatedTriggerAcceptsRelatedEvent(trigger, eventType, ctx = {}) {
+  if (eventType === 'contact-updated') return true
+  if (!CONTACT_CHANGE_EVENT_TYPES.has(eventType)) return false
+  const filters = Array.isArray(trigger?.config?.filters) ? trigger.config.filters : []
+  const explicitlyMatchesRelatedChange = filters.some((filter) => (
+    filter?.field === 'changed_detail' || filter?.field === 'change_source'
+  ) && evaluateFilter(filter, ctx))
+  if (explicitlyMatchesRelatedChange) return true
+
+  // Compatibilidad con flujos antiguos que sólo guardaron "etapa = cliente"
+  // o "etapa = cita": un hecho relacional puede activarlos, pero únicamente
+  // cuando ese hecho acaba de producir esa transición real.
+  return ctx.lifecycleStageChanged === true && filters.some((filter) => (
+    filter?.field === 'stage' && evaluateFilter(filter, ctx)
+  ))
 }
 
 function paymentActionMatches(configAction, ctx = {}, eventType = '') {
@@ -2174,7 +2314,9 @@ function triggerMatches(trigger, eventType, ctx) {
     }
 
     case 'tag-changed': {
-      if (trigger.type === 'trigger-contact-updated') return true
+      if (trigger.type === 'trigger-contact-updated') {
+        return contactUpdatedTriggerAcceptsRelatedEvent(trigger, eventType, matchCtx)
+      }
       if (trigger.type !== 'trigger-contact-tag') return false
       const operator = str(config.operator) || 'added'
       const tag = normalizeText(config.tag)
@@ -2198,14 +2340,18 @@ function triggerMatches(trigger, eventType, ctx) {
     }
 
     case 'appointment-booked': {
-      if (trigger.type === 'trigger-contact-updated') return true
+      if (trigger.type === 'trigger-contact-updated') {
+        return contactUpdatedTriggerAcceptsRelatedEvent(trigger, eventType, matchCtx)
+      }
       if (trigger.type !== 'trigger-appointment-booked') return false
       const calendar = str(config.calendar)
       return !calendar || calendar === str(ctx.calendarId)
     }
 
     case 'appointment-status': {
-      if (trigger.type === 'trigger-contact-updated') return true
+      if (trigger.type === 'trigger-contact-updated') {
+        return contactUpdatedTriggerAcceptsRelatedEvent(trigger, eventType, matchCtx)
+      }
       if (trigger.type !== 'trigger-appointment-status') return false
       const wanted = str(config.status) || 'confirmed'
       const actualRaw = normalizeText(ctx.status)
@@ -2218,7 +2364,9 @@ function triggerMatches(trigger, eventType, ctx) {
     }
 
     case 'payment-received': {
-      if (trigger.type === 'trigger-contact-updated') return true
+      if (trigger.type === 'trigger-contact-updated') {
+        return contactUpdatedTriggerAcceptsRelatedEvent(trigger, eventType, matchCtx)
+      }
       if (trigger.type !== 'trigger-payment-received') return false
       if (!paymentActionMatches(config.paymentAction, ctx, eventType)) return false
       const operator = str(config.amountOperator) || 'any'
@@ -2236,7 +2384,9 @@ function triggerMatches(trigger, eventType, ctx) {
     }
 
     case 'refund':
-      if (trigger.type === 'trigger-contact-updated') return true
+      if (trigger.type === 'trigger-contact-updated') {
+        return contactUpdatedTriggerAcceptsRelatedEvent(trigger, eventType, matchCtx)
+      }
       if (trigger.type === 'trigger-refund') return true
       if (trigger.type !== 'trigger-payment-received') return false
       return paymentActionMatches(config.paymentAction, ctx, eventType)
@@ -8666,9 +8816,11 @@ export async function handleAutomationEvent(eventType, data = {}) {
       )
       if (row) contact = await loadContact(row.id)
     }
+    const lifecycleStageChanged = lifecycleStageChangedForEvent(eventType, eventData, contact)
     const ctx = withContactChangeContext(eventType, {
       ...eventData,
       contact,
+      lifecycleStageChanged,
       messageText: eventData.messageText || '',
       channel: normalizeConversationChannel(eventData.channel || '')
     })
