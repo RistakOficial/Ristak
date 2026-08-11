@@ -6803,7 +6803,7 @@ export function isEphemeralMetaDirectMediaUrl(value = '') {
   }
 }
 
-const QR_MEDIA_MESSAGE_TYPES = new Set(['image', 'video', 'audio', 'voice', 'document', 'sticker'])
+const QR_MEDIA_MESSAGE_TYPES = new Set(['image', 'gif', 'video', 'audio', 'voice', 'document', 'sticker'])
 
 // Traduce el tipo de mensaje a la clave que `extractMessageMedia` sabe leer en el objeto
 // del mensaje (message.image / message.audio / etc.).

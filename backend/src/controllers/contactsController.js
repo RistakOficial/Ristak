@@ -2557,10 +2557,22 @@ const mapContactRowForResponse = (contact = {}) => {
   }
 }
 
+const buildChatMessageIsGifSql = (tableAlias, { hasMediaFilename = false } = {}) => `
+  CASE
+    WHEN LOWER(COALESCE(${tableAlias}.message_type, '')) LIKE '%gif%'
+      OR LOWER(COALESCE(${tableAlias}.media_mime_type, '')) = 'image/gif'
+      ${hasMediaFilename ? `OR LOWER(COALESCE(${tableAlias}.media_filename, '')) LIKE '%.gif'` : ''}
+      OR LOWER(COALESCE(${tableAlias}.media_url, '')) LIKE '%.gif%'
+      OR LOWER(COALESCE(${tableAlias}.raw_payload_json, '')) LIKE '%"gifplayback":true%'
+    THEN 1 ELSE 0
+  END
+`
+
 const mapChatContactRowForResponse = (contact = {}) => ({
   ...mapContactRowForResponse(contact),
   lastMessageText: contact.last_message_text || '',
   lastMessageType: contact.last_message_type || '',
+  lastMessageIsGif: Boolean(Number(contact.last_message_is_gif || 0)),
   lastMessageChannel: contact.last_message_channel || '',
   lastMessageDate: contact.last_message_date || contact.created_at,
   lastMessageCursorSort: cleanString(contact.last_message_cursor_sort),
@@ -2620,6 +2632,7 @@ const fetchPickerLatestMessageRowsByContact = async (contacts = [], phoneRowsByC
           ${directWhatsAppContactIdSql} AS contact_id,
           msg.message_text,
           msg.message_type,
+          ${buildChatMessageIsGifSql('msg', { hasMediaFilename: true })} AS message_is_gif,
           msg.direction,
           msg.business_phone,
           msg.business_phone_number_id,
@@ -2638,6 +2651,7 @@ const fetchPickerLatestMessageRowsByContact = async (contacts = [], phoneRowsByC
           MIN(picked_contact_phones.contact_id) AS contact_id,
           msg.message_text,
           msg.message_type,
+          ${buildChatMessageIsGifSql('msg', { hasMediaFilename: true })} AS message_is_gif,
           msg.direction,
           msg.business_phone,
           msg.business_phone_number_id,
@@ -2661,6 +2675,10 @@ const fetchPickerLatestMessageRowsByContact = async (contacts = [], phoneRowsByC
           msg.business_phone,
           msg.business_phone_number_id,
           msg.transport,
+          msg.media_mime_type,
+          msg.media_filename,
+          msg.media_url,
+          msg.raw_payload_json,
           COALESCE(msg.message_timestamp, msg.created_at),
           msg.created_at
         UNION ALL
@@ -2668,6 +2686,7 @@ const fetchPickerLatestMessageRowsByContact = async (contacts = [], phoneRowsByC
           meta_social_messages.contact_id,
           meta_social_messages.message_text,
           meta_social_messages.message_type,
+          ${buildChatMessageIsGifSql('meta_social_messages')} AS message_is_gif,
           meta_social_messages.direction,
           NULL AS business_phone,
           NULL AS business_phone_number_id,
@@ -2691,6 +2710,7 @@ const fetchPickerLatestMessageRowsByContact = async (contacts = [], phoneRowsByC
             ELSE COALESCE(email_messages.message_text, '')
           END AS message_text,
           'email' AS message_type,
+          0 AS message_is_gif,
           email_messages.direction,
           NULL AS business_phone,
           NULL AS business_phone_number_id,
@@ -2719,6 +2739,7 @@ const fetchPickerLatestMessageRowsByContact = async (contacts = [], phoneRowsByC
         contact_id,
         message_text AS last_message_text,
         message_type AS last_message_type,
+        message_is_gif AS last_message_is_gif,
         message_channel AS last_message_channel,
         message_date AS last_message_date,
         direction AS last_message_direction,
@@ -3345,6 +3366,7 @@ export const getChatContacts = async (req, res) => {
             COALESCE(NULLIF(msg.contact_id, ''), NULLIF(api_profile.contact_id, '')) AS contact_id,
             msg.message_text,
             msg.message_type,
+            ${buildChatMessageIsGifSql('msg', { hasMediaFilename: true })} AS message_is_gif,
             msg.direction,
             msg.business_phone,
             msg.business_phone_number_id,
@@ -3394,6 +3416,7 @@ export const getChatContacts = async (req, res) => {
           latest_whatsapp.message_sort AS last_message_cursor_sort,
           latest_whatsapp.message_text AS last_message_text,
           latest_whatsapp.message_type AS last_message_type,
+          latest_whatsapp.message_is_gif AS last_message_is_gif,
           'whatsapp' AS last_message_channel,
           latest_whatsapp.direction AS last_message_direction,
           latest_whatsapp.business_phone AS last_business_phone,
@@ -3617,6 +3640,7 @@ export const getChatContacts = async (req, res) => {
           'whatsapp:' || msg.id AS message_row_id,
           msg.message_text,
           msg.message_type,
+          ${buildChatMessageIsGifSql('msg', { hasMediaFilename: true })} AS message_is_gif,
           msg.direction,
           msg.business_phone,
           msg.business_phone_number_id,
@@ -3651,6 +3675,7 @@ export const getChatContacts = async (req, res) => {
             ELSE meta_social_messages.message_text
           END AS message_text,
           meta_social_messages.message_type,
+          ${buildChatMessageIsGifSql('meta_social_messages')} AS message_is_gif,
           meta_social_messages.direction,
           NULL AS business_phone,
           NULL AS business_phone_number_id,
@@ -3679,6 +3704,7 @@ export const getChatContacts = async (req, res) => {
             ELSE COALESCE(email_messages.message_text, '')
           END AS message_text,
           'email' AS message_type,
+          0 AS message_is_gif,
           email_messages.direction,
           NULL AS business_phone,
           NULL AS business_phone_number_id,
@@ -3831,6 +3857,7 @@ ${CONTACT_META_MESSAGE_FLAGS_SELECT},
         ranked_chats.last_message_sort AS last_message_cursor_sort,
         lm.message_text AS last_message_text,
         lm.message_type AS last_message_type,
+        lm.message_is_gif AS last_message_is_gif,
         lm.message_channel AS last_message_channel,
         lm.direction AS last_message_direction,
         lm.business_phone AS last_business_phone,
@@ -5085,6 +5112,7 @@ ${CONTACT_META_PROFILE_SELECT}
             notes: '',
             lastMessageText: latestMessage.last_message_text || '',
             lastMessageType: latestMessage.last_message_type || '',
+            lastMessageIsGif: Boolean(Number(latestMessage.last_message_is_gif || 0)),
             lastMessageChannel: latestMessage.last_message_channel || '',
             lastMessageDate: latestMessage.last_message_date || contact.created_at,
             lastMessageDirection: latestMessage.last_message_direction || '',

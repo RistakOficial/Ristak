@@ -99,6 +99,7 @@ import {
 } from '@/utils/chatMessageReconciliation'
 import { isChatMessageSendInFlight } from '@/utils/chatMessageDeliveryState'
 import {
+  getChatListMessageText,
   getChatMessageFallbackText,
   getVisibleChatMessageError,
   isOutboundChatMessageFailure,
@@ -270,6 +271,7 @@ interface AdvancedChatFilters {
 interface DesktopChatContact extends Contact {
   lastMessageText?: string
   lastMessageType?: string
+  lastMessageIsGif?: boolean
   lastMessageChannel?: string
   lastMessageTransport?: string
   lastMessageDate?: string
@@ -2650,7 +2652,11 @@ function getScheduledMessageActionId(message: DesktopChatMessage) {
 }
 
 function getChatPreview(contact: DesktopChatContact) {
-  const text = String(contact.lastMessageText || '').trim()
+  const text = getChatListMessageText({
+    messageText: contact.lastMessageText,
+    messageType: contact.lastMessageType,
+    isGif: contact.lastMessageIsGif
+  })
   if (text) return contact.lastMessageDirection === 'outbound' ? `Tú: ${text}` : text
   if (contact.lastMessageType) return getMessageTypeLabel(contact.lastMessageType)
   return contact.phone || contact.email || 'Sin mensajes todavía'

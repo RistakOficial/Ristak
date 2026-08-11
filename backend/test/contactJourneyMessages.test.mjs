@@ -1028,6 +1028,62 @@ test('chat contacts responds before external avatar warming finishes', async () 
   }
 })
 
+test('chat contacts marca GIF históricos aunque WhatsApp QR los guardara como video', async () => {
+  const id = randomUUID()
+  const contactId = `chat_gif_preview_${id}`
+  const phone = `+52990${Date.now().toString().slice(-7)}`
+
+  await cleanup(contactId, phone)
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente GIF histórico',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2099-07-01T12:00:00.000Z',
+      updated_at: '2099-07-01T12:00:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `qr_gif_preview_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'qr',
+      direction: 'inbound',
+      message_type: 'video',
+      message_text: 'Mensaje',
+      media_url: 'https://cdn.example.test/chat/animated-message.mp4',
+      media_mime_type: 'video/mp4',
+      media_filename: 'animated-message.mp4',
+      raw_payload_json: JSON.stringify({
+        qrRaw: {
+          message: {
+            videoMessage: {
+              mimetype: 'video/mp4',
+              gifPlayback: true
+            }
+          }
+        }
+      }),
+      message_timestamp: '2099-07-01T12:01:00.000Z',
+      created_at: '2099-07-01T12:01:00.000Z'
+    })
+
+    const chats = await readChatContacts({ limit: '100' })
+    const chat = chats.find(item => item.id === contactId)
+
+    assert.ok(chat)
+    assert.equal(chat.lastMessageText, 'Mensaje')
+    assert.equal(chat.lastMessageType, 'video')
+    assert.equal(chat.lastMessageIsGif, true)
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
 test('chat contacts caps oversized pages for safer inbox prefetch', async () => {
   const id = randomUUID().replace(/-/g, '')
   const prefix = `chat_page_${id}`

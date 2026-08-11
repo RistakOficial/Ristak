@@ -1046,6 +1046,17 @@ function getBaileysReplyText(replyMessage = {}) {
   ])
 }
 
+export function classifyBaileysMediaMessageType(type = '', node = {}) {
+  const normalizedType = cleanString(type).toLowerCase()
+  const mimeType = cleanString(node?.mimetype || node?.mimeType).split(';')[0].toLowerCase()
+  const gifPlayback = node?.gifPlayback === true ||
+    node?.gifPlayback === 1 ||
+    cleanString(node?.gifPlayback).toLowerCase() === 'true'
+
+  if (mimeType === 'image/gif' || (normalizedType === 'video' && gifPlayback)) return 'gif'
+  return normalizedType
+}
+
 function describeBaileysMessageContent(content) {
   if (!content || typeof content !== 'object') return null
   const unwrapped = unwrapBaileysMessageContent(content)
@@ -1060,8 +1071,18 @@ function describeBaileysMessageContent(content) {
   if (unwrapped.buttonsMessage) return { type: 'interactive', text: describeBaileysButtonsMessage(unwrapped.buttonsMessage) }
   if (unwrapped.listMessage) return { type: 'interactive', text: describeBaileysListMessage(unwrapped.listMessage) }
   if (unwrapped.interactiveMessage) return { type: 'interactive', text: describeBaileysInteractiveMessage(unwrapped.interactiveMessage) }
-  if (unwrapped.imageMessage) return { type: 'image', text: cleanString(unwrapped.imageMessage.caption) }
-  if (unwrapped.videoMessage) return { type: 'video', text: cleanString(unwrapped.videoMessage.caption) }
+  if (unwrapped.imageMessage) {
+    return {
+      type: classifyBaileysMediaMessageType('image', unwrapped.imageMessage),
+      text: cleanString(unwrapped.imageMessage.caption)
+    }
+  }
+  if (unwrapped.videoMessage) {
+    return {
+      type: classifyBaileysMediaMessageType('video', unwrapped.videoMessage),
+      text: cleanString(unwrapped.videoMessage.caption)
+    }
+  }
   if (unwrapped.audioMessage) return { type: 'audio', text: '' }
   if (unwrapped.documentMessage) {
     return { type: 'document', text: cleanString(unwrapped.documentMessage.caption || unwrapped.documentMessage.fileName) }
@@ -1189,7 +1210,7 @@ function getBaileysMessageTimestampIso(message = {}) {
 }
 
 // Tipos de mensaje QR que traen un archivo descargable (el audio de voz llega como 'audio').
-const QR_DOWNLOADABLE_MEDIA_TYPES = new Set(['image', 'video', 'audio', 'document', 'sticker'])
+const QR_DOWNLOADABLE_MEDIA_TYPES = new Set(['image', 'gif', 'video', 'audio', 'document', 'sticker'])
 
 // Logger mínimo compatible con Baileys para `downloadMediaMessage` (evita ruido y crashes
 // si el paquete intenta usar métodos de pino que nuestro logger no expone).

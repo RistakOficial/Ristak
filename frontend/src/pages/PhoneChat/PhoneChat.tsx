@@ -106,6 +106,7 @@ import {
 } from '@/utils/chatMessageReconciliation'
 import { isChatMessageSendInFlight } from '@/utils/chatMessageDeliveryState'
 import {
+  getChatListMessageText,
   getChatMessageFallbackText,
   getVisibleChatMessageError,
   isOutboundChatMessageFailure,
@@ -1440,6 +1441,7 @@ function escapeDataAttributeSelector(value: string) {
 interface ChatContact extends Contact {
   lastMessageText?: string
   lastMessageType?: string
+  lastMessageIsGif?: boolean
   lastMessageChannel?: string
   lastMessageDate?: string
   lastMessageCursorSort?: string
@@ -2794,6 +2796,7 @@ function getChatContactSignature(contact: ChatContact) {
     contact.createdAt,
     contact.lastMessageText,
     contact.lastMessageType,
+    contact.lastMessageIsGif,
     contact.lastMessageChannel,
     contact.lastMessageDate,
     contact.lastMessageDirection,
@@ -4831,7 +4834,11 @@ function getContactInfoAdActionUrl({
 }
 
 function getChatPreview(contact: ChatContact) {
-  const text = String(contact.lastMessageText || '').trim()
+  const text = getChatListMessageText({
+    messageText: contact.lastMessageText,
+    messageType: contact.lastMessageType,
+    isGif: contact.lastMessageIsGif
+  })
   const channel = normalizeGhlChatChannelValue(contact.lastMessageChannel)
   const fallback = channel === 'instagram'
     ? 'Mensaje de Instagram'

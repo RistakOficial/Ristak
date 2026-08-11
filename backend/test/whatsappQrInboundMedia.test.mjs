@@ -8,6 +8,13 @@ import {
   captureQrChatMessage,
   getWhatsAppApiConfigKeys
 } from '../src/services/whatsappApiService.js'
+import { classifyBaileysMediaMessageType } from '../src/services/whatsappQrService.js'
+
+test('clasifica como GIF la media animada que Baileys entrega como video o imagen', () => {
+  assert.equal(classifyBaileysMediaMessageType('video', { mimetype: 'video/mp4', gifPlayback: true }), 'gif')
+  assert.equal(classifyBaileysMediaMessageType('image', { mimetype: 'image/gif' }), 'gif')
+  assert.equal(classifyBaileysMediaMessageType('video', { mimetype: 'video/mp4', gifPlayback: false }), 'video')
+})
 
 test('expone el generador de nombre que usa la descarga QR de medios entrantes', () => {
   assert.equal(
@@ -124,6 +131,64 @@ test('QR sin WhatsApp API: rehospeda la media entrante y la persiste en el mensa
       assert.equal(message.media_url, 'https://cdn.example.com/accounts/acme/chat/qr-image-abc123.jpg')
       assert.equal(message.media_mime_type, 'image/jpeg')
       assert.equal(message.media_filename, 'qr-image-abc123.jpg')
+    })
+  } finally {
+    await cleanup({ contactId, phone, phoneNumberId })
+  }
+})
+
+test('QR conserva el tipo GIF y su media descargada en el historial', async () => {
+  const id = randomUUID()
+  const phone = `+52991${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000012'
+  const phoneNumberId = `phone_qr_gif_${id}`
+  const contactId = `rstk_contact_qr_gif_${id}`
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
+
+  await cleanup({ contactId, phone, phoneNumberId })
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '0')
+      await setAppConfig(keys.provider, 'ycloud')
+
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone, status
+        ) VALUES (?, 'ycloud', 'waba_qr_gif_test', ?, ?, 'QR GIF Test', 1, 0, 1, 'connected', ?, 'CONNECTED')
+      `, [phoneNumberId, businessPhone, businessPhone, businessPhone])
+
+      const result = await captureQrChatMessage({
+        phoneNumberId,
+        businessPhone,
+        direction: 'inbound',
+        wamid: `qr_gif_${id}`,
+        messageType: 'gif',
+        text: '',
+        contactPhone: phone,
+        timestamp: '2099-07-01T12:00:00.000Z',
+        resolveInboundMedia: async () => ({
+          mediaUrl: 'https://cdn.example.com/accounts/acme/chat/qr-gif.mp4',
+          mediaMimeType: 'video/mp4',
+          mediaFilename: 'qr-gif.mp4'
+        })
+      })
+
+      assert.equal(result.skipped, false)
+      const message = await db.get(`
+        SELECT message_type, message_text, media_url, media_mime_type, media_filename
+        FROM whatsapp_api_messages
+        WHERE wamid = ?
+      `, [`qr_gif_${id}`])
+
+      assert.equal(message.message_type, 'gif')
+      assert.equal(message.message_text, null)
+      assert.equal(message.media_url, 'https://cdn.example.com/accounts/acme/chat/qr-gif.mp4')
+      assert.equal(message.media_mime_type, 'video/mp4')
+      assert.equal(message.media_filename, 'qr-gif.mp4')
     })
   } finally {
     await cleanup({ contactId, phone, phoneNumberId })

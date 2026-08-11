@@ -3008,6 +3008,13 @@ cuando la columna `message_text` quedó vacía o contiene el placeholder roto
 `[object Object]`. Un evento
 `edit` sin contenido y un recibo `status` no son mensajes visibles.
 
+La bandeja conserva esa misma semántica en su resumen. `/api/contacts/chats`
+expone `lastMessageIsGif` y lo obtiene tanto del tipo/MIME/nombre del archivo como
+de `gifPlayback` en payloads QR históricos, porque WhatsApp Web suele transportar
+un GIF como video MP4 en bucle. Desktop y móvil muestran `GIF` cuando el texto es
+un placeholder genérico como `Mensaje` o `Video`; una leyenda real escrita por la
+persona sigue teniendo prioridad.
+
 Ubicaciones estáticas y en tiempo real se normalizan a la tarjeta de mapa
 existente. GIF mantiene animación y visor; sticker conserva WebP y se dibuja en
 un lienzo compacto transparente, sin el rectángulo de foto. Reacciones siguen

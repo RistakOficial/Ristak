@@ -7,6 +7,12 @@ export interface ChatMessageContentStateInput {
   contentUnavailable?: unknown
 }
 
+export interface ChatListMessagePreviewInput {
+  messageText?: unknown
+  messageType?: unknown
+  isGif?: unknown
+}
+
 function cleanValue(value: unknown) {
   return String(value ?? '').trim()
 }
@@ -15,6 +21,26 @@ function isTruthyFlag(value: unknown) {
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value === 1
   return ['1', 'true', 'yes', 'si', 'sí'].includes(cleanValue(value).toLowerCase())
+}
+
+const GENERIC_GIF_PREVIEW_TEXTS = new Set([
+  'gif',
+  'image',
+  'imagen',
+  'message',
+  'mensaje',
+  'photo',
+  'foto',
+  'video'
+])
+
+export function getChatListMessageText({ messageText, messageType, isGif }: ChatListMessagePreviewInput) {
+  const text = cleanValue(messageText)
+  const type = cleanValue(messageType).toLowerCase()
+  const gif = isTruthyFlag(isGif) || type.includes('gif')
+
+  if (gif && (!text || GENERIC_GIF_PREVIEW_TEXTS.has(text.toLowerCase()))) return 'GIF'
+  return text
 }
 
 function isProviderUnavailableError({ messageType, errorCode, errorReason, contentUnavailable }: ChatMessageContentStateInput) {

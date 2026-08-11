@@ -1,11 +1,19 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  getChatListMessageText,
   getChatMessageFallbackText,
   getVisibleChatMessageError,
   isOutboundChatMessageFailure,
   shouldHideEmptyChatControlMessage
 } from '../src/utils/chatMessageContent.ts'
+
+test('la bandeja identifica GIF aunque el proveedor mande un placeholder genérico', () => {
+  assert.equal(getChatListMessageText({ messageText: 'Mensaje', messageType: 'video', isGif: true }), 'GIF')
+  assert.equal(getChatListMessageText({ messageText: 'Video', messageType: 'gif' }), 'GIF')
+  assert.equal(getChatListMessageText({ messageText: 'Mira esto', messageType: 'gif', isGif: true }), 'Mira esto')
+  assert.equal(getChatListMessageText({ messageText: 'Mensaje', messageType: 'text' }), 'Mensaje')
+})
 
 test('da nombres legibles a los formatos soportados sin texto', () => {
   assert.equal(getChatMessageFallbackText({ messageType: 'sticker' }), 'Sticker')
