@@ -235,6 +235,7 @@ import {
   MOBILE_CHAT_CACHE_FALLBACK_GRACE_MS,
   shouldRevealMobileChatCacheFallback
 } from './chatLiveFirstPolicy'
+import { ConversationHistoryPaginationGate } from './conversationHistoryPaginationPolicy'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { filterApprovedWhatsAppApiTemplates, getWhatsAppApiProviderLabel, isWhatsAppPhoneApiAvailable, isWhatsAppTemplateCompatibleWithPhone, whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact, ContactCustomField } from '@/types'
@@ -5610,6 +5611,7 @@ export const PhoneChat: React.FC = () => {
   const conversationHistoryPrependRef = useRef(false)
   const conversationHasOlderMessagesRef = useRef(false)
   const conversationHistoryExhaustedContactIdRef = useRef<string | null>(null)
+  const conversationHistoryPaginationGateRef = useRef(new ConversationHistoryPaginationGate())
   const agentLoadGenerationRef = useRef(0)
   const conversationInitialBottomLockRef = useRef({
     contactId: null as string | null,
@@ -5878,11 +5880,21 @@ export const PhoneChat: React.FC = () => {
       active: Boolean(contactId)
     }
     messagesPaneNearBottomRef.current = true
+    conversationHistoryPaginationGateRef.current.reset()
   }, [])
 
   const isConversationBottomLockActive = useCallback((contactId: string | null) => {
     const lock = conversationInitialBottomLockRef.current
     return Boolean(contactId && lock.contactId === contactId && lock.active)
+  }, [])
+
+  const clearQueuedBottomScrolls = useCallback(() => {
+    if (bottomScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(bottomScrollFrameRef.current)
+      bottomScrollFrameRef.current = null
+    }
+    bottomScrollTimeoutRefs.current.forEach((timeout) => window.clearTimeout(timeout))
+    bottomScrollTimeoutRefs.current = []
   }, [])
 
   const loadOlderConversationMessages = useCallback(async (contactId: string) => {
@@ -5902,12 +5914,7 @@ export const PhoneChat: React.FC = () => {
 
     messagesPaneNearBottomRef.current = false
     conversationHistoryPrependRef.current = true
-    if (bottomScrollFrameRef.current !== null) {
-      window.cancelAnimationFrame(bottomScrollFrameRef.current)
-      bottomScrollFrameRef.current = null
-    }
-    bottomScrollTimeoutRefs.current.forEach((timeout) => window.clearTimeout(timeout))
-    bottomScrollTimeoutRefs.current = []
+    clearQueuedBottomScrolls()
     olderMessagesLoadingRef.current = true
     setOlderMessagesLoading(true)
     let restoreScheduled = false
@@ -5967,7 +5974,15 @@ export const PhoneChat: React.FC = () => {
         conversationHistoryPrependRef.current = false
       }
     }
-  }, [])
+  }, [clearQueuedBottomScrolls])
+
+  const consumeConversationHistoryIntentAtBoundary = useCallback((isAtBoundary: boolean) => {
+    if (!conversationHistoryPaginationGateRef.current.consumeIfAtBoundary(isAtBoundary)) return false
+    const contactId = activeContactIdRef.current
+    if (!conversationOpenRef.current || !contactId) return false
+    void loadOlderConversationMessages(contactId)
+    return true
+  }, [loadOlderConversationMessages])
 
   const handleMessagesPaneScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
     const target = event.currentTarget
@@ -5976,20 +5991,47 @@ export const PhoneChat: React.FC = () => {
     // El lock inicial pega el hilo abajo al abrir, pero si el usuario sube
     // deliberadamente lo soltamos: su gesto manda sobre el anclaje automático,
     // así deja de "rebotar" al fondo mientras intenta leer historial.
-    if (!atBottom && !conversationHistoryPrependRef.current) {
+    if (conversationHistoryPaginationGateRef.current.hasPendingIntent
+      && !atBottom
+      && !conversationHistoryPrependRef.current) {
+      clearQueuedBottomScrolls()
       conversationInitialBottomLockRef.current = { contactId: null, active: false }
     }
     messagesPaneNearBottomRef.current = atBottom || isConversationBottomLockActive(activeContactIdRef.current)
     if (target.scrollLeft !== 0) {
       target.scrollLeft = 0
     }
-    if (target.scrollTop <= CHAT_CONVERSATION_TOP_LOAD_GAP_PX) {
-      const contactId = activeContactIdRef.current
-      if (conversationOpenRef.current && contactId) {
-        void loadOlderConversationMessages(contactId)
-      }
+    consumeConversationHistoryIntentAtBoundary(target.scrollTop <= CHAT_CONVERSATION_TOP_LOAD_GAP_PX)
+  }, [clearQueuedBottomScrolls, consumeConversationHistoryIntentAtBoundary, isConversationBottomLockActive])
+  const handleMessagesPaneTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0]
+    conversationHistoryPaginationGateRef.current.touchDidStart(touch?.clientX, touch?.clientY)
+  }, [])
+  const handleMessagesPaneTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0]
+    const didArmHistory = conversationHistoryPaginationGateRef.current.touchDidMove(touch?.clientX, touch?.clientY)
+    if (!didArmHistory) return
+    clearQueuedBottomScrolls()
+    conversationInitialBottomLockRef.current = { contactId: null, active: false }
+    messagesPaneNearBottomRef.current = false
+    const pane = messagesPaneRef.current
+    if (pane) {
+      consumeConversationHistoryIntentAtBoundary(pane.scrollTop <= CHAT_CONVERSATION_TOP_LOAD_GAP_PX)
     }
-  }, [isConversationBottomLockActive, loadOlderConversationMessages])
+  }, [clearQueuedBottomScrolls, consumeConversationHistoryIntentAtBoundary])
+  const handleMessagesPaneTouchEnd = useCallback(() => {
+    conversationHistoryPaginationGateRef.current.touchDidEnd()
+  }, [])
+  const handleMessagesPaneWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    if (!conversationHistoryPaginationGateRef.current.wheelDidMove(event.deltaY)) return
+    clearQueuedBottomScrolls()
+    conversationInitialBottomLockRef.current = { contactId: null, active: false }
+    messagesPaneNearBottomRef.current = false
+    const pane = messagesPaneRef.current
+    if (pane) {
+      consumeConversationHistoryIntentAtBoundary(pane.scrollTop <= CHAT_CONVERSATION_TOP_LOAD_GAP_PX)
+    }
+  }, [clearQueuedBottomScrolls, consumeConversationHistoryIntentAtBoundary])
   const scrollMessagesPaneToBottom = useCallback(() => {
     if (conversationHistoryPrependRef.current) return
     const pane = messagesPaneRef.current
@@ -6004,14 +6046,6 @@ export const PhoneChat: React.FC = () => {
       }
     }
     messagesPaneNearBottomRef.current = true
-  }, [])
-  const clearQueuedBottomScrolls = useCallback(() => {
-    if (bottomScrollFrameRef.current !== null) {
-      window.cancelAnimationFrame(bottomScrollFrameRef.current)
-      bottomScrollFrameRef.current = null
-    }
-    bottomScrollTimeoutRefs.current.forEach((timeout) => window.clearTimeout(timeout))
-    bottomScrollTimeoutRefs.current = []
   }, [])
   const queueMessagesPaneBottomScroll = useCallback((delay = 0) => {
     if (conversationHistoryPrependRef.current) return
@@ -23072,6 +23106,11 @@ export const PhoneChat: React.FC = () => {
               className={`${styles.messagesPane} ${draggingFilesOverChat ? styles.messagesPaneDropActive : ''}`}
               data-phone-chat-scrollable="true"
               onScroll={handleMessagesPaneScroll}
+              onTouchStart={handleMessagesPaneTouchStart}
+              onTouchMove={handleMessagesPaneTouchMove}
+              onTouchEnd={handleMessagesPaneTouchEnd}
+              onTouchCancel={handleMessagesPaneTouchEnd}
+              onWheel={handleMessagesPaneWheel}
               onDragEnter={handleChatDragEnter}
               onDragOver={handleChatDragOver}
               onDragLeave={handleChatDragLeave}

@@ -6,12 +6,13 @@ import Foundation
 /// `defaultScrollAnchor`. Si ese centinela pagina en ese instante, el prepend
 /// instala un anchor histórico y la conversación termina abierta arriba. Esta
 /// máquina mantiene cerrada la paginación hasta que el fondo quedó realmente
-/// establecido (o hasta que el usuario decide desplazarse por sí mismo).
+/// establecido y el usuario decide desplazarse por sí mismo.
 struct ConversationOpeningScrollState: Equatable {
     private var generation: UInt64 = 0
     private var activeAnchorGeneration: UInt64?
     private var isTrackingOpeningLayout = true
     private var hasEstablishedBottom = false
+    private var hasPendingHistoryScrollIntent = false
 
     /// Devuelve una generación nueva mientras la apertura siga bajo control
     /// automático. No se limita al último id: la vista llama esto también al
@@ -46,13 +47,32 @@ struct ConversationOpeningScrollState: Equatable {
     /// Un arrastre vertical explícito manda sobre cualquier reposicionamiento
     /// automático pendiente.
     mutating func userDidBeginScrolling() {
+        stopAutomaticAnchoring()
+        hasPendingHistoryScrollIntent = true
+    }
+
+    /// El botón de bajar también cancela el anclaje de apertura, pero no concede
+    /// permiso para pedir historial porque no fue un arrastre hacia arriba.
+    mutating func manualBottomJumpDidBegin() {
+        stopAutomaticAnchoring()
+    }
+
+    mutating func consumeHistoryPaginationIntent() -> Bool {
+        guard canLoadOlderMessages else { return false }
+        hasPendingHistoryScrollIntent = false
+        return true
+    }
+
+    private mutating func stopAutomaticAnchoring() {
         generation &+= 1
         activeAnchorGeneration = nil
         isTrackingOpeningLayout = false
         hasEstablishedBottom = true
     }
 
-    var canLoadOlderMessages: Bool { hasEstablishedBottom }
+    var canLoadOlderMessages: Bool {
+        hasEstablishedBottom && hasPendingHistoryScrollIntent
+    }
     var isAnchoring: Bool { activeAnchorGeneration != nil }
     var tracksOpeningLayout: Bool { isTrackingOpeningLayout }
 }

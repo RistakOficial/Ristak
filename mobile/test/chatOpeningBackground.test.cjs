@@ -34,6 +34,7 @@ const {
 } = require('../src/backgroundChatPolicy.ts');
 const {
   contactSummaryExpectsMessages,
+  ConversationHistoryPaginationGate,
   ConversationLatestAnchorGate,
   loadConversationWithSuccessfulEmptyRecovery,
   shouldPreserveConversationSnapshot,
@@ -435,12 +436,24 @@ test('el ancla al ultimo mensaje se consume una sola vez cuando ya existen filas
   assert.equal(gate.consume(11), false);
 });
 
+test('cada pagina historica exige y consume un arrastre real del usuario', () => {
+  const gate = new ConversationHistoryPaginationGate();
+  assert.equal(gate.consume(), false);
+  gate.userDidBeginScrolling();
+  assert.equal(gate.consume(), true);
+  assert.equal(gate.consume(), false);
+});
+
 test('App monta el hilo antes de leer caché y conserva el ancla nativa en offset cero', () => {
   assert.doesNotMatch(appSource, /preloadCacheKeys\(\[cacheKey\]\)\.finally\(mountConversation\)/);
   assert.match(appSource, /setSelected\(contact\);/);
   assert.match(appSource, /conversationLatestAnchorGateRef\.current\.consume\(conversationRenderItems\.length\)/);
   assert.match(appSource, /scrollConversationToLatest\(false\)/);
   assert.match(appSource, /maintainVisibleContentPosition=\{\{ minIndexForVisible: 0, autoscrollToTopThreshold: 24 \}\}/);
+  assert.match(appSource, /conversationHistoryPaginationGateRef\.current\.userDidBeginScrolling\(\)/);
+  assert.match(appSource, /if \(!conversationHistoryPaginationGateRef\.current\.consume\(\)\) return;/);
+  assert.doesNotMatch(appSource, /Image\.getSize\(/);
+  assert.match(appSource, /width: MESSAGE_MEDIA_WIDTH,[\s\S]{0,80}height: MESSAGE_MEDIA_HEIGHT/);
   assert.match(appSource, /style=\{styles\.conversationMessageScroller\}/);
   assert.match(appSource, /alwaysBounceVertical=\{false\}/);
   assert.match(appSource, /shouldPreserveConversationSnapshot\(contactSummary, current, journeyMessages\)/);

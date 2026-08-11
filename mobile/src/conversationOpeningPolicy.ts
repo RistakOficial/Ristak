@@ -67,3 +67,20 @@ export class ConversationLatestAnchorGate {
     return true;
   }
 }
+
+// FlatList puede disparar onEndReached durante el montaje o después de que una
+// imagen cambie el layout. Cada página histórica exige y consume un arrastre
+// real, así que el framework no puede mandar al operador hacia mensajes viejos.
+export class ConversationHistoryPaginationGate {
+  private pendingUserGesture = false;
+
+  userDidBeginScrolling() {
+    this.pendingUserGesture = true;
+  }
+
+  consume() {
+    if (!this.pendingUserGesture) return false;
+    this.pendingUserGesture = false;
+    return true;
+  }
+}

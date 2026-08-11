@@ -214,6 +214,7 @@ import {
 } from './conversationReliability';
 import {
   contactSummaryExpectsMessages,
+  ConversationHistoryPaginationGate,
   ConversationLatestAnchorGate,
   loadConversationWithSuccessfulEmptyRecovery,
   shouldPreserveConversationSnapshot,
@@ -992,8 +993,8 @@ const CONVERSATION_WALLPAPER_DOTS = [
 const AUDIO_ATTACHMENT_PATTERN = /\.(ogg|oga|opus|m4a|mp3|wav|aac|amr|caf|webm)(?:[?#].*)?$/i;
 const IMAGE_ATTACHMENT_PATTERN = /\.(png|jpe?g|webp|gif|heic|heif)(?:[?#].*)?$/i;
 const VIDEO_ATTACHMENT_PATTERN = /\.(mp4|mov|m4v|webm)(?:[?#].*)?$/i;
-const MESSAGE_IMAGE_MAX_WIDTH = 252;
-const MESSAGE_IMAGE_MAX_HEIGHT = 318;
+const MESSAGE_MEDIA_WIDTH = 252;
+const MESSAGE_MEDIA_HEIGHT = 189;
 const LOCATION_MAP_TILE_ZOOM = 16;
 const LOCATION_MAP_TILE_SIZE = 144;
 const LOCATION_MAP_WIDTH = 270;
@@ -21517,6 +21518,7 @@ function NativeConversationScreen({
   const audioRecorderState = useAudioRecorderState(audioRecorder, 250);
   const listRef = useRef<FlatList<ConversationListItem>>(null);
   const conversationLatestAnchorGateRef = useRef(new ConversationLatestAnchorGate());
+  const conversationHistoryPaginationGateRef = useRef(new ConversationHistoryPaginationGate());
   const composerInputRef = useRef<TextInput>(null);
   const sheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversationParallaxX = useRef(new Animated.Value(0)).current;
@@ -24232,7 +24234,11 @@ function NativeConversationScreen({
                 scrollConversationToLatest(false);
               }
             }}
+            onScrollBeginDrag={() => {
+              conversationHistoryPaginationGateRef.current.userDidBeginScrolling();
+            }}
             onEndReached={() => {
+              if (!conversationHistoryPaginationGateRef.current.consume()) return;
               void loadOlderConversationMessages();
             }}
             onEndReachedThreshold={0.6}
@@ -25961,10 +25967,6 @@ function NativeMessageAttachment({
   return <NativeDocumentAttachment attachment={attachment} uri={uri} onOpenContent={onOpenContent} />;
 }
 
-// Cache de tamaños medidos: sin él cada montaje de burbuja re-mide la imagen,
-// el alto del item cambia después de pintar y el hilo "brinca" al cargar.
-const nativeImageSizeCache = new Map<string, { width: number; height: number }>();
-
 function buildNativeAttachmentFocusItem(attachment: ChatAttachment, uri?: string): NativeContentFocusItem | null {
   const kind = getNativeAttachmentKind(attachment);
   if (kind === 'audio') return null;
@@ -25991,35 +25993,6 @@ function NativeImageAttachment({
   onOpenContent?: (item: NativeContentFocusItem) => void;
   uri: string;
 }) {
-  const [size, setSize] = useState(() => (
-    nativeImageSizeCache.get(uri)
-    || { width: MESSAGE_IMAGE_MAX_WIDTH, height: Math.round(MESSAGE_IMAGE_MAX_WIDTH * 0.75) }
-  ));
-
-  useEffect(() => {
-    if (nativeImageSizeCache.has(uri)) {
-      setSize(nativeImageSizeCache.get(uri)!);
-      return undefined;
-    }
-    let mounted = true;
-    Image.getSize(
-      uri,
-      (width, height) => {
-        const bounded = getBoundedMediaSize(width, height, MESSAGE_IMAGE_MAX_WIDTH, MESSAGE_IMAGE_MAX_HEIGHT);
-        // No cachear data-URLs: la key sería el base64 completo y quedaría
-        // retenido en memoria para siempre.
-        if (!uri.startsWith('data:')) nativeImageSizeCache.set(uri, bounded);
-        if (mounted) setSize(bounded);
-      },
-      () => {
-        if (mounted) setSize({ width: MESSAGE_IMAGE_MAX_WIDTH, height: Math.round(MESSAGE_IMAGE_MAX_WIDTH * 0.75) });
-      },
-    );
-    return () => {
-      mounted = false;
-    };
-  }, [uri]);
-
   return (
     <Pressable
       accessibilityRole="imagebutton"
@@ -26033,7 +26006,7 @@ function NativeImageAttachment({
       }}
       style={({ pressed }) => [
         styles.messageMediaCard,
-        isSticker ? styles.messageStickerMedia : { width: size.width, height: size.height },
+        isSticker && styles.messageStickerMedia,
         pressed && styles.pressed,
       ]}
     >
@@ -27312,17 +27285,6 @@ function parseWhatsAppFormattedText(text: string, active: Omit<WhatsAppTextSegme
   }
 
   return segments.length ? segments : [{ text, ...active }];
-}
-
-function getBoundedMediaSize(width: number, height: number, maxWidth: number, maxHeight: number) {
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-    return { width: maxWidth, height: Math.round(maxWidth * 0.72) };
-  }
-  const scale = Math.min(maxWidth / width, maxHeight / height, 1);
-  return {
-    width: Math.max(96, Math.round(width * scale)),
-    height: Math.max(96, Math.round(height * scale)),
-  };
 }
 
 function getNativeLocationTilePosition(latitude: number, longitude: number, zoom = LOCATION_MAP_TILE_ZOOM) {
@@ -33673,7 +33635,7 @@ function createAppStyles() {
     paddingBottom: 6,
   },
   locationMessageBubble: {
-    width: MESSAGE_IMAGE_MAX_WIDTH,
+    width: MESSAGE_MEDIA_WIDTH,
     maxWidth: '100%',
     paddingHorizontal: 6,
     paddingTop: 6,
@@ -34003,6 +33965,8 @@ function createAppStyles() {
     letterSpacing: 0.4,
   },
   messageMediaCard: {
+    width: MESSAGE_MEDIA_WIDTH,
+    height: MESSAGE_MEDIA_HEIGHT,
     borderRadius: 8,
     overflow: 'hidden',
     backgroundColor: 'transparent',
@@ -34301,7 +34265,7 @@ function createAppStyles() {
   },
   messageLocationCard: {
     width: '100%',
-    maxWidth: MESSAGE_IMAGE_MAX_WIDTH,
+    maxWidth: MESSAGE_MEDIA_WIDTH,
     borderRadius: 16,
     overflow: 'hidden',
     backgroundColor: COLORS.panelSoft,

@@ -160,6 +160,16 @@ nunca se presenta como `Aun no hay mensajes`. Un `200 []` contradictorio con el
 preview/conteo del inbox intenta una sola recuperacion por journey y jamas borra
 un snapshot visible.
 
+La paginacion historica tiene una compuerta distinta a la de apertura. En
+`mobile/`, cada `onEndReached` debe consumir un `onScrollBeginDrag` real; el
+montaje, un poll, un prepend o un cambio de tamaño no pueden pedir otra pagina.
+En `/movil`, la llegada al borde superior solo pagina si antes hubo un movimiento
+táctil o de rueda hacia el historial, y consume ese permiso una sola vez. En
+`ios/app`, la proximidad al borde superior se mide con la geometria del
+`ScrollView`, nunca con un centinela `onAppear`, y tambien consume un gesto hacia
+el historial por pagina. Ningun cliente debe armar historial solo porque ya
+establecio el ancla inferior.
+
 Recepcion viva del chat nativo: `mobile/` debe suscribirse a
 `/api/chat-events/stream` con la misma sesion bearer que usa para REST. Cada
 `chat_message` aplica inmediatamente sus metadatos a la fila existente
@@ -1692,17 +1702,23 @@ Messenger u otro canal compatible. No se cambia de API a QR por un rechazo de
 contenido.
 
 Las previews nativas deben diferenciar cada
-tipo como `/movil`: fotos con proporcion real y `contain` sin marco fijo,
-video reproducible, waveform de nota de voz con avatar/microfono/progreso,
+tipo como `/movil`: fotos dentro de un canvas estable 4:3 y `contain`, stickers
+en canvas cuadrado, video reproducible, waveform de nota de voz con
+avatar/microfono/progreso,
 tarjeta abrible para documento y mini-mapa con tiles de OpenStreetMap para
-ubicaciones. El auto-scroll de la conversacion solo debe llevar al ultimo
+ubicaciones. Fotos y videos reservan su geometria definitiva desde el primer
+render; descargar el bitmap, resolver la URL o sustituir un placeholder nunca
+puede cambiar la altura de la fila. El auto-scroll de la conversacion solo debe
+llevar al ultimo
 mensaje durante la carga inicial o cuando el usuario ya esta abajo; si el
 usuario esta arrastrando o navegando el historial, ningun recalculo de contenido
 debe devolverlo forzosamente al ultimo mensaje.
 En iOS, durante la apertura el ancla inferior observa el timeline completo y la
 altura del contenido: vuelve a reafirmar el ultimo mensaje mientras se asienta la
 carga primaria y se detiene en cuanto termina esa fase o el usuario inicia su
-primer gesto vertical. Después conserva la posicion del usuario. Al abrir,
+primer gesto vertical. Después conserva la posicion del usuario. Cargar mensajes
+anteriores exige que ese gesto alcance el borde superior; la materializacion del
+`LazyVStack` por sí sola no tiene permiso de paginar. Al abrir,
 cerrar o redimensionar el teclado, la conversación captura si el usuario estaba
 abajo antes del relayout y reafirma el centinela inferior al inicio y al final de
 la animación reportada por UIKit. Así el `LazyVStack` conserva materializadas las

@@ -28,6 +28,10 @@ struct ConversationScreen: View {
     /// materializada exactamente en el fondo.
     @State private var openingScrollState = ConversationOpeningScrollState()
     @State private var openingBottomTask: Task<Void, Never>?
+    /// El historial sólo pagina al llegar aquí después de un gesto vertical
+    /// real. Un relayout o una descarga de media nunca deben dispararlo.
+    @State private var historyBoundaryIsNear = false
+    @State private var conversationDragIsActive = false
 
     @Environment(AppConfigStore.self) private var appConfig
     @Environment(AccessStore.self) private var access
@@ -248,19 +252,37 @@ struct ConversationScreen: View {
                 TapGesture().onEnded { KeyboardDismisser.dismiss() }
             )
             .simultaneousGesture(
-                DragGesture(minimumDistance: 6).onChanged { value in
-                    guard abs(value.translation.height) > abs(value.translation.width),
-                          openingScrollState.tracksOpeningLayout else { return }
-                    openingBottomTask?.cancel()
-                    openingBottomTask = nil
-                    openingScrollState.userDidBeginScrolling()
-                }
+                DragGesture(minimumDistance: 6)
+                    .onChanged { value in
+                        guard value.translation.height > abs(value.translation.width),
+                              !conversationDragIsActive else { return }
+                        conversationDragIsActive = true
+                        openingBottomTask?.cancel()
+                        openingBottomTask = nil
+                        openingScrollState.userDidBeginScrolling()
+                        if historyBoundaryIsNear,
+                           openingScrollState.consumeHistoryPaginationIntent() {
+                            viewModel.loadOlderIfNeeded()
+                        }
+                    }
+                    .onEnded { _ in
+                        conversationDragIsActive = false
+                    }
             )
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentOffset.y + geometry.containerSize.height
                     >= geometry.contentSize.height - 140
             } action: { _, isNearBottom in
                 viewModel.isNearBottom = isNearBottom
+            }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y <= 140
+            } action: { _, isNearHistoryBoundary in
+                historyBoundaryIsNear = isNearHistoryBoundary
+                if isNearHistoryBoundary,
+                   openingScrollState.consumeHistoryPaginationIntent() {
+                    viewModel.loadOlderIfNeeded()
+                }
             }
             .onScrollGeometryChange(for: Int.self) { geometry in
                 Int(geometry.contentSize.height.rounded())
@@ -391,7 +413,7 @@ struct ConversationScreen: View {
     private func prepareForManualBottomJump() {
         openingBottomTask?.cancel()
         openingBottomTask = nil
-        openingScrollState.userDidBeginScrolling()
+        openingScrollState.manualBottomJumpDidBegin()
         keyboardReanchorGeneration &+= 1
     }
 
@@ -510,13 +532,6 @@ struct ConversationScreen: View {
                 .controlSize(.small)
                 .padding(.vertical, RistakTheme.Spacing.sm)
                 .frame(maxWidth: .infinity)
-        } else if viewModel.hasOlderMessages,
-                  openingScrollState.canLoadOlderMessages {
-            Color.clear
-                .frame(height: 26)
-                .onAppear {
-                    viewModel.loadOlderIfNeeded()
-                }
         }
     }
 

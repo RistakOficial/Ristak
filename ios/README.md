@@ -210,8 +210,10 @@ solo en capa flotante; copy en español.
   externa de avatares fuera del request de listas, en cola backend deduplicada;
   hidratación puntual/coalescida de un chat fuera de la página al llegar
   SSE/push; hasta seis hilos recientes precargados; apertura fijada al ultimo
-  mensaje mientras cambia timeline/altura, cancelable al primer gesto, sin
-  habilitar paginacion historica prematura; vacios contradictorios quedan como
+  mensaje mientras cambia timeline/altura, cancelable al primer gesto; la
+  paginacion historica exige un arrastre vertical real que alcance el borde
+  superior y nunca se activa por materializar el `LazyVStack`; vacios
+  contradictorios quedan como
   error reintentable y las escrituras de snapshot son monotónicas por hilo;
   historial primario
   visible antes de cargar datos secundarios; adjuntos
