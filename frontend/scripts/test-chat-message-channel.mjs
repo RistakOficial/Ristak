@@ -119,7 +119,11 @@ const desktopChatSource = await readFile(new URL('../src/pages/DesktopChat/Deskt
 const phoneChatSource = await readFile(new URL('../src/pages/PhoneChat/PhoneChat.tsx', import.meta.url), 'utf8')
 assert.match(desktopChatSource, /getChatMessageSourceLabel\(\{[\s\S]*?transport:\s*message\.transport,[\s\S]*?provider:\s*message\.provider,/)
 assert.match(desktopChatSource, /getChatMessageRoutingPresentation\(\{[\s\S]*?routingReason:\s*message\.routingReason/)
-assert.match(desktopChatSource, /routingBadgeLabel[\s\S]*?transportLabel/)
+assert.match(
+  desktopChatSource,
+  /transportLabel[\s\S]*?routingBadgeLabel/,
+  'el badge de respaldo QR debe aparecer a la derecha del badge WhatsApp API'
+)
 assert.match(phoneChatSource, /getChatMessageSourceLabel\(\{[\s\S]*?transport:\s*message\.transport,[\s\S]*?provider:\s*message\.provider,/)
 
 console.log('chat message channel colors and source labels OK')

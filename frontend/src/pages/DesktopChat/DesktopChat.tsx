@@ -9224,8 +9224,8 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     const sending = message.direction === 'outbound' && isChatMessageSendInFlight(status) && !scheduled && !failed
     return (
       <span className={styles.messageMeta}>
-        {routingBadgeLabel ? <em className={styles.messageTransport}>{routingBadgeLabel}</em> : null}
         {transportLabel ? <em className={styles.messageTransport}>{transportLabel}</em> : null}
+        {routingBadgeLabel ? <em className={styles.messageTransport}>{routingBadgeLabel}</em> : null}
         {formatMessageTime(message.date)}
         {message.direction === 'outbound' && !failed && !scheduled && !sending ? <CheckCheck size={13} /> : null}
         {scheduled ? <Clock size={13} /> : null}
