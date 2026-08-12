@@ -185,7 +185,11 @@ terminar cambio el filtro de calendarios.
   appPackage:"com.ristak.app"}`. El permiso de iOS y el registro confirmado por
   backend son estados distintos: "activo" exige ambos. Serializa activaciones,
   reintenta fallos transitorios a 5/15/60/300 s y revalida en foreground si la
-  confirmación supera 6 h.
+  confirmación supera 6 h. Login, foreground y retry solo actúan con permiso
+  `granted`; jamás convierten `notDetermined` en un prompt. El permiso se pide
+  únicamente al tocar el switch apagado de Ajustes. Si fue negado, ese switch
+  abre Ajustes de iOS; al confirmar registro desaparece y muestra una alerta de
+  éxito.
 - `NotificationRouter`: tap → deep link por `contactId`/`url`/`category`
   (chat, cita, pago). Badge: solo local desde unread de bandeja (el backend no
   manda badge).

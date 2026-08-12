@@ -1,12 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { BellRing, CalendarCheck2, CalendarClock, CheckCircle2, CreditCard, MessageCircle, RotateCcw, Save, ShieldCheck, Smartphone, UserRound, UsersRound, Vibrate, Video, Volume2, Workflow } from 'lucide-react'
+import { BellRing, CalendarCheck2, CalendarClock, CreditCard, MessageCircle, RotateCcw, Save, ShieldCheck, UserRound, UsersRound, Vibrate, Video, Volume2, Workflow } from 'lucide-react'
 import { Badge } from '@/components/common/Badge'
 import { Button, Card, CustomSelect, Switch } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig } from '@/hooks'
-import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { type TeamUser, userAccessService } from '@/services/userAccessService'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import styles from './Settings.module.css'
@@ -126,18 +125,6 @@ const normalizeNotificationChannel = (value: unknown, fallback: NotificationChan
   return VALID_CHANNELS.has(channel) ? channel : fallback
 }
 
-const getNotificationPermissionState = () => {
-  if (typeof window === 'undefined' || !('Notification' in window)) return 'unavailable'
-  return Notification.permission
-}
-
-const getNotificationPermissionLabel = (permission: string) => {
-  if (permission === 'granted') return 'Este dispositivo ya recibe push de Ristak.'
-  if (permission === 'denied') return 'Este dispositivo bloqueó los push desde el navegador.'
-  if (permission === 'unavailable') return 'Este dispositivo no soporta push web.'
-  return 'Este dispositivo todavía no tiene permiso de push.'
-}
-
 const getUserDisplayName = (member: TeamUser) => (
   member.fullName || [member.firstName, member.lastName].filter(Boolean).join(' ') || member.email || member.username || 'Usuario'
 )
@@ -248,12 +235,9 @@ export const NotificationSettings: React.FC = () => {
   const [paymentPushEnabled, setPaymentPushEnabled, savingPaymentPush] = useAppConfig<boolean>('payment_push_notifications_enabled', true)
   const [notificationSoundEnabled, setNotificationSoundEnabled, savingNotificationSound] = useAppConfig<boolean>('push_notification_sound_enabled', true)
   const [notificationVibrationEnabled, setNotificationVibrationEnabled, savingNotificationVibration] = useAppConfig<boolean>('push_notification_vibration_enabled', true)
-  const [pushCalendarIds] = useAppConfig<string[]>('calendar_push_notification_calendar_ids', [])
   const [teamUsers, setTeamUsers] = useState<TeamUser[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
-  const [requestingPush, setRequestingPush] = useState(false)
   const [savingPreferences, setSavingPreferences] = useState(false)
-  const [permissionState, setPermissionState] = useState(getNotificationPermissionState)
 
   const canManageTeam = user?.role === 'admin'
 
@@ -381,27 +365,6 @@ export const NotificationSettings: React.FC = () => {
     setPreferencesDraft(resolvedPreferences)
   }
 
-  const handleActivateDevice = async () => {
-    setRequestingPush(true)
-    try {
-      const result = await pushNotificationsService.subscribeToAppNotifications({
-        calendarIds: pushCalendarIds
-      })
-
-      setPermissionState(getNotificationPermissionState())
-      if (result.status === 'subscribed') {
-        showToast('success', 'Push activado', 'Este dispositivo ya puede recibir notificaciones de Ristak.')
-      } else {
-        showToast('warning', 'No se activó', result.reason)
-      }
-    } catch (error: any) {
-      setPermissionState(getNotificationPermissionState())
-      showToast('error', 'No se activó', error?.message || 'Intenta nuevamente.')
-    } finally {
-      setRequestingPush(false)
-    }
-  }
-
   const getDraftChannel = (recipientId: string, eventKey: NotificationEventKey) => (
     normalizeNotificationChannel(
       preferencesDraft.rows[recipientId]?.[eventKey],
@@ -455,36 +418,10 @@ export const NotificationSettings: React.FC = () => {
               </p>
             </div>
           </div>
-          <div className={styles.panelHeaderActions}>
-            <Badge variant={permissionState === 'granted' ? 'success' : permissionState === 'denied' ? 'warning' : 'neutral'}>
-              <CheckCircle2 size={15} />
-              {permissionState === 'granted' ? 'Push activo' : 'Push pendiente'}
-            </Badge>
-          </div>
         </div>
 
         <div className={styles.panelSection}>
           <div className={styles.notificationOverviewGrid}>
-            <section className={styles.notificationDevicePanel}>
-              <div className={styles.notificationDeviceIcon}>
-                <Smartphone size={20} />
-              </div>
-              <div className={styles.notificationDeviceText}>
-                <strong>Este dispositivo</strong>
-                <span>{getNotificationPermissionLabel(permissionState)}</span>
-              </div>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={handleActivateDevice}
-                loading={requestingPush}
-                disabled={requestingPush}
-              >
-                <BellRing size={16} />
-                Activar push
-              </Button>
-            </section>
-
             <section className={styles.notificationSummaryPanel} aria-label="Resumen de notificaciones">
               <div>
                 <span>Destinatarios</span>

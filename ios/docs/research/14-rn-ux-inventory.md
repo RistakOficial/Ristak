@@ -733,7 +733,7 @@ registrar dinero mal etiquetado (README `mobile/README.md:38-44`).
 | custom-fields | Campos personalizados | Datos visibles en cada contacto. | N/"Todos" |
 | appearance | Apariencia | Claro, noche, sistema u horario. | p.ej. "Sistema: Noche" |
 | privacy | Privacidad | Controla vistos de WhatsApp, Messenger e Instagram. | "Vistos activos/apagados" |
-| notifications | Notificaciones | Mensajes, citas, sonido y vibración. | Activo/Bloqueado/Activar |
+| notifications | Notificaciones | Mensajes, citas, sonido y vibración. | Activas/Apagadas/Revisando |
 | — | **Cerrar sesión** (rojo) | Salir de este dispositivo. | |
 
 - **Números:** tarjeta de acción "Números de WhatsApp" con "Actualizar";
@@ -757,9 +757,11 @@ registrar dinero mal etiquetado (README `mobile/README.md:38-44`).
   preferencia."
 - **Privacidad:** toggle "Marcar mensajes como leídos o vistos" (clave
   `chat_send_read_receipts_enabled`).
-- **Notificaciones:** estado de permiso ("Activo/Bloqueado/No soportado/
-  Activar") + botón Activar/Actualizar (registra device en
-  `/api/push/mobile-devices`); toggles por categoría: "Mensajes del chat",
+- **Notificaciones:** toggle OFF **"Notificaciones apagadas"** visible solo
+  mientras falta permiso o registro; el primer toque pide permiso nativo y, si
+  ya fue negado, abre Ajustes del sistema. Al registrar el device en
+  `/api/push/mobile-devices`, la fila desaparece y muestra una alerta de éxito;
+  toggles por categoría: "Mensajes del chat",
   "Citas agendadas" (+ sub-lista "Calendarios con alertas"), "Citas
   confirmadas", "Pagos"; tarjeta "Sonido y vibración" con "Timbre de
   notificación" y "Vibración de notificación" (claves `*_push_notifications_

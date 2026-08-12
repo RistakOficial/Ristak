@@ -196,9 +196,13 @@ solo en capa flotante; copy en español.
   plantillas, lista de chat, campos personalizados y etiquetas con alta y
   eliminación, apariencia
   (sistema/claro/oscuro/auto), privacidad (confirmaciones de lectura),
-  notificaciones (activación de push, toggles por tipo, calendarios con
-  alerta), versión y cierre de sesión.
+  notificaciones (switch OFF solo cuando están apagadas, permiso nativo bajo
+  toque explícito, apertura de Ajustes si ya fue negado, toggles por tipo y
+  calendarios con alerta), versión y cierre de sesión. Con push activo no queda
+  una tarjeta permanente del dispositivo.
 - **Push y realtime**: registro del token APNs en `/api/push/mobile-devices`,
+  sin pedir permiso automáticamente durante login o foreground (solo renueva si
+  iOS ya lo concedió),
   deep links de notificación (chat/cita/pago), refresh al recibir push en
   foreground/background, precarga del hilo señalado por `content-available`,
   BGAppRefresh oportunista, Notification Service Extension para avatar/media en iOS, SSE

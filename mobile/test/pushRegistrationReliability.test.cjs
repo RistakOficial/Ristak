@@ -17,8 +17,23 @@ require.extensions['.ts'] = (module, filename) => {
 
 const {
   getNativePushRegistrationRetryDelay,
+  shouldAutoRegisterNativePush,
+  shouldOpenNativeNotificationSettings,
   shouldRetryNativePushRegistration,
 } = require('../src/pushRegistrationReliability.ts');
+
+test('el registro automatico nunca abre el permiso nativo', () => {
+  assert.equal(shouldAutoRegisterNativePush('granted'), true);
+  assert.equal(shouldAutoRegisterNativePush('prompt'), false);
+  assert.equal(shouldAutoRegisterNativePush('denied'), false);
+  assert.equal(shouldAutoRegisterNativePush('unsupported'), false);
+});
+
+test('un permiso ya negado se corrige desde los ajustes del sistema', () => {
+  assert.equal(shouldOpenNativeNotificationSettings('denied'), true);
+  assert.equal(shouldOpenNativeNotificationSettings('prompt'), false);
+  assert.equal(shouldOpenNativeNotificationSettings('granted'), false);
+});
 
 test('reintenta fallas transitorias de registro push Android', () => {
   assert.equal(shouldRetryNativePushRegistration('failed'), true);

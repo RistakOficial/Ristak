@@ -461,7 +461,11 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   - Avance: Ajustes consulta el permiso nativo, pide permiso con
     `expo-notifications`, registra el token FCM en
     `/api/push/mobile-devices`, respeta calendarios seleccionados y muestra
-    estado accionable si falta configurar FCM en el servidor.
+    estado accionable si falta configurar FCM en el servidor. El prompt nativo
+    solo nace al tocar el switch **Notificaciones apagadas**; login, foreground
+    y retries trabajan únicamente con permisos ya concedidos. Si el permiso fue
+    negado, el switch abre Ajustes del sistema; al quedar activo desaparece y
+    muestra una sola confirmación.
 - [x] Replicar gestion basica de numeros de WhatsApp en Ajustes.
   - Avance: la subpantalla `Numeros de WhatsApp` lee `/api/whatsapp-api/status`,
     permite refrescar, elegir si la bandeja junta o separa numeros, seleccionar

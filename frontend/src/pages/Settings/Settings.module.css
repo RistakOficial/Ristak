@@ -1667,26 +1667,16 @@ body.dark .select:focus {
 
 .notificationOverviewGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr);
+  grid-template-columns: 1fr;
   gap: 14px;
 }
 
-.notificationDevicePanel,
 .notificationSummaryPanel {
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   background: var(--surface);
 }
 
-.notificationDevicePanel {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 14px;
-}
-
-.notificationDeviceIcon,
 .notificationRecipientIcon {
   display: inline-flex;
   align-items: center;
@@ -1699,11 +1689,6 @@ body.dark .select:focus {
   flex: 0 0 auto;
 }
 
-.notificationDeviceText {
-  min-width: 0;
-}
-
-.notificationDeviceText strong,
 .notificationRecipientText strong {
   display: block;
   color: var(--text);
@@ -1712,7 +1697,6 @@ body.dark .select:focus {
   line-height: 1.25;
 }
 
-.notificationDeviceText span,
 .notificationRecipientText small,
 .notificationEventHeading small,
 .notificationSummaryPanel span {
@@ -2547,7 +2531,6 @@ body.dark .select:focus {
 
   .profileSummary,
   .lockedFieldRow,
-  .notificationDevicePanel,
   .cancelAccountPanel,
   .storageUsageHeader,
   .storageUsageMeta {
@@ -2560,10 +2543,6 @@ body.dark .select:focus {
   .storageUsageHeader,
   .storageUsageMeta {
     flex-direction: column;
-  }
-
-  .notificationDevicePanel {
-    grid-template-columns: 1fr;
   }
 
   .notificationSummaryPanel {

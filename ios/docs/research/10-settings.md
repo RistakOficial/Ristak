@@ -287,7 +287,7 @@ El tipo RN reducido usa solo: `definitionId?, key?, fieldKey?, label?, name?, da
 
 Nota: el CRUD de plantillas (crear, editar, enviar a revisión, sync) vive en `/api/settings/message-templates*` con gate `settings_whatsapp` (`settings.routes.js:100-118`) — **solo desktop**; el móvil es solo lectura de estados.
 
-### 2.7 Push nativo — `/api/push` (lo que usa el botón "Activar")
+### 2.7 Push nativo — `/api/push` (lo que usa el switch de activación)
 
 | Método | Path | Gate | Descripción |
 |---|---|---|---|
@@ -297,7 +297,7 @@ Nota: el CRUD de plantillas (crear, editar, enviar a revisión, sync) vive en `/
 
 - **GET /public-key** → `{ success, data: { configured: bool, publicKey: string, nativeConfigured?: bool, androidConfigured?: bool, iosConfigured?: bool } }`. En iOS, si `iosConfigured !== true` la app muestra "Las notificaciones de iPhone todavía no están preparadas para esta instalación." (`mobile/src/notifications.ts:54-65`).
 - **POST /mobile-devices** body (`mobile/src/types.ts:960-968`): `{ token: string, platform: 'ios'|'android', calendarIds?: string[], appVersion?: string, appBuild?: string, deviceModel?: string, osVersion?: string }` → `201 { success, data: { id?, enabled?, calendarIds? } }`; 400 con mensaje si es rechazado.
-- Flujo de suscripción nativa (`notifications.ts subscribeToNativePushNotifications:195-267`): (1) leer public-key y validar `iosConfigured`; (2) pedir permiso al SO (alert+badge+sound); (3) obtener **device push token nativo** (APNs, no Expo token); (4) `POST /push/mobile-devices` con `calendarIds` = `calendar_push_notification_calendar_ids` si `calendar_push_notifications_enabled`, si no `[]`. Resultados: `subscribed | not_supported | not_configured | denied` con `reason` en español.
+- Flujo de suscripción nativa (`notifications.ts subscribeToNativePushNotifications`): (1) leer public-key y validar la plataforma; (2) pedir permiso al SO (alert+badge+sound) solo tras tocar el switch; (3) obtener **device push token nativo** (APNs/FCM, no Expo token); (4) `POST /push/mobile-devices` con `calendarIds` = `calendar_push_notification_calendar_ids` si `calendar_push_notifications_enabled`, si no `[]`. Login/foreground/retry usan `requestPermission:false` y solo entran con permiso `granted`. Resultados: `subscribed | not_supported | not_configured | denied | failed` con `reason` en español.
 - El filtrado real (qué push llega según toggles chat/citas/pagos, sonido, vibración) lo hace el backend leyendo el user-config; el detalle es del módulo push/realtime.
 
 ---
@@ -391,7 +391,7 @@ Claves relacionadas del módulo chats (mismas tablas, documentadas aquí por com
 | `custom-fields` | Campos personalizados | Datos visibles en cada contacto. | `<n>` o "Todos" | ListChecks / gold |
 | `appearance` | Apariencia | Claro, noche, sistema u horario. | meta de tema (§4.17) | Sun / neutral |
 | `privacy` | Privacidad | Controla vistos de WhatsApp, Messenger e Instagram. | "Vistos activos" / "Vistos apagados" | CheckCheck / neutral |
-| `notifications` | Notificaciones | Mensajes, citas, sonido y vibración. | "Activo" / "Bloqueado" / "No soportado" / "Activar" | Bell / red |
+| `notifications` | Notificaciones | Mensajes, citas, sonido y vibración. | "Activas" / "Apagadas" / "Revisando" | Bell / red |
 | — | **Cerrar sesión** | Salir de este dispositivo. | (chevron) | LogOut / red |
 
 Nota de diseño (docs/MOBILE_APP.md:150): en la lista principal los iconos son glyph-only (sin fondo de color salvo rojo para logout/notifications).
@@ -444,8 +444,8 @@ Nota de diseño (docs/MOBILE_APP.md:150): en la lista principal los iconos son g
 - Hint: "Si lo apagas, Ristak limpia los no leídos dentro de la app, pero no manda doble check, mark seen ni acuse externo a WhatsApp API, WhatsApp QR, Messenger o Instagram."
 
 **Panel Notificaciones** (`renderNotifications`):
-- Card de permiso: si `granted` → check verde + "Alertas activas en este celular · `<n>` tipos prendidos."; si no → campana + "Permiso nativo: `<Activar|Bloqueado|No soportado>`." Debajo, mensaje de estado del último intento (`pushStatusMessage`). Botón **"Activar"** (o **"Actualizar"** si ya granted) → flujo §2.7; textos: "Activando alertas en este celular...", éxito "Alertas activas en este celular.", fallos con Alert "Falta preparar alertas"/"No se activaron"/"No se activaron las alertas".
-  - (/movil: card "Este celular" con estado "Activo en este celular"/"Bloqueado por el celular"/"Falta activar"/"No disponible"/"Revisando", botón "Activar"; si ya hay permiso, card verde "Este celular ya tiene permiso para recibir notificaciones.")
+- Activación condicional: mientras permiso + registro no están listos aparece el toggle OFF **"Notificaciones apagadas"**. El primer toque pide el permiso nativo; si el permiso ya fue negado, abre los Ajustes del sistema. Al completar permiso + backend la fila desaparece y se muestra una sola alerta **"Notificaciones activadas"**. Volver de Ajustes reconsulta el estado automáticamente. No hay botón "Actualizar", card permanente "Este celular" ni switch de apagado dentro de Ristak.
+  - `/movil` replica la fila condicional en superficies móviles y la oculta cuando el permiso está concedido. En desktop no muestra activación por dispositivo ni permite push del navegador.
 - Toggle "Mensajes del chat" — "Avísame cuando llegue un WhatsApp nuevo." → `chat_push_notifications_enabled`.
 - Toggle "Citas agendadas" — "Avísame cuando alguien reserve una cita nueva." → `calendar_push_notifications_enabled` (+ regla §4.7).
 - Si citas ON → card "Calendarios con alertas" con contador (`N seleccionados` / `Todos`), chip "Todos los calendarios" (escribe `[]`), grid de chips por calendario con punto de color (`eventColor || color || acento`) y nombre; loading "Cargando calendarios..."; vacío "No hay calendarios activos para elegir.".
@@ -467,7 +467,7 @@ Nota de diseño (docs/MOBILE_APP.md:150): en la lista principal los iconos son g
 | Templates fetch | `getTemplates()` con default `status=APPROVED` + fallback status | `getTemplates(null)` (todas) + fallback status |
 | Config load | 1 request por key (hook) con cache localStorage | batch `?keys=` + estado en memoria |
 | Logout | confirm modal, redirige a login | Alert 3 botones incl. "Cambiar app" |
-| Permiso push | Notification API / puente Capacitor, labels "Activo en este celular"… | expo-notifications, labels "Activo/Bloqueado/No soportado/Activar" |
+| Permiso push | Fila OFF condicional; sin activación en desktop | expo-notifications; prompt solo bajo toque y Ajustes del sistema tras rechazo |
 | Título sección chats | "Lista de chats" (desktop) / "Lista de chat" (mobile) | "Lista de chat" |
 
 ---

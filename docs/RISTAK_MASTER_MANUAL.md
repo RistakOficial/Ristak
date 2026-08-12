@@ -10659,7 +10659,12 @@ app registra el token con `platform=ios`, `clientType=native` y
 `appPackage=com.ristak.app`. Permiso del sistema y registro confirmado por
 backend son estados separados: Ajustes solo muestra alertas activas cuando ambos
 estan listos. La activacion se serializa, usa reintentos 5/15/60/300 s y se
-revalida en foreground si la confirmacion supera 6 h. Logout deshabilita el
+revalida en foreground si la confirmacion supera 6 h. Ningun arranque, login,
+foreground o reintento puede solicitar permiso: esos caminos solo registran si
+el sistema ya reporta `granted`. El dialogo nativo nace exclusivamente del
+switch **Notificaciones apagadas** en Ajustes. Con permiso negado, ese switch
+abre los Ajustes del sistema; con permiso y registro confirmados, desaparece y
+la app muestra una sola confirmacion de exito. Logout deshabilita el
 device con `DELETE /api/push/mobile-devices` best-effort y siempre limpia APNs
 local; 401/licencia revocada tambien ejecutan la limpieza local inmediata.
 El mismo principio aplica a Android Play/Expo (`com.ristak.android`): permiso
@@ -10667,6 +10672,10 @@ concedido no significa token registrado. La app exige la confirmacion de
 `POST /api/push/mobile-devices`, reintenta fallas de token o red con backoff
 5/15/60/300 s y al volver a foreground, y solo entonces muestra
 `Alertas activas`. La renovacion del token tambien reintenta su persistencia.
+En desktop no existe activacion push por dispositivo: Configuracion conserva
+reglas, eventos y destinatarios para las apps moviles, pero elimina la tarjeta
+"Este dispositivo", bloquea nuevas suscripciones web desktop y limpia
+best-effort las antiguas al autenticar.
 La Notification Service Extension serializa tareas/callbacks para finalizar una
 sola vez, descarga avatar y media en paralelo con presupuesto visual total de
 1.8 s y limita el avatar a 5 MB y la media adjunta a 12 MB; si no puede

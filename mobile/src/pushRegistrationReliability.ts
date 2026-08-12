@@ -11,6 +11,14 @@ export function shouldRetryNativePushRegistration(status: NativePushRegistration
   return status === 'failed' || status === 'not_configured';
 }
 
+export function shouldAutoRegisterNativePush(permission: string): boolean {
+  return permission === 'granted';
+}
+
+export function shouldOpenNativeNotificationSettings(permission: string): boolean {
+  return permission === 'denied';
+}
+
 export function getNativePushRegistrationRetryDelay(attempt: number): number {
   const safeAttempt = Number.isFinite(attempt) ? Math.max(0, Math.trunc(attempt)) : 0;
   return NATIVE_PUSH_RETRY_DELAYS_MS[

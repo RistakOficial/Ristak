@@ -361,7 +361,6 @@
 .sectionTitle span,
 .toggleRow span,
 .templateMain,
-.permissionCard div,
 .actionCard div,
 .choiceButton > span:nth-child(2) {
   display: grid;
@@ -372,7 +371,6 @@
 .sectionTitle strong,
 .toggleRow strong,
 .templateMain strong,
-.permissionCard strong,
 .actionCard strong,
 .choiceButton strong {
   overflow: hidden;
@@ -390,7 +388,6 @@
 .sectionTitle small,
 .toggleRow small,
 .templateMain small,
-.permissionCard small,
 .actionCard small,
 .choiceButton small,
 .hint {
@@ -472,8 +469,6 @@
 .settingsSection,
 .actionCard,
 .businessDescriptionPanel,
-.permissionCard,
-.enabledCard,
 .calendarPicker,
 .alertBox,
 .emptyState,
@@ -493,8 +488,7 @@
 }
 
 .sectionTitle,
-.actionCard,
-.permissionCard {
+.actionCard {
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr) auto;
   align-items: center;
@@ -540,8 +534,6 @@
 }
 
 .actionCard,
-.permissionCard,
-.enabledCard,
 .alertBox,
 .emptyState,
 .loadingInline {
@@ -550,8 +542,7 @@
 
 .actionCard button,
 .businessDescriptionActions button,
-.businessVoiceButton,
-.permissionCard button {
+.businessVoiceButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -569,8 +560,7 @@
 
 .actionCard button:disabled,
 .businessDescriptionActions button:disabled,
-.businessVoiceButton:disabled,
-.permissionCard button:disabled {
+.businessVoiceButton:disabled {
   opacity: 0.6;
 }
 
@@ -960,21 +950,6 @@
   background: color-mix(in srgb, var(--phone-settings-accent-soft) 64%, var(--phone-settings-surface));
 }
 
-.permissionCard {
-  margin-bottom: 10px;
-}
-
-.enabledCard {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-  color: #0f6b3e;
-  background: #dff8e8;
-  font-size: 14px;
-  font-weight: 850;
-}
-
 .calendarPicker {
   margin: 0 0 10px;
 }
@@ -1067,7 +1042,6 @@
   .sectionTitle strong,
   .toggleRow strong,
   .templateMain strong,
-  .permissionCard strong,
   .actionCard strong,
   .choiceButton strong {
     font-size: 16px;

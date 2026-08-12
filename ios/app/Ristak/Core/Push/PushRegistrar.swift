@@ -53,6 +53,10 @@ final class PushRegistrar {
         permissionState == .granted && registrationState == .registered
     }
 
+    static func shouldRegisterAutomatically(for permission: PermissionState) -> Bool {
+        permission == .granted
+    }
+
     private var lastDeviceTokenHex: String?
     private var lastCalendarIDs: [String] = []
     private var tokenContinuation: CheckedContinuation<String, any Error>?
@@ -106,11 +110,11 @@ final class PushRegistrar {
         registrationState = registeredToken == nil ? .unregistered : .unknown
     }
 
-    /// Auto-registro tras login (paridad RN): solo si el permiso es `granted`
-    /// o aún no se ha pedido (`notDetermined`).
+    /// Auto-registro tras login: sólo renueva el enlace si el sistema ya dio
+    /// permiso. El prompt nativo se reserva al switch explícito de Ajustes.
     func registerAfterLoginIfPossible(calendarIDs: [String] = []) async {
         await refreshPermissionState()
-        guard permissionState == .granted || permissionState == .notDetermined else { return }
+        guard Self.shouldRegisterAutomatically(for: permissionState) else { return }
         _ = await activate(calendarIDs: calendarIDs)
     }
 
@@ -364,7 +368,7 @@ final class PushRegistrar {
 
     private func scheduleAutomaticRetry() {
         guard let sessionGeneration = activeSessionGeneration else { return }
-        guard permissionState == .granted || permissionState == .notDetermined else { return }
+        guard Self.shouldRegisterAutomatically(for: permissionState) else { return }
         guard retryTask == nil else { return }
         let expectedEpoch = registrationEpoch
         let index = min(retryAttempt, Self.retryDelays.count - 1)

@@ -42,7 +42,7 @@ function isPushAvailable() {
 }
 
 function getBrowserNotificationTarget() {
-  return getPortableDeviceMode() === 'desktop' ? 'esta computadora' : 'este celular'
+  return 'este celular'
 }
 
 function getNativePushConfigurationError(config: WebPushPublicConfig | null) {
@@ -87,6 +87,13 @@ export const pushNotificationsService = {
       return mobileAppService.subscribeToPushNotifications({ calendarIds })
     }
 
+    if (getPortableDeviceMode() === 'desktop') {
+      return {
+        status: 'not_supported',
+        reason: 'Las notificaciones push se activan únicamente desde la app móvil de Ristak.'
+      }
+    }
+
     if (!isPushAvailable()) {
       const target = getBrowserNotificationTarget()
       return {
@@ -127,6 +134,28 @@ export const pushNotificationsService = {
     })
 
     return { status: 'subscribed' }
+  },
+
+  async removeDesktopBrowserSubscription(): Promise<void> {
+    if (
+      mobileAppService.isNative() ||
+      getPortableDeviceMode() !== 'desktop' ||
+      typeof navigator === 'undefined' ||
+      !('serviceWorker' in navigator)
+    ) {
+      return
+    }
+
+    const registrations = await navigator.serviceWorker.getRegistrations().catch(() => [])
+    await Promise.all(registrations.map(async (registration) => {
+      const subscription = registration.pushManager
+        ? await registration.pushManager.getSubscription().catch(() => null)
+        : null
+      if (!subscription) return
+
+      await apiClient.delete('/push/subscriptions', { endpoint: subscription.endpoint }).catch(() => undefined)
+      await subscription.unsubscribe().catch(() => false)
+    }))
   },
 
   async subscribeToCalendarNotifications(calendarIds: string[]): Promise<CalendarPushResult> {

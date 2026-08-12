@@ -283,7 +283,7 @@ export async function subscribeToNativePushNotifications(
   if (!permission.granted) {
     return {
       status: 'denied',
-      reason: 'Este celular no dio permiso para recibir notificaciones de Ristak.',
+      reason: 'Las notificaciones están apagadas en los ajustes del teléfono. Actívalas ahí para continuar.',
     };
   }
 

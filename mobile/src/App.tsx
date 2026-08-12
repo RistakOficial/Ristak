@@ -258,6 +258,8 @@ import {
 } from './notifications';
 import {
   getNativePushRegistrationRetryDelay,
+  shouldAutoRegisterNativePush,
+  shouldOpenNativeNotificationSettings,
   shouldRetryNativePushRegistration,
 } from './pushRegistrationReliability';
 import {
@@ -2073,21 +2075,21 @@ function PhoneShell({
       const delay = getNativePushRegistrationRetryDelay(retryAttempt);
       retryAttempt += 1;
       retryTimer = setTimeout(() => {
-        void registerIfAllowedOrPending();
+        void registerIfPermissionGranted();
       }, delay);
     };
 
-    const registerIfAllowedOrPending = async () => {
+    const registerIfPermissionGranted = async () => {
       if (cancelled || registrationInFlight || autoRegisteredPushKeyRef.current === registrationKey) return;
       registrationInFlight = true;
       const permission = await getNativePushPermissionStatus();
-      if (cancelled || (permission !== 'granted' && permission !== 'prompt')) {
+      if (cancelled || !shouldAutoRegisterNativePush(permission)) {
         registrationInFlight = false;
         return;
       }
 
       try {
-        const result = await subscribeToNativePushNotifications(api);
+        const result = await subscribeToNativePushNotifications(api, { requestPermission: false });
         if (cancelled) return;
         if (result.status === 'subscribed') {
           autoRegisteredPushKeyRef.current = registrationKey;
@@ -2107,12 +2109,12 @@ function PhoneShell({
       }
     };
 
-    void registerIfAllowedOrPending();
+    void registerIfPermissionGranted();
     const appStateSubscription = AppState.addEventListener('change', (state) => {
       if (state !== 'active' || autoRegisteredPushKeyRef.current === registrationKey) return;
       retryAttempt = 0;
       clearRetryTimer();
-      void registerIfAllowedOrPending();
+      void registerIfPermissionGranted();
     });
 
     return () => {
@@ -13785,13 +13787,6 @@ function getBusinessPhoneStatusLabel(phone: WhatsAppApiPhoneNumber) {
   return phone.status || 'Disponible';
 }
 
-function getPushPermissionLabel(status: NativePushPermissionStatus) {
-  if (status === 'granted') return 'Activo';
-  if (status === 'denied') return 'Bloqueado';
-  if (status === 'unsupported') return 'No soportado';
-  return 'Activar';
-}
-
 function getTemplateStatus(template: WhatsAppApiTemplate) {
   return String(template.status || 'UNKNOWN').toUpperCase();
 }
@@ -13905,9 +13900,9 @@ function SettingsScreen({
   const [settingDefaultPhoneId, setSettingDefaultPhoneId] = useState<string | null>(null);
   const [pushPermissionStatus, setPushPermissionStatus] = useState<NativePushPermissionStatus>('prompt');
   const [pushRegistrationStatus, setPushRegistrationStatus] = useState<'checking' | 'registered' | 'missing'>('checking');
-  const [pushStatusMessage, setPushStatusMessage] = useState('');
   const [requestingPush, setRequestingPush] = useState(false);
   const settingsMountedRef = useRef(true);
+  const awaitingNotificationSettingsRef = useRef(false);
 
   useEffect(() => () => {
     settingsMountedRef.current = false;
@@ -14023,7 +14018,7 @@ function SettingsScreen({
     setPushPermissionStatus(status);
     if (status !== 'granted') {
       setPushRegistrationStatus('missing');
-      return;
+      return false;
     }
 
     setPushRegistrationStatus('checking');
@@ -14032,16 +14027,15 @@ function SettingsScreen({
       if (!settingsMountedRef.current) return;
       if (result.status === 'subscribed') {
         setPushRegistrationStatus('registered');
-        setPushStatusMessage('');
-        return;
+        return true;
       }
 
       setPushRegistrationStatus('missing');
-      setPushStatusMessage(result.reason);
-    } catch (error) {
+      return false;
+    } catch {
       if (!settingsMountedRef.current) return;
       setPushRegistrationStatus('missing');
-      setPushStatusMessage(error instanceof Error ? error.message : 'No se pudo verificar este celular.');
+      return false;
     }
   }, [api]);
 
@@ -14075,6 +14069,22 @@ function SettingsScreen({
     if (activePanel === 'tags') void loadSettingsTags();
     if (activePanel === 'notifications') void loadPushPermissionStatus();
   }, [activePanel, loadCustomFields, loadPushPermissionStatus, loadSettingsTags, loadTemplates, loadWhatsAppStatus]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active' || activePanel !== 'notifications') return;
+      const shouldConfirmActivation = awaitingNotificationSettingsRef.current;
+      void loadPushPermissionStatus().then((registered) => {
+        if (!shouldConfirmActivation || !settingsMountedRef.current) return;
+        awaitingNotificationSettingsRef.current = false;
+        if (registered) {
+          Alert.alert('Notificaciones activadas', 'Ristak ya puede avisarte cuando llegue algo importante.');
+        }
+      });
+    });
+
+    return () => subscription.remove();
+  }, [activePanel, loadPushPermissionStatus]);
 
   const getAppBoolean = (key: string, fallback: boolean) => coerceConfigBoolean(appConfig[key], fallback);
   const getUserBoolean = (key: string, fallback: boolean) => coerceConfigBoolean(userConfig[key], fallback);
@@ -14150,10 +14160,10 @@ function SettingsScreen({
   const whatsappNumbersMode = selectedWhatsAppPhone ? 'separate' : 'together';
   const nativePushReady = pushPermissionStatus === 'granted' && pushRegistrationStatus === 'registered';
   const pushPermissionLabel = nativePushReady
-    ? 'Activo'
-    : pushPermissionStatus === 'granted'
-      ? 'Completar registro'
-      : getPushPermissionLabel(pushPermissionStatus);
+    ? 'Activas'
+    : pushRegistrationStatus === 'checking'
+      ? 'Revisando'
+      : 'Apagadas';
   const selectedCalendarCount = pushCalendarIds.length || calendars.length;
   const customFieldGroups = useMemo(() => {
     const groups = new Map<string, ContactCustomFieldDefinition[]>();
@@ -14166,13 +14176,6 @@ function SettingsScreen({
     return [...groups.entries()].map(([title, items]) => ({ title, items }));
   }, [customFields]);
   const blockedTemplates = templates.filter((template) => TEMPLATE_BLOCKED_STATUSES.has(getTemplateStatus(template))).length;
-  const notificationCount = [
-    chatPushEnabled,
-    calendarPushEnabled,
-    appointmentConfirmationPushEnabled,
-    paymentPushEnabled,
-  ].filter(Boolean).length;
-
   const handleLogout = () => {
     Alert.alert(
       'Cerrar sesión',
@@ -14239,8 +14242,21 @@ function SettingsScreen({
   const handleEnableNativePush = async () => {
     if (requestingPush) return;
     setRequestingPush(true);
+
+    if (shouldOpenNativeNotificationSettings(pushPermissionStatus)) {
+      awaitingNotificationSettingsRef.current = true;
+      try {
+        await Linking.openSettings();
+      } catch {
+        awaitingNotificationSettingsRef.current = false;
+        Alert.alert('No se abrieron los ajustes', 'Abre Ajustes del teléfono y permite las notificaciones de Ristak.');
+      } finally {
+        if (settingsMountedRef.current) setRequestingPush(false);
+      }
+      return;
+    }
+
     setPushRegistrationStatus('checking');
-    setPushStatusMessage('Activando alertas en este celular...');
     try {
       const result = await subscribeToNativePushNotifications(
         api,
@@ -14251,18 +14267,16 @@ function SettingsScreen({
       setPushPermissionStatus(permission);
       if (result.status === 'subscribed') {
         setPushRegistrationStatus('registered');
-        setPushStatusMessage('Alertas activas en este celular.');
+        Alert.alert('Notificaciones activadas', 'Ristak ya puede avisarte cuando llegue algo importante.');
         return;
       }
       setPushRegistrationStatus('missing');
       const message = result.reason || 'No se activaron las alertas en este celular.';
-      setPushStatusMessage(message);
       Alert.alert(result.status === 'not_configured' ? 'Falta preparar alertas' : 'No se activaron', message);
     } catch (err) {
       if (!settingsMountedRef.current) return;
       setPushRegistrationStatus('missing');
       const message = err instanceof Error ? err.message : 'Intenta otra vez.';
-      setPushStatusMessage(message);
       Alert.alert('No se activaron las alertas', message);
     } finally {
       if (settingsMountedRef.current) setRequestingPush(false);
@@ -14633,30 +14647,19 @@ function SettingsScreen({
 
   const renderNotifications = () => (
     <>
-      <View style={[styles.settingsEnabledCard, !nativePushReady && styles.settingsPushCardNeedsAction]}>
-        {nativePushReady ? <Check size={18} color="#0f6b3e" strokeWidth={2.6} /> : <BellRing size={18} color={COLORS.text} strokeWidth={2.6} />}
-        <View style={styles.settingsPushCopy}>
-          <Text style={styles.settingsEnabledText}>
-            {nativePushReady
-              ? `Alertas activas en este celular · ${notificationCount} tipos prendidos.`
-              : pushRegistrationStatus === 'checking'
-                ? 'Verificando el registro de este celular...'
-                : pushPermissionStatus === 'granted'
-                  ? 'El permiso existe, pero este celular todavía no está registrado.'
-                  : `Permiso nativo: ${pushPermissionLabel}.`}
-          </Text>
-          {pushStatusMessage ? <Text style={styles.settingsPushMessage}>{pushStatusMessage}</Text> : null}
-        </View>
-        <Pressable
-          accessibilityRole="button"
+      {!nativePushReady && pushRegistrationStatus !== 'checking' ? (
+        <SettingsToggleRow
+          title="Notificaciones apagadas"
+          description={pushPermissionStatus === 'denied'
+            ? 'Toca el switch para abrir los ajustes del teléfono y activarlas.'
+            : pushPermissionStatus === 'granted'
+              ? 'Toca el switch para terminar de conectarlas con Ristak.'
+              : 'Toca el switch para activar las notificaciones.'}
+          checked={false}
           disabled={requestingPush}
-          onPress={handleEnableNativePush}
-          style={({ pressed }) => [styles.settingsPushActionButton, requestingPush && styles.disabledButton, pressed && styles.pressed]}
-        >
-          {requestingPush ? <ActivityIndicator color={COLORS.white} /> : <Bell size={15} color={COLORS.white} strokeWidth={2.5} />}
-          <Text style={styles.settingsPushActionText}>{nativePushReady ? 'Actualizar' : 'Activar'}</Text>
-        </Pressable>
-      </View>
+          onChange={(checked) => { if (checked) void handleEnableNativePush(); }}
+        />
+      ) : null}
       <SettingsToggleRow title="Mensajes del chat" description="Avísame cuando llegue un WhatsApp nuevo." checked={chatPushEnabled} disabled={savingKey === 'chat_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('chat_push_notifications_enabled', checked)} />
       <SettingsToggleRow title="Citas agendadas" description="Avísame cuando alguien reserve una cita nueva." checked={calendarPushEnabled} disabled={savingKey === 'calendar_push_notifications_enabled'} onChange={handleCalendarPushToggle} />
       {calendarPushEnabled ? (
@@ -28868,54 +28871,6 @@ function createAppStyles() {
     width: 24,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  settingsEnabledCard: {
-    minHeight: 54,
-    borderRadius: 20,
-    backgroundColor: 'rgba(34,197,94,0.16)',
-    borderWidth: 1,
-    borderColor: 'rgba(34,197,94,0.22)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    padding: 14,
-  },
-  settingsPushCardNeedsAction: {
-    backgroundColor: neutralSelectedSurface,
-    borderColor: neutralSelectedBorder,
-  },
-  settingsPushCopy: {
-    flex: 1,
-    minWidth: 0,
-    gap: 3,
-  },
-  settingsEnabledText: {
-    flex: 1,
-    color: '#86efac',
-    fontSize: 14,
-    lineHeight: 18,
-    fontWeight: '800',
-  },
-  settingsPushMessage: {
-    color: COLORS.muted,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
-  },
-  settingsPushActionButton: {
-    minHeight: 34,
-    borderRadius: 17,
-    backgroundColor: COLORS.text,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    paddingHorizontal: 10,
-  },
-  settingsPushActionText: {
-    color: COLORS.bg,
-    fontSize: 12,
-    fontWeight: '900',
   },
   calendarPickerHeader: {
     flexDirection: 'row',

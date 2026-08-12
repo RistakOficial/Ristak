@@ -104,7 +104,7 @@ enum PushRegistrationOutcome: Equatable, Sendable {
     static let defaultNotConfiguredMessage =
         "Las notificaciones de iPhone todavía no están preparadas para esta instalación."
     static let defaultDeniedMessage =
-        "Este celular no dio permiso para recibir notificaciones de Ristak."
+        "Las notificaciones están apagadas en Ajustes de iOS. Actívalas ahí para continuar."
 
     var message: String? {
         switch self {

@@ -2,8 +2,8 @@ import SwiftUI
 import UIKit
 
 /// Panel «Notificaciones» (doc 10 §5.1 `renderNotifications`, doc 11 §10.2):
-/// - Card de permiso nativo con botón «Activar»/«Actualizar» (PushRegistrar) y
-///   deep link «Abrir Ajustes» cuando el permiso está bloqueado.
+/// - Switch de activación visible sólo mientras push está apagado; el primer
+///   toque abre el permiso nativo y, si ya fue negado, abre Ajustes de iOS.
 /// - Toggles por usuario (`/api/user-config`): chat, citas, confirmaciones,
 ///   pagos, sonido y vibración (esta última sin efecto en iOS — paridad UI).
 /// - «Calendarios con alertas»: multiselección → re-registro del token con los
@@ -12,17 +12,20 @@ struct SettingsNotificationsPanel: View {
     @Environment(SettingsModel.self) private var model
     @Environment(AppConfigStore.self) private var appConfig
     @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var saveError = SettingsSaveErrorPresenter()
-    @State private var pushStatusMessage: String?
     @State private var pushAlertTitle: String?
     @State private var pushAlertMessage: String?
+    @State private var awaitingSystemSettings = false
 
     private var push: PushRegistrar { PushRegistrar.shared }
 
     var body: some View {
         SettingsPanelScroll {
-            permissionCard
+            if shouldShowPermissionToggle {
+                permissionToggle
+            }
 
             SectionCard(title: "Avisos") {
                 VStack(spacing: RistakTheme.Spacing.sm) {
@@ -114,6 +117,17 @@ struct SettingsNotificationsPanel: View {
         .task {
             await push.refreshPermissionState()
         }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            Task {
+                let shouldConfirmActivation = awaitingSystemSettings
+                await push.refreshPermissionState()
+                guard shouldConfirmActivation else { return }
+                awaitingSystemSettings = false
+                guard push.permissionState == .granted else { return }
+                await activatePush()
+            }
+        }
         .alert(
             pushAlertTitle ?? "No se activaron",
             isPresented: Binding(
@@ -130,127 +144,60 @@ struct SettingsNotificationsPanel: View {
         }
     }
 
-    // MARK: - Card de permiso
+    // MARK: - Permiso del sistema
 
-    private var permissionCard: some View {
-        let permissionGranted = push.permissionState == .granted
-        let active = push.isFullyActive
+    private var shouldShowPermissionToggle: Bool {
+        push.permissionState != .unknown && !push.isFullyActive
+    }
 
-        return SectionCard(title: "Este celular") {
-            VStack(alignment: .leading, spacing: RistakTheme.Spacing.sm) {
-                HStack(spacing: RistakTheme.Spacing.sm) {
-                    Image(systemName: active ? "checkmark.circle.fill" : "bell.badge")
-                        .font(.title3.weight(.medium))
-                        .foregroundStyle(active ? RistakTheme.pos : RistakTheme.warn)
-                        .frame(width: 42, height: 42)
-                        .background(
-                            RoundedRectangle(cornerRadius: RistakTheme.Radius.small, style: .continuous)
-                                .fill(active ? RistakTheme.posSoft : RistakTheme.warnSoft)
-                        )
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(active
-                            ? "Alertas activas en este celular · \(enabledTypesCount) tipos prendidos."
-                            : pushConnectionHeadline(permissionGranted: permissionGranted))
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(RistakTheme.textPrimary)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        if let pushStatusMessage {
-                            Text(pushStatusMessage)
-                                .font(.footnote)
-                                .foregroundStyle(RistakTheme.textDim)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+    private var permissionToggle: some View {
+        SectionCard {
+            SettingsToggleRow(
+                title: "Notificaciones apagadas",
+                subtitle: permissionToggleSubtitle,
+                isOn: false,
+                isSaving: push.isWorking
+            ) { enabled in
+                guard enabled else { return }
+                if push.permissionState == .denied {
+                    awaitingSystemSettings = true
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        openURL(url)
                     }
-
-                    Spacer(minLength: 0)
+                    return
                 }
 
-                HStack(spacing: RistakTheme.Spacing.xs) {
-                    Button {
-                        Task { await activatePush() }
-                    } label: {
-                        HStack(spacing: 6) {
-                            if push.isWorking {
-                                ProgressView().controlSize(.small)
-                            }
-                            Text(active ? "Actualizar" : "Activar")
-                                .font(.subheadline.weight(.semibold))
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(push.isWorking)
-
-                    if push.permissionState == .denied {
-                        Button("Abrir Ajustes") {
-                            if let url = URL(string: UIApplication.openSettingsURLString) {
-                                openURL(url)
-                            }
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .buttonStyle(.bordered)
-                        .buttonBorderShape(.capsule)
-                    }
-                }
+                Task { await activatePush() }
             }
         }
     }
 
-    private func pushConnectionHeadline(permissionGranted: Bool) -> String {
-        guard permissionGranted else { return "Permiso nativo: \(permissionLabel)." }
-        switch push.registrationState {
-        case .registering:
-            return "Conectando este celular con Ristak..."
-        case .unknown:
-            return "Verificando la conexión de alertas con Ristak..."
-        case .failed:
-            return "iOS dio permiso, pero Ristak todavía no confirmó este celular."
-        case .unregistered:
-            return "iOS dio permiso; falta conectar este celular con Ristak."
-        case .registered:
-            return "Alertas listas en este celular."
-        }
-    }
-
-    /// Etiqueta del permiso nativo (labels RN: Activo/Bloqueado/No soportado/Activar).
-    private var permissionLabel: String {
+    private var permissionToggleSubtitle: String {
         switch push.permissionState {
-        case .granted: return "Permitido"
-        case .denied: return "Bloqueado"
-        case .notDetermined: return "Activar"
-        case .unknown: return "No soportado"
+        case .denied:
+            return "Toca el switch para abrir Ajustes y volver a activarlas."
+        case .granted:
+            return "Toca el switch para terminar de conectarlas con Ristak."
+        case .notDetermined, .unknown:
+            return "Toca el switch para activar las notificaciones."
         }
-    }
-
-    /// «N tipos prendidos»: chat + citas + confirmaciones + pagos activos.
-    private var enabledTypesCount: Int {
-        [
-            appConfig.chatPushEnabled,
-            appConfig.calendarPushEnabled,
-            appConfig.appointmentConfirmationPushEnabled,
-            appConfig.paymentPushEnabled,
-        ].filter { $0 }.count
     }
 
     private func activatePush() async {
-        pushStatusMessage = "Activando alertas en este celular..."
         let calendarIDs = appConfig.calendarPushEnabled ? appConfig.calendarPushCalendarIDs : []
         let outcome = await push.activate(calendarIDs: calendarIDs)
 
         switch outcome {
         case .subscribed:
-            pushStatusMessage = "Alertas activas en este celular."
+            pushAlertTitle = "Notificaciones activadas"
+            pushAlertMessage = "Ristak ya puede avisarte cuando llegue algo importante."
         case .notConfigured(let message):
-            pushStatusMessage = message
             pushAlertTitle = "Falta preparar alertas"
             pushAlertMessage = message
         case .denied(let message):
-            pushStatusMessage = message
             pushAlertTitle = "No se activaron"
             pushAlertMessage = message
         case .failed(let message):
-            pushStatusMessage = message
             pushAlertTitle = "No se activaron las alertas"
             pushAlertMessage = message
         }

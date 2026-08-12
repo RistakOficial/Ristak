@@ -36,7 +36,6 @@ import {
   MessageCircle,
   Mic,
   Moon,
-  Monitor,
   MoreHorizontal,
   MousePointerClick,
   Pause,
@@ -143,7 +142,7 @@ import {
   type ContactAdvancedOperator,
   type ContactAdvancedOption
 } from '@/pages/Contacts/contactAdvancedFilters'
-import { useAIAvailability, useAccountCurrency, useAppConfig, useUserConfig, useBottomSheetDismiss, usePaymentGatewayCapabilities, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks' // MOB-006 useUserConfig
+import { useAIAvailability, useAccountCurrency, useAppConfig, useMobilePushPermission, useUserConfig, useBottomSheetDismiss, usePaymentGatewayCapabilities, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks' // MOB-006 useUserConfig
 import {
   CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT,
   CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH,
@@ -237,7 +236,6 @@ import {
   shouldRevealMobileChatCacheFallback
 } from './chatLiveFirstPolicy'
 import { ConversationHistoryPaginationGate } from './conversationHistoryPaginationPolicy'
-import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { filterApprovedWhatsAppApiTemplates, getWhatsAppApiProviderLabel, isWhatsAppPhoneApiAvailable, isWhatsAppTemplateCompatibleWithPhone, whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact, ContactCustomField } from '@/types'
 import {
@@ -4849,28 +4847,6 @@ function getChatPreview(contact: ChatContact) {
   return normalizeWhatsAppBusinessDirection(contact.lastMessageDirection) === 'outbound' ? `Tú: ${typeLabel}` : typeLabel
 }
 
-function getNotificationPermissionLabel() {
-  if (mobileAppService.isNative()) return 'Toca Activar para permitir alertas en este celular.'
-  const isDesktopBrowser = getPortableDeviceMode() === 'desktop'
-  const target = isDesktopBrowser ? 'esta computadora' : 'este celular'
-  if (typeof window === 'undefined' || !('Notification' in window)) return `El navegador en ${target} no permite alertas de la app.`
-  if (Notification.permission === 'granted') return `${capitalizeFirst(target)} ya puede recibir alertas.`
-  if (Notification.permission === 'denied') return `El navegador en ${target} bloqueó las alertas. Actívalas desde la configuración del navegador.`
-  return `Toca Activar para permitir alertas de navegador en ${target}.`
-}
-
-function getNotificationSettingsDeviceLabel() {
-  if (mobileAppService.isNative()) return 'Este celular'
-  return getPortableDeviceMode() === 'desktop' ? 'Esta computadora' : 'Este celular'
-}
-
-function getNotificationActivationToastMessage() {
-  if (mobileAppService.isNative()) return 'Este celular ya puede recibir alertas de Ristak.'
-  return getPortableDeviceMode() === 'desktop'
-    ? 'Esta computadora ya puede recibir alertas de Ristak por el navegador.'
-    : 'Este celular ya puede recibir alertas de Ristak por el navegador.'
-}
-
 function normalizePhoneValue(value?: string | null) {
   return String(value || '').replace(/\D/g, '')
 }
@@ -5288,7 +5264,7 @@ export const PhoneChat: React.FC = () => {
   const customerWithPlainArticle = formatCrmLabelWithDefiniteArticle(customerLabel, DEFAULT_CRM_LABELS.customer, 'none')
   const customersSentenceLabel = formatSentenceLabel(customersLabel)
   const leadsSentenceLabel = formatSentenceLabel(leadsLabel)
-  const { showToast, showConfirm } = useNotification()
+  const { showToast, showConfirm, showAlert } = useNotification()
   const { timezone, formatLocalDateShort, formatLocalDateTime } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
   const [defaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
@@ -5322,6 +5298,14 @@ export const PhoneChat: React.FC = () => {
     systemThemeAvailable,
     deviceLabel: phoneThemeDeviceLabel
   } = usePhoneTheme({ active: false })
+  const {
+    activate: activatePush,
+    isChecking: checkingPushPermission,
+    isDesktop: isDesktopPushSurface,
+    isGranted: pushPermissionGranted,
+    permission: pushPermission,
+    showActivation: showPushActivation
+  } = useMobilePushPermission()
 
   const [deviceMode, setDeviceMode] = useState<PhoneChatDeviceMode>(getPhoneChatDeviceMode)
   const [accessState, setAccessState] = useState<AccessState>(() => getAccessState(deviceMode))
@@ -14769,17 +14753,19 @@ export const PhoneChat: React.FC = () => {
   const handleRequestPush = async () => {
     setRequestingPush(true)
     try {
-      const result = await pushNotificationsService.subscribeToAppNotifications({
-        calendarIds: pushCalendarIds
-      })
+      const result = await activatePush(pushCalendarIds)
 
       if (result.status === 'subscribed') {
-        showToast('success', 'Alertas activadas', getNotificationActivationToastMessage())
+        showAlert('Notificaciones activadas', 'Ristak ya puede avisarte cuando llegue algo importante.', 'Entendido')
       } else {
-        showToast('warning', 'No se activaron las alertas', result.reason)
+        showAlert(
+          result.status === 'not_configured' ? 'Falta preparar notificaciones' : 'Notificaciones apagadas',
+          result.reason,
+          'Entendido'
+        )
       }
     } catch (error: any) {
-      showToast('error', 'No se activaron las alertas', error?.message || 'Intenta otra vez.')
+      showAlert('No se activaron las notificaciones', error?.message || 'Intenta otra vez.', 'Entendido')
     } finally {
       setRequestingPush(false)
     }
@@ -18699,25 +18685,24 @@ export const PhoneChat: React.FC = () => {
     }
 
     if (activeSettingsSection === 'notifications') {
-      const NotificationDeviceIcon = !mobileAppService.isNative() && getPortableDeviceMode() === 'desktop'
-        ? Monitor
-        : Smartphone
-
       return renderSettingsDetail('Notificaciones', (
         <>
-          <section className={styles.permissionCard}>
+          {showPushActivation && <label className={styles.toggleRow}>
             <span>
-              <NotificationDeviceIcon size={18} />
+              <strong>Notificaciones apagadas</strong>
+              <small>
+                {pushPermission === 'denied'
+                  ? 'Toca el switch para volver a activarlas desde los ajustes del sistema.'
+                  : 'Toca el switch para activar las notificaciones.'}
+              </small>
             </span>
-            <div>
-              <strong>{getNotificationSettingsDeviceLabel()}</strong>
-              <small>{getNotificationPermissionLabel()}</small>
-            </div>
-            <button type="button" onClick={handleRequestPush} disabled={requestingPush}>
-              {requestingPush ? <Loader2 size={16} className={styles.spinIcon} /> : <Bell size={16} />}
-              Activar
-            </button>
-          </section>
+            <input
+              type="checkbox"
+              checked={false}
+              disabled={requestingPush}
+              onChange={(event) => { if (event.target.checked) void handleRequestPush() }}
+            />
+          </label>}
           <label className={styles.toggleRow}>
             <span>
               <strong>Mensajes del chat</strong>
@@ -18889,7 +18874,19 @@ export const PhoneChat: React.FC = () => {
       { id: 'templates', title: 'Plantillas', description: 'Crear y revisar estados de Meta.', meta: `${templates.length} guardadas`, Icon: FileText },
       { id: 'chats', title: 'Lista de chats', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle },
       { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: chatThemeMeta, Icon: Sun },
-      { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas, sonido y vibración.', meta: getNotificationPermissionLabel(), Icon: Bell }
+      {
+        id: 'notifications',
+        title: 'Notificaciones',
+        description: 'Mensajes, citas, sonido y vibración.',
+        meta: isDesktopPushSurface
+          ? undefined
+          : checkingPushPermission
+            ? 'Revisando'
+            : pushPermissionGranted
+              ? 'Activas'
+              : 'Apagadas',
+        Icon: Bell
+      }
     ]
 
     return (

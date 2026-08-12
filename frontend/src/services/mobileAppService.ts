@@ -687,7 +687,7 @@ export const mobileAppService = {
     if (permission.receive !== 'granted') {
       return {
         status: 'denied',
-        reason: 'This phone did not allow Ristak alerts.'
+        reason: 'Las notificaciones están apagadas en los ajustes del celular. Actívalas ahí para continuar.'
       }
     }
 

@@ -1026,6 +1026,23 @@ renovacion del token usa el mismo backoff. Ajustes revalida el registro de forma
 idempotente y muestra que falta completar el registro cuando el permiso existe
 pero el backend aun no reconoce el celular.
 
+El permiso nativo nunca se pide al iniciar sesion, al volver a foreground ni en
+un reintento automatico. Esos caminos solo registran o renuevan el token cuando
+el sistema ya reporta `granted`; `prompt` no cuenta como permiso. En Ajustes >
+Notificaciones, la fila **Notificaciones apagadas** con switch OFF aparece solo
+mientras falta permiso o registro. El primer toque solicita el dialogo nativo de
+Apple/Android; si el usuario ya lo nego, el toque abre Ajustes del sistema. Al
+confirmarse permiso + registro, la fila desaparece y se presenta una sola alerta
+de exito. Al volver desde Ajustes, la app reconsulta el permiso y recupera u
+oculta la fila sin reiniciar. No existe switch de apagado dentro de Ristak: para
+revocar notificaciones se usan los Ajustes del sistema.
+
+En computadora no se ofrece push del navegador ni se muestra una fila de
+"Este dispositivo". El frontend rechaza nuevas suscripciones desktop y, tras
+autenticar, elimina best-effort cualquier suscripcion web antigua de ese
+navegador. Los toggles de tipos y destinatarios siguen configurando que eventos
+se mandan a las apps moviles registradas; no registran la computadora.
+
 En ambos casos el small icon del sistema sigue siendo el icono monocromatico de
 la app y los canales Android oficiales son `ristak_alerts`, `ristak_sound`,
 `ristak_vibrate` y `ristak_silent`.
@@ -1959,9 +1976,11 @@ exacto `com.ristak.app`; un bundle legacy o el paquete Android no debe reportar
 `clientType=native` y `appPackage=com.ristak.app` para que el backend/Installer
 no lo clasifique como Expo o Android.
 El permiso de notificaciones y el registro confirmado en backend son estados
-distintos. Ajustes solo muestra alertas activas cuando ambos estan listos; el
-registro se serializa, reintenta fallos temporales a 5/15/60/300 segundos y se
-revalida al volver a foreground si la confirmacion tiene 6 horas. Logout llama
+distintos. La lista de Ajustes solo marca `Activas` cuando ambos estan listos;
+la fila de activacion desaparece en ese estado. El login y los reintentos nunca
+solicitan permiso: solo revalidan un permiso ya concedido. El registro se
+serializa, reintenta fallos temporales a 5/15/60/300 segundos y se revalida al
+volver a foreground si la confirmacion tiene 6 horas. Logout llama
 `DELETE /api/push/mobile-devices` best-effort y limpia APNs local incluso cuando
 un 401 o una licencia revocada ya impiden usar la sesion.
 El archive de App Store firma dos targets: `com.ristak.app` y

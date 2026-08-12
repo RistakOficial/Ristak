@@ -625,13 +625,16 @@ Requisitos de proyecto:
 Flujo de registro (`mobile/src/notifications.ts:195-267`,
 `mobile/src/App.tsx:1446-1466`):
 
-1. **Auto-registro tras login** (una vez por `baseUrl:userId`): si el permiso
-   nativo es `granted` o `prompt`, llama `subscribeToNativePushNotifications`.
+1. **Auto-registro tras login** (una vez por `baseUrl:userId`): únicamente si
+   el permiso nativo ya es `granted`, llama
+   `subscribeToNativePushNotifications({requestPermission:false})`. Un estado
+   `prompt` jamás abre el diálogo del sistema automáticamente.
 2. Ese método: valida `GET /push/public-key` → si `iosConfigured` falso,
    devuelve `not_configured` con copy
    `"Las notificaciones de iPhone todavía no están preparadas para esta instalación."`;
-   pide permisos (`allowAlert/allowBadge/allowSound`); si deniegan →
-   `denied` con `"Este celular no dio permiso para recibir notificaciones de Ristak."`;
+   solo pide permisos (`allowAlert/allowBadge/allowSound`) cuando el usuario
+   toca el switch de Ajustes; si deniegan →
+   `denied` indicando que deben activarse desde los ajustes del teléfono;
    obtiene el device token APNs nativo y hace
    `POST /push/mobile-devices` con
    `{ token, platform:'ios', calendarIds, appVersion:'', appBuild:'', deviceModel,
@@ -639,9 +642,11 @@ Flujo de registro (`mobile/src/notifications.ts:195-267`,
    `ios/app` separa permiso del sistema de registro confirmado en backend,
    serializa activaciones, reintenta 5/15/60/300 s y revalida en foreground si
    la confirmacion supera 6 h. Cada activacion queda ligada a un epoch de sesion.
-3. Reintento manual desde Ajustes → Notificaciones (botón `Activar`/
-   `Actualizar`), pasando `calendarIds` = selección actual si
-   `calendar_push_notifications_enabled` (App.tsx:11800-11826).
+3. Activación manual desde Ajustes → Notificaciones mediante el switch OFF
+   **"Notificaciones apagadas"**, pasando `calendarIds` = selección actual si
+   `calendar_push_notifications_enabled`. Tras un rechazo previo, el mismo
+   switch abre Ajustes del sistema. Cuando permiso + registro quedan listos, la
+   fila desaparece y se presenta una sola alerta de éxito.
 
 Preferencias por usuario — leídas/escritas vía `GET/POST /api/user-config`
 (`mobile/src/api.ts:1073-1086`; montado en `server.js:333`). Claves y defaults
@@ -662,18 +667,15 @@ de UI (`App.tsx:897-903, 11674-11679`):
 `mobile/src/App.tsx:11828-11845 (lista), 12157-12228 (panel)`:
 
 - Ítem de lista: título **"Notificaciones"**, descripción
-  **"Mensajes, citas, sonido y vibración."**, meta = estado del permiso:
-  `Activo` | `Bloqueado` | `No soportado` | `Activar`
-  (`getPushPermissionLabel`, 11377-11382). Icono campana, tono rojo.
-- Card de estado: en `ios/app` solo dice
-  **"Alertas activas en este celular · N tipos prendidos."** cuando permiso y
-  registro backend estan confirmados; permiso `granted` sin backend se presenta
-  como pendiente/fallido, nunca como activo. Si no →
-  **"Permiso nativo: <label>."** + mensaje de estado
-  (p. ej. "Activando alertas en este celular...", "Alertas activas en este
-  celular.", o la razón de fallo). Botón con spinner:
-  **"Activar"** / **"Actualizar"**. Alert de error:
-  título "Falta preparar alertas" (not_configured) o "No se activaron".
+  **"Mensajes, citas, sonido y vibración."**, meta `Activas`, `Apagadas` o
+  `Revisando`. Icono campana, tono rojo.
+- Mientras permiso + registro no estén confirmados aparece el toggle OFF
+  **"Notificaciones apagadas"**. En estado inicial pide permiso al tocarlo; si
+  ya fue negado, abre Ajustes del sistema; si falta backend, reintenta el
+  registro sin volver a pedir permiso. Al quedar activo el toggle desaparece y
+  aparece una sola alerta **"Notificaciones activadas"**. No existe card
+  persistente del dispositivo ni control para apagar desde Ristak. Los errores
+  mantienen los alerts "Falta preparar alertas" o "No se activaron".
 - Toggles (título / descripción):
   - **Mensajes del chat** — "Avísame cuando llegue un WhatsApp nuevo."
   - **Citas agendadas** — "Avísame cuando alguien reserve una cita nueva."
@@ -788,7 +790,8 @@ campana del header desktop; ni /movil ni la app RN la muestran hoy.
 3. **Presencia**: reportar `viewing` al abrir/cerrar chat, en cambios de
    scenePhase y keep-alive cada 20 s; `{contactId:'', foreground:false}` al
    salir.
-4. **Push**: pedir permiso tras login (auto si `prompt`), registrar token en
+4. **Push**: pedir permiso exclusivamente desde el switch explícito de Ajustes;
+   login, foreground y retry solo registran si el permiso ya es `granted`. Registrar token en
    `POST /api/push/mobile-devices` con `platform:'ios'`, `clientType:'native'` y
    `appPackage:'com.ristak.app'`; reintentar en cada arranque/cambio de token
    (`didRegisterForRemoteNotificationsWithDeviceToken`). El permiso no basta:

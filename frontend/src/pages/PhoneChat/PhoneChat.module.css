@@ -9696,8 +9696,7 @@
   gap: 8px;
 }
 
-.setupCard,
-.permissionCard {
+.setupCard {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 12px;
@@ -9708,8 +9707,7 @@
   background: var(--phone-chat-surface-soft);
 }
 
-.setupCard svg,
-.permissionCard > span {
+.setupCard svg {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -9721,7 +9719,6 @@
 }
 
 .setupCard strong,
-.permissionCard strong,
 .toggleRow strong {
   display: block;
   color: var(--phone-chat-text);
@@ -9730,7 +9727,6 @@
 }
 
 .setupCard span,
-.permissionCard small,
 .toggleRow small {
   display: block;
   margin-top: 4px;
@@ -9739,8 +9735,7 @@
   line-height: 1.4;
 }
 
-.primarySheetButton,
-.permissionCard button {
+.primarySheetButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -9756,16 +9751,6 @@
 
 .primarySheetButton:disabled {
   opacity: 0.46;
-}
-
-.permissionCard {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-}
-
-.permissionCard button {
-  min-width: 96px;
-  padding: 0 12px;
 }
 
 .phoneChatPage input[type="checkbox"] {

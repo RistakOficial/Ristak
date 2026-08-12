@@ -14,7 +14,6 @@ import {
   MessageCircle,
   Plus,
   RefreshCw,
-  Smartphone,
   Sun,
   Tag,
   Trash2,
@@ -25,13 +24,11 @@ import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAppConfig, useUserConfig, usePhoneElasticScroll, usePhoneTheme } from '@/hooks' // (MOB-006) useUserConfig
+import { useAppConfig, useMobilePushPermission, useUserConfig, usePhoneElasticScroll, usePhoneTheme } from '@/hooks' // (MOB-006) useUserConfig
 import { calendarsService, type Calendar } from '@/services/calendarsService'
 import { customFieldsService, isSystemCustomFieldDefinition } from '@/services/customFieldsService'
 import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
-import { mobileAppService } from '@/services/mobileAppService'
 import { clearRuntimeApiBaseUrl, isNativeAppRuntime } from '@/services/apiBaseUrl'
-import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { ContactCustomFieldDefinition } from '@/types'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
@@ -40,38 +37,9 @@ import styles from './PhoneSettings.module.css'
 
 type SettingsSection = 'templates' | 'chats' | 'custom-fields' | 'tags' | 'appearance' | 'privacy' | 'notifications' | null
 type ConversationSortMode = 'recent' | 'unread'
-type PhoneNotificationPermission = NotificationPermission | 'native_granted' | 'native_denied' | 'native_prompt' | 'unsupported' | 'checking'
-
 const CHAT_SEND_READ_RECEIPTS_CONFIG_KEY = 'chat_send_read_receipts_enabled'
 
 const TEMPLATE_BLOCKED_STATUSES = new Set(['REJECTED', 'PAUSED', 'DISABLED'])
-function getNotificationPermission(): PhoneNotificationPermission {
-  if (mobileAppService.isNative()) return 'checking'
-  if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported'
-  return window.Notification.permission
-}
-
-function mapNativePermission(permission: Awaited<ReturnType<typeof mobileAppService.getPushPermissionStatus>>): PhoneNotificationPermission {
-  if (permission === 'granted') return 'native_granted'
-  if (permission === 'denied') return 'native_denied'
-  if (permission === 'prompt') return 'native_prompt'
-  return 'unsupported'
-}
-
-function getNotificationPermissionLabel(permission: PhoneNotificationPermission) {
-  if (permission === 'checking') return 'Revisando'
-  if (permission === 'native_granted') return 'Activo en este celular'
-  if (permission === 'native_denied') return 'Bloqueado por el celular'
-  if (permission === 'native_prompt') return 'Falta activar'
-  if (permission === 'granted') return 'Activo en este celular'
-  if (permission === 'denied') return 'Bloqueado por el celular'
-  if (permission === 'default') return 'Falta activar'
-  return 'No disponible'
-}
-
-function shouldShowPhoneActivation(permission: PhoneNotificationPermission) {
-  return permission !== 'granted' && permission !== 'native_granted' && permission !== 'checking'
-}
 
 function getTemplateStatus(template: WhatsAppApiTemplate) {
   return String(template.status || 'UNKNOWN').toUpperCase()
@@ -93,7 +61,7 @@ function getTemplatePreview(template: WhatsAppApiTemplate) {
 
 export const PhoneSettings: React.FC = () => {
   const { locationId, accessToken, logout } = useAuth()
-  const { showToast, showConfirm } = useNotification()
+  const { showToast, showConfirm, showAlert } = useNotification()
   const { labels } = useLabels()
   const customerLowerLabel = formatCrmLabelLower(labels.customer, DEFAULT_CRM_LABELS.customer)
   const customersLowerLabel = formatCrmLabelLower(labels.customers, DEFAULT_CRM_LABELS.customers)
@@ -126,33 +94,18 @@ export const PhoneSettings: React.FC = () => {
   const [newTagName, setNewTagName] = useState('')
   const [catalogBusyId, setCatalogBusyId] = useState<string | null>(null)
   const [requestingPush, setRequestingPush] = useState(false)
-  const [permission, setPermission] = useState(getNotificationPermission)
   const [backButtonCollapsed, setBackButtonCollapsed] = useState(false)
   const lastSettingsScrollTopRef = useRef(0)
+  const {
+    activate: activatePush,
+    isChecking: checkingPushPermission,
+    isDesktop,
+    isGranted: pushPermissionGranted,
+    permission: pushPermission,
+    showActivation: showPushActivation
+  } = useMobilePushPermission()
 
   usePhoneElasticScroll()
-
-  const refreshPermission = useCallback(() => {
-    if (mobileAppService.isNative()) {
-      mobileAppService.getPushPermissionStatus()
-        .then((status) => setPermission(mapNativePermission(status)))
-        .catch(() => setPermission('unsupported'))
-      return
-    }
-
-    setPermission(getNotificationPermission())
-  }, [])
-
-  useEffect(() => {
-    refreshPermission()
-    if (typeof window === 'undefined') return undefined
-    window.addEventListener('focus', refreshPermission)
-    document.addEventListener('visibilitychange', refreshPermission)
-    return () => {
-      window.removeEventListener('focus', refreshPermission)
-      document.removeEventListener('visibilitychange', refreshPermission)
-    }
-  }, [refreshPermission])
 
   useEffect(() => {
     setBackButtonCollapsed(false)
@@ -252,8 +205,13 @@ export const PhoneSettings: React.FC = () => {
   }, [activeSection, loadCustomFieldDefinitions, loadSettingsTags])
 
   const selectedCalendarCount = pushCalendarIds.length || calendars.length
-  const permissionLabel = getNotificationPermissionLabel(permission)
-  const showPhoneActivation = shouldShowPhoneActivation(permission)
+  const permissionLabel = isDesktop
+    ? undefined
+    : checkingPushPermission
+      ? 'Revisando'
+      : pushPermissionGranted
+        ? 'Activas'
+        : 'Apagadas'
   const blockedTemplates = templates.filter((template) => TEMPLATE_BLOCKED_STATUSES.has(getTemplateStatus(template))).length
   const togglePushCalendar = (calendarId: string) => {
     const next = pushCalendarIds.includes(calendarId)
@@ -275,21 +233,20 @@ export const PhoneSettings: React.FC = () => {
       const calendarIds = calendarPushEnabled
         ? pushCalendarIds.length ? pushCalendarIds : calendars.map((calendar) => calendar.id)
         : []
-      const result = await pushNotificationsService.subscribeToAppNotifications({ calendarIds })
+      const result = await activatePush(calendarIds)
 
       if (result.status === 'subscribed') {
-        refreshPermission()
-        showToast('success', 'Alertas activadas', 'Este celular ya puede recibir notificaciones de Ristak.')
+        showAlert('Notificaciones activadas', 'Ristak ya puede avisarte cuando llegue algo importante.', 'Entendido')
         return
       }
 
-      showToast(
-        result.status === 'denied' ? 'warning' : 'info',
-        result.status === 'not_configured' ? 'Falta preparar alertas' : 'No se activaron',
-        result.reason
+      showAlert(
+        result.status === 'not_configured' ? 'Falta preparar notificaciones' : 'Notificaciones apagadas',
+        result.reason,
+        'Entendido'
       )
     } catch (error: any) {
-      showToast('error', 'No se activaron las alertas', error?.message || 'Intenta otra vez.')
+      showAlert('No se activaron las notificaciones', error?.message || 'Intenta otra vez.', 'Entendido')
     } finally {
       setRequestingPush(false)
     }
@@ -594,24 +551,14 @@ export const PhoneSettings: React.FC = () => {
 
   const renderNotifications = () => (
     <>
-      {showPhoneActivation && (
-        <section className={styles.permissionCard}>
-          <span><Smartphone size={18} /></span>
-          <div>
-            <strong>Este celular</strong>
-            <small>{permissionLabel}</small>
-          </div>
-          <button type="button" onClick={handleRequestPush} disabled={requestingPush}>
-            {requestingPush ? <Loader2 size={16} className={styles.spinIcon} /> : <BellRing size={16} />}
-            Activar
-          </button>
-        </section>
-      )}
-      {!showPhoneActivation && (
-        <section className={styles.enabledCard}>
-          <Check size={18} />
-          <span>Este celular ya tiene permiso para recibir notificaciones.</span>
-        </section>
+      {showPushActivation && renderToggle(
+        'Notificaciones apagadas',
+        pushPermission === 'denied'
+          ? 'Toca el switch para volver a activarlas desde los ajustes del sistema.'
+          : 'Toca el switch para activar las notificaciones.',
+        false,
+        (checked) => { if (checked) void handleRequestPush() },
+        requestingPush
       )}
       {renderToggle('Mensajes del chat', 'Avísame cuando llegue un WhatsApp nuevo.', chatPushEnabled, (checked) => saveConfigPreference(setChatPushEnabled, checked))}
       {renderToggle('Citas agendadas', 'Avísame cuando alguien reserve una cita nueva.', calendarPushEnabled, handleCalendarPushToggle)}

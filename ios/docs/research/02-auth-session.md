@@ -678,8 +678,8 @@ Tras login exitoso:
     mobile_chat_show_last_preview, mobile_chat_show_unread_indicators,
     mobile_chat_theme_preference, mobile_chat_selected_whatsapp_phone_id,
     chat_send_read_receipts`) para preferencias de chat/tema.
-  - Auto-registro de push si el permiso está `granted`/`prompt`
-    (`App.tsx:1444-1464`), una vez por `baseUrl:userId`.
+  - Auto-registro de push una vez por `baseUrl:userId` únicamente si el permiso
+    ya está `granted`; `prompt` nunca solicita autorización durante login.
   - Cada sección carga sus datos al entrar (chats, calendario, etc.).
 - No hay ningún otro "bootstrap" obligatorio: no se llama `/api/auth/me` ni
   `/api/license/status` tras el login (los datos de licencia ya vienen en el

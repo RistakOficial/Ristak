@@ -50,9 +50,10 @@ import { Modal } from '@/components/common/Modal'
 import { StorageAlert } from '@/components/common/StorageAlert'
 import { MediaStorageQuotaPrompt } from '@/components/common/MediaStorageQuotaPrompt'
 import { AppStartupLoader } from '@/components/common/AppStartupLoader'
-import { MobileNotificationOnboarding } from '@/components/phone/MobileNotificationOnboarding'
+import { MobilePushRegistrationSync } from '@/components/phone/MobilePushRegistrationSync'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { mobileAppService } from '@/services/mobileAppService'
+import { pushNotificationsService } from '@/services/pushNotificationsService'
 import {
   DESKTOP_LOGIN_PATH,
   PHONE_APP_HOME_PATH,
@@ -62,6 +63,7 @@ import {
   SETUP_PATH,
   TABLET_VIEW_PREFERENCE_EVENT,
   getLoginPathForRoute,
+  getPortableDeviceMode,
   getPostAuthRedirectPath,
   isCellphoneDevice,
   isPhoneAppPath,
@@ -804,6 +806,17 @@ const KeyboardFocusScrollEffect: React.FC = () => {
   return null
 }
 
+const DesktopPushCleanupEffect: React.FC = () => {
+  const { isAuthenticated } = useAuth()
+
+  React.useEffect(() => {
+    if (mobileAppService.isNative() || getPortableDeviceMode() !== 'desktop') return
+    void pushNotificationsService.removeDesktopBrowserSubscription()
+  }, [isAuthenticated])
+
+  return null
+}
+
 const AppWithNotifications: React.FC = () => {
   const { toasts, removeToast, modal, closeModal } = useNotification()
 
@@ -820,6 +833,8 @@ const AppWithNotifications: React.FC = () => {
       <BrowserRouter useTransitions={false}>
         <PhoneRouteEffects />
         <KeyboardFocusScrollEffect />
+        <DesktopPushCleanupEffect />
+        <MobilePushRegistrationSync />
         <NativeIosMobileRouteGate />
         <CellphoneRouteGate />
         <TabletViewPreferenceGate />
@@ -992,7 +1007,6 @@ const AppWithNotifications: React.FC = () => {
           </Route>
           </Routes>
         </RouteModuleSuspense>
-        <MobileNotificationOnboarding />
         <MediaStorageQuotaPrompt />
       </BrowserRouter>
       <StorageAlert />

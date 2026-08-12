@@ -210,12 +210,11 @@ struct SettingsRootView: View {
         case .privacy:
             return appConfig.sendReadReceiptsEnabled ? "Vistos activos" : "Vistos apagados"
         case .notifications:
-            if PushRegistrar.shared.isFullyActive { return "Activo" }
+            if PushRegistrar.shared.isFullyActive { return "Activas" }
             switch PushRegistrar.shared.permissionState {
-            case .granted: return "Por conectar"
-            case .denied: return "Bloqueado"
-            case .notDetermined: return "Activar"
-            case .unknown: return "No soportado"
+            case .granted: return "Revisando"
+            case .denied, .notDetermined: return "Apagadas"
+            case .unknown: return "Revisando"
             }
         }
     }
