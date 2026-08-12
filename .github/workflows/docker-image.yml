@@ -53,7 +53,9 @@ jobs:
           cache-dependency-path: backend/package-lock.json
 
       - name: Instalar backend
-        run: npm ci --prefix backend
+        # Esta compuerta sólo importa el esquema PostgreSQL. Evita descargar el
+        # binario de ffmpeg, que no participa en la prueba y puede fallar por red.
+        run: npm ci --prefix backend --ignore-scripts
 
       - name: Verificar arranque en PostgreSQL limpio
         env:
