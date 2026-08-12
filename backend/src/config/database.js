@@ -39,6 +39,7 @@ import {
 } from '../startup/sitesPublicationDomainSchemaCompatibility.js'
 import { ensureNotificationPersistenceSchema } from '../startup/notificationSchemaCompatibility.js'
 import { ensureSharedReportTableConfig } from '../utils/reportTableConfig.js'
+import { idempotentCreateViewClause } from '../utils/sqlDdl.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -3654,7 +3655,7 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_created_at ON contacts(created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_referred_by ON contacts(referred_by_contact_id)')
     await db.run(`
-      CREATE VIEW IF NOT EXISTS contact_effective_ad_attribution AS
+      ${idempotentCreateViewClause(databaseDialect)} contact_effective_ad_attribution AS
       WITH RECURSIVE referral_chain(contact_id, candidate_contact_id, referral_depth) AS (
         SELECT id, id, 0
         FROM contacts

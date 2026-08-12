@@ -174,6 +174,18 @@ No cambies nombres ni URLs en esta guía. Si necesitas renombrar servicios o bas
 
 ### Contrato de migraciones durante un deploy
 
+La publicación de `ghcr.io/ristakoficial/ristak:stable` tiene una compuerta
+obligatoria en cada pull request y antes del build de `main`. GitHub Actions
+levanta PostgreSQL 18 efímero y
+ejecuta `npm --prefix backend run test:postgres-bootstrap` sobre un schema
+completamente vacío. La validación corre el bootstrap base, confirma la vista de
+atribución de contactos, aplica toda la cadena de migraciones versionadas y
+repite ambos procesos para comprobar idempotencia. Si cualquier sentencia no es
+válida en PostgreSQL o una migración deja el esquema incompleto, el job de la
+imagen no inicia y el Installer no recibe una versión defectuosa. Las
+credenciales de esa base son locales al runner y desechables; no son secretos de
+producción.
+
 El backend escucha el puerto para que Render pueda observar el proceso, pero no
 publica readiness hasta completar las migraciones versionadas. PostgreSQL
 serializa la cadena completa con el advisory lock `versioned-migrations`; los
