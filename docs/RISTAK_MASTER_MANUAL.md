@@ -8916,7 +8916,9 @@ sus filas pendientes. Los eventos nuevos con ID de auditoría determinista sirve
 además para reconstruir una semilla que hubiera sido consumida durante el primer
 despliegue de la reparación. El avance de borrado se actualiza por lote en ese
 mismo plan: un reinicio no puede hacer que se olvide una compactación grande ya
-necesaria. En
+necesaria. PostgreSQL procesa la reparación en lotes acotados de hasta diez mil
+eventos —por debajo del límite de parámetros del motor— para liberar millones de
+duplicados sin convertir cada dos mil filas en otro viaje y commit. En
 segundo plano elimina únicamente repeticiones de esos mismos
 contacto + canal + mensaje para `agent_not_matched`, supresiones de canal y
 retries de handoff/medida preventiva. También retira los errores legacy que no

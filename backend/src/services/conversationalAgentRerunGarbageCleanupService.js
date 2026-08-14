@@ -6,7 +6,10 @@ const CLEANUP_CONFIG_KEY = 'conversational_rerun_garbage_cleanup'
 const COMPACTION_CONFIG_KEY = 'conversational_rerun_garbage_compaction'
 const CLEANUP_PLAN_CONFIG_KEY = 'conversational_rerun_garbage_cleanup_plan'
 const CLEANUP_LOCK_KEY = 'conversational-rerun-garbage-cleanup'
-const CLEANUP_PAGE_SIZE = databaseDialect === 'postgres' ? 2_000 : 250
+// PostgreSQL admite hasta 65,535 parámetros por sentencia. Diez mil IDs
+// mantienen cada DELETE muy por debajo del límite y reducen 5x los viajes,
+// commits y checkpoints del saneamiento de instalaciones grandes.
+const CLEANUP_PAGE_SIZE = databaseDialect === 'postgres' ? 10_000 : 250
 const FULL_COMPACTION_MIN_DELETED_ROWS = 10_000
 const CLEANUP_EVENT_TYPES = Object.freeze([
   // Los errores legacy no traían messageId, pero sí se escribían inmediatamente
