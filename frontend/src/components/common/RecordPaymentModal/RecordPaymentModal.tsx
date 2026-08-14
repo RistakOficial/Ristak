@@ -2312,6 +2312,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     },
     totalAmount: summary.amount,
     currency: summary.currency,
+    applyTax: summary.includesTax,
+    taxCalculationMode: summary.taxCalculationMode,
     description: summary.description,
     title: payload.title || payload.name || DEFAULT_INVOICE_TITLE,
     invoicePayload: payload,

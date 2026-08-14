@@ -3,9 +3,19 @@ import assert from 'node:assert/strict'
 
 import { db } from '../src/config/database.js'
 import { listInvoiceSchedules } from '../src/controllers/highlevelController.js'
-import { createConektaPaymentPlan, saveConektaPaymentConfig, setConektaFetchForTest } from '../src/services/conektaPaymentService.js'
+import {
+  createConektaPaymentPlan,
+  getPublicConektaPayment,
+  saveConektaPaymentConfig,
+  setConektaFetchForTest
+} from '../src/services/conektaPaymentService.js'
 import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
-import { createStripePaymentPlan, saveStripePaymentConfig, setStripeFactoryForTest } from '../src/services/stripePaymentService.js'
+import {
+  createStripePaymentPlan,
+  getPublicStripePayment,
+  saveStripePaymentConfig,
+  setStripeFactoryForTest
+} from '../src/services/stripePaymentService.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 
 function suffix(label = 'cross_gateway') {
@@ -304,4 +314,144 @@ test('planes de pago: Stripe y Conekta coexisten para el mismo contacto y el lis
   })
 
   await cleanupContact(contactId)
+})
+
+test('planes de pago: la selección sin impuesto llega al checkout de Stripe y Conekta', async () => {
+  await initializeMasterKey()
+
+  const idSuffix = suffix('plan_without_tax')
+  const contactId = `contact_${idSuffix}`
+  const stripeCustomerId = `cus_${idSuffix}`
+  const conektaCustomerId = `conekta_cus_${idSuffix}`
+  const phone = testPhoneFromSuffix(idSuffix)
+  const contact = {
+    id: contactId,
+    name: 'Cliente Plan Sin Impuesto',
+    email: `${contactId}@example.test`,
+    phone
+  }
+
+  await cleanupContact(contactId)
+
+  try {
+    await withIsolatedGatewayConfig(async () => {
+      setStripeFactoryForTest(() => ({
+        customers: {
+          retrieve: async (customerId) => ({ id: customerId })
+        }
+      }))
+      setConektaFetchForTest(async () => {
+        throw new Error('No se esperaba llamar Conekta en esta prueba.')
+      })
+
+      await savePaymentSettings({
+        paymentMode: 'test',
+        taxes: {
+          enabled: true,
+          taxName: 'IVA',
+          rateValue: 16,
+          calculationMode: 'exclusive',
+          country: 'MX'
+        }
+      })
+      await saveStripePaymentConfig({
+        enabled: true,
+        mode: 'test',
+        publishableKey: 'pk_test_plan_without_tax',
+        secretKey: 'sk_test_plan_without_tax',
+        defaultCurrency: 'MXN'
+      })
+      await saveConektaPaymentConfig({
+        enabled: true,
+        mode: 'test',
+        manualModes: {
+          test: {
+            publicKey: 'key_test_plan_without_tax_public',
+            privateKey: 'key_test_plan_without_tax_private'
+          }
+        }
+      })
+
+      await db.run(
+        `INSERT INTO contacts (
+          id, full_name, email, phone, source, stripe_customer_id, conekta_customer_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'test', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [contactId, contact.name, contact.email, phone, stripeCustomerId, conektaCustomerId]
+      )
+
+      const stripePlan = await createStripePaymentPlan({
+        contact,
+        title: 'Plan Stripe sin impuesto',
+        description: 'Plan Stripe sin impuesto',
+        totalAmount: 1000,
+        applyTax: false,
+        taxCalculationMode: 'exclusive',
+        firstPayment: {
+          enabled: true,
+          amount: 250,
+          date: addDaysDateOnly(1),
+          method: 'card'
+        },
+        remainingFrequency: 'custom',
+        remainingPayments: [
+          { sequence: 1, amount: 750, dueDate: addDaysDateOnly(20), frequency: 'custom' }
+        ]
+      }, { baseUrl: 'https://example.test' })
+
+      const stripeFirstPaymentRow = await db.get(
+        'SELECT amount, public_payment_id, metadata_json FROM payments WHERE id = ?',
+        [stripePlan.firstPaymentPaymentId]
+      )
+      const stripeCheckout = await getPublicStripePayment(stripeFirstPaymentRow.public_payment_id, {
+        baseUrl: 'https://example.test'
+      })
+
+      assert.equal(stripeFirstPaymentRow.amount, 250)
+      assert.equal(JSON.parse(stripeFirstPaymentRow.metadata_json || '{}').tax, undefined)
+      assert.equal(stripeCheckout.amount, 250)
+      assert.equal(stripeCheckout.tax, null)
+
+      const conektaPlan = await createConektaPaymentPlan({
+        contact,
+        title: 'Plan Conekta sin impuesto',
+        description: 'Plan Conekta sin impuesto',
+        totalAmount: 1000,
+        applyTax: false,
+        taxCalculationMode: 'exclusive',
+        cardSetupAmount: 25,
+        firstPayment: {
+          enabled: true,
+          amount: 250,
+          date: addDaysDateOnly(1),
+          method: 'cash'
+        },
+        remainingFrequency: 'custom',
+        remainingPayments: [
+          { sequence: 1, amount: 750, dueDate: addDaysDateOnly(20), frequency: 'custom' }
+        ]
+      }, { baseUrl: 'https://example.test' })
+
+      const conektaSetupRow = await db.get(
+        'SELECT amount, public_payment_id, metadata_json FROM payments WHERE id = ?',
+        [conektaPlan.cardSetupPaymentId]
+      )
+      const conektaCheckout = await getPublicConektaPayment(conektaSetupRow.public_payment_id, {
+        baseUrl: 'https://example.test'
+      })
+
+      assert.equal(conektaSetupRow.amount, 25)
+      assert.equal(JSON.parse(conektaSetupRow.metadata_json || '{}').tax, undefined)
+      assert.equal(conektaCheckout.amount, 25)
+      assert.equal(conektaCheckout.tax, null)
+
+      const flowTaxes = await db.all(
+        'SELECT payment_provider, metadata FROM payment_flows WHERE id IN (?, ?) ORDER BY payment_provider',
+        [stripePlan.flowId, conektaPlan.flowId]
+      )
+      assert.equal(flowTaxes.length, 2)
+      assert.ok(flowTaxes.every((row) => JSON.parse(row.metadata || '{}').applyTax === false))
+    })
+  } finally {
+    await cleanupContact(contactId)
+  }
 })

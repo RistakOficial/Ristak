@@ -3968,6 +3968,10 @@ function validateStripePaymentPlanPayload(input = {}, timezone = DEFAULT_PAYMENT
     },
     totalAmount: Math.round(totalAmount * 100) / 100,
     currency,
+    applyTax: normalizeBoolean(input.applyTax, true),
+    taxCalculationMode: ['exclusive', 'inclusive'].includes(input.taxCalculationMode)
+      ? input.taxCalculationMode
+      : undefined,
     description: cleanString(input.description || input.concept || 'Plan de pagos'),
     title: cleanString(input.title || input.invoicePayload?.title || input.invoicePayload?.name || 'Plan de pagos'),
     firstPayment: {
@@ -4961,6 +4965,10 @@ async function createStripePaymentPlanCardSetupLink(flow, { baseUrl } = {}) {
     phone: flow.contact_phone,
     amount: cardSetupAmount,
     currency,
+    applyTax: normalizeBoolean(metadata.applyTax, true),
+    taxCalculationMode: ['exclusive', 'inclusive'].includes(metadata.taxCalculationMode)
+      ? metadata.taxCalculationMode
+      : undefined,
     title: `${concept} - cambiar tarjeta domiciliada`,
     description: `Domiciliación de nueva tarjeta para ${concept}`,
     dueDate: todayDateOnly(accountTimezone),
@@ -5433,6 +5441,8 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
         timezone: accountTimezone,
         remainingFrequency: plan.remainingFrequency,
         lineItems: plan.lineItems,
+        applyTax: plan.applyTax,
+        taxCalculationMode: plan.taxCalculationMode,
         firstPaymentLinkRequired: !hasSavedCard && firstPaymentIsCard,
         cardSetupLinkRequired: needsSeparateCardSetup
       })
@@ -5537,6 +5547,8 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       phone: plan.contact.phone,
       amount: plan.firstPayment.amount,
       currency: plan.currency,
+      applyTax: plan.applyTax,
+      taxCalculationMode: plan.taxCalculationMode,
       title: firstPaymentTitle,
       description: firstPaymentDescription,
       dueDate: plan.firstPayment.date,
@@ -5571,6 +5583,8 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       phone: plan.contact.phone,
       amount: plan.cardSetupAmount,
       currency: plan.currency,
+      applyTax: plan.applyTax,
+      taxCalculationMode: plan.taxCalculationMode,
       title: `${plan.title} - domiciliación de tarjeta`,
       description: `Domiciliación de tarjeta para ${plan.description}`,
       dueDate: businessTodayDateOnly(accountTimezone),

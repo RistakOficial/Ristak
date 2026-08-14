@@ -30,6 +30,8 @@ export interface OfflinePaymentPlanPayload {
   }
   totalAmount: number
   currency: string
+  applyTax?: boolean
+  taxCalculationMode?: 'exclusive' | 'inclusive'
   title: string
   description?: string
   firstPayment: {

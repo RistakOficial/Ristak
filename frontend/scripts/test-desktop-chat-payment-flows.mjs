@@ -17,6 +17,10 @@ const paymentSelectorSource = await readFile(
   new URL('../src/components/common/PaymentFlowSelectorModal/PaymentFlowSelectorModal.tsx', import.meta.url),
   'utf8'
 )
+const recordPaymentModalSource = await readFile(
+  new URL('../src/components/common/RecordPaymentModal/RecordPaymentModal.tsx', import.meta.url),
+  'utf8'
+)
 
 assert.match(
   desktopChatSource,
@@ -62,6 +66,11 @@ assert.match(
   paymentSelectorSource,
   /hasOnlinePaymentPlanProvider[\s\S]*parcialidades offline/i,
   'el selector debe explicar el plan offline cuando no existe una pasarela'
+)
+assert.match(
+  recordPaymentModalSource,
+  /const buildGatewayPaymentPlanPayload[\s\S]*applyTax: summary\.includesTax,[\s\S]*taxCalculationMode: summary\.taxCalculationMode/,
+  'los planes deben conservar la elección explícita de impuesto al crear su checkout'
 )
 
 console.log('Desktop chat payment flow contract OK')

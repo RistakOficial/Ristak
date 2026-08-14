@@ -4718,6 +4718,12 @@ en el flujo móvil integrado. **Ya incluido** sigue disponible como elección po
 cobro mediante el `TabList`/segmentado; cambiarlo no modifica la configuración
 fiscal global de la cuenta.
 
+En planes de pago, la elección hecha en el formulario viaja explícitamente a la
+creación del checkout inicial y queda en la metadata del flujo para futuras ligas
+de domiciliación o cambio de tarjeta. Si el usuario elige **Sin impuesto**, Stripe
+y Conekta no pueden recuperar el default fiscal de la cuenta ni agregar o mostrar
+un impuesto en esas ligas.
+
 Las suscripciones guardan en `metadata_json.tax` el desglose fiscal autoritativo
 del alta y persisten en `amount` el total recurrente que recibe la pasarela. El
 importe configurado se expone por separado como `configuredAmount` para reabrir el

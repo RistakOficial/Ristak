@@ -214,6 +214,8 @@ export interface ConektaPaymentPlanPayload {
   }
   totalAmount: number
   currency: string
+  applyTax?: boolean
+  taxCalculationMode?: 'exclusive' | 'inclusive'
   description?: string
   title?: string
   invoicePayload?: Record<string, unknown>
