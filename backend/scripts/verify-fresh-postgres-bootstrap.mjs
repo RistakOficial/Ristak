@@ -84,18 +84,24 @@ try {
       channel: 'whatsapp'
     })
   ])
-  for (let index = 0; index < 5; index += 1) {
-    await database.db.run(`
-      INSERT INTO conversational_agent_events (
-        id, contact_id, event_type, detail_json, created_at
-      ) VALUES (?, ?, 'agent_not_matched', ?, CURRENT_TIMESTAMP + (? * INTERVAL '1 millisecond'))
-    `, [
-      `postgres_cleanup_event_${index}_${cleanupSuffix}`,
-      cleanupContactId,
-      JSON.stringify({ messageId: cleanupMessageId, channel: 'whatsapp' }),
-      index
-    ])
-  }
+  const cleanupAgentEventCount = 2_005
+  await database.db.run(`
+    INSERT INTO conversational_agent_events (
+      id, contact_id, event_type, detail_json, created_at
+    )
+    SELECT
+      'postgres_cleanup_event_' || event_number || '_' || ?,
+      ?,
+      'agent_not_matched',
+      ?,
+      CURRENT_TIMESTAMP + (event_number * INTERVAL '1 millisecond')
+    FROM generate_series(0, ?) AS event_number
+  `, [
+    cleanupSuffix,
+    cleanupContactId,
+    JSON.stringify({ messageId: cleanupMessageId, channel: 'whatsapp' }),
+    cleanupAgentEventCount - 1
+  ])
   for (let index = 0; index < 2; index += 1) {
     const createdOffsetMs = 1_000 + index
     await database.db.run(`
@@ -141,7 +147,7 @@ try {
   const cleanupService = await import('../src/services/conversationalAgentRerunGarbageCleanupService.js')
   const cleanupPlan = await cleanupService.buildConversationalRerunGarbageCleanupPlan()
   const cleanupResult = await cleanupService.runConversationalRerunGarbageCleanup(cleanupPlan)
-  assert.equal(cleanupResult.cleanup.deleted, 6)
+  assert.equal(cleanupResult.cleanup.deleted, cleanupAgentEventCount + 1)
 
   const cleanupEvidence = await database.db.get(`
     SELECT
@@ -155,7 +161,7 @@ try {
   assert.equal(Number(cleanupEvidence.metric_rows), 3)
   assert.equal(
     Number(cleanupEvidence.summary_total),
-    Number(summaryBeforeCleanup.total) - 6
+    Number(summaryBeforeCleanup.total) - cleanupAgentEventCount - 1
   )
 
   // El bypass de la reparación es LOCAL a su transacción. Un evento normal

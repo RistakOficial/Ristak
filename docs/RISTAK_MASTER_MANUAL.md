@@ -8931,7 +8931,9 @@ guardaban `messageId` únicamente cuando quedaron registrados a cinco segundos o
 menos de uno de esos retries exactos. Para historiales grandes precarga y pagina
 una sola vez cada tipo de evento mediante el índice temporal existente, filtra
 en memoria contra todas las semillas capturadas y resuelve ahí las marcas de
-tiempo de los retry. No repite el historial por cada mensaje ni ejecuta un
+tiempo de los retry. En PostgreSQL el avance usa la comparación keyset nativa
+`(created_at, id) > (...)`; así el índice salta al bloque siguiente y no relee
+el prefijo ya inspeccionado en cada página. No repite el historial por cada mensaje ni ejecuta un
 subquery correlacionado por cada error; los errores ajenos o fuera de esa ventana
 no entran al barrido. Un timeout, deadlock o corte transitorio de PostgreSQL
 reanuda el mismo plan en lugar de abandonarlo. Conserva una evidencia por

@@ -219,6 +219,15 @@ function eventSignature(eventType, detail = {}) {
 function cursorPredicate(cursor, tableAlias = '') {
   if (!cursor?.createdAt || !cursor?.id) return { sql: '', params: [] }
   const prefix = tableAlias ? `${tableAlias}.` : ''
+  if (databaseDialect === 'postgres') {
+    // La comparación por tupla mantiene el cursor sargable sobre el prefijo
+    // (event_type, created_at) del índice. La forma equivalente con OR hacía
+    // que PostgreSQL releyera grandes prefijos del mismo tipo en cada página.
+    return {
+      sql: `AND (${prefix}created_at, ${prefix}id) > (?, ?)`,
+      params: [cursor.createdAt, cursor.id]
+    }
+  }
   return {
     sql: `AND (${prefix}created_at > ? OR (${prefix}created_at = ? AND ${prefix}id > ?))`,
     params: [cursor.createdAt, cursor.createdAt, cursor.id]
