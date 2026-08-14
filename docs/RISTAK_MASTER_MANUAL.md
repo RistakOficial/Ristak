@@ -8916,7 +8916,10 @@ sus filas pendientes. Los eventos nuevos con ID de auditoría determinista sirve
 además para reconstruir una semilla que hubiera sido consumida durante el primer
 despliegue de la reparación. El avance de borrado se actualiza por lote en ese
 mismo plan: un reinicio no puede hacer que se olvide una compactación grande ya
-necesaria. En
+necesaria. En PostgreSQL, cada lote descuenta las métricas agregadas una sola vez
+por shard dentro de la misma transacción y marca sus renglones derivados antes de
+borrar los eventos; el trigger conserva la consistencia sin ejecutar millones de
+actualizaciones individuales sobre el resumen. En
 segundo plano elimina únicamente repeticiones de esos mismos
 contacto + canal + mensaje para `agent_not_matched`, supresiones de canal y
 retries de handoff/medida preventiva. También retira los errores legacy que no

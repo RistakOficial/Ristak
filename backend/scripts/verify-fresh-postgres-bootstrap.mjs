@@ -64,6 +64,63 @@ try {
   const migrations = await database.db.get('SELECT COUNT(*) AS total FROM schema_migrations')
   assert.ok(Number(migrations?.total || 0) > 0)
 
+  // La limpieza histórica descuenta el ledger de métricas por shard dentro de
+  // la misma transacción. Esta prueba PostgreSQL real evita publicar una
+  // optimización que deje el resumen desfasado o dependa sólo de SQLite.
+  const cleanupSuffix = `${process.pid}_${Date.now()}`
+  const cleanupContactId = `postgres_cleanup_contact_${cleanupSuffix}`
+  const cleanupMessageId = `postgres_cleanup_message_${cleanupSuffix}`
+  const cleanupRunKey = `whatsapp:${cleanupContactId}`
+  await database.db.run(`
+    INSERT INTO ai_agent_pending_reruns (
+      run_key, contact_id, channel, scheduled_for, payload, created_at
+    ) VALUES (?, ?, 'whatsapp', CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
+  `, [
+    cleanupRunKey,
+    cleanupContactId,
+    JSON.stringify({
+      contactId: cleanupContactId,
+      messageId: cleanupMessageId,
+      channel: 'whatsapp'
+    })
+  ])
+  for (let index = 0; index < 5; index += 1) {
+    await database.db.run(`
+      INSERT INTO conversational_agent_events (
+        id, contact_id, event_type, detail_json, created_at
+      ) VALUES (?, ?, 'agent_not_matched', ?, CURRENT_TIMESTAMP + (? * INTERVAL '1 millisecond'))
+    `, [
+      `postgres_cleanup_event_${index}_${cleanupSuffix}`,
+      cleanupContactId,
+      JSON.stringify({ messageId: cleanupMessageId, channel: 'whatsapp' }),
+      index
+    ])
+  }
+
+  const summaryBeforeCleanup = await database.db.get(`
+    SELECT COALESCE(SUM(total_events), 0) AS total
+    FROM conversational_agent_event_metric_summary
+  `)
+  const cleanupService = await import('../src/services/conversationalAgentRerunGarbageCleanupService.js')
+  const cleanupPlan = await cleanupService.buildConversationalRerunGarbageCleanupPlan()
+  const cleanupResult = await cleanupService.runConversationalRerunGarbageCleanup(cleanupPlan)
+  assert.equal(cleanupResult.cleanup.deleted, 4)
+
+  const cleanupEvidence = await database.db.get(`
+    SELECT
+      (SELECT COUNT(*) FROM conversational_agent_events WHERE contact_id = ?) AS events,
+      (SELECT COUNT(*) FROM conversational_agent_event_metric_rows
+       WHERE event_id LIKE ?) AS metric_rows,
+      (SELECT COALESCE(SUM(total_events), 0)
+       FROM conversational_agent_event_metric_summary) AS summary_total
+  `, [cleanupContactId, `postgres_cleanup_event_%_${cleanupSuffix}`])
+  assert.equal(Number(cleanupEvidence.events), 1)
+  assert.equal(Number(cleanupEvidence.metric_rows), 1)
+  assert.equal(
+    Number(cleanupEvidence.summary_total),
+    Number(summaryBeforeCleanup.total) - 4
+  )
+
   console.log(`Bootstrap PostgreSQL limpio verificado en schema efímero (${Number(migrations.total)} migraciones registradas).`)
 } finally {
   pg.default.Pool = OriginalPool

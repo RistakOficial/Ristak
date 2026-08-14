@@ -8,6 +8,20 @@ const CLEANUP_PLAN_CONFIG_KEY = 'conversational_rerun_garbage_cleanup_plan'
 const CLEANUP_LOCK_KEY = 'conversational-rerun-garbage-cleanup'
 const CLEANUP_PAGE_SIZE = databaseDialect === 'postgres' ? 2_000 : 250
 const FULL_COMPACTION_MIN_DELETED_ROWS = 10_000
+const EVENT_METRIC_TOTAL_COLUMNS = Object.freeze([
+  'total_events',
+  'success_events',
+  'error_events',
+  'assigned_events',
+  'reply_events',
+  'appointment_events',
+  'payment_link_events',
+  'goal_completion_events',
+  'follow_up_sent_events',
+  'follow_up_suppressed_events',
+  'human_handoff_events',
+  'tool_failure_events'
+])
 const CLEANUP_EVENT_TYPES = Object.freeze([
   // Los errores legacy no traían messageId, pero sí se escribían inmediatamente
   // después de cada retry. Se limpian primero, mientras todavía existen todos
@@ -259,6 +273,68 @@ function seedEventFilter(eventType) {
 async function deleteEventIds(database, ids) {
   if (!ids.length) return 0
   const placeholders = ids.map(() => '?').join(', ')
+
+  if (databaseDialect === 'postgres') {
+    await database.transaction(async (transactionDb) => {
+      // El trigger normal actualiza el resumen una vez por evento. En una
+      // reparación millonaria eso convierte 64 shards pequeños en millones de
+      // escrituras aleatorias. Calculamos el mismo delta por shard, marcamos el
+      // ledger como ya descontado y dejamos que el trigger sólo retire su fila.
+      const metricDeltas = await transactionDb.all(`
+        SELECT
+          summary_shard,
+          ${EVENT_METRIC_TOTAL_COLUMNS.map(column => `SUM(${column}) AS ${column}`).join(',\n          ')}
+        FROM conversational_agent_event_metric_rows
+        WHERE included = 1
+          AND event_id IN (${placeholders})
+        GROUP BY summary_shard
+        ORDER BY summary_shard ASC
+      `, ids)
+
+      await transactionDb.run(`
+        UPDATE conversational_agent_event_metric_rows
+        SET included = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE included = 1
+          AND event_id IN (${placeholders})
+      `, ids)
+
+      if (metricDeltas.length > 0) {
+        const deltaRows = metricDeltas.map(() => `(
+          CAST(? AS INTEGER),
+          ${EVENT_METRIC_TOTAL_COLUMNS.map(() => 'CAST(? AS BIGINT)').join(', ')}
+        )`).join(', ')
+        const deltaParams = metricDeltas.flatMap(row => [
+          row.summary_shard,
+          ...EVENT_METRIC_TOTAL_COLUMNS.map(column => row[column] || 0)
+        ])
+        await transactionDb.run(`
+          UPDATE conversational_agent_event_metric_summary AS summary
+          SET
+            ${EVENT_METRIC_TOTAL_COLUMNS.map(column => (
+              `${column} = summary.${column} - delta.${column}`
+            )).join(',\n            ')},
+            updated_at = CURRENT_TIMESTAMP
+          FROM (VALUES ${deltaRows}) AS delta(
+            summary_shard,
+            ${EVENT_METRIC_TOTAL_COLUMNS.join(', ')}
+          )
+          WHERE summary.summary_shard = delta.summary_shard
+        `, deltaParams)
+        await transactionDb.run(`
+          DELETE FROM conversational_agent_event_metric_summary
+          WHERE total_events <= 0
+        `)
+      }
+
+      await transactionDb.run(
+        `DELETE FROM conversational_agent_events WHERE id IN (${placeholders})`,
+        ids
+      )
+    })
+    return ids.length
+  }
+
   await database.run(
     `DELETE FROM conversational_agent_events WHERE id IN (${placeholders})`,
     ids
