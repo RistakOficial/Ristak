@@ -147,6 +147,10 @@ import { requireAuth } from './middleware/authMiddleware.js'
 import { publicIngestionJsonMiddleware } from './middleware/publicIngestionJson.js'
 import { recoverPendingConversationalAgentConversations } from './agents/conversational/runner.js'
 import {
+  buildConversationalRerunGarbageCleanupPlan,
+  runConversationalRerunGarbageCleanup
+} from './services/conversationalAgentRerunGarbageCleanupService.js'
+import {
   recoverPendingConversationGoalCompletionEffects,
   startConversationGoalEffectsRecoveryScheduler
 } from './services/conversationalAgentService.js'
@@ -797,10 +801,27 @@ async function startRuntimeServices() {
   // Inicializar versión de Meta API desde BD
   await initializeVersion()
 
+  // Captura los reruns durables antes de que el recovery pueda consumirlos.
+  // El borrado pesado ocurre después y en segundo plano, pero la lista exacta
+  // evita barridos ambiguos o eliminar auditoría legítima de otros mensajes.
+  const conversationalRerunGarbageCleanupPlan =
+    await buildConversationalRerunGarbageCleanupPlan().catch((error) => {
+      logger.warn(`No se pudo inventariar la basura histórica de reruns: ${error.message}`)
+      return null
+    })
+
   // Cleanup de sistema: compensa subscribed_apps/relay de OAuth abandonados y
   // garantiza TTL de secretos aunque nadie vuelva a abrir Configuración.
   startMetaOAuthPendingSessionCleanupScheduler()
   startMetaOAuthIntegrationCleanupScheduler()
+
+  runStartupDrainTask(
+    'startup:conversational-rerun-garbage-cleanup',
+    () => runConversationalRerunGarbageCleanup(
+      conversationalRerunGarbageCleanupPlan
+    ),
+    'No se pudo limpiar o compactar la auditoría duplicada de reruns'
+  )
 
   // Las reparaciones de historiales grandes no forman parte de la compuerta de
   // sesión. El esquema y las rutas ya están listos; esta tarea converge datos

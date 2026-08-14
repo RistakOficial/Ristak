@@ -8870,6 +8870,44 @@ detalle y su conclusión, un error o un timeout, el resultado deja de ser
 coherente permite continuar con el modelo principal; su resultado se guarda como
 JSON íntegro e idempotente para poder auditarlo después.
 
+Los reruns del debounce y de recuperación tienen una sola propiedad en memoria.
+Cuando despierta el timer, consume exactamente la entrada que lo programó antes
+de ejecutar el mensaje; el `finally` sólo agenda otra vuelta si durante esa
+ejecución llegó un inbound realmente nuevo. La fila de
+`ai_agent_pending_reruns` permanece como cobertura ante crash hasta que se
+adquiere un claim o se alcanza un resultado terminal. Si ya se comprobó que
+ningún agente aplica, que no existe mensaje o que ese canal de HighLevel no es el
+ganador, la fila se elimina; nunca se revive el mismo mensaje cada cuatro
+segundos. Una entrada más nueva encolada durante la corrida no se borra por
+accidente.
+
+Los eventos terminales repetibles usan una identidad determinista por tipo,
+contacto, canal, mensaje y causa. Reintentar el mismo hecho conserva una sola
+evidencia en `conversational_agent_events`, mientras un mensaje o una causa
+distintos siguen generando auditoría independiente. Las escalaciones de handoff
+obligatorio mantienen su obligación durable, pero su espera comienza en 30
+segundos, crece exponencialmente y queda topada en 15 minutos; desde que entra a
+escalación, tanto el evento de retry como su error son idempotentes. Esto evita
+que una dependencia caída convierta la auditoría en almacenamiento sin límite
+sin sacrificar la entrega humana pendiente.
+
+La reparación versionada
+`conversational_rerun_garbage_cleanup=2026-08-14-v1` captura al arrancar los
+mensajes exactos de los reruns durables antes de que recovery los consuma. En
+segundo plano elimina únicamente repeticiones de esos mismos
+contacto + canal + mensaje para `agent_not_matched`, supresiones de canal y
+retries de handoff/medida preventiva. También retira los errores legacy que no
+guardaban `messageId` únicamente cuando quedaron registrados a cinco segundos o
+menos de uno de esos retries exactos; los errores ajenos o fuera de esa ventana
+no entran al barrido. Conserva una evidencia por resultado, cada intento inicial
+y una evidencia de escalación. El borrado normal mantiene exacto
+el ledger de métricas mediante sus triggers. Si se retiraron al menos 10,000
+filas, compacta exclusivamente `conversational_agent_events` y
+`conversational_agent_event_metric_rows` con `VACUUM FULL`, límites de espera y
+marcador durable; si no obtiene el lock, la compactación queda sin marcar y se
+reintenta en el siguiente arranque. Instalaciones sin basura quedan marcadas sin
+barridos amplios ni borrado de historial legítimo.
+
 Un `match` crea `handoff_rule_pending`, una obligacion durable identificada por
 contacto, agente, canal, revision completa de politica, scope de conversacion y
 mensaje origen. La revision incluye hasta los 4000 caracteres visibles de reglas,

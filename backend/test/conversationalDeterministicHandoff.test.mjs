@@ -4,13 +4,16 @@ import { createHash, randomUUID } from 'node:crypto'
 import { db, databaseReady } from '../src/config/database.js'
 import {
   MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS,
+  MANDATORY_HANDOFF_ESCALATION_RETRY_MAX_DELAY_MS,
   adjudicateToolCallingV2VerifiedGoalHandoff,
   adjudicateToolCallingV2VerifiedPaymentHandoff,
+  buildConversationalAuditEventId,
   buildToolCallingV2HandoffClassifierEvidence,
   buildToolCallingV2HistoryEnvelope,
   buildToolCallingV2MandatoryHandoffRuntimeFacts,
   buildToolCallingV2MandatoryHandoffRetryPlan,
   claimFreshToolCallingV2MandatoryHandoffRequiredDataPrompt,
+  consumeScheduledPendingContactRerun,
   deliverVerifiedHandoffRequiredDataPrompt,
   executeToolCallingV2MandatoryHandoffEscalation,
   extractDeterministicToolCallingV2RequiredHandoffData,
@@ -6694,7 +6697,7 @@ test('los fallos DB previos a descartar el handoff siempre quedan tipados para r
   }
 })
 
-test('el retry del gate obligatorio es durablemente acotado y respeta backoff', () => {
+test('el retry del gate obligatorio conserva la obligación con backoff acotado', () => {
   const failure = Object.assign(new Error('timeout simulado'), {
     code: 'handoff_rule_adjudication_failed',
     mandatoryHandoffGateRetryable: true,
@@ -6726,6 +6729,22 @@ test('el retry del gate obligatorio es durablemente acotado y respeta backoff', 
   assert.equal(escalation.escalation, true)
   assert.equal(escalation.exhausted, false)
   assert.equal(escalation.reason, 'mandatory_handoff_gate_escalation')
+  assert.equal(escalation.delayMs, 30_000)
+
+  const laterEscalation = buildToolCallingV2MandatoryHandoffRetryPlan(failure, {
+    attemptCount: MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS + 2,
+    nowMs: Date.parse('2026-07-30T10:00:00.000Z')
+  })
+  assert.equal(laterEscalation.delayMs, 120_000)
+
+  const longRunningEscalation = buildToolCallingV2MandatoryHandoffRetryPlan(failure, {
+    attemptCount: 35_000,
+    nowMs: Date.parse('2026-07-30T10:00:00.000Z')
+  })
+  assert.equal(
+    longRunningEscalation.delayMs,
+    MANDATORY_HANDOFF_ESCALATION_RETRY_MAX_DELAY_MS
+  )
   assert.equal(shouldRecoverPendingInbound(
     {
       id: 'message-exhausted',
@@ -6764,6 +6783,45 @@ test('el retry del gate obligatorio es durablemente acotado y respeta backoff', 
     },
     { nowMs: Date.parse('2026-07-30T10:00:10.000Z') }
   ), true)
+})
+
+test('el timer consume sólo su propia entrada pendiente y conserva un inbound más nuevo', () => {
+  const runKey = 'whatsapp:contact-rerun'
+  const scheduled = { messageId: 'message-old' }
+  const pending = new Map([[runKey, scheduled]])
+
+  assert.equal(
+    consumeScheduledPendingContactRerun(pending, runKey, scheduled),
+    true
+  )
+  assert.equal(pending.has(runKey), false)
+
+  const newer = { messageId: 'message-new' }
+  pending.set(runKey, newer)
+  assert.equal(
+    consumeScheduledPendingContactRerun(pending, runKey, scheduled),
+    false
+  )
+  assert.equal(pending.get(runKey), newer)
+})
+
+test('la auditoría repetible usa una identidad estable por mensaje y causa', () => {
+  const base = {
+    contactId: 'contact-audit',
+    messageId: 'message-audit',
+    channel: 'WhatsApp',
+    qualifier: 'agent-not-matched'
+  }
+  const first = buildConversationalAuditEventId('agent_not_matched', base)
+  const repeated = buildConversationalAuditEventId('agent_not_matched', base)
+  const anotherMessage = buildConversationalAuditEventId('agent_not_matched', {
+    ...base,
+    messageId: 'message-audit-2'
+  })
+
+  assert.match(first, /^cae_audit_[a-f0-9]{64}$/)
+  assert.equal(repeated, first)
+  assert.notEqual(anotherMessage, first)
 })
 
 test('un crash después del claim conserva el marker y el tercer intento escala sin depender de IA', async () => {

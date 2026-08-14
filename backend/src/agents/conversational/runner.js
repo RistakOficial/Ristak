@@ -158,7 +158,8 @@ const PENDING_RECOVERY_PAGE_SIZE = 80
 const PENDING_RECOVERY_MAX_AGE_MS = Number(process.env.CONVERSATIONAL_AGENT_PENDING_RECOVERY_MAX_AGE_MS || 60 * 60 * 1000)
 export const MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS = 3
 const MANDATORY_HANDOFF_GATE_RETRY_DELAYS_MS = Object.freeze([1_000, 5_000])
-const MANDATORY_HANDOFF_ESCALATION_RETRY_DELAY_MS = 30_000
+const MANDATORY_HANDOFF_ESCALATION_RETRY_BASE_DELAY_MS = 30_000
+export const MANDATORY_HANDOFF_ESCALATION_RETRY_MAX_DELAY_MS = 15 * 60 * 1000
 const FOLLOW_UP_WINDOW_MS = MAX_FOLLOW_UP_DELAY_MINUTES * 60 * 1000
 const MAX_TIMER_MS = 2_147_483_647
 export const TOOL_CALLING_V2_RUNTIME_MODE = 'tool_calling_v2'
@@ -328,6 +329,29 @@ function isEmailConversationalChannel(channel) {
 
 function getRunKey(contactId, channel = 'whatsapp') {
   return `${normalizeConversationalChannel(channel)}:${contactId}`
+}
+
+export function buildConversationalAuditEventId(eventType, {
+  contactId = '',
+  messageId = '',
+  channel = 'whatsapp',
+  qualifier = ''
+} = {}) {
+  const cleanEventType = String(eventType || '').trim()
+  const cleanContactId = String(contactId || '').trim()
+  const cleanMessageId = String(messageId || '').trim()
+  if (!cleanEventType || !cleanContactId || !cleanMessageId) return ''
+
+  const fingerprint = createHash('sha256')
+    .update(JSON.stringify({
+      eventType: cleanEventType,
+      contactId: cleanContactId,
+      messageId: cleanMessageId,
+      channel: normalizeConversationalChannel(channel),
+      qualifier: String(qualifier || '').trim()
+    }))
+    .digest('hex')
+  return `cae_audit_${fingerprint}`
 }
 
 function normalizeTransportKey(value = '') {
@@ -528,9 +552,15 @@ export function buildToolCallingV2MandatoryHandoffRetryPlan(error, {
     !safeToReplayWithoutRepeatingMain ||
     normalizedAttemptCount >= MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS
   ) {
-    const delayMs = normalizedAttemptCount > MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS
-      ? MANDATORY_HANDOFF_ESCALATION_RETRY_DELAY_MS
-      : MANDATORY_HANDOFF_GATE_RETRY_DELAYS_MS[0]
+    const escalationExponent = Math.max(
+      0,
+      normalizedAttemptCount - MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS
+    )
+    const delayMs = Math.min(
+      MANDATORY_HANDOFF_ESCALATION_RETRY_MAX_DELAY_MS,
+      MANDATORY_HANDOFF_ESCALATION_RETRY_BASE_DELAY_MS *
+        (2 ** Math.min(escalationExponent, 20))
+    )
     return {
       retry: true,
       escalation: true,
@@ -7352,6 +7382,20 @@ function clearPendingContactRerunTimer(runKey) {
   pendingContactRerunTimers.delete(runKey)
 }
 
+export function consumeScheduledPendingContactRerun(pendingMap, runKey, scheduledEntry) {
+  if (!scheduledEntry || pendingMap?.get(runKey) !== scheduledEntry) return false
+  pendingMap.delete(runKey)
+  return true
+}
+
+async function deleteCurrentPendingRerun(runKey) {
+  // Si entró otro mensaje mientras esta corrida trabajaba, el Map ya contiene
+  // una entrada distinta y su fila durable no pertenece a la corrida actual.
+  if (pendingContactReruns.has(runKey)) return false
+  await deletePendingRerun(runKey)
+  return true
+}
+
 function scheduleConversationalAgentRerun({
   contactId,
   phone,
@@ -7365,15 +7409,17 @@ function scheduleConversationalAgentRerun({
   const normalizedChannel = normalizeConversationalChannel(channel || latestMessage.channel)
   const runKey = getRunKey(contactId, normalizedChannel)
   clearPendingContactRerunTimer(runKey)
+  let scheduledPendingEntry = null
   if (pendingEntry && typeof pendingEntry === 'object') {
-    pendingContactReruns.set(runKey, {
+    scheduledPendingEntry = {
       ...pendingEntry,
       contactId,
       phone: latestMessage.phone || phone,
       messageId: latestMessage.id,
       channel: normalizedChannel,
       scheduledFor: scheduledFor || pendingEntry.scheduledFor || nowSqlTimestamp()
-    })
+    }
+    pendingContactReruns.set(runKey, scheduledPendingEntry)
   }
   const scheduledForMs = toTimestampMs(scheduledFor || pendingEntry?.scheduledFor)
   const delayMs = scheduledForMs > 0
@@ -7381,9 +7427,15 @@ function scheduleConversationalAgentRerun({
     : 0
   const timer = setTimeout(() => {
     pendingContactRerunTimers.delete(runKey)
-    // La fila se conserva incluso al despertar el timer. Se consume sólo
-    // después de adquirir el siguiente claim; si el proceso cae entre ambos
-    // puntos, boot recovery todavía puede reconstruir el retry.
+    // La copia durable sigue cubriendo un crash hasta que la corrida alcance un
+    // resultado terminal o adquiera un claim. La copia en memoria, en cambio,
+    // ya fue consumida: dejarla aquí hacía que el finally reencolara por siempre
+    // exactamente el mismo mensaje sin agente.
+    consumeScheduledPendingContactRerun(
+      pendingContactReruns,
+      runKey,
+      scheduledPendingEntry
+    )
     handleInboundConversationalChatMessage({
       contactId,
       phone: latestMessage.phone || phone,
@@ -11768,6 +11820,14 @@ export async function handleInboundConversationalMessage({
           scheduleConversationalAgentRerun
       })
       await recordConversationalAgentEvent({
+        eventId: queued?.plan?.escalation === true
+          ? buildConversationalAuditEventId('preventive_measure_load_retry_queued', {
+              contactId,
+              messageId,
+              channel: normalizedChannel,
+              qualifier: `${queued?.plan?.stage || 'unknown'}:${queued?.plan?.errorCode || 'unknown'}`
+            })
+          : '',
         contactId,
         eventType: 'preventive_measure_load_retry_queued',
         detail: {
@@ -11862,7 +11922,10 @@ export async function handleInboundConversationalMessage({
       await sleep(DEBOUNCE_MS)
 
       let latest = await loadLatestInboundMessage(contactId, normalizedChannel)
-      if (!latest) return
+      if (!latest) {
+        await deleteCurrentPendingRerun(runKey)
+        return
+      }
       // El webhook que abrió esta corrida es el inicio factual del lote. Si
       // llega otro mensaje durante el debounce, `latest` cambia, pero el primer
       // inbound no puede desaparecer del ciclo de handoff. La carga por ID
@@ -11883,6 +11946,12 @@ export async function handleInboundConversationalMessage({
       })
       if (highLevelPhoneRoute.applies && !highLevelPhoneRoute.shouldHandle) {
         await recordConversationalAgentEvent({
+          eventId: buildConversationalAuditEventId('run_suppressed_highlevel_phone_channel', {
+            contactId,
+            messageId: latest.id,
+            channel: normalizedChannel,
+            qualifier: `${highLevelPhoneRoute.reason || ''}:after_debounce`
+          }),
           contactId,
           eventType: 'run_suppressed_highlevel_phone_channel',
           detail: {
@@ -11894,6 +11963,7 @@ export async function handleInboundConversationalMessage({
             phase: 'after_debounce'
           }
         }).catch(() => {})
+        await deleteCurrentPendingRerun(runKey)
         return
       }
 
@@ -11917,10 +11987,16 @@ export async function handleInboundConversationalMessage({
 	      if (!agentConfig) {
 	        // Ningún agente aplica a esta conversación: no responder.
 	        await recordConversationalAgentEvent({
+          eventId: buildConversationalAuditEventId('agent_not_matched', {
+            contactId,
+            messageId: latest.id,
+            channel: normalizedChannel
+          }),
           contactId,
           eventType: 'agent_not_matched',
           detail: { messageId: latest.id, channel: normalizedChannel }
 	        }).catch(() => {})
+	        await deleteCurrentPendingRerun(runKey)
 	        return
 	      }
 	      mandatoryHandoffPolicyConfiguredForRun =
@@ -11945,7 +12021,10 @@ export async function handleInboundConversationalMessage({
           await deletePendingRerun(runKey).catch(() => {})
         }
       })
-      if (!waitResult.latest) return
+      if (!waitResult.latest) {
+        await deleteCurrentPendingRerun(runKey)
+        return
+      }
       if (waitResult.latest.id !== latest.id) {
         latest = waitResult.latest
         highLevelPhoneRoute = await resolveHighLevelConversationalPhoneRoute({
@@ -11955,6 +12034,12 @@ export async function handleInboundConversationalMessage({
         })
         if (highLevelPhoneRoute.applies && !highLevelPhoneRoute.shouldHandle) {
           await recordConversationalAgentEvent({
+            eventId: buildConversationalAuditEventId('run_suppressed_highlevel_phone_channel', {
+              contactId,
+              messageId: latest.id,
+              channel: normalizedChannel,
+              qualifier: `${highLevelPhoneRoute.reason || ''}:after_response_wait`
+            }),
             contactId,
             eventType: 'run_suppressed_highlevel_phone_channel',
             detail: {
@@ -11966,6 +12051,7 @@ export async function handleInboundConversationalMessage({
               phase: 'after_response_wait'
             }
           }).catch(() => {})
+          await deleteCurrentPendingRerun(runKey)
           return
         }
         ruleContext = await buildRuleContext({
@@ -12245,6 +12331,14 @@ export async function handleInboundConversationalMessage({
           activeClaim = null
           retryQueued = true
           await recordConversationalAgentEvent({
+            eventId: retryPlan.escalation === true
+              ? buildConversationalAuditEventId('mandatory_handoff_gate_retry_queued', {
+                  contactId,
+                  messageId: claim.messageId,
+                  channel: claim.channel,
+                  qualifier: `${retryPlan.stage}:${retryPlan.errorCode}:escalation`
+                })
+              : '',
             contactId,
             eventType: 'mandatory_handoff_gate_retry_queued',
             detail: {
@@ -12256,6 +12350,7 @@ export async function handleInboundConversationalMessage({
               attemptCount: retryPlan.attemptCount,
               nextAttempt: retryPlan.nextAttempt,
               maxAttempts: retryPlan.maxAttempts,
+              escalation: retryPlan.escalation === true,
               delayMs: retryPlan.delayMs,
               scheduledFor: retryPlan.scheduledFor
             }
@@ -12305,14 +12400,24 @@ export async function handleInboundConversationalMessage({
     }
     logger.error(`[Agente conversacional] Error atendiendo mensaje entrante: ${retryableError.message}`)
     await recordConversationalAgentEvent({
+      eventId: retryPlan?.escalation === true
+        ? buildConversationalAuditEventId('error', {
+            contactId,
+            messageId: failedClaim?.messageId || messageId,
+            channel: normalizedChannel,
+            qualifier: `${retryPlan.stage}:${retryPlan.errorCode}:escalation`
+          })
+        : '',
       contactId: contactId || null,
       eventType: 'error',
       detail: {
+        messageId: failedClaim?.messageId || messageId || null,
         message: retryableError.message,
         channel: normalizedChannel,
         retryQueued,
         retryStage: retryPlan?.stage || null,
-        retryAttemptCount: retryPlan?.attemptCount || null
+        retryAttemptCount: retryPlan?.attemptCount || null,
+        retryEscalation: retryPlan?.escalation === true
       }
     }).catch(() => {})
   }
