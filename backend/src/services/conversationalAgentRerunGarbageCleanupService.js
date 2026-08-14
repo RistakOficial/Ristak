@@ -35,13 +35,13 @@ const EVENT_METRIC_TOTAL_COLUMNS = Object.freeze([
   'tool_failure_events'
 ])
 const CLEANUP_EVENT_TYPES = Object.freeze([
-  // Los errores legacy no traían messageId, pero sí se escribían inmediatamente
-  // después de cada retry. Se limpian primero, mientras todavía existen todos
-  // los retry exactos que permiten relacionarlos sin tocar errores ajenos.
+  // Los errores legacy no traían messageId. Primero recorremos los retry y
+  // conservamos sus instantes en memoria; así podemos relacionarlos después sin
+  // un subquery por fila y aunque los retry duplicados ya hayan sido eliminados.
+  'mandatory_handoff_gate_retry_queued',
   'error',
   'agent_not_matched',
   'run_suppressed_highlevel_phone_channel',
-  'mandatory_handoff_gate_retry_queued',
   'preventive_measure_load_retry_queued'
 ])
 
@@ -182,13 +182,6 @@ export async function buildConversationalRerunGarbageCleanupPlan({
   }
 }
 
-function jsonTextExpression(field, column = 'detail_json') {
-  if (databaseDialect === 'postgres') {
-    return `COALESCE(${column}::jsonb ->> '${field}', '')`
-  }
-  return `CASE WHEN json_valid(${column}) THEN COALESCE(json_extract(${column}, '$.${field}'), '') ELSE '' END`
-}
-
 function eventSignature(eventType, detail = {}) {
   if (eventType === 'agent_not_matched') return 'terminal:no-agent'
   if (eventType === 'run_suppressed_highlevel_phone_channel') {
@@ -232,28 +225,12 @@ function cursorPredicate(cursor, tableAlias = '') {
   }
 }
 
-function seedEventFilter(eventType) {
-  if (eventType !== 'error') {
-    return {
-      sql: `
-        AND ${jsonTextExpression('messageId', 'event_row.detail_json')} = ?
-        AND ${jsonTextExpression('channel', 'event_row.detail_json')} = ?
-      `,
-      params: null
-    }
-  }
+function cleanupSeedKey({ contactId, channel, messageId } = {}) {
+  return `${String(contactId || '').trim()}\u0000${normalizeChannel(channel)}\u0000${String(messageId || '').trim()}`
+}
 
-  const eventMessageId = jsonTextExpression('messageId', 'event_row.detail_json')
-  return {
-    sql: `
-      AND ${jsonTextExpression('channel', 'event_row.detail_json')} = ?
-      AND (
-        ${eventMessageId} = ?
-        OR ${eventMessageId} = ''
-      )
-    `,
-    params: null
-  }
+function cleanupContactChannelKey(contactId, channel) {
+  return `${String(contactId || '').trim()}\u0000${normalizeChannel(channel)}`
 }
 
 function eventTimeMs(value) {
@@ -266,55 +243,35 @@ function eventTimeMs(value) {
   return new Date(normalized).getTime()
 }
 
-function hasNearbyRetry(sortedRetryTimes, eventTime, windowMs = 5_000) {
-  if (!sortedRetryTimes.length || !Number.isFinite(eventTime)) return false
+function nearbyRetrySeedKey(sortedRetryTimes, eventTime, windowMs = 5_000) {
+  if (!sortedRetryTimes.length || !Number.isFinite(eventTime)) return ''
   let low = 0
   let high = sortedRetryTimes.length
   while (low < high) {
     const middle = Math.floor((low + high) / 2)
-    if (sortedRetryTimes[middle] < eventTime) low = middle + 1
+    if (sortedRetryTimes[middle].time < eventTime) low = middle + 1
     else high = middle
   }
-  return (
-    (low < sortedRetryTimes.length && Math.abs(sortedRetryTimes[low] - eventTime) <= windowMs) ||
-    (low > 0 && Math.abs(sortedRetryTimes[low - 1] - eventTime) <= windowMs)
-  )
-}
-
-async function loadLegacyErrorRetryTimes(database, seed, pageSize = CLEANUP_PAGE_SIZE) {
-  const retryTimes = []
-  let cursor = null
-  while (true) {
-    const cursorFilter = cursorPredicate(cursor, 'retry')
-    const rows = await database.all(`
-      SELECT retry.id, retry.created_at
-      FROM conversational_agent_events AS retry
-      WHERE retry.contact_id = ?
-        AND retry.event_type = 'mandatory_handoff_gate_retry_queued'
-        AND ${jsonTextExpression('messageId', 'retry.detail_json')} = ?
-        AND ${jsonTextExpression('channel', 'retry.detail_json')} = ?
-        ${cursorFilter.sql}
-      ORDER BY retry.created_at ASC, retry.id ASC
-      LIMIT ?
-    `, [
-      seed.contactId,
-      seed.messageId,
-      seed.channel,
-      ...cursorFilter.params,
-      pageSize
-    ])
-    if (!rows.length) break
-
-    for (const row of rows) {
-      const timestamp = eventTimeMs(row.created_at)
-      if (Number.isFinite(timestamp)) retryTimes.push(timestamp)
-    }
-    const last = rows[rows.length - 1]
-    cursor = { createdAt: last.created_at, id: last.id }
-    if (rows.length < pageSize) break
-    await sleep(25)
+  const candidates = []
+  for (let index = low; index < sortedRetryTimes.length; index += 1) {
+    const distance = Math.abs(sortedRetryTimes[index].time - eventTime)
+    if (distance > windowMs) break
+    candidates.push({ ...sortedRetryTimes[index], distance })
   }
-  return retryTimes.sort((left, right) => left - right)
+  for (let index = low - 1; index >= 0; index -= 1) {
+    const distance = Math.abs(sortedRetryTimes[index].time - eventTime)
+    if (distance > windowMs) break
+    candidates.push({ ...sortedRetryTimes[index], distance })
+  }
+  if (!candidates.length) return ''
+
+  const minimumDistance = Math.min(...candidates.map(candidate => candidate.distance))
+  const nearestSeeds = new Set(
+    candidates
+      .filter(candidate => candidate.distance === minimumDistance)
+      .map(candidate => candidate.seedKey)
+  )
+  return nearestSeeds.size === 1 ? [...nearestSeeds][0] : ''
 }
 
 async function deleteEventIds(database, ids) {
@@ -389,37 +346,27 @@ async function deleteEventIds(database, ids) {
   return ids.length
 }
 
-async function cleanupSeedEventType(database, seed, eventType, {
+async function cleanupEventTypeAcrossSeeds(database, seedByKey, eventType, {
   pageSize = CLEANUP_PAGE_SIZE,
-  onDeleted = null
+  onDeleted = null,
+  retryTimesByContactChannel = new Map()
 } = {}) {
-  const seenSignatures = new Set()
+  const seenSignaturesBySeed = new Map()
   let cursor = null
   let scanned = 0
   let deleted = 0
-  const legacyErrorRetryTimes = eventType === 'error'
-    ? await loadLegacyErrorRetryTimes(database, seed, pageSize)
-    : []
 
   while (true) {
     const cursorFilter = cursorPredicate(cursor, 'event_row')
-    const eventFilter = seedEventFilter(eventType)
-    const eventFilterParams = eventType === 'error'
-      ? [seed.channel, seed.messageId]
-      : [seed.messageId, seed.channel]
     const rows = await database.all(`
-      SELECT event_row.id, event_row.detail_json, event_row.created_at
+      SELECT event_row.id, event_row.contact_id, event_row.detail_json, event_row.created_at
       FROM conversational_agent_events AS event_row
-      WHERE event_row.contact_id = ?
-        AND event_row.event_type = ?
-        ${eventFilter.sql}
+      WHERE event_row.event_type = ?
         ${cursorFilter.sql}
       ORDER BY event_row.created_at ASC, event_row.id ASC
       LIMIT ?
     `, [
-      seed.contactId,
       eventType,
-      ...eventFilterParams,
       ...cursorFilter.params,
       pageSize
     ])
@@ -428,16 +375,40 @@ async function cleanupSeedEventType(database, seed, eventType, {
     const duplicateIds = []
     for (const row of rows) {
       const detail = safeJsonParse(row.detail_json, {}) || {}
-      if (
-        eventType === 'error' &&
-        !String(detail.messageId || '').trim() &&
-        !hasNearbyRetry(legacyErrorRetryTimes, eventTimeMs(row.created_at))
-      ) {
-        continue
+      const contactId = String(row.contact_id || '').trim()
+      const rawChannel = String(detail.channel || '').trim()
+      const messageId = String(detail.messageId || '').trim()
+      if (!contactId || !rawChannel) continue
+
+      const channel = normalizeChannel(rawChannel)
+      let seedKey = messageId
+        ? cleanupSeedKey({ contactId, channel, messageId })
+        : ''
+
+      if (eventType === 'error' && !messageId) {
+        const contactChannelKey = cleanupContactChannelKey(contactId, channel)
+        seedKey = nearbyRetrySeedKey(
+          retryTimesByContactChannel.get(contactChannelKey) || [],
+          eventTimeMs(row.created_at)
+        )
       }
+      if (!seedByKey.has(seedKey)) continue
+
+      if (eventType === 'mandatory_handoff_gate_retry_queued') {
+        const timestamp = eventTimeMs(row.created_at)
+        if (Number.isFinite(timestamp)) {
+          const contactChannelKey = cleanupContactChannelKey(contactId, channel)
+          const retryTimes = retryTimesByContactChannel.get(contactChannelKey) || []
+          retryTimes.push({ time: timestamp, seedKey })
+          retryTimesByContactChannel.set(contactChannelKey, retryTimes)
+        }
+      }
+
+      const seenSignatures = seenSignaturesBySeed.get(seedKey) || new Set()
       const signature = eventSignature(eventType, detail)
       if (seenSignatures.has(signature)) duplicateIds.push(row.id)
       else seenSignatures.add(signature)
+      seenSignaturesBySeed.set(seedKey, seenSignatures)
     }
     const pageDeleted = await deleteEventIds(database, duplicateIds)
     deleted += pageDeleted
@@ -451,17 +422,30 @@ async function cleanupSeedEventType(database, seed, eventType, {
     await sleep(25)
   }
 
-  return { scanned, deleted, retained: seenSignatures.size }
+  return {
+    scanned,
+    deleted,
+    retained: [...seenSignaturesBySeed.values()]
+      .reduce((total, signatures) => total + signatures.size, 0)
+  }
 }
 
 async function cleanupCapturedSeeds(database, seeds = [], { onDeleted = null } = {}) {
   const totals = { seeds: seeds.length, scanned: 0, deleted: 0, retained: 0 }
-  for (const seed of seeds) {
-    for (const eventType of CLEANUP_EVENT_TYPES) {
-      const result = await cleanupSeedEventType(database, seed, eventType, { onDeleted })
-      totals.scanned += result.scanned
-      totals.deleted += result.deleted
-      totals.retained += result.retained
+  const seedByKey = new Map(seeds.map(seed => [cleanupSeedKey(seed), seed]))
+  const retryTimesByContactChannel = new Map()
+  for (const eventType of CLEANUP_EVENT_TYPES) {
+    const result = await cleanupEventTypeAcrossSeeds(database, seedByKey, eventType, {
+      onDeleted,
+      retryTimesByContactChannel
+    })
+    totals.scanned += result.scanned
+    totals.deleted += result.deleted
+    totals.retained += result.retained
+    if (eventType === 'mandatory_handoff_gate_retry_queued') {
+      for (const retryTimes of retryTimesByContactChannel.values()) {
+        retryTimes.sort((left, right) => left.time - right.time)
+      }
     }
   }
   return totals

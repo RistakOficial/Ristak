@@ -8925,7 +8925,9 @@ contacto + canal + mensaje para `agent_not_matched`, supresiones de canal y
 retries de handoff/medida preventiva. También retira los errores legacy que no
 guardaban `messageId` únicamente cuando quedaron registrados a cinco segundos o
 menos de uno de esos retries exactos. Para historiales grandes precarga y pagina
-las marcas de tiempo del retry exacto y resuelve esa ventana en memoria, sin un
+una sola vez cada tipo de evento mediante el índice temporal existente, filtra
+en memoria contra todas las semillas capturadas y resuelve ahí las marcas de
+tiempo de los retry. No repite el historial por cada mensaje ni ejecuta un
 subquery correlacionado por cada error; los errores ajenos o fuera de esa ventana
 no entran al barrido. Un timeout, deadlock o corte transitorio de PostgreSQL
 reanuda el mismo plan en lugar de abandonarlo. Conserva una evidencia por
