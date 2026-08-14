@@ -73,10 +73,14 @@ struct ContactCustomFieldValue: Decodable, Sendable, Equatable {
     let model: String?
     let syncTarget: String?
     let sourceType: String?
+    let sourceSiteId: String
+    let sourceFormId: String
+    let sourceFieldId: String
 
     enum CodingKeys: String, CodingKey {
         case id, definitionId, key, fieldKey, label, name, dataType
         case value, options, model, syncTarget, sourceType
+        case sourceSiteId, sourceFormId, sourceFieldId
     }
 
     init(from decoder: Decoder) throws {
@@ -93,6 +97,9 @@ struct ContactCustomFieldValue: Decodable, Sendable, Equatable {
         model = container.flexibleString(forKey: .model)
         syncTarget = container.flexibleString(forKey: .syncTarget)
         sourceType = container.flexibleString(forKey: .sourceType)
+        sourceSiteId = container.flexibleString(forKey: .sourceSiteId) ?? ""
+        sourceFormId = container.flexibleString(forKey: .sourceFormId) ?? ""
+        sourceFieldId = container.flexibleString(forKey: .sourceFieldId) ?? ""
     }
 }
 
@@ -131,6 +138,9 @@ struct ContactCustomFieldDefinition: Decodable, Identifiable, Sendable, Equatabl
     let fieldGroup: String
     let syncTarget: String
     let sourceType: String
+    let sourceSiteId: String
+    let sourceFormId: String
+    let sourceFieldId: String
     let archived: Bool
     let system: Bool
     let systemManaged: Bool
@@ -145,6 +155,7 @@ struct ContactCustomFieldDefinition: Decodable, Identifiable, Sendable, Equatabl
     enum CodingKeys: String, CodingKey {
         case definitionId, key, fieldKey, label, name, description, dataType
         case options, folderId, folderName, fieldGroup, syncTarget, sourceType
+        case sourceSiteId, sourceFormId, sourceFieldId
         case archived, system, systemManaged, locked, editable, deletable
         case createdAt, updatedAt
     }
@@ -164,6 +175,9 @@ struct ContactCustomFieldDefinition: Decodable, Identifiable, Sendable, Equatabl
         fieldGroup = container.flexibleString(forKey: .fieldGroup) ?? "general"
         syncTarget = container.flexibleString(forKey: .syncTarget) ?? "local"
         sourceType = container.flexibleString(forKey: .sourceType) ?? ""
+        sourceSiteId = container.flexibleString(forKey: .sourceSiteId) ?? ""
+        sourceFormId = container.flexibleString(forKey: .sourceFormId) ?? ""
+        sourceFieldId = container.flexibleString(forKey: .sourceFieldId) ?? ""
         archived = container.flexibleBool(forKey: .archived) ?? false
         system = container.flexibleBool(forKey: .system) ?? false
         systemManaged = container.flexibleBool(forKey: .systemManaged) ?? system

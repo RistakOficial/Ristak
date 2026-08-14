@@ -251,6 +251,170 @@ struct ContactInfoConflictPayload: Decodable, Sendable {
 
 // MARK: - Valores de campos personalizados (doc 06 §1.3/§1.4 y §4.1.10)
 
+/// Une las definiciones del catálogo con las respuestas guardadas del contacto.
+/// Los formularios legacy pueden traer sólo la etiqueta visible, mientras que
+/// los actuales usan `definitionId`/`fieldKey`. La etiqueta jamás debe mezclar
+/// dos campos modernos que casualmente tengan la misma pregunta.
+enum ContactInfoCustomFieldResolution {
+    struct ResolvedField: Sendable {
+        let definition: ContactCustomFieldDefinition
+        let value: ContactCustomFieldValue?
+    }
+
+    private struct Candidate {
+        let index: Int
+        let definition: ContactCustomFieldDefinition
+        let value: ContactCustomFieldValue?
+        let sourceIdentity: String
+    }
+
+    static func resolve(
+        definitions: [ContactCustomFieldDefinition],
+        values: [ContactCustomFieldValue]
+    ) -> [ResolvedField] {
+        let candidates = definitions.enumerated().compactMap { index, definition -> Candidate? in
+            let value = matchingValue(for: definition, in: values)
+            if isUncuratedRecoveryDefinition(definition, value: value) { return nil }
+            return Candidate(
+                index: index,
+                definition: definition,
+                value: value,
+                sourceIdentity: sourceIdentity(definition)
+            )
+        }
+
+        var visibleIndexes = Set<Int>()
+        var bySource: [String: [Candidate]] = [:]
+
+        for candidate in candidates {
+            guard !candidate.sourceIdentity.isEmpty else {
+                visibleIndexes.insert(candidate.index)
+                continue
+            }
+            bySource[candidate.sourceIdentity, default: []].append(candidate)
+        }
+
+        for group in bySource.values {
+            if group.count == 1, let candidate = group.first {
+                visibleIndexes.insert(candidate.index)
+                continue
+            }
+
+            let populated = group.filter { hasMeaningfulValue($0.value) }
+            if !populated.isEmpty {
+                populated.forEach { visibleIndexes.insert($0.index) }
+                continue
+            }
+
+            let preferred = group.max { left, right in
+                definitionTimestamp(left.definition) < definitionTimestamp(right.definition)
+            }
+            if let preferred { visibleIndexes.insert(preferred.index) }
+        }
+
+        return candidates
+            .filter { visibleIndexes.contains($0.index) }
+            .map { ResolvedField(definition: $0.definition, value: $0.value) }
+    }
+
+    static func matchingValue(
+        for definition: ContactCustomFieldDefinition,
+        in values: [ContactCustomFieldValue]
+    ) -> ContactCustomFieldValue? {
+        let definitionStableKeys = Set(stableKeys(definition))
+        if let stableMatch = values.first(where: { value in
+            !definitionStableKeys.isDisjoint(with: stableKeys(value))
+        }) {
+            return stableMatch
+        }
+
+        let definitionFallbackKeys = Set(fallbackKeys(definition))
+        guard !definitionFallbackKeys.isEmpty else { return nil }
+        let fallbackMatches = values.filter { value in
+            if !definitionStableKeys.isEmpty, !stableKeys(value).isEmpty { return false }
+            return !definitionFallbackKeys.isDisjoint(with: fallbackKeys(value))
+        }
+        return fallbackMatches.count == 1 ? fallbackMatches[0] : nil
+    }
+
+    private static func stableKeys(_ definition: ContactCustomFieldDefinition) -> [String] {
+        normalizedUnique([
+            definition.definitionId,
+            definition.id,
+            definition.key,
+            definition.fieldKey,
+        ])
+    }
+
+    private static func stableKeys(_ value: ContactCustomFieldValue) -> [String] {
+        normalizedUnique([
+            value.definitionId,
+            value.id,
+            value.key,
+            value.fieldKey,
+        ])
+    }
+
+    private static func fallbackKeys(_ definition: ContactCustomFieldDefinition) -> [String] {
+        normalizedUnique([definition.label, definition.name]).map { "label:\($0)" }
+    }
+
+    private static func fallbackKeys(_ value: ContactCustomFieldValue) -> [String] {
+        normalizedUnique([value.label, value.name]).map { "label:\($0)" }
+    }
+
+    private static func normalizedUnique(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.compactMap { value in
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalized.isEmpty, seen.insert(normalized).inserted else { return nil }
+            return normalized
+        }
+    }
+
+    private static func sourceIdentity(_ definition: ContactCustomFieldDefinition) -> String {
+        let fieldID = definition.sourceFieldId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let scope = (definition.sourceFormId.isEmpty ? definition.sourceSiteId : definition.sourceFormId)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !fieldID.isEmpty, !scope.isEmpty else { return "" }
+        return "source:\(scope):field:\(fieldID)"
+    }
+
+    private static func hasMeaningfulValue(_ field: ContactCustomFieldValue?) -> Bool {
+        guard let value = field?.value else { return false }
+        switch value {
+        case .null:
+            return false
+        case .string(let value):
+            return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .array(let values):
+            return !values.isEmpty
+        case .object(let values):
+            return !values.isEmpty
+        case .number, .bool:
+            return true
+        }
+    }
+
+    private static func definitionTimestamp(_ definition: ContactCustomFieldDefinition) -> TimeInterval {
+        RistakDateParsing.date(fromISO: definition.updatedAt ?? definition.createdAt)?.timeIntervalSince1970 ?? 0
+    }
+
+    private static func isUncuratedRecoveryDefinition(
+        _ definition: ContactCustomFieldDefinition,
+        value: ContactCustomFieldValue?
+    ) -> Bool {
+        guard definition.sourceType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "submission_recovery" else {
+            return false
+        }
+        if hasMeaningfulValue(value) { return false }
+        let fieldGroup = definition.fieldGroup.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return definition.folderId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (fieldGroup.isEmpty || fieldGroup == "general")
+    }
+}
+
 enum ContactInfoCustomFieldValueFormat {
     /// Texto para mostrar un valor de campo personalizado (vacío = "Sin dato"
     /// lo pone la fila).

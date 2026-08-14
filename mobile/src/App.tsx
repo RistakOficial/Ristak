@@ -21062,7 +21062,7 @@ function NativeContactDetailScreen({
 
         <View style={styles.contactInfoLightSection}>
           <ContactInfoText style={styles.contactInfoSectionHeadingLight}>CAMPOS PERSONALIZADOS</ContactInfoText>
-          {customFields.length ? customFields.map((field) => renderRow(field.id, FileText, field.label, field.value || 'Sin dato', null, () => {
+          {customFields.length ? customFields.map((field) => renderRow(field.id, FileText, field.label, field.displayValue || 'Sin dato', null, () => {
             setEditingCustomField(field);
             setCustomFieldDraft(field.value);
           })) : <ContactInfoText style={styles.contactInfoLightEmpty}>No hay campos personalizados creados en Ajustes.</ContactInfoText>}
