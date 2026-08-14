@@ -8918,8 +8918,12 @@ despliegue de la reparación. El avance de borrado se actualiza por lote en ese
 mismo plan: un reinicio no puede hacer que se olvide una compactación grande ya
 necesaria. En PostgreSQL, cada lote descuenta las métricas agregadas una sola vez
 por shard dentro de la misma transacción y marca sus renglones derivados antes de
-borrar los eventos; el trigger conserva la consistencia sin ejecutar millones de
-actualizaciones individuales sobre el resumen. En
+borrar los eventos. Después elimina esos renglones derivados en bloque y activa
+un flag local de transacción para que el trigger padre no repita una búsqueda
+indexada por cada evento. Ese flag no afecta otras conexiones: los eventos vivos
+siguen proyectando sus métricas normalmente mientras la reparación avanza. Así se
+conserva la consistencia sin ejecutar millones de actualizaciones o búsquedas
+individuales sobre el resumen y su ledger. En
 segundo plano elimina únicamente repeticiones de esos mismos
 contacto + canal + mensaje para `agent_not_matched`, supresiones de canal y
 retries de handoff/medida preventiva. También retira los errores legacy que no

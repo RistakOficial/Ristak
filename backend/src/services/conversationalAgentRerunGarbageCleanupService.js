@@ -331,6 +331,18 @@ async function deleteEventIds(database, ids) {
         `)
       }
 
+      // Retiramos el ledger en bloque antes de borrar el historial padre. La
+      // función del trigger padre reconoce este flag local y evita repetir un
+      // DELETE indexado por cada evento. El flag vive sólo en esta transacción:
+      // las inserciones/actualizaciones normales de otras conexiones conservan
+      // su proyección de métricas sin interrupciones.
+      await transactionDb.run(`
+        DELETE FROM conversational_agent_event_metric_rows
+        WHERE event_id IN (${placeholders})
+      `, ids)
+      await transactionDb.exec(
+        "SELECT set_config('ristak.skip_conversational_event_metrics_reproject', 'on', true)"
+      )
       await transactionDb.run(
         `DELETE FROM conversational_agent_events WHERE id IN (${placeholders})`,
         ids

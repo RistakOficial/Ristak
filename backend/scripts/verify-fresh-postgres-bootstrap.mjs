@@ -158,6 +158,27 @@ try {
     Number(summaryBeforeCleanup.total) - 6
   )
 
+  // El bypass de la reparación es LOCAL a su transacción. Un evento normal
+  // insertado después debe seguir alimentando el ledger y el summary.
+  const liveEventId = `postgres_cleanup_live_${cleanupSuffix}`
+  await database.db.run(`
+    INSERT INTO conversational_agent_events (
+      id, contact_id, event_type, detail_json, created_at
+    ) VALUES (?, ?, 'reply_sent', '{}', CURRENT_TIMESTAMP)
+  `, [liveEventId, cleanupContactId])
+  const liveProjection = await database.db.get(`
+    SELECT
+      (SELECT COUNT(*) FROM conversational_agent_event_metric_rows
+       WHERE event_id = ?) AS metric_rows,
+      (SELECT COALESCE(SUM(total_events), 0)
+       FROM conversational_agent_event_metric_summary) AS summary_total
+  `, [liveEventId])
+  assert.equal(Number(liveProjection.metric_rows), 1)
+  assert.equal(
+    Number(liveProjection.summary_total),
+    Number(cleanupEvidence.summary_total) + 1
+  )
+
   console.log(`Bootstrap PostgreSQL limpio verificado en schema efímero (${Number(migrations.total)} migraciones registradas).`)
 } finally {
   pg.default.Pool = OriginalPool
