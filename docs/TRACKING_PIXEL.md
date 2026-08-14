@@ -820,17 +820,33 @@ la playlist ni el iframe de Bunny Stream, porque apagar sólo `/video-event` no
 evitaría que el proveedor contabilizara esa reproducción. Un asset Stream-only
 sin copia Storage queda temporalmente no disponible en ese modo.
 
-El inventario de Analíticas no depende del ownership histórico del upload. Un
-video pertenece al alcance de un Site cuando existe cualquiera de estas
-relaciones actuales: `module_entity_id` legacy, binding estable en
-`public_site_content_assets`, `mediaAssetId` del bloque o URL Storage canónica en
-un bloque `video`. Un mismo asset puede tener varios orígenes y el filtro debe
-conservarlos todos. Los bloques por URL se resuelven también al renderizar para
-que eventos nuevos guarden `media_asset_id`, incluso si el asset sólo tiene
-Storage. Para eventos históricos que llegaron sin asset ni Stream, la lectura
-puede recuperar el asset desde el bloque actual únicamente si el evento ocurrió
-después de `public_site_blocks.updated_at`; nunca atribuye actividad anterior a
-una reasociación posterior.
+El inventario de Analíticas usa `site_video_placements` como bitácora de cada
+intervalo en que un video estuvo colocado en un Site, bloque y página. Crear,
+mover, reemplazar, restaurar o quitar un bloque abre o cierra su intervalo dentro
+de la misma transacción que modifica el bloque; quitarlo nunca borra
+`video_playback_events`. Cada fila conserva los snapshots de nombre, URL,
+`public_page_id`, título y ruta de la página, además de `activated_at`,
+`deactivated_at` y el motivo de cierre. Por eso el selector sigue ofreciendo el
+video después de retirarlo, lo etiqueta como `Activo` o `Desactivado` y muestra
+la página donde estuvo. Si un mismo asset conserva alguna colocación activa en
+el alcance seleccionado, su estado agregado sigue siendo activo y el detalle
+mantiene todas sus colocaciones históricas.
+
+Las relaciones actuales (`public_site_content_assets`, `mediaAssetId` o URL
+Storage de un bloque) siguen cubriendo imports y writers legacy que aún no pasen
+por el servicio. El ownership `module_entity_id` es sólo el último fallback y
+deja de declarar un video activo en cuanto ya existe historial de colocaciones;
+así un upload antiguo no resucita falsamente después de borrar su bloque. La
+migración versionada `161*` crea índices de una sola colocación activa por bloque,
+precarga bloques y bindings vigentes y recupera como desactivados los videos con
+eventos históricos que ya no tienen una relación actual. Un mismo asset puede
+tener varios orígenes y el filtro debe conservarlos todos. Los bloques por URL se
+resuelven también al renderizar para que eventos nuevos guarden
+`media_asset_id`, incluso si el asset sólo tiene Storage. Para eventos históricos
+que llegaron sin asset ni Stream, la lectura puede recuperar el asset desde el
+bloque actual únicamente si el evento ocurrió después de
+`public_site_blocks.updated_at`; nunca atribuye actividad anterior a una
+reasociación posterior.
 
 El editor distingue **reemplazar el archivo** de **reiniciar la analítica**. Si
 un bloque nativo ya tiene video, el control muestra `Reemplazar video` y, antes

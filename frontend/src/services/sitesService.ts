@@ -610,6 +610,8 @@ export interface SitesAnalyticsInventory {
   }
   videos: {
     total: number
+    active: number
+    inactive: number
     streamReady: number
     storageOnly: number
     originsTotal: number

@@ -48,6 +48,10 @@ import {
   findMediaAssetsByBunnyStreamVideoIds,
   findMediaAssetsByPublicUrls
 } from './mediaStorageService.js'
+import {
+  deactivateAllSiteVideoPlacements,
+  transitionSiteVideoPlacement
+} from './siteVideoPlacementService.js'
 import { getMetaConfig, hasConnectedMetaDatasetConfig, resolveMetaCapiAccessToken } from './metaAdsService.js'
 import { createSession, linkVisitorToContact, unifyVisitorIds } from './trackingService.js'
 import {
@@ -10678,31 +10682,124 @@ function getSitesVideoSourceUnionSql() {
     NULLIF(TRIM(COALESCE(video_block.content, '')), '')
   )`
 
-  // Una relación actual gana sobre el ownership histórico del upload. Esto
-  // cubre Media compartida, bindings estables de HTML y bloques que todavía
-  // guardan la URL Storage sin haber persistido mediaAssetId.
+  // Las colocaciones son la fuente histórica. Las relaciones actuales cubren
+  // filas creadas fuera del servicio (imports/legacy) y el ownership del upload
+  // sólo se conserva como último fallback mientras no exista una colocación que
+  // ya haya determinado si ese video sigue activo o fue retirado.
   return `
-    SELECT legacy_media.id AS media_asset_id, legacy_media.module_entity_id AS site_id
+    SELECT
+      COALESCE(placement_lineage.canonical_asset_id, placement.canonical_asset_id) AS media_asset_id,
+      placement.media_asset_id AS source_media_asset_id,
+      placement.site_id,
+      placement.block_id,
+      placement.public_page_id,
+      placement.page_title,
+      placement.page_path,
+      CASE WHEN placement.deactivated_at IS NULL THEN 'active' ELSE 'inactive' END AS placement_status,
+      placement.activated_at,
+      placement.deactivated_at,
+      placement.deactivation_reason,
+      'placement' AS source_kind
+    FROM site_video_placements placement
+    LEFT JOIN site_video_metric_lineage placement_lineage
+      ON placement_lineage.site_id = placement.site_id
+      AND placement_lineage.block_id = placement.block_id
+      AND placement_lineage.asset_id = placement.media_asset_id
+    UNION ALL
+    SELECT
+      content_asset.media_asset_id,
+      content_asset.media_asset_id,
+      content_asset.site_id,
+      'content_asset:' || content_asset.id,
+      'page-1',
+      'Página HTML',
+      '/',
+      'active',
+      content_asset.created_at,
+      NULL,
+      NULL,
+      'content_asset'
+    FROM public_site_content_assets content_asset
+    WHERE content_asset.media_asset_id IS NOT NULL
+      AND content_asset.media_asset_id != ''
+    UNION ALL
+    SELECT
+      COALESCE(explicit_lineage.canonical_asset_id, explicit_media.id),
+      explicit_media.id,
+      video_block.site_id,
+      video_block.id,
+      COALESCE(
+        NULLIF(${getSitesVideoBlockSettingTextExpression('video_block', 'pageId')}, ''),
+        NULLIF(${getSitesVideoBlockSettingTextExpression('video_block', 'page_id')}, ''),
+        'page-1'
+      ),
+      NULL,
+      NULL,
+      'active',
+      video_block.created_at,
+      NULL,
+      NULL,
+      'block'
+    FROM public_site_blocks video_block
+    INNER JOIN media_assets explicit_media ON explicit_media.id = ${mediaAssetId}
+    LEFT JOIN site_video_metric_lineage explicit_lineage
+      ON explicit_lineage.site_id = video_block.site_id
+      AND explicit_lineage.block_id = video_block.id
+      AND explicit_lineage.asset_id = explicit_media.id
+    WHERE video_block.block_type = 'video'
+    UNION ALL
+    SELECT
+      COALESCE(url_lineage.canonical_asset_id, url_media.id),
+      url_media.id,
+      video_block.site_id,
+      video_block.id,
+      COALESCE(
+        NULLIF(${getSitesVideoBlockSettingTextExpression('video_block', 'pageId')}, ''),
+        NULLIF(${getSitesVideoBlockSettingTextExpression('video_block', 'page_id')}, ''),
+        'page-1'
+      ),
+      NULL,
+      NULL,
+      'active',
+      video_block.created_at,
+      NULL,
+      NULL,
+      'block_url'
+    FROM public_site_blocks video_block
+    INNER JOIN media_assets url_media ON url_media.public_url = ${mediaUrl}
+    LEFT JOIN site_video_metric_lineage url_lineage
+      ON url_lineage.site_id = video_block.site_id
+      AND url_lineage.block_id = video_block.id
+      AND url_lineage.asset_id = url_media.id
+    WHERE video_block.block_type = 'video'
+      AND ${mediaAssetId} IS NULL
+    UNION ALL
+    SELECT
+      legacy_media.id,
+      legacy_media.id,
+      legacy_media.module_entity_id,
+      'legacy_upload:' || legacy_media.id,
+      NULL,
+      NULL,
+      NULL,
+      'active',
+      legacy_media.created_at,
+      NULL,
+      NULL,
+      'legacy_upload'
     FROM media_assets legacy_media
     WHERE legacy_media.module IN ('sites', 'forms')
       AND legacy_media.module_entity_id IS NOT NULL
       AND legacy_media.module_entity_id != ''
-    UNION
-    SELECT content_asset.media_asset_id, content_asset.site_id
-    FROM public_site_content_assets content_asset
-    WHERE content_asset.media_asset_id IS NOT NULL
-      AND content_asset.media_asset_id != ''
-    UNION
-    SELECT explicit_media.id, video_block.site_id
-    FROM public_site_blocks video_block
-    INNER JOIN media_assets explicit_media ON explicit_media.id = ${mediaAssetId}
-    WHERE video_block.block_type = 'video'
-      AND ${mediaUrl} IS NULL
-    UNION
-    SELECT url_media.id, video_block.site_id
-    FROM public_site_blocks video_block
-    INNER JOIN media_assets url_media ON url_media.public_url = ${mediaUrl}
-    WHERE video_block.block_type = 'video'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM site_video_placements placement_history
+        WHERE placement_history.site_id = legacy_media.module_entity_id
+          AND (
+            placement_history.media_asset_id = legacy_media.id
+            OR placement_history.canonical_asset_id = legacy_media.id
+          )
+      )
   `
 }
 
@@ -10734,25 +10831,81 @@ function mapSitesVideoSourceMetadata(sourceSiteRow = {}) {
   }
 }
 
+function mapSitesVideoPlacementMetadata(row = {}) {
+  const sourceTheme = parseJson(row.source_site_theme_json, {})
+  const sourceSite = {
+    id: cleanString(row.source_site_id),
+    name: cleanString(row.source_site_name) || 'Sitio sin nombre',
+    siteType: cleanString(row.source_site_type),
+    theme: sourceTheme
+  }
+  const pages = normalizeSitePages(sourceSite)
+  const pageId = cleanString(row.public_page_id)
+  const page = pages.find(item => item.id === pageId) || null
+  const status = cleanString(row.placement_status) === 'inactive' ? 'inactive' : 'active'
+  return {
+    siteId: sourceSite.id,
+    siteName: sourceSite.name,
+    siteType: sourceSite.siteType,
+    pageId,
+    pageTitle: cleanString(row.page_title) || cleanString(page?.title) || (pageId ? 'Página histórica' : ''),
+    pagePath: cleanString(row.page_path) || (page ? buildPublicPageRoutePath(sourceSite, page.id) : ''),
+    blockId: cleanString(row.block_id),
+    sourceMediaAssetId: cleanString(row.source_media_asset_id || row.media_asset_id),
+    status,
+    activatedAt: row.activated_at || null,
+    deactivatedAt: row.deactivated_at || null,
+    deactivationReason: cleanString(row.deactivation_reason),
+    sourceKind: cleanString(row.source_kind)
+  }
+}
+
 function attachSitesVideoSourceMetadata(asset, sourceSiteRows = []) {
   if (!asset) return null
   const rows = Array.isArray(sourceSiteRows) ? sourceSiteRows : [sourceSiteRows]
+  const placements = []
+  const seenPlacements = new Set()
+  for (const row of rows) {
+    const placement = mapSitesVideoPlacementMetadata(row)
+    const placementKey = [
+      placement.siteId,
+      placement.blockId,
+      placement.sourceMediaAssetId,
+      placement.pageId,
+      placement.status,
+      placement.deactivatedAt || ''
+    ].join(':')
+    if (!placement.siteId || seenPlacements.has(placementKey)) continue
+    seenPlacements.add(placementKey)
+    placements.push(placement)
+  }
   const sourceSites = []
   const seen = new Set()
-  for (const row of rows) {
+  const orderedRows = [
+    ...rows.filter(row => cleanString(row.placement_status) !== 'inactive'),
+    ...rows.filter(row => cleanString(row.placement_status) === 'inactive')
+  ]
+  for (const row of orderedRows) {
     const sourceSite = mapSitesVideoSourceMetadata(row)
     if (!sourceSite.id || seen.has(sourceSite.id)) continue
     seen.add(sourceSite.id)
     sourceSites.push(sourceSite)
   }
   if (!sourceSites.length) return null
+  const lifecycleStatus = placements.some(placement => placement.status === 'active')
+    ? 'active'
+    : 'inactive'
 
   return {
     ...asset,
     metadata: {
       ...(asset.metadata || {}),
       analyticsSourceSite: sourceSites[0],
-      analyticsSourceSites: sourceSites
+      analyticsSourceSites: sourceSites,
+      analyticsLifecycleStatus: lifecycleStatus,
+      analyticsActive: lifecycleStatus === 'active',
+      analyticsPrimaryPlacement: placements.find(placement => placement.status === 'active') || placements[0] || null,
+      analyticsPlacements: placements
     }
   }
 }
@@ -10819,6 +10972,17 @@ export async function getSitesVideoAsset({
   const sourceSites = await db.all(`
     WITH ${getSitesVideoSourceCteSql('video_sources')}
     SELECT
+      video_sources.media_asset_id,
+      video_sources.source_media_asset_id,
+      video_sources.block_id,
+      video_sources.public_page_id,
+      video_sources.page_title,
+      video_sources.page_path,
+      video_sources.placement_status,
+      video_sources.activated_at,
+      video_sources.deactivated_at,
+      video_sources.deactivation_reason,
+      video_sources.source_kind,
       ps.id AS source_site_id,
       ps.name AS source_site_name,
       ps.site_type AS source_site_type,
@@ -10826,7 +10990,12 @@ export async function getSitesVideoAsset({
     FROM video_sources
     INNER JOIN public_sites ps ON ps.id = video_sources.site_id
     WHERE ${sourceClauses.join(' AND ')}
-    ORDER BY ps.updated_at DESC, ps.id ASC
+    ORDER BY
+      CASE WHEN video_sources.placement_status = 'active' THEN 0 ELSE 1 END,
+      CASE WHEN video_sources.source_kind = 'placement' THEN 0 ELSE 1 END,
+      video_sources.deactivated_at DESC,
+      ps.updated_at DESC,
+      ps.id ASC
   `, sourceParams)
   return sourceSites.length ? attachSitesVideoSourceMetadata(asset, sourceSites) : null
 }
@@ -10928,6 +11097,16 @@ export async function listSitesVideoAssets({
         WITH ${getSitesVideoSourceCteSql('video_sources')}
         SELECT
           video_sources.media_asset_id,
+          video_sources.source_media_asset_id,
+          video_sources.block_id,
+          video_sources.public_page_id,
+          video_sources.page_title,
+          video_sources.page_path,
+          video_sources.placement_status,
+          video_sources.activated_at,
+          video_sources.deactivated_at,
+          video_sources.deactivation_reason,
+          video_sources.source_kind,
           ps.id AS source_site_id,
           ps.name AS source_site_name,
           ps.site_type AS source_site_type,
@@ -10936,7 +11115,12 @@ export async function listSitesVideoAssets({
         INNER JOIN public_sites ps ON ps.id = video_sources.site_id
         WHERE video_sources.media_asset_id IN (${pageAssetIds.map(() => '?').join(', ')})
           AND ${siteClauses.join(' AND ')}
-        ORDER BY ps.updated_at DESC, ps.id ASC
+        ORDER BY
+          CASE WHEN video_sources.placement_status = 'active' THEN 0 ELSE 1 END,
+          CASE WHEN video_sources.source_kind = 'placement' THEN 0 ELSE 1 END,
+          video_sources.deactivated_at DESC,
+          ps.updated_at DESC,
+          ps.id ASC
       `, [...pageAssetIds, ...siteParams])
     : []
   const sourceRowsByAssetId = new Map()
@@ -11023,6 +11207,10 @@ export async function getSitesVideoInventorySummary({
         WHEN m.stream_video_id IS NULL OR m.stream_video_id = '' THEN m.id
         ELSE NULL
       END) AS storage_only,
+      COUNT(DISTINCT CASE
+        WHEN video_sources.placement_status = 'active' THEN m.id
+        ELSE NULL
+      END) AS active_total,
       COUNT(DISTINCT ps.id) AS origins_total
     FROM media_assets m
     INNER JOIN video_sources ON video_sources.media_asset_id = m.id
@@ -11032,6 +11220,8 @@ export async function getSitesVideoInventorySummary({
 
   return {
     total: Number(row?.total || 0),
+    active: Number(row?.active_total || 0),
+    inactive: Math.max(0, Number(row?.total || 0) - Number(row?.active_total || 0)),
     streamReady: Number(row?.stream_ready || 0),
     storageOnly: Number(row?.storage_only || 0),
     originsTotal: Number(row?.origins_total || 0)
@@ -15701,6 +15891,23 @@ function mapSiteContentAssetRow(row = {}, mediaAsset = null) {
   }
 }
 
+function siteContentVideoPlacementBlock(row = {}) {
+  return {
+    id: `content_asset:${cleanString(row.id)}`,
+    site_id: cleanString(row.site_id),
+    block_type: 'video',
+    label: row.label || 'Video HTML',
+    content: '',
+    settings_json: jsonString({
+      mediaAssetId: cleanString(row.media_asset_id),
+      analyticsPageId: DEFAULT_FUNNEL_PAGE_ID,
+      analyticsPageTitle: 'Página HTML',
+      analyticsPagePath: '/'
+    }),
+    created_at: row.created_at || null
+  }
+}
+
 async function getReadyPublicMediaAsset(mediaAssetId) {
   const [asset] = await findMediaAssetsByIds([mediaAssetId])
   if (asset) return asset
@@ -15788,57 +15995,70 @@ export async function saveSiteContentAsset(siteId, input = {}) {
     }
   }
 
-  if (existing) {
-    await db.run(`
-      UPDATE public_site_content_assets SET
-        label = ?, kind = ?, media_asset_id = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND site_id = ?
-    `, [
-      cleanString(input.label || existing.label || mediaAsset.originalFilename || assetKey),
-      cleanString(input.kind || mediaAsset.mediaType || existing.kind || 'other'),
-      mediaAsset.id,
-      existing.id,
-      siteId
-    ])
-  } else if (explicitAssetKey) {
-    await db.run(`
-      INSERT INTO public_site_content_assets (
-        id, site_id, asset_key, label, kind, media_asset_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      ON CONFLICT(site_id, asset_key) DO UPDATE SET
-        label = excluded.label,
-        kind = excluded.kind,
-        media_asset_id = excluded.media_asset_id,
-        updated_at = CURRENT_TIMESTAMP
-    `, [
-      createRistakId('content_asset'),
-      siteId,
-      assetKey,
-      cleanString(input.label || mediaAsset.originalFilename || assetKey),
-      cleanString(input.kind || mediaAsset.mediaType || 'other'),
-      mediaAsset.id
-    ])
-  } else {
-    await db.run(`
-      INSERT INTO public_site_content_assets (
-        id, site_id, asset_key, label, kind, media_asset_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `, [
-      createRistakId('site_asset'),
-      siteId,
-      assetKey,
-      cleanString(input.label || mediaAsset.originalFilename || assetKey),
-      cleanString(input.kind || mediaAsset.mediaType || 'other'),
-      mediaAsset.id
-    ])
-  }
+  const row = await db.transaction(async tx => {
+    if (existing) {
+      await tx.run(`
+        UPDATE public_site_content_assets SET
+          label = ?, kind = ?, media_asset_id = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND site_id = ?
+      `, [
+        cleanString(input.label || existing.label || mediaAsset.originalFilename || assetKey),
+        cleanString(input.kind || mediaAsset.mediaType || existing.kind || 'other'),
+        mediaAsset.id,
+        existing.id,
+        siteId
+      ])
+    } else if (explicitAssetKey) {
+      await tx.run(`
+        INSERT INTO public_site_content_assets (
+          id, site_id, asset_key, label, kind, media_asset_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(site_id, asset_key) DO UPDATE SET
+          label = excluded.label,
+          kind = excluded.kind,
+          media_asset_id = excluded.media_asset_id,
+          updated_at = CURRENT_TIMESTAMP
+      `, [
+        createRistakId('content_asset'),
+        siteId,
+        assetKey,
+        cleanString(input.label || mediaAsset.originalFilename || assetKey),
+        cleanString(input.kind || mediaAsset.mediaType || 'other'),
+        mediaAsset.id
+      ])
+    } else {
+      await tx.run(`
+        INSERT INTO public_site_content_assets (
+          id, site_id, asset_key, label, kind, media_asset_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        createRistakId('site_asset'),
+        siteId,
+        assetKey,
+        cleanString(input.label || mediaAsset.originalFilename || assetKey),
+        cleanString(input.kind || mediaAsset.mediaType || 'other'),
+        mediaAsset.id
+      ])
+    }
 
-  const row = await db.get('SELECT * FROM public_site_content_assets WHERE site_id = ? AND asset_key = ? LIMIT 1', [siteId, assetKey])
-  if (!row) {
-    const error = new Error('No se pudo confirmar la asociación de contenido.')
-    error.status = 500
-    throw error
-  }
+    const savedRow = await tx.get(
+      'SELECT * FROM public_site_content_assets WHERE site_id = ? AND asset_key = ? LIMIT 1',
+      [siteId, assetKey]
+    )
+    if (!savedRow) {
+      const error = new Error('No se pudo confirmar la asociación de contenido.')
+      error.status = 500
+      throw error
+    }
+    await transitionSiteVideoPlacement({
+      transaction: tx,
+      siteId,
+      previousBlock: existing ? siteContentVideoPlacementBlock(existing) : null,
+      nextBlock: siteContentVideoPlacementBlock(savedRow),
+      deactivationReason: 'content_asset_replaced'
+    })
+    return savedRow
+  })
   const [resolvedMediaAsset] = row.media_asset_id === mediaAsset.id
     ? [mediaAsset]
     : await findMediaAssetsByIds([row.media_asset_id])
@@ -15852,7 +16072,16 @@ export async function deleteSiteContentAsset(siteId, bindingId) {
     error.status = 404
     throw error
   }
-  await db.run('DELETE FROM public_site_content_assets WHERE id = ? AND site_id = ?', [bindingId, siteId])
+  await db.transaction(async tx => {
+    await transitionSiteVideoPlacement({
+      transaction: tx,
+      siteId,
+      previousBlock: siteContentVideoPlacementBlock(row),
+      nextBlock: null,
+      deactivationReason: 'content_asset_deleted'
+    })
+    await tx.run('DELETE FROM public_site_content_assets WHERE id = ? AND site_id = ?', [bindingId, siteId])
+  })
   return { id: bindingId, deleted: true }
 }
 
@@ -18026,6 +18255,13 @@ export async function deleteSite(siteId) {
 
   const placeholders = deletionIds.map(() => '?').join(', ')
   await db.transaction(async tx => {
+    for (const deletionId of deletionIds) {
+      await deactivateAllSiteVideoPlacements({
+        transaction: tx,
+        siteId: deletionId,
+        reason: 'site_deleted'
+      })
+    }
     await tx.run(`DELETE FROM public_sites WHERE id IN (${placeholders})`, deletionIds)
     await tx.run(`
       UPDATE public_site_domains
@@ -18090,23 +18326,35 @@ export async function createBlock(siteId, input = {}) {
   }
   await assertUniqueSystemFieldForInput(siteId, site, { settings }, blockType)
 
-  await db.run(`
-    INSERT INTO public_site_blocks (
-      id, site_id, block_type, label, content, placeholder, required,
-      options_json, settings_json, sort_order, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-  `, [
-    id,
-    siteId,
-    blockType,
-    cleanString(input.label) || (isField ? 'Nueva pregunta' : 'Nuevo bloque'),
-    cleanString(input.content),
-    cleanString(input.placeholder),
-    normalizeBoolean(input.required),
-    jsonString(options),
-    jsonString(settings),
-    Number(last?.max_order || -1) + 1
-  ])
+  await db.transaction(async tx => {
+    await tx.run(`
+      INSERT INTO public_site_blocks (
+        id, site_id, block_type, label, content, placeholder, required,
+        options_json, settings_json, sort_order, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [
+      id,
+      siteId,
+      blockType,
+      cleanString(input.label) || (isField ? 'Nueva pregunta' : 'Nuevo bloque'),
+      cleanString(input.content),
+      cleanString(input.placeholder),
+      normalizeBoolean(input.required),
+      jsonString(options),
+      jsonString(settings),
+      Number(last?.max_order || -1) + 1
+    ])
+    const createdBlock = await tx.get(
+      'SELECT * FROM public_site_blocks WHERE id = ? AND site_id = ?',
+      [id, siteId]
+    )
+    await transitionSiteVideoPlacement({
+      transaction: tx,
+      siteId,
+      nextBlock: createdBlock,
+      deactivationReason: 'block_created'
+    })
+  })
 
   if (blockType === 'calendar_embed') {
     await ensureConnectedMetaCalendarSurfaceDefault(site, id)
@@ -18141,28 +18389,41 @@ export async function updateBlock(siteId, blockId, input = {}) {
   }
   await assertUniqueSystemFieldForInput(siteId, site, { settings: nextSettings }, blockType, blockId)
 
-  await db.run(`
-    UPDATE public_site_blocks SET
-      block_type = ?,
-      label = ?,
-      content = ?,
-      placeholder = ?,
-      required = ?,
-      options_json = ?,
-      settings_json = ?,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND site_id = ?
-  `, [
-    blockType,
-    input.label === undefined ? existing.label : cleanString(input.label),
-    input.content === undefined ? existing.content : cleanString(input.content),
-    input.placeholder === undefined ? existing.placeholder : cleanString(input.placeholder),
-    input.required === undefined ? normalizeBoolean(existing.required) : normalizeBoolean(input.required),
-    input.options === undefined ? existing.options_json : jsonString(Array.isArray(input.options) ? input.options : []),
-    jsonString(nextSettings),
-    blockId,
-    siteId
-  ])
+  await db.transaction(async tx => {
+    await tx.run(`
+      UPDATE public_site_blocks SET
+        block_type = ?,
+        label = ?,
+        content = ?,
+        placeholder = ?,
+        required = ?,
+        options_json = ?,
+        settings_json = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND site_id = ?
+    `, [
+      blockType,
+      input.label === undefined ? existing.label : cleanString(input.label),
+      input.content === undefined ? existing.content : cleanString(input.content),
+      input.placeholder === undefined ? existing.placeholder : cleanString(input.placeholder),
+      input.required === undefined ? normalizeBoolean(existing.required) : normalizeBoolean(input.required),
+      input.options === undefined ? existing.options_json : jsonString(Array.isArray(input.options) ? input.options : []),
+      jsonString(nextSettings),
+      blockId,
+      siteId
+    ])
+    const updatedBlock = await tx.get(
+      'SELECT * FROM public_site_blocks WHERE id = ? AND site_id = ?',
+      [blockId, siteId]
+    )
+    await transitionSiteVideoPlacement({
+      transaction: tx,
+      siteId,
+      previousBlock: existing,
+      nextBlock: updatedBlock,
+      deactivationReason: 'block_updated'
+    })
+  })
 
   if (blockType === 'calendar_embed' && existing.block_type !== 'calendar_embed') {
     await ensureConnectedMetaCalendarSurfaceDefault(site, blockId)
@@ -18195,10 +18456,21 @@ export async function deleteBlock(siteId, blockId) {
 
   const ids = [...deleteIds]
   const placeholders = ids.map(() => '?').join(', ')
-  await db.run(
-    `DELETE FROM public_site_blocks WHERE site_id = ? AND id IN (${placeholders})`,
-    [siteId, ...ids]
-  )
+  await db.transaction(async tx => {
+    for (const block of blocks.filter(item => deleteIds.has(item.id))) {
+      await transitionSiteVideoPlacement({
+        transaction: tx,
+        siteId,
+        previousBlock: block,
+        nextBlock: null,
+        deactivationReason: 'block_deleted'
+      })
+    }
+    await tx.run(
+      `DELETE FROM public_site_blocks WHERE site_id = ? AND id IN (${placeholders})`,
+      [siteId, ...ids]
+    )
+  })
   await compactBlockOrder(siteId)
   return getSite(siteId, { includeBlocks: true, includeSubmissions: true })
 }
@@ -18241,7 +18513,7 @@ export async function restoreBlocks(siteId, inputBlocks = []) {
     const isField = FIELD_BLOCK_TYPES.has(blockType)
     const sortOrder = Number(input.sortOrder ?? input.sort_order)
     const existing = await db.get(
-      'SELECT id FROM public_site_blocks WHERE id = ? AND site_id = ?',
+      'SELECT * FROM public_site_blocks WHERE id = ? AND site_id = ?',
       [id, siteId]
     )
     const inputSettings = isPlainObject(input.settings) ? input.settings : {}
@@ -18266,33 +18538,58 @@ export async function restoreBlocks(siteId, inputBlocks = []) {
     ]
 
     if (existing) {
-      await db.run(`
-        UPDATE public_site_blocks SET
-          block_type = ?,
-          label = ?,
-          content = ?,
-          placeholder = ?,
-          required = ?,
-          options_json = ?,
-          settings_json = ?,
-          sort_order = ?,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND site_id = ?
-      `, [...values, id, siteId])
+      await db.transaction(async tx => {
+        await tx.run(`
+          UPDATE public_site_blocks SET
+            block_type = ?,
+            label = ?,
+            content = ?,
+            placeholder = ?,
+            required = ?,
+            options_json = ?,
+            settings_json = ?,
+            sort_order = ?,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND site_id = ?
+        `, [...values, id, siteId])
+        const restoredBlock = await tx.get(
+          'SELECT * FROM public_site_blocks WHERE id = ? AND site_id = ?',
+          [id, siteId]
+        )
+        await transitionSiteVideoPlacement({
+          transaction: tx,
+          siteId,
+          previousBlock: existing,
+          nextBlock: restoredBlock,
+          deactivationReason: 'block_restored'
+        })
+      })
       continue
     }
 
-    await db.run(`
-      INSERT INTO public_site_blocks (
-        id, site_id, block_type, label, content, placeholder, required,
-        options_json, settings_json, sort_order, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
-    `, [
-      id,
-      siteId,
-      ...values,
-      cleanString(input.createdAt || input.created_at) || null
-    ])
+    await db.transaction(async tx => {
+      await tx.run(`
+        INSERT INTO public_site_blocks (
+          id, site_id, block_type, label, content, placeholder, required,
+          options_json, settings_json, sort_order, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+      `, [
+        id,
+        siteId,
+        ...values,
+        cleanString(input.createdAt || input.created_at) || null
+      ])
+      const restoredBlock = await tx.get(
+        'SELECT * FROM public_site_blocks WHERE id = ? AND site_id = ?',
+        [id, siteId]
+      )
+      await transitionSiteVideoPlacement({
+        transaction: tx,
+        siteId,
+        nextBlock: restoredBlock,
+        deactivationReason: 'block_restored'
+      })
+    })
   }
 
   return getSite(siteId, { includeBlocks: true, includeSubmissions: true })

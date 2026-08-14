@@ -207,6 +207,121 @@ test('la migración 160 crea el linaje y la bitácora de reemplazos de video', a
   }
 })
 
+test('la migración 161 crea y precarga el historial de colocaciones de video', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-site-video-placements-'))
+  const database = openMemoryDatabase()
+  const migrationName = '161_sites_video_placements.sqlite.sql'
+
+  try {
+    await database.exec(`
+      CREATE TABLE public_site_blocks (
+        id TEXT PRIMARY KEY,
+        site_id TEXT NOT NULL,
+        block_type TEXT NOT NULL,
+        label TEXT,
+        content TEXT,
+        settings_json TEXT,
+        created_at TIMESTAMP
+      );
+      CREATE TABLE media_assets (
+        id TEXT PRIMARY KEY,
+        original_filename TEXT,
+        stored_filename TEXT,
+        public_url TEXT,
+        stream_video_id TEXT,
+        media_type TEXT,
+        status TEXT,
+        deleted_at TIMESTAMP,
+        created_at TIMESTAMP
+      );
+      CREATE TABLE public_site_content_assets (
+        id TEXT PRIMARY KEY,
+        site_id TEXT NOT NULL,
+        label TEXT,
+        media_asset_id TEXT NOT NULL,
+        created_at TIMESTAMP
+      );
+      CREATE TABLE video_playback_events (
+        id TEXT PRIMARY KEY,
+        site_id TEXT,
+        block_id TEXT,
+        public_page_id TEXT,
+        page_url TEXT,
+        media_asset_id TEXT,
+        stream_video_id TEXT,
+        tracking_source TEXT,
+        event_at TIMESTAMP
+      );
+      CREATE TABLE site_video_metric_lineage (
+        site_id TEXT NOT NULL,
+        block_id TEXT NOT NULL,
+        asset_id TEXT NOT NULL,
+        canonical_asset_id TEXT NOT NULL,
+        PRIMARY KEY (site_id, block_id, asset_id)
+      );
+
+      INSERT INTO media_assets (
+        id, original_filename, stored_filename, public_url, media_type, status, created_at
+      ) VALUES
+        ('asset_active', 'activo.mp4', 'activo.mp4', 'https://media.test/activo.mp4', 'video', 'ready', '2026-08-01T10:00:00Z'),
+        ('asset_historical', 'historico.mp4', 'historico.mp4', 'https://media.test/historico.mp4', 'video', 'ready', '2026-07-01T10:00:00Z');
+      INSERT INTO public_site_blocks (
+        id, site_id, block_type, label, content, settings_json, created_at
+      ) VALUES (
+        'block_active', 'site_1', 'video', 'Video activo', '',
+        '{"mediaAssetId":"asset_active","pageId":"offer"}',
+        '2026-08-01T10:00:00Z'
+      );
+      INSERT INTO video_playback_events (
+        id, site_id, block_id, public_page_id, page_url, media_asset_id,
+        tracking_source, event_at
+      ) VALUES (
+        'event_historical', 'site_1', 'block_deleted', 'old-page',
+        'https://example.test/old-page', 'asset_historical',
+        'native_site_video', '2026-07-02T10:00:00Z'
+      );
+    `)
+    await copyFile(
+      new URL(`../migrations/versioned/${migrationName}`, import.meta.url),
+      join(directory, migrationName)
+    )
+
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 1, skipped: 0 }
+    )
+
+    const columns = await database.all("PRAGMA table_info('site_video_placements')")
+    assert.ok(columns.some(column => column.name === 'public_page_id'))
+    assert.ok(columns.some(column => column.name === 'deactivated_at'))
+
+    const indexes = await database.all("PRAGMA index_list('site_video_placements')")
+    assert.ok(indexes.some(index => index.name === 'idx_site_video_placements_active_block' && Number(index.unique) === 1))
+    assert.ok(indexes.some(index => index.name === 'idx_site_video_placements_canonical'))
+
+    const [active] = await database.all(`
+      SELECT * FROM site_video_placements
+      WHERE media_asset_id = 'asset_active' AND deactivated_at IS NULL
+    `)
+    assert.equal(active.public_page_id, 'offer')
+
+    const [historical] = await database.all(`
+      SELECT * FROM site_video_placements
+      WHERE media_asset_id = 'asset_historical' AND deactivated_at IS NOT NULL
+    `)
+    assert.equal(historical.public_page_id, 'old-page')
+    assert.equal(historical.deactivation_reason, 'historical_event')
+
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 0, skipped: 0 }
+    )
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('SQLite repara el contador de intentos y la visibilidad del chat antes de migrar', async () => {
   const database = openMemoryDatabase()
 

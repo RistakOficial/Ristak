@@ -6947,9 +6947,32 @@ async function initTablesUnlocked() {
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `)
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS site_video_placements (
+        id TEXT PRIMARY KEY,
+        site_id TEXT NOT NULL,
+        block_id TEXT NOT NULL,
+        media_asset_id TEXT NOT NULL,
+        canonical_asset_id TEXT NOT NULL,
+        public_page_id TEXT,
+        page_title TEXT,
+        page_path TEXT,
+        asset_name TEXT,
+        asset_public_url TEXT,
+        stream_video_id TEXT,
+        activated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        deactivated_at TIMESTAMP,
+        deactivation_reason TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
     await db.run('CREATE INDEX IF NOT EXISTS idx_site_video_metric_lineage_canonical ON site_video_metric_lineage(canonical_asset_id, site_id, block_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_site_video_replacements_block ON site_video_replacements(site_id, block_id, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_site_video_replacements_assets ON site_video_replacements(previous_asset_id, replacement_asset_id)')
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_site_video_placements_active_block ON site_video_placements(site_id, block_id) WHERE deactivated_at IS NULL')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_site_video_placements_canonical ON site_video_placements(canonical_asset_id, site_id, deactivated_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_site_video_placements_asset ON site_video_placements(media_asset_id, site_id, deactivated_at)')
 
     for (const [columnName, columnType] of [
       ['event_sequence', 'INTEGER'],

@@ -173,6 +173,8 @@ test('el inventario reconoce bindings HTML, bloques por URL y videos compartidos
     })
     assert.deepEqual(inventory, {
       total: 2,
+      active: 2,
+      inactive: 0,
       streamReady: 0,
       storageOnly: 2,
       originsTotal: 2
@@ -604,6 +606,11 @@ test('el frontend pide previews por streamVideoId y resume Sites por scope sin e
   assert.doesNotMatch(frontendSource, /analyticsSiteIds\.has\(sourceSiteId\)/)
   assert.match(frontendSource, /analyticsSourceSite/)
   assert.match(frontendSource, /analyticsSourceSites/)
+  assert.match(frontendSource, /analyticsPlacements/)
+  assert.match(frontendSource, /analyticsLifecycleStatus/)
+  assert.match(frontendSource, /Página:/)
+  assert.match(frontendSource, /'Activo'/)
+  assert.match(frontendSource, /'Desactivado'/)
   assert.match(frontendSource, /getMediaSourceSiteIds/)
   assert.match(frontendSource, /getMediaSourceSiteName/)
   assert.match(frontendSource, /analyticsVideoOriginOptions/)

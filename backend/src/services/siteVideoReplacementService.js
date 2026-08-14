@@ -1,5 +1,6 @@
 import { databaseDialect, db } from '../config/database.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { transitionSiteVideoPlacement } from './siteVideoPlacementService.js'
 
 export const SITE_VIDEO_METRICS_MODES = Object.freeze(['preserve', 'reset'])
 
@@ -101,7 +102,7 @@ export async function replaceSiteVideo({
     if (!site) throw fail('El Site ya no existe.', 404, 'site_not_found')
 
     const block = await transaction.get(`
-      SELECT id, site_id, block_type, content, settings_json
+      SELECT id, site_id, block_type, label, content, settings_json, created_at
       FROM public_site_blocks
       WHERE id = ? AND site_id = ?${lock}
     `, [normalizedBlockId, normalizedSiteId])
@@ -177,6 +178,23 @@ export async function replaceSiteVideo({
       await upsertMetricLineage(transaction, normalizedSiteId, normalizedBlockId, currentCanonicalAssetId, replacementAssetId)
       await upsertMetricLineage(transaction, normalizedSiteId, normalizedBlockId, currentAssetId, replacementAssetId)
       await upsertMetricLineage(transaction, normalizedSiteId, normalizedBlockId, replacementCanonicalAssetId, replacementAssetId)
+      await transaction.run(`
+        UPDATE site_video_placements
+        SET canonical_asset_id = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE site_id = ? AND block_id = ?
+          AND (
+            canonical_asset_id IN (?, ?)
+            OR media_asset_id IN (?, ?)
+          )
+      `, [
+        replacementAssetId,
+        normalizedSiteId,
+        normalizedBlockId,
+        currentCanonicalAssetId,
+        replacementCanonicalAssetId,
+        currentAssetId,
+        replacementAssetId
+      ])
     }
     await upsertMetricLineage(transaction, normalizedSiteId, normalizedBlockId, replacementAssetId, canonicalAssetId)
 
@@ -198,6 +216,20 @@ export async function replaceSiteVideo({
       SET content = ?, settings_json = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND site_id = ?
     `, [nextContent, JSON.stringify(nextSettings), normalizedBlockId, normalizedSiteId])
+    const updatedBlock = await transaction.get(`
+      SELECT id, site_id, block_type, label, content, settings_json, created_at
+      FROM public_site_blocks
+      WHERE id = ? AND site_id = ?
+    `, [normalizedBlockId, normalizedSiteId])
+    await transitionSiteVideoPlacement({
+      transaction,
+      siteId: normalizedSiteId,
+      previousBlock: block,
+      nextBlock: updatedBlock,
+      deactivationReason: mode === 'preserve' ? 'video_replaced_preserve' : 'video_replaced_reset',
+      previousCanonicalAssetId: mode === 'preserve' ? replacementAssetId : '',
+      nextCanonicalAssetId: replacementAssetId
+    })
 
     const replacementId = createRistakId('site_video_replacement')
     await transaction.run(`
