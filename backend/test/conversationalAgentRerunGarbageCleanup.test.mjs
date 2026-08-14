@@ -5,7 +5,8 @@ import { db, databaseReady } from '../src/config/database.js'
 import {
   CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION,
   buildConversationalRerunGarbageCleanupPlan,
-  runConversationalRerunGarbageCleanup
+  runConversationalRerunGarbageCleanup,
+  runConversationalRerunGarbageCleanupUntilComplete
 } from '../src/services/conversationalAgentRerunGarbageCleanupService.js'
 
 await databaseReady
@@ -25,6 +26,36 @@ const CLEANUP_CONFIG_KEYS = [
   'conversational_rerun_garbage_compaction',
   'conversational_rerun_garbage_cleanup_plan'
 ]
+
+test('retoma la limpieza cuando la instancia anterior libera el candado', async () => {
+  const calls = []
+  const waits = []
+  const database = { name: 'fake-database' }
+  const expected = { version: CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION }
+
+  const result = await runConversationalRerunGarbageCleanupUntilComplete(
+    { seeds: [{ contactId: 'contact-1', messageId: 'message-1', channel: 'whatsapp' }] },
+    {
+      database,
+      retryInitialDelayMs: 5,
+      retryMaxDelayMs: 20,
+      sleepFn: async (delayMs) => waits.push(delayMs),
+      runCleanup: async (plan, options) => {
+        calls.push({ plan, database: options.database })
+        return calls.length === 1
+          ? { skipped: true, reason: 'already-running' }
+          : expected
+      }
+    }
+  )
+
+  assert.equal(result, expected)
+  assert.deepEqual(waits, [5])
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0].database, database)
+  assert.equal(calls[0].plan.seeds.length, 1)
+  assert.equal(calls[1].plan, null)
+})
 
 async function insertEvent({ id, contactId, eventType, detail, createdAt }) {
   await db.run(`

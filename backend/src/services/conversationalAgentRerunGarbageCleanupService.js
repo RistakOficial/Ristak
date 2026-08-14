@@ -1,4 +1,8 @@
-import { databaseDialect, db } from '../config/database.js'
+import {
+  databaseDialect,
+  db,
+  isTransientPostgresConnectionError
+} from '../config/database.js'
 import { logger } from '../utils/logger.js'
 
 export const CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION = '2026-08-14-v2'
@@ -6,6 +10,8 @@ const CLEANUP_CONFIG_KEY = 'conversational_rerun_garbage_cleanup'
 const COMPACTION_CONFIG_KEY = 'conversational_rerun_garbage_compaction'
 const CLEANUP_PLAN_CONFIG_KEY = 'conversational_rerun_garbage_cleanup_plan'
 const CLEANUP_LOCK_KEY = 'conversational-rerun-garbage-cleanup'
+const CLEANUP_RETRY_INITIAL_DELAY_MS = 15_000
+const CLEANUP_RETRY_MAX_DELAY_MS = 60_000
 const CLEANUP_PAGE_SIZE = databaseDialect === 'postgres' ? 2_000 : 250
 const FULL_COMPACTION_MIN_DELETED_ROWS = 10_000
 const EVENT_METRIC_TOTAL_COLUMNS = Object.freeze([
@@ -517,5 +523,41 @@ export async function runConversationalRerunGarbageCleanup(plan = null, {
       return { skipped: true, reason: 'already-running' }
     }
     throw error
+  }
+}
+
+export async function runConversationalRerunGarbageCleanupUntilComplete(plan = null, {
+  database = db,
+  retryInitialDelayMs = CLEANUP_RETRY_INITIAL_DELAY_MS,
+  retryMaxDelayMs = CLEANUP_RETRY_MAX_DELAY_MS,
+  sleepFn = sleep,
+  runCleanup = runConversationalRerunGarbageCleanup
+} = {}) {
+  let nextPlan = plan
+  let retryDelayMs = Math.max(0, Number(retryInitialDelayMs) || 0)
+  const maxRetryDelayMs = Math.max(retryDelayMs, Number(retryMaxDelayMs) || 0)
+
+  while (true) {
+    try {
+      const result = await runCleanup(nextPlan, { database })
+      if (result?.reason !== 'already-running') return result
+      logger.info(
+        `[Agente conversacional] La limpieza histórica sigue en otra instancia; ` +
+        `se reintentará en ${retryDelayMs}ms.`
+      )
+    } catch (error) {
+      if (!isTransientPostgresConnectionError(error)) throw error
+      logger.warn(
+        `[Agente conversacional] PostgreSQL interrumpió la limpieza histórica; ` +
+        `se reintentará en ${retryDelayMs}ms: ${error.message}`
+      )
+    }
+
+    await sleepFn(retryDelayMs)
+    nextPlan = null
+    retryDelayMs = Math.min(
+      maxRetryDelayMs,
+      Math.max(retryDelayMs + 1, retryDelayMs * 2)
+    )
   }
 }

@@ -8930,9 +8930,11 @@ y una evidencia de escalación. El borrado normal mantiene exacto
 el ledger de métricas mediante sus triggers. Si se retiraron al menos 10,000
 filas, compacta exclusivamente `conversational_agent_events` y
 `conversational_agent_event_metric_rows` con `VACUUM FULL`, límites de espera y
-marcador durable; si no obtiene el lock, la compactación queda sin marcar y se
-reintenta en el siguiente arranque. Instalaciones sin basura quedan marcadas sin
-barridos amplios ni borrado de historial legítimo.
+marcador durable. Si durante un despliegue la instancia anterior todavía tiene
+el lock, o PostgreSQL corta temporalmente la conexión, la instancia nueva
+reintenta con espera creciente hasta retomar el plan durable; no abandona la
+limpieza ni depende de otro reinicio. Instalaciones sin basura quedan marcadas
+sin barridos amplios ni borrado de historial legítimo.
 
 Un `match` crea `handoff_rule_pending`, una obligacion durable identificada por
 contacto, agente, canal, revision completa de politica, scope de conversacion y

@@ -148,7 +148,7 @@ import { publicIngestionJsonMiddleware } from './middleware/publicIngestionJson.
 import { recoverPendingConversationalAgentConversations } from './agents/conversational/runner.js'
 import {
   buildConversationalRerunGarbageCleanupPlan,
-  runConversationalRerunGarbageCleanup
+  runConversationalRerunGarbageCleanupUntilComplete
 } from './services/conversationalAgentRerunGarbageCleanupService.js'
 import {
   recoverPendingConversationGoalCompletionEffects,
@@ -817,7 +817,7 @@ async function startRuntimeServices() {
 
   runStartupDrainTask(
     'startup:conversational-rerun-garbage-cleanup',
-    () => runConversationalRerunGarbageCleanup(
+    () => runConversationalRerunGarbageCleanupUntilComplete(
       conversationalRerunGarbageCleanupPlan
     ),
     'No se pudo limpiar o compactar la auditoría duplicada de reruns'
