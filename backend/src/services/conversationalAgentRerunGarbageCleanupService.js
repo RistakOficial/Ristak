@@ -304,14 +304,6 @@ async function deleteEventIds(database, ids) {
         ORDER BY summary_shard ASC
       `, ids)
 
-      await transactionDb.run(`
-        UPDATE conversational_agent_event_metric_rows
-        SET included = 0,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE included = 1
-          AND event_id IN (${placeholders})
-      `, ids)
-
       if (metricDeltas.length > 0) {
         const deltaRows = metricDeltas.map(() => `(
           CAST(? AS INTEGER),
@@ -341,17 +333,18 @@ async function deleteEventIds(database, ids) {
       }
 
       // Retiramos el ledger en bloque antes de borrar el historial padre. La
-      // función del trigger padre reconoce este flag local y evita repetir un
-      // DELETE indexado por cada evento. El flag vive sólo en esta transacción:
-      // las inserciones/actualizaciones normales de otras conexiones conservan
+      // guarda de ambos triggers reconoce este flag local: el ledger ya fue
+      // descontado por shard y el padre no necesita repetir un DELETE indexado
+      // por evento. Así evitamos actualizar cada ledger justo antes de borrarlo.
+      // El flag vive sólo en esta transacción; las conexiones normales conservan
       // su proyección de métricas sin interrupciones.
+      await transactionDb.exec(
+        "SELECT set_config('ristak.skip_conversational_event_metrics_reproject', 'on', true)"
+      )
       await transactionDb.run(`
         DELETE FROM conversational_agent_event_metric_rows
         WHERE event_id IN (${placeholders})
       `, ids)
-      await transactionDb.exec(
-        "SELECT set_config('ristak.skip_conversational_event_metrics_reproject', 'on', true)"
-      )
       await transactionDb.run(
         `DELETE FROM conversational_agent_events WHERE id IN (${placeholders})`,
         ids

@@ -8926,7 +8926,10 @@ conserva la consistencia sin ejecutar millones de actualizaciones o búsquedas
 individuales sobre el resumen y su ledger. Los triggers de borrado llevan además
 guardas declarativas: el ledger no invoca su función cuando el renglón ya quedó
 fuera del resumen, y el evento padre no dispara la reproyección cuando la sesión
-de mantenimiento activó ese flag local. En
+de mantenimiento activó ese flag local. Como el resumen ya fue descontado por
+shard, esa sesión borra directamente el ledger sin escribir primero
+`included=0`; evita crear una versión muerta adicional de cada fila justo antes
+de eliminarla. En
 segundo plano elimina únicamente repeticiones de esos mismos
 contacto + canal + mensaje para `agent_not_matched`, supresiones de canal y
 retries de handoff/medida preventiva. También retira los errores legacy que no
