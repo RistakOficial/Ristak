@@ -1,9 +1,10 @@
 import { databaseDialect, db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 
-export const CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION = '2026-08-14-v1'
+export const CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION = '2026-08-14-v2'
 const CLEANUP_CONFIG_KEY = 'conversational_rerun_garbage_cleanup'
 const COMPACTION_CONFIG_KEY = 'conversational_rerun_garbage_compaction'
+const CLEANUP_PLAN_CONFIG_KEY = 'conversational_rerun_garbage_cleanup_plan'
 const CLEANUP_LOCK_KEY = 'conversational-rerun-garbage-cleanup'
 const CLEANUP_PAGE_SIZE = databaseDialect === 'postgres' ? 2_000 : 250
 const FULL_COMPACTION_MIN_DELETED_ROWS = 10_000
@@ -61,9 +62,9 @@ async function writeConfig(database, key, value) {
 function uniqueCleanupSeeds(rows = []) {
   const seeds = new Map()
   for (const row of rows) {
-    const payload = safeJsonParse(row?.payload, {}) || {}
-    const contactId = String(payload.contactId || row?.contact_id || '').trim()
-    const messageId = String(payload.messageId || '').trim()
+    const payload = safeJsonParse(row?.payload ?? row?.detail_json, {}) || {}
+    const contactId = String(payload.contactId || row?.contactId || row?.contact_id || '').trim()
+    const messageId = String(payload.messageId || row?.messageId || '').trim()
     const channel = normalizeChannel(payload.channel || row?.channel)
     if (!contactId || !messageId) continue
     const key = `${contactId}\u0000${channel}\u0000${messageId}`
@@ -77,27 +78,81 @@ function uniqueCleanupSeeds(rows = []) {
 export async function buildConversationalRerunGarbageCleanupPlan({
   database = db
 } = {}) {
-  const [cleanupStatus, compactionStatus] = await Promise.all([
+  const [cleanupStatus, compactionStatus, savedPlanStatus] = await Promise.all([
     readConfig(database, CLEANUP_CONFIG_KEY),
-    readConfig(database, COMPACTION_CONFIG_KEY)
+    readConfig(database, COMPACTION_CONFIG_KEY),
+    readConfig(database, CLEANUP_PLAN_CONFIG_KEY)
   ])
   const cleanupApplied = cleanupVersionMatches(cleanupStatus)
   const compactionApplied = cleanupVersionMatches(compactionStatus)
   const parsedCleanupStatus = safeJsonParse(cleanupStatus, {}) || {}
-  const rows = cleanupApplied
-    ? []
-    : await database.all(`
-        SELECT run_key, contact_id, channel, payload
-        FROM ai_agent_pending_reruns
-        ORDER BY run_key ASC
-      `)
+  if (cleanupApplied) {
+    return {
+      version: CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION,
+      cleanupApplied,
+      compactionApplied,
+      previouslyDeletedRows: Math.max(0, Number(parsedCleanupStatus.deletedRows) || 0),
+      seeds: []
+    }
+  }
+
+  const parsedSavedPlan = safeJsonParse(savedPlanStatus, {}) || {}
+  const savedDeletedRows = parsedSavedPlan.version === CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION
+    ? Math.max(0, Number(parsedSavedPlan.deletedRows) || 0)
+    : 0
+  const savedSeeds = parsedSavedPlan.version === CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION
+    ? uniqueCleanupSeeds(parsedSavedPlan.seeds)
+    : []
+  const eventTypePlaceholders = CLEANUP_EVENT_TYPES.map(() => '?').join(', ')
+  const [pendingRows, deterministicAuditRows] = await Promise.all([
+    database.all(`
+      SELECT run_key, contact_id, channel, payload
+      FROM ai_agent_pending_reruns
+      ORDER BY run_key ASC
+    `),
+    // Si un despliegue anterior alcanzó a consumir el pending pero no terminó
+    // la limpieza, sus IDs deterministas permiten recuperar la semilla exacta.
+    database.all(`
+      SELECT contact_id, detail_json
+      FROM conversational_agent_events
+      WHERE id >= 'cae_audit_'
+        AND id < 'cae_audit_g'
+        AND event_type IN (${eventTypePlaceholders})
+      ORDER BY id ASC
+    `, CLEANUP_EVENT_TYPES)
+  ])
+  const seeds = uniqueCleanupSeeds([
+    ...savedSeeds,
+    ...pendingRows,
+    ...deterministicAuditRows
+  ])
+  const capturedAt = parsedSavedPlan.version === CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION
+    ? parsedSavedPlan.capturedAt
+    : new Date().toISOString()
+
+  // Ésta es la primera escritura del boot y ocurre antes del recovery. Nunca
+  // dependemos sólo de memoria: otro deploy puede interrumpir la limpieza y el
+  // siguiente proceso retoma exactamente los mismos contacto/canal/mensaje.
+  await writeConfig(database, CLEANUP_PLAN_CONFIG_KEY, {
+    version: CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION,
+    capturedAt,
+    updatedAt: new Date().toISOString(),
+    seedCount: seeds.length,
+    deletedRows: savedDeletedRows,
+    seeds
+  })
 
   return {
     version: CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION,
     cleanupApplied,
     compactionApplied,
-    previouslyDeletedRows: Math.max(0, Number(parsedCleanupStatus.deletedRows) || 0),
-    seeds: uniqueCleanupSeeds(rows)
+    previouslyDeletedRows: Math.max(
+      0,
+      Number(parsedCleanupStatus.deletedRows) || 0,
+      savedDeletedRows
+    ),
+    capturedAt,
+    seeds
   }
 }
 
@@ -212,7 +267,8 @@ async function deleteEventIds(database, ids) {
 }
 
 async function cleanupSeedEventType(database, seed, eventType, {
-  pageSize = CLEANUP_PAGE_SIZE
+  pageSize = CLEANUP_PAGE_SIZE,
+  onDeleted = null
 } = {}) {
   const seenSignatures = new Set()
   let cursor = null
@@ -250,7 +306,11 @@ async function cleanupSeedEventType(database, seed, eventType, {
       if (seenSignatures.has(signature)) duplicateIds.push(row.id)
       else seenSignatures.add(signature)
     }
-    deleted += await deleteEventIds(database, duplicateIds)
+    const pageDeleted = await deleteEventIds(database, duplicateIds)
+    deleted += pageDeleted
+    if (pageDeleted > 0 && typeof onDeleted === 'function') {
+      await onDeleted(pageDeleted)
+    }
     scanned += rows.length
     const last = rows[rows.length - 1]
     cursor = { createdAt: last.created_at, id: last.id }
@@ -261,11 +321,11 @@ async function cleanupSeedEventType(database, seed, eventType, {
   return { scanned, deleted, retained: seenSignatures.size }
 }
 
-async function cleanupCapturedSeeds(database, seeds = []) {
+async function cleanupCapturedSeeds(database, seeds = [], { onDeleted = null } = {}) {
   const totals = { seeds: seeds.length, scanned: 0, deleted: 0, retained: 0 }
   for (const seed of seeds) {
     for (const eventType of CLEANUP_EVENT_TYPES) {
-      const result = await cleanupSeedEventType(database, seed, eventType)
+      const result = await cleanupSeedEventType(database, seed, eventType, { onDeleted })
       totals.scanned += result.scanned
       totals.deleted += result.deleted
       totals.retained += result.retained
@@ -305,7 +365,7 @@ async function compactGarbageTables(database, deletedRows) {
 export async function runConversationalRerunGarbageCleanup(plan = null, {
   database = db
 } = {}) {
-  const initialPlan = plan || await buildConversationalRerunGarbageCleanupPlan({ database })
+  if (!plan) await buildConversationalRerunGarbageCleanupPlan({ database })
   try {
     return await database.withAdvisoryLock(CLEANUP_LOCK_KEY, async (lockedDatabase) => {
       const maintenanceDb = lockedDatabase || database
@@ -322,11 +382,22 @@ export async function runConversationalRerunGarbageCleanup(plan = null, {
       }
 
       if (!latestPlan.cleanupApplied) {
-        const capturedSeeds = initialPlan.seeds?.length
-          ? initialPlan.seeds
-          : latestPlan.seeds
-        cleanup = await cleanupCapturedSeeds(maintenanceDb, capturedSeeds)
-        deletedRows = cleanup.deleted
+        const capturedSeeds = latestPlan.seeds
+        let persistedDeletedRows = deletedRows
+        cleanup = await cleanupCapturedSeeds(maintenanceDb, capturedSeeds, {
+          onDeleted: async (pageDeleted) => {
+            persistedDeletedRows += pageDeleted
+            await writeConfig(maintenanceDb, CLEANUP_PLAN_CONFIG_KEY, {
+              version: CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION,
+              capturedAt: latestPlan.capturedAt,
+              updatedAt: new Date().toISOString(),
+              seedCount: capturedSeeds.length,
+              deletedRows: persistedDeletedRows,
+              seeds: capturedSeeds
+            })
+          }
+        })
+        deletedRows = persistedDeletedRows
         await writeConfig(maintenanceDb, CLEANUP_CONFIG_KEY, {
           version: CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION,
           deletedRows,

@@ -8907,8 +8907,16 @@ que una dependencia caída convierta la auditoría en almacenamiento sin límite
 sin sacrificar la entrega humana pendiente.
 
 La reparación versionada
-`conversational_rerun_garbage_cleanup=2026-08-14-v1` captura al arrancar los
-mensajes exactos de los reruns durables antes de que recovery los consuma. En
+`conversational_rerun_garbage_cleanup=2026-08-14-v2` captura al arrancar los
+mensajes exactos de los reruns durables antes de que recovery los consuma. Ese
+inventario se persiste primero en
+`conversational_rerun_garbage_cleanup_plan`, por lo que otro despliegue o reinicio
+puede retomar exactamente las mismas semillas aunque recovery ya haya eliminado
+sus filas pendientes. Los eventos nuevos con ID de auditoría determinista sirven
+además para reconstruir una semilla que hubiera sido consumida durante el primer
+despliegue de la reparación. El avance de borrado se actualiza por lote en ese
+mismo plan: un reinicio no puede hacer que se olvide una compactación grande ya
+necesaria. En
 segundo plano elimina únicamente repeticiones de esos mismos
 contacto + canal + mensaje para `agent_not_matched`, supresiones de canal y
 retries de handoff/medida preventiva. También retira los errores legacy que no

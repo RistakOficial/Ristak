@@ -22,7 +22,8 @@ await db.run(`
 
 const CLEANUP_CONFIG_KEYS = [
   'conversational_rerun_garbage_cleanup',
-  'conversational_rerun_garbage_compaction'
+  'conversational_rerun_garbage_compaction',
+  'conversational_rerun_garbage_cleanup_plan'
 ]
 
 async function insertEvent({ id, contactId, eventType, detail, createdAt }) {
@@ -126,10 +127,28 @@ test('limpia sólo repeticiones de mensajes capturados y conserva evidencia úni
     assert.equal(plan.cleanupApplied, false)
     assert.deepEqual(plan.seeds, [{ contactId, messageId, channel: 'whatsapp' }])
 
-    const result = await runConversationalRerunGarbageCleanup(plan)
+    const savedPlan = await db.get(
+      'SELECT config_value FROM app_config WHERE config_key = ?',
+      ['conversational_rerun_garbage_cleanup_plan']
+    )
+    assert.equal(JSON.parse(savedPlan.config_value).seedCount, 1)
+
+    // Simula un redeploy que ocurre después de que recovery consumió la fila,
+    // pero antes de que terminara el borrado pesado. La semilla no se pierde.
+    await db.run('DELETE FROM ai_agent_pending_reruns WHERE run_key = ?', [runKey])
+    const resumedPlan = await buildConversationalRerunGarbageCleanupPlan()
+    assert.deepEqual(resumedPlan.seeds, [{ contactId, messageId, channel: 'whatsapp' }])
+
+    const result = await runConversationalRerunGarbageCleanup(resumedPlan)
     assert.equal(result.version, CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION)
     assert.equal(result.cleanup.deleted, 6)
     assert.equal(result.cleanup.retained, 11)
+
+    const completedPlan = await db.get(
+      'SELECT config_value FROM app_config WHERE config_key = ?',
+      ['conversational_rerun_garbage_cleanup_plan']
+    )
+    assert.equal(JSON.parse(completedPlan.config_value).deletedRows, 6)
 
     const retained = await db.all(`
       SELECT event_type, detail_json
