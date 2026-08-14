@@ -12,6 +12,12 @@ const CLEANUP_PLAN_CONFIG_KEY = 'conversational_rerun_garbage_cleanup_plan'
 const CLEANUP_LOCK_KEY = 'conversational-rerun-garbage-cleanup'
 const CLEANUP_RETRY_INITIAL_DELAY_MS = 15_000
 const CLEANUP_RETRY_MAX_DELAY_MS = 60_000
+const CLEANUP_RETRYABLE_POSTGRES_CODES = new Set([
+  '40001', // serialization_failure
+  '40P01', // deadlock_detected
+  '55P03', // lock_not_available
+  '57014' // query_canceled / statement_timeout
+])
 const CLEANUP_PAGE_SIZE = databaseDialect === 'postgres' ? 2_000 : 250
 const FULL_COMPACTION_MIN_DELETED_ROWS = 10_000
 const EVENT_METRIC_TOTAL_COLUMNS = Object.freeze([
@@ -226,21 +232,6 @@ function cursorPredicate(cursor, tableAlias = '') {
   }
 }
 
-function legacyErrorRetryTimePredicate() {
-  if (databaseDialect === 'postgres') {
-    return `
-      retry.created_at BETWEEN
-        event_row.created_at - INTERVAL '5 seconds'
-        AND event_row.created_at + INTERVAL '5 seconds'
-    `
-  }
-  return `
-    retry.created_at BETWEEN
-      datetime(event_row.created_at, '-5 seconds')
-      AND datetime(event_row.created_at, '+5 seconds')
-  `
-}
-
 function seedEventFilter(eventType) {
   if (eventType !== 'error') {
     return {
@@ -258,22 +249,72 @@ function seedEventFilter(eventType) {
       AND ${jsonTextExpression('channel', 'event_row.detail_json')} = ?
       AND (
         ${eventMessageId} = ?
-        OR (
-          ${eventMessageId} = ''
-          AND EXISTS (
-            SELECT 1
-            FROM conversational_agent_events AS retry
-            WHERE retry.contact_id = event_row.contact_id
-              AND retry.event_type = 'mandatory_handoff_gate_retry_queued'
-              AND ${jsonTextExpression('messageId', 'retry.detail_json')} = ?
-              AND ${jsonTextExpression('channel', 'retry.detail_json')} = ?
-              AND ${legacyErrorRetryTimePredicate()}
-          )
-        )
+        OR ${eventMessageId} = ''
       )
     `,
     params: null
   }
+}
+
+function eventTimeMs(value) {
+  if (value instanceof Date) return value.getTime()
+  const text = String(value || '').trim()
+  if (!text) return Number.NaN
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)
+    ? text
+    : `${text.includes('T') ? text : text.replace(' ', 'T')}Z`
+  return new Date(normalized).getTime()
+}
+
+function hasNearbyRetry(sortedRetryTimes, eventTime, windowMs = 5_000) {
+  if (!sortedRetryTimes.length || !Number.isFinite(eventTime)) return false
+  let low = 0
+  let high = sortedRetryTimes.length
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2)
+    if (sortedRetryTimes[middle] < eventTime) low = middle + 1
+    else high = middle
+  }
+  return (
+    (low < sortedRetryTimes.length && Math.abs(sortedRetryTimes[low] - eventTime) <= windowMs) ||
+    (low > 0 && Math.abs(sortedRetryTimes[low - 1] - eventTime) <= windowMs)
+  )
+}
+
+async function loadLegacyErrorRetryTimes(database, seed, pageSize = CLEANUP_PAGE_SIZE) {
+  const retryTimes = []
+  let cursor = null
+  while (true) {
+    const cursorFilter = cursorPredicate(cursor, 'retry')
+    const rows = await database.all(`
+      SELECT retry.id, retry.created_at
+      FROM conversational_agent_events AS retry
+      WHERE retry.contact_id = ?
+        AND retry.event_type = 'mandatory_handoff_gate_retry_queued'
+        AND ${jsonTextExpression('messageId', 'retry.detail_json')} = ?
+        AND ${jsonTextExpression('channel', 'retry.detail_json')} = ?
+        ${cursorFilter.sql}
+      ORDER BY retry.created_at ASC, retry.id ASC
+      LIMIT ?
+    `, [
+      seed.contactId,
+      seed.messageId,
+      seed.channel,
+      ...cursorFilter.params,
+      pageSize
+    ])
+    if (!rows.length) break
+
+    for (const row of rows) {
+      const timestamp = eventTimeMs(row.created_at)
+      if (Number.isFinite(timestamp)) retryTimes.push(timestamp)
+    }
+    const last = rows[rows.length - 1]
+    cursor = { createdAt: last.created_at, id: last.id }
+    if (rows.length < pageSize) break
+    await sleep(25)
+  }
+  return retryTimes.sort((left, right) => left - right)
 }
 
 async function deleteEventIds(database, ids) {
@@ -356,12 +397,15 @@ async function cleanupSeedEventType(database, seed, eventType, {
   let cursor = null
   let scanned = 0
   let deleted = 0
+  const legacyErrorRetryTimes = eventType === 'error'
+    ? await loadLegacyErrorRetryTimes(database, seed, pageSize)
+    : []
 
   while (true) {
     const cursorFilter = cursorPredicate(cursor, 'event_row')
     const eventFilter = seedEventFilter(eventType)
     const eventFilterParams = eventType === 'error'
-      ? [seed.channel, seed.messageId, seed.messageId, seed.channel]
+      ? [seed.channel, seed.messageId]
       : [seed.messageId, seed.channel]
     const rows = await database.all(`
       SELECT event_row.id, event_row.detail_json, event_row.created_at
@@ -384,6 +428,13 @@ async function cleanupSeedEventType(database, seed, eventType, {
     const duplicateIds = []
     for (const row of rows) {
       const detail = safeJsonParse(row.detail_json, {}) || {}
+      if (
+        eventType === 'error' &&
+        !String(detail.messageId || '').trim() &&
+        !hasNearbyRetry(legacyErrorRetryTimes, eventTimeMs(row.created_at))
+      ) {
+        continue
+      }
       const signature = eventSignature(eventType, detail)
       if (seenSignatures.has(signature)) duplicateIds.push(row.id)
       else seenSignatures.add(signature)
@@ -546,9 +597,12 @@ export async function runConversationalRerunGarbageCleanupUntilComplete(plan = n
         `se reintentará en ${retryDelayMs}ms.`
       )
     } catch (error) {
-      if (!isTransientPostgresConnectionError(error)) throw error
+      if (
+        !isTransientPostgresConnectionError(error) &&
+        !CLEANUP_RETRYABLE_POSTGRES_CODES.has(String(error?.code || '').trim())
+      ) throw error
       logger.warn(
-        `[Agente conversacional] PostgreSQL interrumpió la limpieza histórica; ` +
+        `[Agente conversacional] PostgreSQL pausó la limpieza histórica; ` +
         `se reintentará en ${retryDelayMs}ms: ${error.message}`
       )
     }

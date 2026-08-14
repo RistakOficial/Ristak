@@ -96,6 +96,43 @@ try {
       index
     ])
   }
+  for (let index = 0; index < 2; index += 1) {
+    const createdOffsetMs = 1_000 + index
+    await database.db.run(`
+      INSERT INTO conversational_agent_events (
+        id, contact_id, event_type, detail_json, created_at
+      ) VALUES (?, ?, 'mandatory_handoff_gate_retry_queued', ?,
+        CURRENT_TIMESTAMP + (? * INTERVAL '1 millisecond'))
+    `, [
+      `postgres_cleanup_retry_${index}_${cleanupSuffix}`,
+      cleanupContactId,
+      JSON.stringify({
+        messageId: cleanupMessageId,
+        channel: 'whatsapp',
+        stage: 'adjudication',
+        errorCode: 'handoff_rule_adjudication_failed',
+        attemptCount: 1,
+        maxAttempts: 3
+      }),
+      createdOffsetMs
+    ])
+    await database.db.run(`
+      INSERT INTO conversational_agent_events (
+        id, contact_id, event_type, detail_json, created_at
+      ) VALUES (?, ?, 'error', ?, CURRENT_TIMESTAMP + (? * INTERVAL '1 millisecond'))
+    `, [
+      `postgres_cleanup_error_${index}_${cleanupSuffix}`,
+      cleanupContactId,
+      JSON.stringify({
+        channel: 'whatsapp',
+        message: 'fallo repetido de adjudicación',
+        retryQueued: true,
+        retryStage: 'adjudication',
+        retryAttemptCount: 1
+      }),
+      createdOffsetMs
+    ])
+  }
 
   const summaryBeforeCleanup = await database.db.get(`
     SELECT COALESCE(SUM(total_events), 0) AS total
@@ -104,7 +141,7 @@ try {
   const cleanupService = await import('../src/services/conversationalAgentRerunGarbageCleanupService.js')
   const cleanupPlan = await cleanupService.buildConversationalRerunGarbageCleanupPlan()
   const cleanupResult = await cleanupService.runConversationalRerunGarbageCleanup(cleanupPlan)
-  assert.equal(cleanupResult.cleanup.deleted, 4)
+  assert.equal(cleanupResult.cleanup.deleted, 6)
 
   const cleanupEvidence = await database.db.get(`
     SELECT
@@ -113,12 +150,12 @@ try {
        WHERE event_id LIKE ?) AS metric_rows,
       (SELECT COALESCE(SUM(total_events), 0)
        FROM conversational_agent_event_metric_summary) AS summary_total
-  `, [cleanupContactId, `postgres_cleanup_event_%_${cleanupSuffix}`])
-  assert.equal(Number(cleanupEvidence.events), 1)
-  assert.equal(Number(cleanupEvidence.metric_rows), 1)
+  `, [cleanupContactId, `postgres_cleanup_%_${cleanupSuffix}`])
+  assert.equal(Number(cleanupEvidence.events), 3)
+  assert.equal(Number(cleanupEvidence.metric_rows), 3)
   assert.equal(
     Number(cleanupEvidence.summary_total),
-    Number(summaryBeforeCleanup.total) - 4
+    Number(summaryBeforeCleanup.total) - 6
   )
 
   console.log(`Bootstrap PostgreSQL limpio verificado en schema efímero (${Number(migrations.total)} migraciones registradas).`)

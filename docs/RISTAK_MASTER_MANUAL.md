@@ -8924,9 +8924,12 @@ segundo plano elimina únicamente repeticiones de esos mismos
 contacto + canal + mensaje para `agent_not_matched`, supresiones de canal y
 retries de handoff/medida preventiva. También retira los errores legacy que no
 guardaban `messageId` únicamente cuando quedaron registrados a cinco segundos o
-menos de uno de esos retries exactos; los errores ajenos o fuera de esa ventana
-no entran al barrido. Conserva una evidencia por resultado, cada intento inicial
-y una evidencia de escalación. El borrado normal mantiene exacto
+menos de uno de esos retries exactos. Para historiales grandes precarga y pagina
+las marcas de tiempo del retry exacto y resuelve esa ventana en memoria, sin un
+subquery correlacionado por cada error; los errores ajenos o fuera de esa ventana
+no entran al barrido. Un timeout, deadlock o corte transitorio de PostgreSQL
+reanuda el mismo plan en lugar de abandonarlo. Conserva una evidencia por
+resultado, cada intento inicial y una evidencia de escalación. El borrado normal mantiene exacto
 el ledger de métricas mediante sus triggers. Si se retiraron al menos 10,000
 filas, compacta exclusivamente `conversational_agent_events` y
 `conversational_agent_event_metric_rows` con `VACUUM FULL`, límites de espera y

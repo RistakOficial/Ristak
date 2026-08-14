@@ -57,6 +57,31 @@ test('retoma la limpieza cuando la instancia anterior libera el candado', async 
   assert.equal(calls[1].plan, null)
 })
 
+test('retoma la limpieza después de un statement timeout de PostgreSQL', async () => {
+  let attempts = 0
+  const waits = []
+
+  const result = await runConversationalRerunGarbageCleanupUntilComplete(null, {
+    database: {},
+    retryInitialDelayMs: 7,
+    retryMaxDelayMs: 20,
+    sleepFn: async (delayMs) => waits.push(delayMs),
+    runCleanup: async () => {
+      attempts += 1
+      if (attempts === 1) {
+        const error = new Error('canceling statement due to statement timeout')
+        error.code = '57014'
+        throw error
+      }
+      return { version: CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION }
+    }
+  })
+
+  assert.equal(result.version, CONVERSATIONAL_RERUN_GARBAGE_CLEANUP_VERSION)
+  assert.equal(attempts, 2)
+  assert.deepEqual(waits, [7])
+})
+
 async function insertEvent({ id, contactId, eventType, detail, createdAt }) {
   await db.run(`
     INSERT INTO conversational_agent_events (
