@@ -14,6 +14,7 @@ const OPENAI_CREDENTIAL_REQUIRED_MESSAGE = 'Primero conecta OpenAI desde Chatbot
 const REQUEST_TIMEOUT_MS = readBoundedNumberEnv('OPENAI_AGENT_REQUEST_TIMEOUT_MS', 45_000, 10_000, 180_000)
 const BUSINESS_PROFILE_EXTRACTION_TIMEOUT_MS = readBoundedNumberEnv('OPENAI_BUSINESS_PROFILE_EXTRACTION_TIMEOUT_MS', 90_000, 15_000, 180_000)
 const BUSINESS_CONTEXT_LIMIT = 50_000
+export const AI_RUNTIME_BUSINESS_CONTEXT_MAX_LENGTH = BUSINESS_CONTEXT_LIMIT
 const BUSINESS_PROFILE_CONTEXT_MIN_LENGTH = 40
 const BUSINESS_PROFILE_TEXT_LIMIT = 1200
 const BUSINESS_PROFILE_SUMMARY_LIMIT = 2400
@@ -1256,6 +1257,50 @@ export async function saveAIRuntimeOpenAICredentials({
       DEFAULT_AI_RESPONSE_STYLE,
       DEFAULT_AI_RECOMMENDATION_MODE
     ])
+  }
+
+  return getAIRuntimeStatus({ userId })
+}
+
+export async function saveAIRuntimeBusinessProfile({
+  userId,
+  businessContext
+} = {}) {
+  const normalizedContext = cleanConfigText(businessContext, BUSINESS_CONTEXT_LIMIT)
+  const currentConfig = await getAIRuntimeConfig({ userId })
+
+  await db.run(`
+    INSERT INTO ai_agent_config (
+      id,
+      business_context,
+      market_context,
+      ideal_customer,
+      location_context,
+      competitors_context,
+      brand_voice,
+      updated_at
+    )
+    VALUES (1, ?, '', '', '', '', '', CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      business_context = excluded.business_context,
+      market_context = excluded.market_context,
+      ideal_customer = excluded.ideal_customer,
+      location_context = excluded.location_context,
+      competitors_context = excluded.competitors_context,
+      brand_voice = excluded.brand_voice,
+      updated_at = CURRENT_TIMESTAMP
+  `, [normalizedContext])
+
+  try {
+    await syncBusinessProfileFromContext({
+      businessContext: normalizedContext,
+      model: normalizeAIRuntimeModel(currentConfig?.model)
+    })
+  } catch (error) {
+    // El texto guardado es la fuente primaria y el runtime puede usarlo sin el
+    // perfil estructurado. Una extracción auxiliar no debe convertir un guardado
+    // válido en un falso error para el usuario.
+    logger.warn(`[Runtime IA] La descripción se guardó, pero no se pudo actualizar el perfil estructurado: ${error.message}`)
   }
 
   return getAIRuntimeStatus({ userId })

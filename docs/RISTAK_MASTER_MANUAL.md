@@ -168,7 +168,7 @@ Rutas protegidas por auth y/o feature flags:
 - `/api/tracking`: sesiones, visitantes, conversiones y config.
 - `/api/reports`: reportes operativos/financieros.
 - `/api/media`: uploads, library, Bunny Storage/Stream y cuotas.
-- `/api/ai-runtime`: estado compartido de OpenAI y transcripción para Chatbot/Sites;
+- `/api/ai-runtime`: estado compartido de OpenAI, perfil del negocio y transcripción para Chatbot/Sites;
   exige acceso a por lo menos uno de esos módulos.
 - `/api/conversational-agent`: agentes conversacionales.
 - `/api/external`, `/api/mcp`: API externa y MCP.
@@ -299,8 +299,11 @@ La disponibilidad compartida de OpenAI sigue el mismo principio especializado:
 `aiRuntimeService` comparte un unico `GET /api/ai-runtime/config` entre Chatbot y
 Sites, con snapshot de 60 segundos por cuenta y deadline de 20 segundos. El
 ultimo consumidor que abandona aborta el transporte. Las mutaciones de
-proveedores hechas desde Chatbot invalidan el snapshot después de confirmarse;
-timeouts y errores nunca se cachean.
+proveedores y del perfil compartido del negocio hechas desde Chatbot publican o
+invalidan el snapshot después de confirmarse; timeouts y errores nunca se
+cachean. `PUT /api/ai-runtime/business-profile` exige escritura en `ai_agent`,
+conserva las credenciales existentes y vuelve a preparar el perfil estructurado
+sin convertir una falla auxiliar de extracción en pérdida del texto guardado.
 
 Una mutacion exitosa notifica solamente los prefijos afectados; los POST que son
 consultas declaradas, como los resumenes de Analytics, no cuentan como mutacion.
@@ -1940,8 +1943,9 @@ Shell desktop protegido:
 - `/analytics`
 - `/sites`
 - `/automations`
-- `/ai-agent`: pestaña principal `Chatbot`, dedicada únicamente a los agentes
-  conversacionales.
+- `/ai-agent`: pestaña principal `Chatbot`. `Agentes`
+  (`/ai-agent/conversational`) administra los agentes conversacionales y
+  `Configuración` (`/ai-agent/general`) edita su descripción global compartida.
 - `/mdp-program`
 - `/settings`
 
@@ -8530,16 +8534,19 @@ Documento operativo: `docs/MEDIA_STORAGE_BUNNY.md`.
 ## IA
 
 Ristak expone una sola superficie principal de IA en el menu lateral: `Chatbot`
-(`/ai-agent` y `/ai-agent/conversational`). Administra agentes que interactuan
-con contactos y objetivos. El asistente personal interno de operación fue
-retirado de web, la app React Native y la app iOS; ya no existe su panel flotante,
-chat fijo, configuración, sugerencias ni API pública.
+(`/ai-agent`). Dentro de ella, `Agentes` (`/ai-agent/conversational`) administra
+los chatbots que interactuan con contactos y objetivos, mientras
+`Configuración` (`/ai-agent/general`) administra la descripción global del
+negocio que esos agentes pueden usar como memoria. El asistente personal interno
+de operación fue retirado de web, la app React Native y la app iOS; ya no existe
+su panel flotante, chat fijo, sugerencias ni API pública.
 
-Las rutas antiguas de configuración redirigen a Chatbot para no romper
-marcadores. La conexión de proveedores IA se gestiona dentro de Chatbot. El
-backend conserva únicamente `aiRuntimeService` para credenciales cifradas,
-perfil del negocio y transcripción compartidos por Chatbot, Sites y funciones
-automáticas vigentes; no expone un chat de asistente personal.
+Las rutas antiguas `/settings/artificial-intelligence` y `/settings/ai-agent`
+redirigen a la configuración de Chatbot para no romper marcadores. La conexión
+de proveedores IA se gestiona dentro de Chatbot. El backend conserva únicamente
+`aiRuntimeService` para credenciales cifradas, perfil del negocio y transcripción
+compartidos por Chatbot, Sites y funciones automáticas vigentes; no expone un
+chat de asistente personal.
 
 ### Catalogo y default de OpenAI
 
@@ -8559,7 +8566,8 @@ OpenAI para que el usuario no pierda opciones al cambiar de superficie.
 La API conserva:
 
 - `/api/conversational-agent`: agentes conversacionales, configuración y proveedores.
-- `/api/ai-runtime`: estado compartido de OpenAI y transcripción; no recibe mensajes de chat.
+- `/api/ai-runtime`: estado compartido de OpenAI, lectura/escritura del perfil
+  del negocio y transcripción; no recibe mensajes de chat.
 
 ### Configuracion y experiencia del usuario
 
@@ -8567,6 +8575,12 @@ Todos los agentes conversacionales usan un solo runtime nativo de tool calling.
 No existe selector, fallback ni ruta de ejecucion del motor anterior. El editor
 deja plantillas utiles por defecto y separa las piezas que el dueño sí controla:
 
+- Configuracion global: la pestaña `/ai-agent/general` permite escribir hasta
+  50,000 caracteres con productos o servicios, clientes, ubicaciones, horarios,
+  precios, condiciones, diferenciadores y reglas del negocio. El guardado
+  conserva el texto como fuente primaria y prepara un perfil estructurado cuando
+  OpenAI esta disponible; aun sin esa extracción, el runtime puede usar la
+  descripción directa. La pantalla muestra el estado y el resumen reconocido.
 - Estrategia y capacitacion: conocimiento, objetivo, guion y proceso del negocio.
   Es la autoridad sobre que debe lograr la conversacion, que debe ocurrir antes de
   una accion y en que momento se puede consultar, agendar, cobrar, enlazar o

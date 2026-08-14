@@ -1,9 +1,11 @@
 import { logger } from '../utils/logger.js'
 import {
+  AI_RUNTIME_BUSINESS_CONTEXT_MAX_LENGTH,
   getAIRuntimeStatus,
   isAIRuntimeCredentialError,
   isAIRuntimeOpenAIRequiredError,
   requireOpenAIApiKey,
+  saveAIRuntimeBusinessProfile,
   transcribeVoiceAudio
 } from '../services/aiRuntimeService.js'
 
@@ -39,6 +41,38 @@ export async function getConfig(req, res) {
   } catch (error) {
     logger.error('Error obteniendo configuración compartida de IA:', error)
     sendRuntimeError(res, error, 'Error al obtener la configuración de IA')
+  }
+}
+
+export async function saveBusinessProfile(req, res) {
+  try {
+    if (typeof req.body?.businessContext !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Envía una descripción válida del negocio.'
+      })
+    }
+
+    if (req.body.businessContext.length > AI_RUNTIME_BUSINESS_CONTEXT_MAX_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        error: `La descripción no puede superar ${AI_RUNTIME_BUSINESS_CONTEXT_MAX_LENGTH.toLocaleString('es-MX')} caracteres.`
+      })
+    }
+
+    const status = await saveAIRuntimeBusinessProfile({
+      userId: req.user?.userId,
+      businessContext: req.body.businessContext
+    })
+
+    res.json({
+      success: true,
+      message: 'Descripción del negocio guardada.',
+      data: status
+    })
+  } catch (error) {
+    logger.error('Error guardando el perfil compartido del negocio:', error)
+    sendRuntimeError(res, error, 'Error al guardar la descripción del negocio')
   }
 }
 

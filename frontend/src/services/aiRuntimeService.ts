@@ -12,6 +12,7 @@ export interface AIRuntimeConfigStatus {
   needsReconnect?: boolean
   connectionIssue?: string | null
   connectionIssueCode?: string | null
+  businessContext?: string
   businessProfile?: {
     configured?: boolean
     status?: string
@@ -23,8 +24,10 @@ export interface AIRuntimeConfigStatus {
     businessType?: string | null
     profile?: unknown
     promptParameters?: Record<string, string>
+    sourceContext?: string | null
     updatedAt?: string | null
   }
+  updatedAt?: string | null
 }
 
 export interface AITranscriptionResult {
@@ -49,6 +52,30 @@ function invalidateConfigRead() {
   configGeneration += 1
   abortAndClearSharedRequests(configInflight)
   configSnapshot = null
+}
+
+function beginConfigMutation() {
+  syncAuthScopedCachePrincipal()
+  invalidateConfigRead()
+  return [configGeneration, getAuthScopedCacheRevision()] as const
+}
+
+function publishConfigSnapshot(
+  data: AIRuntimeConfigStatus,
+  [generation, principalRevision]: readonly [number, number]
+) {
+  if (
+    generation === configGeneration &&
+    principalRevision === getAuthScopedCacheRevision()
+  ) {
+    configSnapshot = { data, fetchedAt: Date.now(), principalRevision }
+  }
+}
+
+function emitConfigChange() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(AI_RUNTIME_CONFIG_CHANGED_EVENT))
+  }
 }
 
 registerAuthScopedCacheInvalidator(invalidateConfigRead)
@@ -143,6 +170,17 @@ function getConfig(options: { signal?: AbortSignal } = {}): Promise<AIRuntimeCon
 export const aiRuntimeService = {
   getConfig,
 
+  async saveBusinessProfile(businessContext: string): Promise<AIRuntimeConfigStatus> {
+    const context = beginConfigMutation()
+    const status = await request<AIRuntimeConfigStatus>('/business-profile', {
+      method: 'PUT',
+      body: JSON.stringify({ businessContext })
+    })
+    publishConfigSnapshot(status, context)
+    emitConfigChange()
+    return status
+  },
+
   async transcribeVoice(audioBlob: Blob): Promise<AITranscriptionResult> {
     const response = await fetch(apiUrl('/api/ai-runtime/transcribe'), {
       method: 'POST',
@@ -169,7 +207,7 @@ export const aiRuntimeService = {
 
   invalidateConfig() {
     invalidateConfigRead()
-    window.dispatchEvent(new Event(AI_RUNTIME_CONFIG_CHANGED_EVENT))
+    emitConfigChange()
   }
 }
 

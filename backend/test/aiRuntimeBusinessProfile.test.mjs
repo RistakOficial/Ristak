@@ -4,6 +4,8 @@ import assert from 'node:assert/strict'
 import { db } from '../src/config/database.js'
 import {
   buildBusinessProfileExtractionContext,
+  getAIRuntimeStatus,
+  saveAIRuntimeBusinessProfile,
   syncBusinessProfileFromContext
 } from '../src/services/aiRuntimeService.js'
 
@@ -19,6 +21,22 @@ async function restoreBusinessProfileRow(row) {
   const placeholders = columns.map(() => '?').join(', ')
   await db.run(
     `INSERT INTO ai_business_profile (${columns.join(', ')}) VALUES (${placeholders})`,
+    columns.map((column) => row[column])
+  )
+}
+
+async function getStoredAIRuntimeConfigRow() {
+  return db.get('SELECT * FROM ai_agent_config WHERE id = 1').catch(() => null)
+}
+
+async function restoreAIRuntimeConfigRow(row) {
+  await db.run('DELETE FROM ai_agent_config WHERE id = 1').catch(() => undefined)
+  if (!row) return
+
+  const columns = Object.keys(row)
+  const placeholders = columns.map(() => '?').join(', ')
+  await db.run(
+    `INSERT INTO ai_agent_config (${columns.join(', ')}) VALUES (${placeholders})`,
     columns.map((column) => row[column])
   )
 }
@@ -71,6 +89,45 @@ test('prepara perfil usable cuando la extraccion IA aborta con descripcion larga
     assert.match(result.summary, /Clinica Rescate/)
     assert.ok(result.promptParameters.INFO_GENERAL_DEL_NEGOCIO)
   } finally {
+    await restoreBusinessProfileRow(previousBusinessProfile)
+  }
+})
+
+test('guarda y elimina la descripcion global que consumen los agentes conversacionales', async () => {
+  const previousConfig = await getStoredAIRuntimeConfigRow()
+  const previousBusinessProfile = await getStoredBusinessProfileRow()
+  const businessContext = [
+    'Clínica Horizonte ofrece fisioterapia y rehabilitación deportiva en Ciudad Juárez.',
+    'Atiende de lunes a sábado, acepta tarjeta y transferencia, y nunca promete resultados garantizados.'
+  ].join(' ')
+
+  try {
+    await db.run('DELETE FROM ai_agent_config WHERE id = 1')
+    await db.run('DELETE FROM ai_business_profile WHERE id = 1')
+
+    const saved = await saveAIRuntimeBusinessProfile({
+      userId: 1,
+      businessContext
+    })
+
+    assert.equal(saved.businessContext, businessContext)
+    assert.equal(saved.businessProfile.configured, true)
+    assert.equal(saved.businessProfile.sourceContext, businessContext)
+    assert.match(saved.businessProfile.summary, /Clínica Horizonte/)
+
+    const reloaded = await getAIRuntimeStatus({ userId: 1 })
+    assert.equal(reloaded.businessContext, businessContext)
+    assert.equal(reloaded.businessProfile.configured, true)
+
+    const cleared = await saveAIRuntimeBusinessProfile({
+      userId: 1,
+      businessContext: ''
+    })
+
+    assert.equal(cleared.businessContext, '')
+    assert.equal(cleared.businessProfile.configured, false)
+  } finally {
+    await restoreAIRuntimeConfigRow(previousConfig)
     await restoreBusinessProfileRow(previousBusinessProfile)
   }
 })

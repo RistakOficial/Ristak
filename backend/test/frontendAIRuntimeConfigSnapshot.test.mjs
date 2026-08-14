@@ -207,3 +207,65 @@ test('cancelar consumidores aborta el transporte sólo cuando ya no queda ningú
     delete globalThis.__ristakAIRuntimeConfigTestEnvironment
   }
 })
+
+test('guardar el perfil publica el snapshot nuevo sin releer datos obsoletos', async () => {
+  const previousFetch = globalThis.fetch
+  const previousLocalStorage = globalThis.localStorage
+  const previousWindow = globalThis.window
+  const invalidators = new Set()
+  const accountState = { revision: 0, token: 'token-a' }
+  const calls = []
+  const events = []
+
+  globalThis.localStorage = {
+    getItem: (key) => key === 'auth_token' ? accountState.token : null
+  }
+  globalThis.window = {
+    dispatchEvent: (event) => {
+      events.push(event.type)
+      return true
+    }
+  }
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({
+      url: String(url),
+      method: options.method || 'GET',
+      body: options.body ? JSON.parse(options.body) : null
+    })
+    if (options.method === 'PUT') {
+      return jsonResponse({
+        ...createStatus('Clínica Horizonte'),
+        businessContext: 'Clínica Horizonte atiende de lunes a sábado.'
+      })
+    }
+    return jsonResponse({
+      ...createStatus('Perfil anterior'),
+      businessContext: 'Perfil anterior'
+    })
+  }
+
+  try {
+    const { aiRuntimeService, AI_RUNTIME_CONFIG_CHANGED_EVENT } = await importAIRuntimeService(
+      createTestEnvironment(accountState, invalidators)
+    )
+
+    assert.equal((await aiRuntimeService.getConfig()).businessContext, 'Perfil anterior')
+    const saved = await aiRuntimeService.saveBusinessProfile('Clínica Horizonte atiende de lunes a sábado.')
+
+    assert.equal(saved.businessContext, 'Clínica Horizonte atiende de lunes a sábado.')
+    assert.equal(calls.length, 2)
+    assert.deepEqual(calls[1], {
+      url: '/api/ai-runtime/business-profile',
+      method: 'PUT',
+      body: { businessContext: 'Clínica Horizonte atiende de lunes a sábado.' }
+    })
+    assert.equal((await aiRuntimeService.getConfig()).businessContext, saved.businessContext)
+    assert.equal(calls.length, 2, 'la lectura posterior debe reutilizar el snapshot confirmado')
+    assert.deepEqual(events, [AI_RUNTIME_CONFIG_CHANGED_EVENT])
+  } finally {
+    globalThis.fetch = previousFetch
+    globalThis.localStorage = previousLocalStorage
+    globalThis.window = previousWindow
+    delete globalThis.__ristakAIRuntimeConfigTestEnvironment
+  }
+})

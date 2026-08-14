@@ -1,9 +1,9 @@
 import express from 'express'
 import multer from 'multer'
-import { getConfig, transcribeVoice } from '../controllers/aiRuntimeController.js'
+import { getConfig, saveBusinessProfile, transcribeVoice } from '../controllers/aiRuntimeController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireOpenAIConfigured } from '../middleware/openAIConfigMiddleware.js'
-import { requireAnyModuleAccess } from '../middleware/userAccessMiddleware.js'
+import { requireAnyModuleAccess, requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 
 const router = express.Router()
 const audioUpload = multer({
@@ -38,6 +38,7 @@ function transcribeAudioBody(req, res, next) {
 router.use(requireAuth)
 router.use(requireAnyModuleAccess(['ai_agent', 'sites', 'appointments']))
 router.get('/config', getConfig)
+router.put('/business-profile', requireModuleAccess('ai_agent'), saveBusinessProfile)
 router.post('/transcribe', requireOpenAIConfigured, transcribeAudioBody, transcribeVoice)
 
 export default router

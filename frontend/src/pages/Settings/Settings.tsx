@@ -285,10 +285,11 @@ export const Settings: React.FC = () => {
                 <Route path="variable-fields/*" element={<SettingsAccessGate moduleKey="settings_custom_fields"><VariableFields /></SettingsAccessGate>} />
                 <Route path="trigger-links/*" element={<SettingsAccessGate moduleKey="settings_custom_fields" featureKeys={['trigger_links']}><TriggerLinks /></SettingsAccessGate>} />
                 <Route path="tags" element={<SettingsAccessGate moduleKey="settings_custom_fields"><TagsSettings /></SettingsAccessGate>} />
-                <Route path="artificial-intelligence" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/conversational" replace /></SettingsAccessGate>} />
-                <Route path="ai-agent" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/conversational" replace /></SettingsAccessGate>} />
+                <Route path="artificial-intelligence" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/general" replace /></SettingsAccessGate>} />
+                <Route path="ai-agent" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/general" replace /></SettingsAccessGate>} />
+                <Route path="ai-agent/general" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/general" replace /></SettingsAccessGate>} />
                 <Route path="ai-agent/conversational" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/conversational" replace /></SettingsAccessGate>} />
-                <Route path="ai-agent/*" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/conversational" replace /></SettingsAccessGate>} />
+                <Route path="ai-agent/*" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/general" replace /></SettingsAccessGate>} />
                 <Route path="developers" element={<SettingsAccessGate moduleKey="settings_api_access"><APIAccessSettings /></SettingsAccessGate>} />
                 <Route path="database-performance" element={<SettingsAccessGate moduleKey="settings_account" adminOnly><DatabasePerformanceSettings /></SettingsAccessGate>} />
                 <Route path="api-access" element={<SettingsAccessGate moduleKey="settings_api_access"><Navigate to="../developers" replace /></SettingsAccessGate>} />
