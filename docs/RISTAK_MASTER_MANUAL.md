@@ -8175,6 +8175,21 @@ y asistencia sobre una cita activa. Pagos y cambios de cita agregan `stage` a
 eso `Detalle que cambio = Pipeline / etapa` puede combinarse con la etapa final
 deseada sin disparos repetidos por citas, estados o pagos posteriores.
 
+La transición comercial causada por pagos no depende del nombre de la pasarela.
+Cada vez que `updateSingleContactStats` reconcilia los pagos persistidos, compara
+el contacto antes y después dentro de una transacción y publica un único evento
+canónico `contact-updated` con los campos estadísticos que realmente cambiaron.
+Si el contacto entra o sale de `customer`, el mismo evento incluye `stage`. El
+candado de fila en PostgreSQL —y la serialización por contacto en SQLite— evita
+que dos webhooks simultáneos anuncien dos veces la misma transición sin bloquear
+las escrituras de pagos que ocurren en paralelo. Los
+eventos técnicos `payment-received`/`refund` conservan sus disparadores propios,
+pero no vuelven a inscribir un flujo de `Contacto modificado` cuando la
+reconciliación canónica ya publicó ese cambio; sólo sirven como respaldo si esa
+publicación falló. Un pago posterior mientras el contacto sigue en Cliente sí
+actualiza totales y conteos, pero no finge otro cambio de etapa. Las
+reconciliaciones masivas históricas no reproducen automatizaciones retroactivas.
+
 Los webhooks entrantes productivos siempre hacen match exacto por `endpoint_id`:
 un endpoint vacio no es comodin. La captura de muestra del editor usa una llave
 interna separada derivada del `flow` editable, por lo que tampoco necesita

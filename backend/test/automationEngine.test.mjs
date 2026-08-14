@@ -38,6 +38,7 @@ import { createVariableField } from '../src/services/variableFieldsService.js'
 import { upsertSystemTriggerLink } from '../src/services/triggerLinksService.js'
 import { readTriggerLinkRecipientToken } from '../src/services/triggerLinkRecipientTokenService.js'
 import { parseContactCustomFields } from '../src/utils/contactCustomFields.js'
+import { updateSingleContactStats } from '../src/utils/updateContactsStats.js'
 
 const EMAIL_CONFIG_KEY = 'email_smtp_config'
 const EMAIL_PASSWORD_KEY = 'email_smtp_password'
@@ -4830,6 +4831,7 @@ test('trigger contacto modificado filtra etapa de cliente y totales de pago', as
   const automationId = `automation_contact_change_payment_${suffix}`
   const contactId = `contact_change_payment_${suffix}`
   const paymentId = `payment_contact_change_${suffix}`
+  const secondPaymentId = `payment_contact_change_second_${suffix}`
   const flow = {
     nodes: [
       {
@@ -4901,24 +4903,69 @@ test('trigger contacto modificado filtra etapa de cliente y totales de pago', as
       [automationId, 'Test contacto modificado pagos', JSON.stringify(flow), JSON.stringify(flow)]
     )
 
+    const concurrentStatsUpdates = await Promise.all([
+      updateSingleContactStats(contactId),
+      updateSingleContactStats(contactId)
+    ])
+    const statsUpdate = concurrentStatsUpdates.find(result => result.lifecycleStageChanged === true)
+    assert.ok(statsUpdate)
+    assert.equal(statsUpdate.lifecycleStageChanged, true)
+    assert.equal(statsUpdate.contactUpdateEventPublished, true)
+    assert.equal(concurrentStatsUpdates.filter(result => result.contactUpdateEventPublished === true).length, 1)
+
     await handleAutomationEvent('payment-received', {
       contactId,
       paymentId,
       amount: 150,
       paymentStatus: 'paid',
-      product: 'Compra prueba'
+      product: 'Compra prueba',
+      canonicalContactStatsReconciled: statsUpdate.updated,
+      canonicalContactStatsChanged: Boolean(statsUpdate.changedFields?.length),
+      canonicalContactUpdateEventPublished: statsUpdate.contactUpdateEventPublished,
+      lifecycleStageChanged: statsUpdate.lifecycleStageChanged
     })
 
-    const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?', [automationId, contactId])
+    const enrollments = await db.all('SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?', [automationId, contactId])
+    assert.equal(enrollments.length, 1, 'el evento de pago no debe duplicar el cambio canónico de etapa ya publicado')
+    const enrollment = enrollments[0]
     assert.ok(enrollment)
     assert.equal(enrollment.status, 'completed')
     assert.equal(enrollment.current_node_id, 'done')
     const log = JSON.parse(enrollment.log)
-    assert.equal(log.some((entry) => String(entry.detail || '').includes('pago exitoso')), true)
+    assert.equal(log.some((entry) => String(entry.detail || '').includes('stage')), true)
+
+    await db.run(
+      `INSERT INTO payments (id, contact_id, amount, currency, status, payment_method, payment_mode, reference, title, date)
+       VALUES (?, ?, ?, 'MXN', 'paid', 'card', 'live', ?, ?, ?)`,
+      [secondPaymentId, contactId, 50, `INV-SECOND-${suffix}`, 'Segunda compra', '2026-06-17T12:00:00.000Z']
+    )
+    const secondStatsUpdate = await updateSingleContactStats(contactId)
+    assert.equal(secondStatsUpdate.lifecycleStageChanged, false)
+    assert.equal(secondStatsUpdate.contactUpdateEventPublished, true)
+
+    const duplicateWebhookStatsUpdate = await updateSingleContactStats(contactId)
+    assert.equal(duplicateWebhookStatsUpdate.changedFields.length, 0)
+    assert.equal(duplicateWebhookStatsUpdate.contactUpdateEventPublished, false)
+    await handleAutomationEvent('payment-received', {
+      contactId,
+      paymentId: secondPaymentId,
+      amount: 50,
+      paymentStatus: 'paid',
+      product: 'Segunda compra',
+      canonicalContactStatsReconciled: duplicateWebhookStatsUpdate.updated,
+      canonicalContactStatsChanged: Boolean(duplicateWebhookStatsUpdate.changedFields?.length),
+      canonicalContactUpdateEventPublished: duplicateWebhookStatsUpdate.contactUpdateEventPublished,
+      lifecycleStageChanged: duplicateWebhookStatsUpdate.lifecycleStageChanged
+    })
+    assert.equal(
+      Number((await db.get('SELECT COUNT(*) AS total FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?', [automationId, contactId])).total),
+      1,
+      'un pago posterior o su webhook repetido no vuelven a fingir que la etapa cambió a cliente'
+    )
   } finally {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])
-    await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
+    await db.run('DELETE FROM payments WHERE id IN (?, ?)', [paymentId, secondPaymentId])
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
   }
 })

@@ -1920,12 +1920,16 @@ export const refundTransaction = async (req, res) => {
     })
 
     if (transaction.contact_id) {
-      await updateSingleContactStats(transaction.contact_id)
+      const contactStatsUpdate = await updateSingleContactStats(transaction.contact_id)
       import('../services/automationEngine.js')
         .then(engine => engine.handleAutomationEvent('refund', buildTransactionAutomationPayload(transaction, req, {
           paymentId: transaction.id || id,
           status: 'refunded',
-          paymentStatus: 'refunded'
+          paymentStatus: 'refunded',
+          canonicalContactStatsReconciled: contactStatsUpdate.updated === true,
+          canonicalContactStatsChanged: Boolean(contactStatsUpdate.changedFields?.length),
+          canonicalContactUpdateEventPublished: contactStatsUpdate.contactUpdateEventPublished === true,
+          lifecycleStageChanged: contactStatsUpdate.lifecycleStageChanged === true
         })))
         .catch(() => {})
     }
@@ -2001,12 +2005,16 @@ export const voidTransaction = async (req, res) => {
     })
     await syncPaymentPlanFromLocalTransaction(transaction, id)
     if (transaction.contact_id) {
-      await updateSingleContactStats(transaction.contact_id)
+      const contactStatsUpdate = await updateSingleContactStats(transaction.contact_id)
       import('../services/automationEngine.js')
         .then(engine => engine.handleAutomationEvent('payment-received', buildTransactionAutomationPayload(transaction, req, {
           paymentId: transaction.id || id,
           status: 'void',
-          paymentStatus: 'void'
+          paymentStatus: 'void',
+          canonicalContactStatsReconciled: contactStatsUpdate.updated === true,
+          canonicalContactStatsChanged: Boolean(contactStatsUpdate.changedFields?.length),
+          canonicalContactUpdateEventPublished: contactStatsUpdate.contactUpdateEventPublished === true,
+          lifecycleStageChanged: contactStatsUpdate.lifecycleStageChanged === true
         })))
         .catch(() => {})
     }

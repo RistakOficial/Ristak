@@ -650,6 +650,10 @@ function buildAutomationPaymentPayload(input = {}) {
     metadata,
     metadataJson: input.metadata_json || input.metadataJson || '',
     lineItems,
+    canonicalContactStatsReconciled: input.canonicalContactStatsReconciled === true,
+    canonicalContactStatsChanged: input.canonicalContactStatsChanged === true,
+    canonicalContactUpdateEventPublished: input.canonicalContactUpdateEventPublished === true,
+    lifecycleStageChanged: input.lifecycleStageChanged === true,
     receipt: firstValue(input.receipt, reference, invoiceNumber, invoiceId, title) || '',
     paymentDate,
     date: paymentDate
@@ -1473,7 +1477,7 @@ export const handlePaymentWebhook = async (req, res) => {
     }
 
     // Actualizar estadísticas del contacto
-    await updateSingleContactStats(contactId);
+    const contactStatsUpdate = await updateSingleContactStats(contactId);
 
     if (isSuccessfulPaymentStatus(status)) {
       const flow = await markPaymentFlowInvoicePaid(effectiveInvoiceId, {
@@ -1529,7 +1533,11 @@ export const handlePaymentWebhook = async (req, res) => {
       invoiceNumber,
       paidAt: paymentDate,
       paymentDate,
-      createdAt
+      createdAt,
+      canonicalContactStatsReconciled: contactStatsUpdate.updated === true,
+      canonicalContactStatsChanged: Boolean(contactStatsUpdate.changedFields?.length),
+      canonicalContactUpdateEventPublished: contactStatsUpdate.contactUpdateEventPublished === true,
+      lifecycleStageChanged: contactStatsUpdate.lifecycleStageChanged === true
     }));
 
     logger.info(`✅ Pago ${paymentId} procesado exitosamente para contacto ${contactId}`);
@@ -2100,12 +2108,16 @@ export const handleRefundWebhook = async (req, res) => {
 
     // Recalcular estadísticas del contacto
     if (payment.contact_id) {
-      await updateSingleContactStats(payment.contact_id);
+      const contactStatsUpdate = await updateSingleContactStats(payment.contact_id);
       logger.info(`✅ Reembolso ${refundId} procesado exitosamente para contacto ${payment.contact_id}`);
       emitAutomationPaymentEvent('refund', buildAutomationPaymentPayloadFromRow(payment, {
         status: 'refunded',
         paymentStatus: 'refunded',
-        paymentId: refundId
+        paymentId: refundId,
+        canonicalContactStatsReconciled: contactStatsUpdate.updated === true,
+        canonicalContactStatsChanged: Boolean(contactStatsUpdate.changedFields?.length),
+        canonicalContactUpdateEventPublished: contactStatsUpdate.contactUpdateEventPublished === true,
+        lifecycleStageChanged: contactStatsUpdate.lifecycleStageChanged === true
       }));
     } else {
       logger.info(`✅ Reembolso ${refundId} procesado exitosamente`);
@@ -2305,10 +2317,12 @@ export const handleInvoiceWebhook = async (req, res) => {
         }
       }
 
+      let contactStatsUpdate = null;
+
       // Si fue pagado, actualizar estadísticas del contacto
       if (newStatus === 'paid') {
         if (payment && payment.contact_id) {
-          await updateSingleContactStats(payment.contact_id);
+          contactStatsUpdate = await updateSingleContactStats(payment.contact_id);
           logger.success(`Estadísticas actualizadas para contacto: ${payment.contact_id}`);
 
           if (isSuccessfulPaymentStatus(payment.status || newStatus)) {
@@ -2343,7 +2357,7 @@ export const handleInvoiceWebhook = async (req, res) => {
       // deje de contar y el contacto no quede marcado como cliente
       if (newStatus === 'refunded' || newStatus === 'void') {
         if (payment && payment.contact_id) {
-          await updateSingleContactStats(payment.contact_id);
+          contactStatsUpdate = await updateSingleContactStats(payment.contact_id);
           logger.success(`Estadísticas recalculadas tras ${newStatus === 'void' ? 'anulación' : 'reembolso'} para contacto: ${payment.contact_id}`);
         }
       }
@@ -2354,7 +2368,11 @@ export const handleInvoiceWebhook = async (req, res) => {
           buildAutomationPaymentPayloadFromRow(payment, {
             status: newStatus,
             paymentStatus: newStatus,
-            invoiceId
+            invoiceId,
+            canonicalContactStatsReconciled: contactStatsUpdate?.updated === true,
+            canonicalContactStatsChanged: Boolean(contactStatsUpdate?.changedFields?.length),
+            canonicalContactUpdateEventPublished: contactStatsUpdate?.contactUpdateEventPublished === true,
+            lifecycleStageChanged: contactStatsUpdate?.lifecycleStageChanged === true
           })
         );
       }

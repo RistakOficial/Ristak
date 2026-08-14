@@ -2365,6 +2365,8 @@ function triggerMatches(trigger, eventType, ctx) {
 
     case 'payment-received': {
       if (trigger.type === 'trigger-contact-updated') {
+        if (matchCtx.canonicalContactUpdateEventPublished === true) return false
+        if (matchCtx.canonicalContactStatsReconciled === true && matchCtx.canonicalContactStatsChanged !== true) return false
         return contactUpdatedTriggerAcceptsRelatedEvent(trigger, eventType, matchCtx)
       }
       if (trigger.type !== 'trigger-payment-received') return false
@@ -2385,6 +2387,8 @@ function triggerMatches(trigger, eventType, ctx) {
 
     case 'refund':
       if (trigger.type === 'trigger-contact-updated') {
+        if (matchCtx.canonicalContactUpdateEventPublished === true) return false
+        if (matchCtx.canonicalContactStatsReconciled === true && matchCtx.canonicalContactStatsChanged !== true) return false
         return contactUpdatedTriggerAcceptsRelatedEvent(trigger, eventType, matchCtx)
       }
       if (trigger.type === 'trigger-refund') return true
@@ -8816,7 +8820,10 @@ export async function handleAutomationEvent(eventType, data = {}) {
       )
       if (row) contact = await loadContact(row.id)
     }
-    const lifecycleStageChanged = lifecycleStageChangedForEvent(eventType, eventData, contact)
+    const lifecycleStageChanged = eventData.canonicalContactStatsReconciled === true
+      ? eventData.lifecycleStageChanged === true
+      : eventData.canonicalLifecycleStageChange === true ||
+        lifecycleStageChangedForEvent(eventType, eventData, contact)
     const ctx = withContactChangeContext(eventType, {
       ...eventData,
       contact,
