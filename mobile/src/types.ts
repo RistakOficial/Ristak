@@ -127,12 +127,19 @@ export type ChatContact = {
     definitionId?: string;
     fieldId?: string;
     field_id?: string;
+    customFieldId?: string;
     key?: string;
     fieldKey?: string;
+    field_key?: string;
     dataType?: string;
     name?: string;
     label?: string;
     value?: unknown;
+    options?: Array<{ label?: string; value?: string; name?: string } | string>;
+    sourceType?: string;
+    sourceSiteId?: string;
+    sourceFormId?: string;
+    sourceFieldId?: string;
   }>;
 };
 
@@ -1105,6 +1112,7 @@ export type WhatsAppApiTemplatesResponse = {
 };
 
 export type ContactCustomFieldDefinition = {
+  id?: string;
   definitionId?: string;
   key?: string;
   fieldKey?: string;
@@ -1114,7 +1122,13 @@ export type ContactCustomFieldDefinition = {
   options?: Array<{ label: string; value: string }>;
   folderId?: string;
   folderName?: string;
+  fieldGroup?: string;
   sourceType?: string;
+  sourceSiteId?: string;
+  sourceFormId?: string;
+  sourceFieldId?: string;
+  createdAt?: string;
+  updatedAt?: string;
   system?: boolean;
   systemManaged?: boolean;
   locked?: boolean;

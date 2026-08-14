@@ -350,6 +350,12 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     `chat_data_changed/scheduled_messages`; web, Android e iOS releen de inmediato
     la lista canonica del contacto sin promover la fila ni sumar no leidos.
 - [ ] Contact info/modal movil y campos personalizados.
+  - Avance: `/movil`, Android e iOS resuelven las respuestas por identidad
+    estable, recuperan valores legacy por etiqueta sólo cuando no hay ambigüedad
+    y ocultan variantes históricas vacías de una misma pregunta. Radios,
+    dropdowns y checkboxes muestran la opción respondida en vez de `Sin dato` o
+    el valor técnico del formulario. Siguen pendientes las demás brechas de la
+    ficha documentadas en esta lista.
 - [ ] Agenda desde chat.
 - [x] Aislar y aligerar sincronizacion de conversaciones.
   - Avance: cada contacto remonta su pantalla; la cache queda aislada por cliente

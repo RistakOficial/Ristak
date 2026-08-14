@@ -514,30 +514,22 @@ final class ContactInfoViewModel {
 
     var customFieldRows: [CustomFieldRow] {
         let values = contact?.customFields ?? []
-        var consumed = Set<Int>()
-
-        func matchValue(for definition: ContactCustomFieldDefinition) -> ContactCustomFieldValue? {
-            for (index, value) in values.enumerated() where !consumed.contains(index) {
-                if Self.matches(definition: definition, value: value) {
-                    consumed.insert(index)
-                    return value
-                }
+        let definitions = fieldDefinitions.filter(Self.isUserCreatedDefinition)
+        let rows: [CustomFieldRow] = ContactInfoCustomFieldResolution
+            .resolve(definitions: definitions, values: values)
+            .map { resolved in
+                let definition = resolved.definition
+                let value = resolved.value
+                return CustomFieldRow(
+                    id: definition.id,
+                    label: definition.label.isEmpty ? definition.key : definition.label,
+                    dataType: definition.dataType,
+                    options: definition.options.isEmpty ? (value?.options ?? []) : definition.options,
+                    definition: definition,
+                    value: value,
+                    isEditable: true
+                )
             }
-            return nil
-        }
-
-        let rows: [CustomFieldRow] = fieldDefinitions.filter(Self.isUserCreatedDefinition).map { definition in
-            let value = matchValue(for: definition)
-            return CustomFieldRow(
-                id: definition.id,
-                label: definition.label.isEmpty ? definition.key : definition.label,
-                dataType: definition.dataType,
-                options: definition.options.isEmpty ? (value?.options ?? []) : definition.options,
-                definition: definition,
-                value: value,
-                isEditable: true
-            )
-        }
 
         // Los valores sin una definición creada/configurada por el usuario son
         // metadatos internos o de integración. Nunca se muestran como campos.
@@ -576,19 +568,6 @@ final class ContactInfoViewModel {
             .lowercased()
             .replacingOccurrences(of: "[^a-z0-9]", with: "", options: .regularExpression)
         return token.isEmpty ? nil : token
-    }
-
-    private static func matches(definition: ContactCustomFieldDefinition, value: ContactCustomFieldValue) -> Bool {
-        if !definition.definitionId.isEmpty, definition.definitionId == value.definitionId { return true }
-        let defKeys = [definition.key, definition.fieldKey].map { $0.lowercased() }.filter { !$0.isEmpty }
-        let valueKeys = [value.key, value.fieldKey].map { $0.lowercased() }.filter { !$0.isEmpty }
-        if !defKeys.isEmpty, !valueKeys.isEmpty, defKeys.contains(where: valueKeys.contains) { return true }
-        if valueKeys.isEmpty, defKeys.isEmpty {
-            let defLabel = definition.label.lowercased()
-            let valueLabel = value.label.lowercased()
-            return !defLabel.isEmpty && defLabel == valueLabel
-        }
-        return false
     }
 
     /// Guarda un valor de campo personalizado (`PUT {customFields:[...]}`).

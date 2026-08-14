@@ -169,6 +169,76 @@ test('info de contacto solo muestra campos definidos por el usuario', () => {
 
   assert.deepEqual(rows.map((row) => row.label), ['Historia clínica']);
   assert.equal(rows[0].value, 'Alergia a penicilina');
+  assert.equal(rows[0].displayValue, 'Alergia a penicilina');
+});
+
+test('info de contacto enlaza respuestas legacy y oculta placeholders históricos del formulario', () => {
+  const sharedSource = {
+    sourceFormId: 'form-contacto',
+    sourceFieldId: 'pregunta-servicio',
+  };
+  const definitions = [
+    {
+      definitionId: 'field-servicio-anterior',
+      key: 'servicio_anterior',
+      fieldKey: 'servicio_anterior',
+      label: '¿Qué servicio buscas?',
+      dataType: 'radio',
+      options: [{ value: 'music', label: 'Producción musical' }],
+      updatedAt: '2026-07-01T12:00:00.000Z',
+      ...sharedSource,
+    },
+    {
+      definitionId: 'field-servicio-actual',
+      key: 'servicio_actual',
+      fieldKey: 'servicio_actual',
+      label: '¿Qué servicio buscas?',
+      dataType: 'radio',
+      options: [{ value: 'mix', label: 'Mezcla y masterización' }],
+      updatedAt: '2026-08-01T12:00:00.000Z',
+      ...sharedSource,
+    },
+  ];
+
+  const historicalRows = buildUserCustomFieldRows(definitions, [
+    {
+      definitionId: 'field-servicio-anterior',
+      key: 'servicio_anterior',
+      fieldKey: 'servicio_anterior',
+      value: 'music',
+    },
+  ]);
+  assert.deepEqual(historicalRows.map((row) => row.id), ['field-servicio-anterior']);
+  assert.equal(historicalRows[0].displayValue, 'Producción musical');
+
+  const currentRows = buildUserCustomFieldRows(definitions, [
+    {
+      definitionId: 'field-servicio-actual',
+      key: 'servicio_actual',
+      fieldKey: 'servicio_actual',
+      value: 'mix',
+    },
+  ]);
+  assert.deepEqual(currentRows.map((row) => row.id), ['field-servicio-actual']);
+  assert.equal(currentRows[0].displayValue, 'Mezcla y masterización');
+});
+
+test('info de contacto recupera una respuesta identificada solo por su etiqueta sin mezclar preguntas modernas', () => {
+  const [legacyRow] = buildUserCustomFieldRows([
+    { definitionId: 'field-instagram', key: 'instagram', label: 'Instagram' },
+  ], [
+    { label: 'Instagram', value: '@artista' },
+  ]);
+  assert.equal(legacyRow.displayValue, '@artista');
+
+  const rows = buildUserCustomFieldRows([
+    { definitionId: 'field-a', key: 'a', label: 'Elige una opción' },
+    { definitionId: 'field-b', key: 'b', label: 'Elige una opción' },
+  ], [
+    { definitionId: 'field-a', key: 'a', label: 'Elige una opción', value: 'A' },
+    { definitionId: 'field-b', key: 'b', label: 'Elige una opción', value: 'B' },
+  ]);
+  assert.deepEqual(rows.map((row) => row.displayValue), ['A', 'B']);
 });
 
 test('Analiticas movil usa el mismo permiso Dashboard que sus endpoints', () => {

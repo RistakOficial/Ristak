@@ -1232,7 +1232,15 @@ campos `system/systemManaged/locked` y metadatos de integraciones como
 `meta_social_*` nunca se convierten en filas visibles. `business_name`,
 `business.name` y “Nombre del negocio” pertenecen al perfil de la cuenta y se
 ocultan tanto en Info del contacto como en Ajustes, incluso si una instalación
-legacy los entrega sin banderas de sistema. La sección `Etiquetas`
+legacy los entrega sin banderas de sistema. `/movil`, Android e iOS emparejan
+cada definición con su respuesta primero por identidad estable
+(`definitionId`/`fieldKey`) y sólo recuperan por etiqueta cuando la respuesta
+legacy no tiene identidad y la coincidencia es única. Si una misma pregunta de
+formulario cambió de destino, se muestra la versión que sí contiene la respuesta
+del contacto; cuando ninguna tiene respuesta se conserva únicamente la
+definición más reciente. Radios, dropdowns y selecciones múltiples muestran la
+etiqueta contestada por la persona, no el valor técnico de la opción ni un
+placeholder vacío. La sección `Etiquetas`
 permite buscar o crear una etiqueta y coloca inmediatamente debajo la acción
 `Meter a una automatización`, limitada a automatizaciones publicadas. En Ajustes
 móviles, `Campos personalizados` y `Etiquetas` permiten crear y eliminar sus
