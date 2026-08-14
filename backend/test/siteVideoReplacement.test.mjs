@@ -3,6 +3,8 @@ import test from 'node:test'
 
 import { db } from '../src/config/database.js'
 import { replaceSiteVideo } from '../src/services/siteVideoReplacementService.js'
+import { transitionSiteVideoPlacement } from '../src/services/siteVideoPlacementService.js'
+import { listSitesVideoAssets } from '../src/services/sitesService.js'
 import {
   getVideoPlaybackViewers,
   recordVideoPlaybackEvent
@@ -62,6 +64,11 @@ async function makeFixture() {
       id, site_id, block_type, label, content, settings_json, sort_order
     ) VALUES (?, ?, 'video', 'Video principal', '', ?, 0)
   `, [blockId, siteId, JSON.stringify({ mediaUrl: oldUrl, mediaAssetId: oldAssetId })])
+  const initialBlock = await db.get(
+    'SELECT * FROM public_site_blocks WHERE id = ? AND site_id = ?',
+    [blockId, siteId]
+  )
+  await transitionSiteVideoPlacement({ siteId, nextBlock: initialBlock })
 
   return { siteId, blockId, oldAssetId, newAssetId, oldUrl, newUrl }
 }
@@ -73,6 +80,7 @@ async function cleanupFixture(fixture, playbackIds) {
   }
   await db.run('DELETE FROM site_video_replacements WHERE site_id = ?', [fixture.siteId]).catch(() => undefined)
   await db.run('DELETE FROM site_video_metric_lineage WHERE site_id = ?', [fixture.siteId]).catch(() => undefined)
+  await db.run('DELETE FROM site_video_placements WHERE site_id = ?', [fixture.siteId]).catch(() => undefined)
   await db.run('DELETE FROM public_site_blocks WHERE id = ?', [fixture.blockId]).catch(() => undefined)
   await db.run('DELETE FROM media_assets WHERE id IN (?, ?)', [fixture.oldAssetId, fixture.newAssetId]).catch(() => undefined)
   await db.run('DELETE FROM public_sites WHERE id = ?', [fixture.siteId]).catch(() => undefined)
@@ -125,6 +133,16 @@ test('reemplazar conservando métricas une el historial bajo el video nuevo', as
       [fixture.siteId, fixture.blockId, fixture.oldAssetId]
     )
     assert.equal(lineage.canonical_asset_id, fixture.newAssetId)
+    const catalog = await listSitesVideoAssets({
+      businessId: 'default',
+      siteType: 'sites',
+      siteId: fixture.siteId
+    })
+    assert.deepEqual(catalog.items.map(asset => asset.id), [fixture.newAssetId])
+    assert.equal(catalog.items[0].metadata.analyticsLifecycleStatus, 'active')
+    assert.ok(catalog.items[0].metadata.analyticsPlacements.some(placement => (
+      placement.sourceMediaAssetId === fixture.oldAssetId && placement.status === 'inactive'
+    )))
     const audit = await db.get('SELECT * FROM site_video_replacements WHERE site_id = ?', [fixture.siteId])
     assert.equal(audit.metrics_mode, 'preserve')
     assert.equal(audit.requested_by_user_id, 'user_test')

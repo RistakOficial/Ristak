@@ -1321,17 +1321,32 @@ incluidos límites de identidad, cobertura y pruebas, vive en
 `docs/TRACKING_PIXEL.md`.
 
 La videoteca de Sites usa `/api/sites/video-assets` con paginas de 50 y cursor
-`created_at + id`. El inventario se arma por uso actual: ownership legacy
-`sites/forms`, bindings de contenido HTML, IDs explícitos de bloque y URLs
-canónicas de Storage dentro de bloques de video. Por eso un asset de Media o uno
-compartido entre varios Sites aparece con todos sus orígenes publicados aunque
-`module_entity_id` sea nulo o viejo. El selector y el preview son paginados, pero
-`inventory`, `topAssetsByStarts` y `topAssetsByWatch` salen del alcance completo
-en servidor. Un video guardado sin Bunny Stream conserva analitica first-party;
-el detalle ya no consulta ni muestra la respuesta de Bunny: reproducciones,
-tiempo visto, visitantes y retencion salen del ledger de Ristak. La consulta del
-proveedor queda como diagnostico operativo separado. Los videos del formulario
-interno de calendario se
+`created_at + id`. `site_video_placements` conserva cada intervalo en que un
+asset estuvo colocado en un Site, bloque y página, con snapshots de nombre, URL,
+título/ruta de página y sus instantes de activación y desactivación. Crear,
+mover, reemplazar, restaurar o quitar un video actualiza esa bitácora dentro de la
+misma transacción del bloque; quitarlo no elimina el asset ni toca
+`video_playback_events`. El selector muestra primero los videos activos y
+mantiene los retirados como `Desactivado`, junto con la página donde estuvieron,
+para que su detalle y sus filtros de fecha sigan disponibles. El inventario
+expone `active` e `inactive`; si el mismo asset conserva al menos una colocación
+activa dentro del alcance, cuenta como activo sin perder sus colocaciones
+anteriores.
+
+Los bindings de contenido HTML, IDs explícitos de bloque y URLs canónicas de
+Storage cubren relaciones actuales que todavía no hayan pasado por esa bitácora.
+El ownership legacy `sites/forms` sólo funciona como fallback mientras el asset
+no tenga historial, evitando que un upload viejo reaparezca como activo después
+de quitar el bloque. La migración `161*` crea la tabla, garantiza una sola
+colocación activa por Site/bloque y precarga tanto relaciones actuales como
+eventos históricos huérfanos. Por eso un asset de Media o uno compartido entre
+varios Sites aparece con todos sus orígenes publicados aunque `module_entity_id`
+sea nulo o viejo. El selector y el preview son paginados, pero `inventory`,
+`topAssetsByStarts` y `topAssetsByWatch` salen del alcance completo en servidor.
+Un video guardado sin Bunny Stream conserva analitica first-party; el detalle ya
+no consulta ni muestra la respuesta de Bunny: reproducciones, tiempo visto,
+visitantes y retencion salen del ledger de Ristak. La consulta del proveedor
+queda como diagnostico operativo separado. Los videos del formulario interno de calendario se
 excluyen del inventario y de todos los scopes analiticos. Cuando la interfaz
 selecciona un origen exacto, el detalle de ese video transmite `siteId` hasta el
 ledger: tarjetas, curva y espectadores no mezclan otras páginas que reutilicen

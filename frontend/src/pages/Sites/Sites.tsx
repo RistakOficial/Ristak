@@ -3220,6 +3220,55 @@ const getMediaAnalyticsSourceSiteRecords = (asset?: MediaAsset | null) => {
   return Object.keys(legacySource).length ? [legacySource] : []
 }
 
+type MediaAnalyticsPlacement = {
+  siteId: string
+  siteName: string
+  pageId: string
+  pageTitle: string
+  pagePath: string
+  blockId: string
+  status: 'active' | 'inactive'
+  activatedAt?: string | null
+  deactivatedAt?: string | null
+}
+
+const getMediaAnalyticsPlacements = (asset?: MediaAsset | null): MediaAnalyticsPlacement[] => {
+  const placements = getMediaMetadataRecord(asset).analyticsPlacements
+  if (!Array.isArray(placements)) return []
+  return placements.flatMap((placement) => {
+    if (!placement || typeof placement !== 'object') return []
+    const record = placement as Record<string, unknown>
+    const siteId = typeof record.siteId === 'string' ? record.siteId.trim() : ''
+    const status = record.status === 'inactive' ? 'inactive' : 'active'
+    if (!siteId) return []
+    return [{
+      siteId,
+      siteName: typeof record.siteName === 'string' ? record.siteName.trim() : '',
+      pageId: typeof record.pageId === 'string' ? record.pageId.trim() : '',
+      pageTitle: typeof record.pageTitle === 'string' ? record.pageTitle.trim() : '',
+      pagePath: typeof record.pagePath === 'string' ? record.pagePath.trim() : '',
+      blockId: typeof record.blockId === 'string' ? record.blockId.trim() : '',
+      status,
+      activatedAt: typeof record.activatedAt === 'string' ? record.activatedAt : null,
+      deactivatedAt: typeof record.deactivatedAt === 'string' ? record.deactivatedAt : null
+    }]
+  })
+}
+
+const getMediaAnalyticsLifecycleStatus = (asset?: MediaAsset | null): 'active' | 'inactive' => {
+  const status = getMediaMetadataRecord(asset).analyticsLifecycleStatus
+  return status === 'inactive' ? 'inactive' : 'active'
+}
+
+const getMediaAnalyticsPrimaryPlacement = (asset?: MediaAsset | null, preferredSiteId = '') => {
+  const placements = getMediaAnalyticsPlacements(asset)
+  const preferred = preferredSiteId
+    ? placements.filter(placement => placement.siteId === preferredSiteId)
+    : placements
+  const scoped = preferred.length ? preferred : placements
+  return scoped.find(placement => placement.status === 'active') || scoped[0] || null
+}
+
 const getMediaSourceSiteName = (asset?: MediaAsset | null) => {
   const name = getMediaAnalyticsSourceSiteRecords(asset)[0]?.name
   return typeof name === 'string' ? name.trim() : ''
@@ -3359,8 +3408,16 @@ const getSiteAnalyticsVideoLabel = (asset: MediaAsset, sitesById: Map<string, Pu
   const sourceRecord = getMediaAnalyticsSourceSiteRecords(asset).find(sourceSite => sourceSite.id === sourceSiteId)
   const sourceRecordName = typeof sourceRecord?.name === 'string' ? sourceRecord.name.trim() : ''
   const siteName = sitesById.get(sourceSiteId)?.name || sourceRecordName || getMediaSourceSiteName(asset)
+  const placement = getMediaAnalyticsPrimaryPlacement(asset, preferredSiteId || sourceSiteId)
   const videoName = shortenSitesText(getMediaAssetDisplayName(asset), siteName ? 34 : 54)
-  return [videoName, siteName ? shortenSitesText(siteName, 24) : ''].filter(Boolean).join(' · ')
+  const pageName = placement?.pageTitle || placement?.pagePath || ''
+  const lifecycleLabel = getMediaAnalyticsLifecycleStatus(asset) === 'active' ? 'Activo' : 'Desactivado'
+  return [
+    videoName,
+    siteName ? shortenSitesText(siteName, 24) : '',
+    pageName ? `Página: ${shortenSitesText(pageName, 22)}` : '',
+    lifecycleLabel
+  ].filter(Boolean).join(' · ')
 }
 
 const slugifyName = (value: string) => value
@@ -9954,6 +10011,10 @@ export const Sites: React.FC = () => {
       if (!sourceSiteIds.length) return false
       if (sitesAnalyticsSiteId) return sourceSiteIds.includes(sitesAnalyticsSiteId)
       return true
+    }).sort((left, right) => {
+      const leftActive = getMediaAnalyticsLifecycleStatus(left) === 'active' ? 1 : 0
+      const rightActive = getMediaAnalyticsLifecycleStatus(right) === 'active' ? 1 : 0
+      return rightActive - leftActive
     })
   ), [siteVideoAssets, sitesAnalyticsSiteId])
   const selectedAnalyticsVideo = useMemo(() => (
@@ -47236,7 +47297,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     ? sitesById.get(selectedSiteId)?.name || siteOptions.find(site => site.id === selectedSiteId)?.name || 'Sitio seleccionado'
     : typeLabel
   const scopeDescription = isVideosView
-    ? `${formatSitesCompactNumber(videoInventory?.total)} videos en el alcance · ${formatSitesCompactNumber(videoInventory?.originsTotal)} orígenes · ${selectedVideoMode ? currentVideoLabel : 'vista agregada'} · ${analyticsSummary?.meta?.timezone || 'zona de la cuenta'}`
+    ? `${formatSitesCompactNumber(videoInventory?.total)} videos en el alcance · ${formatSitesCompactNumber(videoInventory?.active)} activos · ${formatSitesCompactNumber(videoInventory?.inactive)} desactivados · ${formatSitesCompactNumber(videoInventory?.originsTotal)} orígenes · ${selectedVideoMode ? currentVideoLabel : 'vista agregada'} · ${analyticsSummary?.meta?.timezone || 'zona de la cuenta'}`
     : `Todos los ${entityPluralLabel} publicados · ${analyticsSummary?.meta?.timezone || 'zona de la cuenta'}`
   const kpiCards = isVideosView
     ? selectedVideoMode
@@ -47252,7 +47313,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           { key: 'videos', icon: <Video size={16} />, label: 'Videos', value: formatSitesCompactNumber(videoInventory?.total) },
           { key: 'plays', icon: <Play size={16} />, label: 'Reproducciones', value: formatSitesCompactNumber(totalVideoViews) },
           { key: 'viewers', icon: <Eye size={16} />, label: 'Visitantes únicos', value: formatSitesCompactNumber(uniqueVideoViewers) },
-          { key: 'origins', icon: <LayoutTemplate size={16} />, label: 'Orígenes', value: formatSitesCompactNumber(videoInventory?.originsTotal) },
+          { key: 'inactive', icon: <LayoutTemplate size={16} />, label: 'Videos desactivados', value: formatSitesCompactNumber(videoInventory?.inactive) },
           { key: 'watch-time', icon: <Clock3 size={16} />, label: 'Tiempo visto', value: formatSitesSeconds(totalVideoWatchTime) },
           { key: 'average', icon: <Flame size={16} />, label: 'Alcance promedio', value: formatSitesPercent(engagementScore) }
         ]
@@ -47543,6 +47604,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           </div>
           {renderDetailRows([
             { key: 'origins', icon: <LayoutTemplate size={15} />, label: 'Orígenes publicados', value: formatSitesCompactNumber(videoInventory?.originsTotal) },
+            { key: 'active', icon: <CheckCircle2 size={15} />, label: 'Videos activos', value: formatSitesCompactNumber(videoInventory?.active) },
+            { key: 'inactive', icon: <Video size={15} />, label: 'Videos desactivados con historial', value: formatSitesCompactNumber(videoInventory?.inactive) },
             { key: 'stream-ready', icon: <CheckCircle2 size={15} />, label: 'Con Stream disponible', value: formatSitesCompactNumber(videoInventory?.streamReady) },
             { key: 'storage-only', icon: <Video size={15} />, label: 'Sólo storage', value: formatSitesCompactNumber(videoInventory?.storageOnly) }
           ], 'Sin inventario server-side disponible.')}
