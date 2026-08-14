@@ -48,7 +48,8 @@ import {
 } from '../services/scheduledChatMessagesService.js'
 import {
   buildDefaultMessageTemplateSendComponents,
-  ensureDefaultWhatsAppApiMessageTemplates
+  ensureDefaultWhatsAppApiMessageTemplates,
+  reconcileMessageTemplatesForActiveProvider
 } from '../services/messageTemplatesService.js'
 import { sendMetaSocialTextMessage, sendMetaSocialAudioMessage, sendMetaSocialAttachmentMessage, sendMetaSocialReactionMessage, sendMetaSocialCommentReply, listMetaSocialPosts } from '../services/metaSocialMessagingService.js'
 import {
@@ -137,16 +138,27 @@ function getWebhookUrl(req) {
 
 async function ensureDefaultTemplatesForActiveWhatsAppProvider(req, { publicBaseUrl = '' } = {}) {
   try {
-    const result = await ensureDefaultWhatsAppApiMessageTemplates({
-      submitToActiveProvider: true,
-      publicBaseUrl: publicBaseUrl || getPublicBaseUrl(req)
-    })
-    if (result.errors > 0) {
-      const failedNames = result.templates
-        .filter(template => template.error)
+    const activeProvider = await getAppConfig('whatsapp_api_provider')
+    const resolvedPublicBaseUrl = publicBaseUrl || getPublicBaseUrl(req)
+    const result = activeProvider === 'meta_direct'
+      ? await reconcileMessageTemplatesForActiveProvider({ publicBaseUrl: resolvedPublicBaseUrl })
+      : await ensureDefaultWhatsAppApiMessageTemplates({
+          submitToActiveProvider: true,
+          publicBaseUrl: resolvedPublicBaseUrl
+        })
+    const failures = activeProvider === 'meta_direct'
+      ? [
+          ...(result.details || []).filter(template => template.action === 'failed'),
+          ...(result.defaults?.templates || []).filter(template => template.error)
+        ].filter((template, index, items) => (
+          items.findIndex(candidate => candidate.id === template.id) === index
+        ))
+      : (result.templates || []).filter(template => template.error)
+    if (failures.length > 0) {
+      const failedNames = failures
         .map(template => template.name)
         .join(', ')
-      logger.warn(`WhatsApp API conectado, pero ${result.errors} plantilla(s) default fallaron con el proveedor activo: ${failedNames}`)
+      logger.warn(`WhatsApp API conectado, pero ${failures.length} plantilla(s) fallaron con el proveedor activo: ${failedNames}`)
     }
     return result
   } catch (error) {
@@ -501,6 +513,9 @@ export async function setWhatsAppActiveProviderView(req, res) {
     const data = await setWhatsAppActiveProvider({ provider: req.body?.provider })
     await syncRegisteredIntegrationCronsForProvider('whatsapp-api', { reason: 'whatsapp-api-provider-changed' })
     res.json({ success: true, data })
+    if (data.activeProvider === 'meta_direct') {
+      scheduleMetaDirectPostConnectionTasks(req)
+    }
   } catch (error) {
     logger.error(`Error cambiando proveedor WhatsApp: ${error.message}`)
     res.status(400).json({
@@ -1195,10 +1210,13 @@ export async function getWhatsAppApiTemplatesView(req, res) {
 
 export async function repairDefaultWhatsAppApiTemplatesView(req, res) {
   try {
-    const data = await ensureDefaultWhatsAppApiMessageTemplates({
-      submitToActiveProvider: true,
-      publicBaseUrl: getPublicBaseUrl(req)
-    })
+    const activeProvider = await getAppConfig('whatsapp_api_provider')
+    const data = activeProvider === 'meta_direct'
+      ? await reconcileMessageTemplatesForActiveProvider({ publicBaseUrl: getPublicBaseUrl(req) })
+      : await ensureDefaultWhatsAppApiMessageTemplates({
+          submitToActiveProvider: true,
+          publicBaseUrl: getPublicBaseUrl(req)
+        })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error reparando plantillas default WhatsApp_API: ${error.message}`)

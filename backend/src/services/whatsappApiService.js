@@ -123,7 +123,7 @@ const GENERIC_CONTACT_NAME = GENERIC_WHATSAPP_API_CONTACT_NAME
 const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY = 'whatsapp_protocol_identity_repair_version'
 const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION = '2026-08-06-v4'
 const YCLOUD_DISCONNECTED_PHONE_CLEANUP_CONFIG_KEY = 'whatsapp_ycloud_disconnected_phone_cleanup_version'
-const YCLOUD_DISCONNECTED_PHONE_CLEANUP_VERSION = 'v2'
+const YCLOUD_DISCONNECTED_PHONE_CLEANUP_VERSION = 'v3'
 const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-images')
 let ycloudFetch = nodeFetch
 let metaDirectFetch = nodeFetch
@@ -3355,6 +3355,120 @@ export async function deleteWhatsAppApiTemplateSnapshot({ wabaId, name, language
   }
 }
 
+async function detachDisconnectedYCloudTemplateArtifacts() {
+  const result = await db.transaction(async transaction => {
+    const snapshotRows = await transaction.all(`
+      SELECT id
+      FROM whatsapp_api_templates
+      WHERE LOWER(COALESCE(provider, 'ycloud')) = 'ycloud'
+    `)
+    const snapshotIds = snapshotRows.map(row => cleanString(row.id)).filter(Boolean)
+    let sendReferencesReleased = 0
+
+    if (snapshotIds.length) {
+      const placeholders = snapshotIds.map(() => '?').join(', ')
+      const released = await transaction.run(
+        `UPDATE whatsapp_api_template_sends
+         SET template_id = NULL, updated_at = CURRENT_TIMESTAMP
+         WHERE template_id IN (${placeholders})`,
+        snapshotIds
+      )
+      sendReferencesReleased = Number(released?.changes || 0)
+    }
+
+    const localRows = await transaction.all(`
+      SELECT id
+      FROM whatsapp_message_templates
+      WHERE LOWER(COALESCE(template_provider, '')) = 'ycloud'
+        OR (
+          COALESCE(template_provider, '') = ''
+          AND (
+            NULLIF(provider_template_name, '') IS NOT NULL
+            OR NULLIF(provider_template_id, '') IS NOT NULL
+            OR NULLIF(provider_status, '') IS NOT NULL
+            OR NULLIF(provider_raw_payload_json, '') IS NOT NULL
+            OR provider_submitted_at IS NOT NULL
+            OR provider_synced_at IS NOT NULL
+          )
+        )
+    `)
+    const localIds = localRows.map(row => cleanString(row.id)).filter(Boolean)
+    const detached = await transaction.run(`
+      UPDATE whatsapp_message_templates
+      SET ycloud_template_name = COALESCE(NULLIF(ycloud_template_name, ''), NULLIF(provider_template_name, ''), name),
+          ycloud_template_id = COALESCE(NULLIF(ycloud_template_id, ''), NULLIF(provider_template_id, '')),
+          ycloud_status = COALESCE(NULLIF(ycloud_status, ''), NULLIF(provider_status, '')),
+          ycloud_reason = COALESCE(NULLIF(ycloud_reason, ''), NULLIF(provider_reason, '')),
+          ycloud_status_update_event = COALESCE(NULLIF(ycloud_status_update_event, ''), NULLIF(provider_status_update_event, '')),
+          ycloud_quality_rating = COALESCE(NULLIF(ycloud_quality_rating, ''), NULLIF(provider_quality_rating, '')),
+          ycloud_raw_payload_json = COALESCE(NULLIF(ycloud_raw_payload_json, ''), NULLIF(provider_raw_payload_json, '')),
+          ycloud_submitted_at = COALESCE(ycloud_submitted_at, provider_submitted_at),
+          ycloud_synced_at = COALESCE(ycloud_synced_at, provider_synced_at),
+          template_provider = NULL,
+          provider_template_name = NULL,
+          provider_template_id = NULL,
+          provider_status = NULL,
+          provider_reason = NULL,
+          provider_status_update_event = NULL,
+          provider_quality_rating = NULL,
+          provider_raw_payload_json = NULL,
+          provider_submitted_at = NULL,
+          provider_synced_at = NULL,
+          last_error = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE LOWER(COALESCE(template_provider, '')) = 'ycloud'
+        OR (
+          COALESCE(template_provider, '') = ''
+          AND (
+            NULLIF(provider_template_name, '') IS NOT NULL
+            OR NULLIF(provider_template_id, '') IS NOT NULL
+            OR NULLIF(provider_status, '') IS NOT NULL
+            OR NULLIF(provider_raw_payload_json, '') IS NOT NULL
+            OR provider_submitted_at IS NOT NULL
+            OR provider_synced_at IS NOT NULL
+          )
+        )
+    `)
+
+    const deletedSnapshots = await transaction.run(`
+      DELETE FROM whatsapp_api_templates
+      WHERE LOWER(COALESCE(provider, 'ycloud')) = 'ycloud'
+    `)
+    await transaction.run(`DELETE FROM whatsapp_api_balance WHERE id = 'current'`)
+    await transaction.run(`
+      UPDATE whatsapp_api_alerts
+      SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      WHERE status = 'active' AND alert_type = 'balance'
+    `)
+
+    const detachedEntityIds = [...new Set([...snapshotIds, ...localIds])]
+    if (detachedEntityIds.length) {
+      const placeholders = detachedEntityIds.map(() => '?').join(', ')
+      await transaction.run(`
+        UPDATE whatsapp_api_alerts
+        SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE status = 'active'
+          AND COALESCE(entity_type, '') = 'template'
+          AND entity_id IN (${placeholders})
+      `, detachedEntityIds)
+    }
+
+    return {
+      templatesDetached: Number(detached?.changes || 0),
+      templateSnapshotsDeleted: Number(deletedSnapshots?.changes || 0),
+      templateSendReferencesReleased: sendReferencesReleased
+    }
+  })
+
+  if (result.templatesDetached || result.templateSnapshotsDeleted) {
+    logger.info(
+      `WhatsApp: YCloud desconectado; se retiraron ${result.templateSnapshotsDeleted} snapshot(s) y ` +
+      `se desvincularon ${result.templatesDetached} plantilla(s) locales sin borrar su contenido.`
+    )
+  }
+  return result
+}
+
 export async function upsertWhatsAppApiTemplateSnapshot(record = {}) {
   const config = await loadConfig()
   const provider = cleanString(record.provider || config.provider) || PROVIDER_NAME
@@ -3610,13 +3724,28 @@ function isLocallyConnectedWhatsAppPhone(phone = {}) {
 
 async function selectNextDefaultWhatsAppPhone() {
   const rows = await getPhoneNumbersFromDb()
-  const nextDefault = rows.find(isLocallyConnectedWhatsAppPhone) || null
+  const connectedRows = rows.filter(isLocallyConnectedWhatsAppPhone)
+  const nextDefault = connectedRows.find(row => Number(row.is_default_sender || 0) === 1) ||
+    connectedRows.find(row => (
+      isOfficialWhatsAppApiProvider(cleanString(row.provider).toLowerCase()) &&
+      cleanString(row.provider).toLowerCase() !== 'qr' &&
+      Number(row.api_send_enabled ?? 1) === 1
+    )) ||
+    connectedRows[0] ||
+    null
 
   if (nextDefault?.id) {
     await setDefaultSenderPhoneNumber(nextDefault.id)
-    await setAppConfig(CONFIG_KEYS.senderPhone, nextDefault.phone_number || nextDefault.display_phone_number || '')
-    await setAppConfig(CONFIG_KEYS.phoneNumberId, nextDefault.id || '')
-    await setAppConfig(CONFIG_KEYS.wabaId, nextDefault.waba_id || '')
+    const nextProvider = cleanString(nextDefault.provider).toLowerCase()
+    const configWrites = [
+      setAppConfig(CONFIG_KEYS.senderPhone, nextDefault.phone_number || nextDefault.display_phone_number || ''),
+      setAppConfig(CONFIG_KEYS.phoneNumberId, nextDefault.id || ''),
+      setAppConfig(CONFIG_KEYS.wabaId, nextDefault.waba_id || '')
+    ]
+    if ([PROVIDER_NAME, META_DIRECT_PROVIDER_NAME].includes(nextProvider)) {
+      configWrites.push(setAppConfig(CONFIG_KEYS.provider, nextProvider))
+    }
+    await Promise.all(configWrites)
     return nextDefault
   }
 
@@ -3750,8 +3879,17 @@ export async function repairDisconnectedYCloudPhoneRows({ force = false } = {}) 
   `, [PROVIDER_NAME, PROVIDER_NAME]).catch(() => [])
 
   if (!rows.length && !force && cleanupVersion === YCLOUD_DISCONNECTED_PHONE_CLEANUP_VERSION) {
-    return { repaired: false, skipped: 'already_repaired', removed: 0, convertedToQr: 0 }
+    return {
+      repaired: false,
+      skipped: 'already_repaired',
+      removed: 0,
+      convertedToQr: 0,
+      templatesDetached: 0,
+      templateSnapshotsDeleted: 0
+    }
   }
+
+  const templateCleanup = await detachDisconnectedYCloudTemplateArtifacts()
 
   let removed = 0
   let convertedToQr = 0
@@ -3765,7 +3903,13 @@ export async function repairDisconnectedYCloudPhoneRows({ force = false } = {}) 
 
   await selectNextDefaultWhatsAppPhone()
   await setAppConfig(YCLOUD_DISCONNECTED_PHONE_CLEANUP_CONFIG_KEY, YCLOUD_DISCONNECTED_PHONE_CLEANUP_VERSION)
-  return { repaired: removed > 0 || convertedToQr > 0, removed, convertedToQr, keptQr }
+  return {
+    repaired: removed > 0 || convertedToQr > 0 || templateCleanup.templatesDetached > 0 || templateCleanup.templateSnapshotsDeleted > 0,
+    removed,
+    convertedToQr,
+    keptQr,
+    ...templateCleanup
+  }
 }
 
 export async function setWhatsAppApiDefaultPhoneNumber({ phoneNumberId } = {}) {
@@ -3775,7 +3919,7 @@ export async function setWhatsAppApiDefaultPhoneNumber({ phoneNumberId } = {}) {
   }
 
   const phoneNumber = await db.get(`
-    SELECT id, waba_id, phone_number, display_phone_number
+    SELECT id, provider, waba_id, phone_number, display_phone_number
     FROM whatsapp_api_phone_numbers
     WHERE id = ?
   `, [cleanPhoneNumberId])
@@ -3789,6 +3933,10 @@ export async function setWhatsAppApiDefaultPhoneNumber({ phoneNumberId } = {}) {
   await setAppConfig(CONFIG_KEYS.senderPhone, senderPhone)
   await setAppConfig(CONFIG_KEYS.phoneNumberId, phoneNumber.id || '')
   await setAppConfig(CONFIG_KEYS.wabaId, phoneNumber.waba_id || '')
+  const provider = cleanString(phoneNumber.provider).toLowerCase()
+  if ([PROVIDER_NAME, META_DIRECT_PROVIDER_NAME].includes(provider)) {
+    await setAppConfig(CONFIG_KEYS.provider, provider)
+  }
   await setAppConfig(CONFIG_KEYS.lastSyncedAt, nowIso())
   await setAppConfig(CONFIG_KEYS.lastError, '')
 
@@ -5483,9 +5631,72 @@ function mapTemplateRow(row = {}) {
   }
 }
 
-async function getTemplatesFromDb({ status, limit = 100 } = {}) {
+async function getConnectedWhatsAppTemplateScopes() {
+  const [rows, ycloudConfig, metaConfig] = await Promise.all([
+    db.all(`
+      SELECT provider, waba_id
+      FROM whatsapp_api_phone_numbers
+      WHERE api_send_enabled = 1
+        AND NULLIF(waba_id, '') IS NOT NULL
+        AND LOWER(COALESCE(provider, '')) IN ('ycloud', 'meta_direct')
+    `).catch(() => []),
+    loadConfig(),
+    loadMetaDirectConfig()
+  ])
+  const ycloudConnected = Boolean(ycloudConfig.enabled && ycloudConfig.hasApiKey)
+  const scopes = []
+  const seen = new Set()
+
+  for (const row of rows) {
+    const provider = cleanString(row.provider).toLowerCase()
+    const wabaId = cleanString(row.waba_id)
+    if (!wabaId) continue
+    if (provider === PROVIDER_NAME && !ycloudConnected) continue
+    if (
+      provider === META_DIRECT_PROVIDER_NAME &&
+      (!metaConfig.connected || wabaId !== cleanString(metaConfig.wabaId))
+    ) continue
+
+    const key = `${provider}|${wabaId}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    scopes.push({ provider, wabaId })
+  }
+
+  return scopes.sort((left, right) => (
+    left.provider.localeCompare(right.provider) || left.wabaId.localeCompare(right.wabaId)
+  ))
+}
+
+function getWhatsAppTemplateScopeCondition(scopes = [], alias = 't') {
+  if (!scopes.length) return { sql: '1 = 0', params: [] }
+  return {
+    sql: `(${scopes.map(() => `(LOWER(COALESCE(${alias}.provider, 'ycloud')) = ? AND ${alias}.waba_id = ?)`).join(' OR ')})`,
+    params: scopes.flatMap(scope => [scope.provider, scope.wabaId])
+  }
+}
+
+async function getWhatsAppTemplateStatsFromDb(scopes = []) {
+  const scope = getWhatsAppTemplateScopeCondition(scopes)
+  const row = await db.get(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN status = 'APPROVED' THEN 1 ELSE 0 END) AS approved
+    FROM whatsapp_api_templates t
+    WHERE ${scope.sql}
+  `, scope.params)
+  return {
+    total: Number(row?.total || 0),
+    approved: Number(row?.approved || 0)
+  }
+}
+
+async function getTemplatesFromDb({ status, limit = 100, scopes } = {}) {
+  const activeScopes = Array.isArray(scopes) ? scopes : await getConnectedWhatsAppTemplateScopes()
   const params = []
-  const where = []
+  const scope = getWhatsAppTemplateScopeCondition(activeScopes)
+  const where = [scope.sql]
+  params.push(...scope.params)
 
   if (status) {
     where.push('t.status = ?')
@@ -5721,11 +5932,11 @@ export async function getWhatsAppApiStatus() {
   ) {
     config = { ...config, provider: PROVIDER_NAME }
   }
-  const [statusSnapshot, phoneNumbers, balance, templates, alerts, qrSessions, qrDripSettings] = await Promise.all([
+  const [statusSnapshot, phoneNumbers, balance, templateCatalog, alerts, qrSessions, qrDripSettings] = await Promise.all([
     getWhatsAppStatusProjectionSnapshot(),
     getPhoneNumbersFromDb(),
     getBalanceFromDb(),
-    getTemplatesFromDb({ limit: 12 }),
+    getWhatsAppApiTemplates({ limit: 12 }),
     getActiveAlertsFromDb({ limit: 12 }),
     getWhatsAppQrSessions({ repairMissingAuthState: false }).catch(error => {
       logger.warn(`No se pudieron leer sesiones QR WhatsApp: ${error.message}`)
@@ -5765,7 +5976,7 @@ export async function getWhatsAppApiStatus() {
   }))
 
   const needsDefaultSelection = Boolean(
-    connected &&
+    (connected || metaDirect.connected) &&
     phoneNumbersWithAvailability.length > 1 &&
     !phoneNumbersWithAvailability.some(phone => Number(phone.is_default_sender || 0) === 1)
   )
@@ -5822,13 +6033,8 @@ export async function getWhatsAppApiStatus() {
     selectedPhone,
     needsDefaultSelection,
     pendingRestores,
-    balance,
-    templates: {
-      total: stats.templates,
-      approved: stats.approvedTemplates,
-      blocked: Math.max(0, stats.templates - stats.approvedTemplates),
-      items: templates
-    },
+    balance: connected ? balance : null,
+    templates: templateCatalog,
     alerts: {
       total: stats.activeAlerts,
       critical: stats.criticalAlerts,
@@ -12895,12 +13101,12 @@ async function sendInteractiveViaMetaDirect({ to, interactive, from, externalId 
 }
 
 export async function getWhatsAppApiTemplates({ status, limit } = {}) {
-  const [items, snapshot] = await Promise.all([
-    getTemplatesFromDb({ status, limit }),
-    getWhatsAppStatusProjectionSnapshot()
+  const scopes = await getConnectedWhatsAppTemplateScopes()
+  const [items, stats] = await Promise.all([
+    getTemplatesFromDb({ status, limit, scopes }),
+    getWhatsAppTemplateStatsFromDb(scopes)
   ])
-  const total = Number(snapshot.stats.templates || 0)
-  const approved = Number(snapshot.stats.approvedTemplates || 0)
+  const { total, approved } = stats
 
   return {
     total,
@@ -12923,8 +13129,12 @@ function escapeWhatsAppTemplateCatalogLike(value) {
     .replaceAll('_', '!_')
 }
 
-function whatsappTemplateCatalogScope({ status = '', search = '' } = {}) {
-  return JSON.stringify([status, search.toLowerCase()])
+function whatsappTemplateCatalogScope({ status = '', search = '', providerScopes = [] } = {}) {
+  return JSON.stringify([
+    status,
+    search.toLowerCase(),
+    providerScopes.map(scope => [scope.provider, scope.wabaId])
+  ])
 }
 
 function encodeWhatsAppTemplateCatalogCursor(row, scope) {
@@ -13064,10 +13274,16 @@ export async function getWhatsAppApiTemplatesCatalogPage({
   const pageLimit = normalizeWhatsAppTemplateCatalogLimit(limit)
   const normalizedStatus = cleanString(status).toUpperCase()
   const normalizedSearch = cleanString(search).slice(0, 160)
-  const scope = whatsappTemplateCatalogScope({ status: normalizedStatus, search: normalizedSearch })
+  const providerScopes = await getConnectedWhatsAppTemplateScopes()
+  const scope = whatsappTemplateCatalogScope({
+    status: normalizedStatus,
+    search: normalizedSearch,
+    providerScopes
+  })
   const decodedCursor = decodeWhatsAppTemplateCatalogCursor(cursor, scope)
-  const conditions = []
-  const params = []
+  const providerScope = getWhatsAppTemplateScopeCondition(providerScopes)
+  const conditions = [providerScope.sql]
+  const params = [...providerScope.params]
 
   if (normalizedStatus) {
     conditions.push('t.status = ?')
@@ -13125,9 +13341,7 @@ export async function getWhatsAppApiTemplatesCatalogPage({
     items.push(item)
   }
 
-  const snapshot = await getWhatsAppStatusProjectionSnapshot()
-  const total = Number(snapshot.stats.templates || 0)
-  const approved = Number(snapshot.stats.approvedTemplates || 0)
+  const { total, approved } = await getWhatsAppTemplateStatsFromDb(providerScopes)
   return {
     total,
     approved,
@@ -13594,7 +13808,7 @@ function templateQuickReplyButtonComponents(template = {}, components = []) {
   return quickReplies.length ? [...existingComponents, ...quickReplies] : existingComponents
 }
 
-async function findTemplateForSend({ templateId, templateName, language }) {
+async function findTemplateForSend({ templateId, templateName, language, provider, wabaId }) {
   if (templateId) {
     return db.get(`
       SELECT id, provider, waba_id, name, language, status, quality_rating, components_json
@@ -13604,13 +13818,17 @@ async function findTemplateForSend({ templateId, templateName, language }) {
   }
 
   if (!templateName || !language) return null
+  const cleanProvider = cleanString(provider).toLowerCase()
+  const cleanWabaId = cleanString(wabaId)
   return db.get(`
     SELECT id, provider, waba_id, name, language, status, quality_rating, components_json
     FROM whatsapp_api_templates
     WHERE name = ? AND language = ?
+      AND (? = '' OR LOWER(COALESCE(provider, 'ycloud')) = ?)
+      AND (? = '' OR waba_id = ?)
     ORDER BY updated_at DESC
     LIMIT 1
-  `, [templateName, language])
+  `, [templateName, language, cleanProvider, cleanProvider, cleanWabaId, cleanWabaId])
 }
 
 function getComponentParameters(components = [], type = '') {
@@ -13763,7 +13981,9 @@ export async function sendWhatsAppApiTemplateMessage({
   const template = await findTemplateForSend({
     templateId: cleanString(templateId),
     templateName: cleanTemplateName,
-    language: cleanLanguage
+    language: cleanLanguage,
+    provider: config.provider,
+    wabaId: config.wabaId
   })
 
   const finalTemplate = template || {
@@ -13792,6 +14012,14 @@ export async function sendWhatsAppApiTemplateMessage({
     throw new Error(
       `La plantilla ${finalTemplate.name} pertenece a ${getWhatsAppProviderLabel(templateProvider)}. ` +
       `Elige un número conectado a ese canal en lugar de ${getWhatsAppProviderLabel(outboundProvider)}.`
+    )
+  }
+  const templateWabaId = cleanString(finalTemplate.waba_id || finalTemplate.wabaId)
+  const outboundWabaId = cleanString(config.wabaId)
+  if (templateWabaId && outboundWabaId && templateWabaId !== outboundWabaId) {
+    throw new Error(
+      `La plantilla ${finalTemplate.name} pertenece a otra cuenta de WhatsApp Business. ` +
+      'Elige una plantilla del mismo WABA que el número remitente.'
     )
   }
 

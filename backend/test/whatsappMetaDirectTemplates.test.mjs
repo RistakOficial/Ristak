@@ -14,6 +14,7 @@ import {
 } from '../src/services/whatsappApiService.js'
 import {
   createMessageTemplate,
+  reconcileMessageTemplatesForActiveProvider,
   sendMessageTemplateTest,
   submitMessageTemplateToActiveProvider
 } from '../src/services/messageTemplatesService.js'
@@ -247,6 +248,59 @@ test('rechaza una plantilla de otro proveedor antes de intentar el envío', asyn
   })
 })
 
+test('rechaza una plantilla Meta que pertenece a otro WABA antes de enviar', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const suffix = Date.now()
+  const templateId = `meta_template_wrong_waba_${suffix}`
+  const templateName = `plantilla_waba_incorrecto_${suffix}`
+
+  await snapshotConfig([
+    keys.provider,
+    keys.metaStatus,
+    keys.metaWabaId,
+    keys.metaPhoneNumberId,
+    keys.metaDisplayPhoneNumber,
+    keys.metaSystemUserToken
+  ], async () => {
+    await setAppConfig(keys.provider, 'meta_direct')
+    await setAppConfig(keys.metaStatus, 'connected')
+    await setAppConfig(keys.metaWabaId, `waba_actual_${suffix}`)
+    await setAppConfig(keys.metaPhoneNumberId, `phone_waba_actual_${suffix}`)
+    await setAppConfig(keys.metaDisplayPhoneNumber, '+526561112234')
+    await setAppConfig(keys.metaSystemUserToken, encrypt('meta_direct_wrong_waba_token'))
+    await db.run(`
+      INSERT INTO whatsapp_api_templates (
+        id, official_template_id, provider_template_id, provider, source_adapter,
+        waba_id, name, language, status, components_json, raw_payload_json
+      ) VALUES (?, ?, ?, 'meta_direct', 'meta_direct', ?, ?, 'es_MX', 'APPROVED', ?, '{}')
+    `, [
+      templateId,
+      templateId,
+      templateId,
+      `waba_anterior_${suffix}`,
+      templateName,
+      JSON.stringify([{ type: 'BODY', text: 'Hola' }])
+    ])
+    setMetaDirectFetchForTest(async () => {
+      throw new Error('Meta no debe recibir una plantilla de otro WABA')
+    })
+
+    try {
+      await assert.rejects(
+        sendWhatsAppApiTemplateMessage({
+          to: '+526561234567',
+          templateId,
+          variablesResolved: true
+        }),
+        /pertenece a otra cuenta de WhatsApp Business.*mismo WABA/
+      )
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_templates WHERE id = ?', [templateId])
+    }
+  })
+})
+
 test('el flujo local envía a Meta directo sin escribir el ID en columnas YCloud', async () => {
   await initializeMasterKey()
   const keys = getWhatsAppApiConfigKeys()
@@ -382,4 +436,197 @@ test('webhook Meta actualiza estado y calidad sin tocar columnas YCloud', async 
     await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [local.id])
     await db.run('DELETE FROM whatsapp_api_templates WHERE name = ? AND language = ?', [templateName, 'es_MX'])
   }
+})
+
+test('al pasar de YCloud a Meta adopta las existentes, envía las faltantes y no revive aprobaciones viejas', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const suffix = Date.now()
+  const wabaId = `waba_meta_migration_${suffix}`
+  const phoneId = `phone_meta_migration_${suffix}`
+  const existingName = `migracion_existente_${suffix}`
+  const missingName = `migracion_faltante_${suffix}`
+  const failingName = `migracion_fallida_${suffix}`
+  const candidateRows = [
+    [`tmpl_existing_${suffix}`, existingName, `ycloud_existing_${suffix}`],
+    [`tmpl_missing_${suffix}`, missingName, `ycloud_missing_${suffix}`],
+    [`tmpl_failing_${suffix}`, failingName, `ycloud_failing_${suffix}`]
+  ]
+  const requests = []
+
+  await snapshotConfig([
+    keys.enabled,
+    keys.provider,
+    keys.senderPhone,
+    keys.phoneNumberId,
+    keys.wabaId,
+    keys.metaStatus,
+    keys.metaWabaId,
+    keys.metaPhoneNumberId,
+    keys.metaDisplayPhoneNumber,
+    keys.metaSystemUserToken
+  ], async () => {
+    await setAppConfig(keys.enabled, '1')
+    await setAppConfig(keys.provider, 'meta_direct')
+    await setAppConfig(keys.senderPhone, '+526144640000')
+    await setAppConfig(keys.phoneNumberId, phoneId)
+    await setAppConfig(keys.wabaId, wabaId)
+    await setAppConfig(keys.metaStatus, 'connected')
+    await setAppConfig(keys.metaWabaId, wabaId)
+    await setAppConfig(keys.metaPhoneNumberId, phoneId)
+    await setAppConfig(keys.metaDisplayPhoneNumber, '+526144640000')
+    await setAppConfig(keys.metaSystemUserToken, encrypt('meta_direct_migration_test_token'))
+
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number,
+        status, api_send_enabled, is_default_sender
+      ) VALUES (?, 'meta_direct', ?, '+526144640000', '+52 614 464 0000', 'CONNECTED', 1, 1)
+    `, [phoneId, wabaId])
+    for (const [id, name, ycloudId] of candidateRows) {
+      await db.run(`
+        INSERT INTO whatsapp_message_templates (
+          id, name, language, status, body_text, template_provider,
+          provider_template_name, provider_template_id, provider_status,
+          provider_raw_payload_json, ycloud_template_name, ycloud_template_id,
+          ycloud_status, ycloud_raw_payload_json
+        ) VALUES (?, ?, 'es_MX', 'active', 'Hola desde YCloud', 'ycloud', ?, ?, 'APPROVED', ?, ?, ?, 'APPROVED', ?)
+      `, [
+        id,
+        name,
+        name,
+        ycloudId,
+        JSON.stringify({ wabaId: `waba_ycloud_old_${suffix}`, name }),
+        name,
+        ycloudId,
+        JSON.stringify({ wabaId: `waba_ycloud_old_${suffix}`, name })
+      ])
+    }
+
+    setMetaDirectFetchForTest(async (url, options = {}) => {
+      const requestUrl = new URL(url)
+      const method = String(options.method || 'GET').toUpperCase()
+      const body = options.body ? JSON.parse(options.body) : null
+      requests.push({ method, path: requestUrl.pathname, body })
+
+      if (method === 'GET' && requestUrl.pathname.endsWith(`/${wabaId}/message_templates`)) {
+        return graphResponse({
+          data: [{
+            id: `meta_existing_${suffix}`,
+            name: existingName,
+            language: 'es_MX',
+            category: 'UTILITY',
+            status: 'APPROVED',
+            components: [{ type: 'BODY', text: 'Hola desde YCloud' }]
+          }],
+          paging: {}
+        })
+      }
+
+      if (method === 'POST' && requestUrl.pathname.endsWith(`/${wabaId}/message_templates`)) {
+        if (body?.name === failingName) {
+          return graphResponse({
+            error: {
+              message: 'Invalid custom template',
+              code: 100,
+              error_user_msg: 'El contenido necesita corrección.'
+            }
+          }, 400)
+        }
+        return graphResponse({
+          id: `meta_${body.name}_${suffix}`,
+          status: 'PENDING',
+          category: body.category
+        })
+      }
+
+      throw new Error(`Unexpected Meta migration request ${method} ${requestUrl.pathname}`)
+    })
+
+    try {
+      const result = await reconcileMessageTemplatesForActiveProvider({
+        publicBaseUrl: 'https://pagos.ristak.test'
+      })
+
+      assert.equal(result.skipped, false)
+      assert.equal(result.adopted, 1)
+      assert.equal(result.submitted, 1, JSON.stringify(result))
+      assert.equal(result.failed, 1)
+      assert.equal(requests.filter(request => request.method === 'POST' && request.body?.name === existingName).length, 0)
+      assert.equal(requests.filter(request => request.method === 'POST' && request.body?.name === missingName).length, 1)
+      assert.equal(requests.filter(request => request.method === 'POST' && request.body?.name === failingName).length, 1)
+
+      const existing = await db.get(`
+        SELECT template_provider, provider_template_id, provider_status,
+          ycloud_template_id, ycloud_status
+        FROM whatsapp_message_templates WHERE id = ?
+      `, [candidateRows[0][0]])
+      assert.deepEqual(existing, {
+        template_provider: 'meta_direct',
+        provider_template_id: `meta_existing_${suffix}`,
+        provider_status: 'APPROVED',
+        ycloud_template_id: `ycloud_existing_${suffix}`,
+        ycloud_status: 'APPROVED'
+      })
+
+      const missing = await db.get(`
+        SELECT template_provider, provider_template_id, provider_status,
+          ycloud_template_id, ycloud_status
+        FROM whatsapp_message_templates WHERE id = ?
+      `, [candidateRows[1][0]])
+      assert.equal(missing.template_provider, 'meta_direct')
+      assert.equal(missing.provider_template_id, `meta_${missingName}_${suffix}`)
+      assert.equal(missing.provider_status, 'PENDING')
+      assert.equal(missing.ycloud_template_id, `ycloud_missing_${suffix}`)
+      assert.equal(missing.ycloud_status, 'APPROVED')
+
+      const failing = await db.get(`
+        SELECT template_provider, provider_template_id, provider_status,
+          ycloud_template_id, ycloud_status, last_error
+        FROM whatsapp_message_templates WHERE id = ?
+      `, [candidateRows[2][0]])
+      assert.equal(failing.template_provider, 'meta_direct')
+      assert.equal(failing.provider_template_id, null)
+      assert.equal(failing.provider_status, null)
+      assert.equal(failing.ycloud_template_id, `ycloud_failing_${suffix}`)
+      assert.equal(failing.ycloud_status, 'APPROVED')
+      assert.match(failing.last_error, /Invalid custom template/)
+      assert.equal(
+        await db.get('SELECT id FROM whatsapp_api_templates WHERE waba_id = ? AND name = ?', [wabaId, failingName]),
+        null
+      )
+
+      const scheduledRequest = requests.find(request => (
+        request.method === 'POST' && request.body?.name === 'cita_programada'
+      ))
+      assert.ok(scheduledRequest)
+      const scheduledHeader = scheduledRequest.body.components.find(component => component.type === 'HEADER')
+      assert.equal(scheduledHeader.text, 'Cita programada para el {{1}}')
+      assert.equal(scheduledHeader.text.includes('🗓'), false)
+    } finally {
+      const candidateIds = candidateRows.map(([id]) => id)
+      await db.run(
+        `DELETE FROM whatsapp_message_templates WHERE id IN (${candidateIds.map(() => '?').join(', ')})`,
+        candidateIds
+      )
+      await db.run('DELETE FROM whatsapp_api_templates WHERE waba_id = ?', [wabaId])
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneId])
+      await db.run(`
+        DELETE FROM whatsapp_message_templates
+        WHERE name IN (
+          'cita_programada',
+          'recordatorio_cita_una_hora_simple',
+          'recordatorio_cita_un_dia_antes',
+          'confirmacion_cita_dia_anterior',
+          'recordatorio_pago_pendiente',
+          'comprobante_pago_recibido',
+          'pago_fallido_reintento'
+        )
+      `)
+      await db.run(`
+        DELETE FROM app_config
+        WHERE config_key LIKE 'whatsapp_default_template_provider_revision_meta_direct_%'
+      `)
+    }
+  })
 })

@@ -44,6 +44,7 @@ import { ensureBunnyStreamRuntimeConfigured } from './services/mediaStorageServi
 import { scheduleStartupStorageTaxonomyMigration } from './services/storageTaxonomyMigration.js'
 import {
   ensureDefaultWhatsAppApiMessageTemplates,
+  reconcileMessageTemplatesForActiveProvider,
   repairDefaultAppointmentMessageTemplatesForCurrentConnection
 } from './services/messageTemplatesService.js'
 import { ensureDefaultLocalCalendar } from './services/localCalendarService.js'
@@ -959,6 +960,10 @@ async function startRuntimeServices() {
       if (!(await canRunBackgroundJob('whatsapp'))) {
         return { skipped: true, reason: 'license_blocked' }
       }
+      const reconciliation = await reconcileMessageTemplatesForActiveProvider({
+        publicBaseUrl: process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || ''
+      })
+      if (!reconciliation.skipped) return reconciliation
       return repairDefaultAppointmentMessageTemplatesForCurrentConnection()
     },
     'No se pudieron inicializar o actualizar las plantillas default de WhatsApp'

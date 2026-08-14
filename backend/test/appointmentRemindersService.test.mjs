@@ -313,6 +313,44 @@ async function createReminderTemplate({ suffix, ycloudStatus = 'APPROVED' }) {
   return { ...template, name }
 }
 
+async function ensureApprovedYCloudTemplateSnapshotForTest({ name, components }) {
+  const wabaId = 'waba_appointment_reminder_test'
+  const previous = await db.get(`
+    SELECT id, status, components_json
+    FROM whatsapp_api_templates
+    WHERE LOWER(COALESCE(provider, 'ycloud')) = 'ycloud'
+      AND waba_id = ? AND name = ? AND language = 'es_MX'
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `, [wabaId, name])
+
+  if (previous) {
+    await db.run(`
+      UPDATE whatsapp_api_templates
+      SET status = 'APPROVED', components_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [JSON.stringify(components), previous.id])
+    return async () => {
+      await db.run(`
+        UPDATE whatsapp_api_templates
+        SET status = ?, components_json = ?
+        WHERE id = ?
+      `, [previous.status, previous.components_json, previous.id])
+    }
+  }
+
+  const id = `api_default_reminder_fixture_${randomUUID()}`
+  await db.run(`
+    INSERT INTO whatsapp_api_templates (
+      id, official_template_id, provider_template_id, provider, source_adapter,
+      waba_id, name, language, status, components_json, raw_payload_json
+    ) VALUES (?, ?, ?, 'ycloud', 'ycloud', ?, ?, 'es_MX', 'APPROVED', ?, '{}')
+  `, [id, `official_${name}`, `official_${name}`, wabaId, name, JSON.stringify(components)])
+  return async () => {
+    await db.run('DELETE FROM whatsapp_api_templates WHERE id = ?', [id])
+  }
+}
+
 async function attachQrSessionForReminder(phoneNumberId, businessPhone, sentMessages = []) {
   const connectedJid = `${normalizeDigits(businessPhone)}@s.whatsapp.net`
   setBaileysRuntimeForTest(createFakeBaileysRuntime(connectedJid, sentMessages))
@@ -682,20 +720,11 @@ test('confirmaciones adaptan el contrato legacy aprendido del rechazo 132000', a
             }
           }
         }
-        const previousApiTemplates = await db.all(`
-          SELECT id, status, components_json
-          FROM whatsapp_api_templates
-          WHERE name = 'confirmacion_cita_dia_anterior' AND language = 'es_MX'
-        `)
-        t.after(async () => {
-          for (const row of previousApiTemplates) {
-            await db.run(`
-              UPDATE whatsapp_api_templates
-              SET status = ?, components_json = ?
-              WHERE id = ?
-            `, [row.status, row.components_json, row.id])
-          }
+        const restoreApiTemplate = await ensureApprovedYCloudTemplateSnapshotForTest({
+          name: 'confirmacion_cita_dia_anterior',
+          components: [{ type: 'BODY', text: currentBody }]
         })
+        t.after(restoreApiTemplate)
 
         await db.run(`
           UPDATE whatsapp_message_templates
@@ -711,12 +740,6 @@ test('confirmaciones adaptan el contrato legacy aprendido del rechazo 132000', a
           JSON.stringify(currentBindings),
           template.id
         ])
-        await db.run(`
-          UPDATE whatsapp_api_templates
-          SET status = 'APPROVED',
-              components_json = ?
-          WHERE name = 'confirmacion_cita_dia_anterior' AND language = 'es_MX'
-        `, [JSON.stringify([{ type: 'BODY', text: currentBody }])])
         await db.run(`
           UPDATE whatsapp_api_templates
           SET components_json = ?, updated_at = CURRENT_TIMESTAMP
@@ -973,7 +996,7 @@ test('el envío congela un deadline que sólo cuenta dentro del horario de respu
   })
 })
 
-test('el envío corrige una plantilla default cruzada y usa cita_programada al agendar', async () => {
+test('el envío corrige una plantilla default cruzada y usa cita_programada al agendar', async (t) => {
   await withYCloudMessageCapture(async (captures) => {
     await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder, appointmentId }) => {
       const templates = await db.all(`
@@ -987,6 +1010,20 @@ test('el envío corrige una plantilla default cruzada y usa cita_programada al a
       assert.ok(noticeTemplate?.id)
       assert.ok(wrongTemplate?.id)
 
+      const restoreSnapshots = await Promise.all([
+        ensureApprovedYCloudTemplateSnapshotForTest({
+          name: 'cita_programada',
+          components: [{ type: 'BODY', text: 'Hola {{1}}, tu cita quedó programada para {{2}} a las {{3}}.' }]
+        }),
+        ensureApprovedYCloudTemplateSnapshotForTest({
+          name: 'confirmacion_cita_dia_anterior',
+          components: [{ type: 'BODY', text: 'Hola {{1}}, ¿confirmas tu asistencia a la cita de {{2}}?' }]
+        })
+      ])
+      t.after(async () => {
+        for (const restore of restoreSnapshots) await restore()
+      })
+
       await db.run(`
         UPDATE whatsapp_message_templates
         SET template_provider = 'ycloud',
@@ -996,11 +1033,6 @@ test('el envío corrige una plantilla default cruzada y usa cita_programada al a
             ycloud_status = 'APPROVED',
             ycloud_template_id = 'official_' || name,
             ycloud_template_name = name
-        WHERE name IN ('cita_programada', 'confirmacion_cita_dia_anterior')
-      `)
-      await db.run(`
-        UPDATE whatsapp_api_templates
-        SET status = 'APPROVED'
         WHERE name IN ('cita_programada', 'confirmacion_cita_dia_anterior')
       `)
       await db.run(

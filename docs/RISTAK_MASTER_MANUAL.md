@@ -2903,6 +2903,10 @@ aunque YCloud se hubiera desconectado antes. Si se pierde la respuesta final,
 Installer no deja una conexión a medias: consulta un callback HMAC de readiness
 y sólo activa la ruta cuando el WABA, Phone Number ID, proveedor, modo relay y
 número oficial coinciden exactamente.
+La conexión confirmada promueve su fila como remitente principal y alinea la
+selección global de proveedor, WABA y Phone Number ID. La misma regla se aplica
+al retirar conexiones: si queda un solo número operativo, se vuelve principal
+automáticamente sin pedir una selección adicional.
 
 La tabla de números separa las métricas oficiales de los estados QR. Para Meta
 directo, **Calidad** muestra la calificación actual del número y **Límite
@@ -2973,7 +2977,10 @@ Una reparación idempotente de arranque limpia instalaciones antiguas que ya
 habían borrado las credenciales pero conservaban números YCloud fantasma. En el
 mismo saneamiento elimina un QR heredado de YCloud que diga estar reconectando
 pero ya no tenga credenciales QR reales; ese estado no es recuperable y no debe
-seguir apareciendo como otro número. En el mismo arranque, si el último resultado
+seguir apareciendo como otro número. También desvincula la propiedad operativa
+de las plantillas YCloud, retira sus snapshots del catálogo, saldo y alertas, y
+conserva únicamente el contenido local y los campos históricos `ycloud_*` para
+auditoría o una migración explícita. En el mismo arranque, si el último resultado
 de envío del número Meta activo fue un
 `133010`, la conexión queda en `reconnect_required` antes de arrancar sus tareas.
 
@@ -2986,12 +2993,15 @@ Las plantillas usan el proveedor API activo. Con Meta directo se administran en
 Graph bajo `/{WABA_ID}/message_templates`; con YCloud se usan sus endpoints
 propios. El modelo neutral y la UI se comparten, pero IDs remotos, estados,
 payloads y handles multimedia permanecen etiquetados por proveedor.
+El catálogo y sus conteos sólo incluyen combinaciones `provider + WABA` que
+tengan un número oficial conectado; una plantilla de una conexión anterior no
+puede reaparecer en Chat ni Automatizaciones por conservar un snapshot viejo.
 
 Al enviar o programar desde Chat, el proveedor de la plantilla debe coincidir
-con el proveedor del número seleccionado. Si no hay número elegido o pertenece
-a otro canal, desktop y móvil piden escoger el canal correcto; no presentan una
-desconexión global ficticia. El backend repite la misma validación antes de tocar
-Graph o YCloud.
+con el proveedor **y el WABA** del número seleccionado. Si no hay número elegido
+o pertenece a otro canal/cuenta, desktop y móvil piden escoger el remitente o la
+plantilla correcta; no presentan una desconexión global ficticia. El backend
+repite la misma validación antes de tocar Graph o YCloud.
 
 El historial conserva la estructura visible de los mensajes enriquecidos de
 WhatsApp. El journey reconstruye `message_presentation` desde el payload durable
@@ -4041,11 +4051,22 @@ Al reenviar a revision una plantilla que ya existe, Ristak usa la identidad del
 proveedor que administra esa copia. YCloud edita por
 `wabaId + name + language`; Meta directo edita por `TEMPLATE_ID` con
 `POST /{TEMPLATE_ID}`. Si una plantilla pertenecia a YCloud y el proveedor
-activo cambia a Meta directo, el ID YCloud no se reutiliza: se crea y guarda una
-identidad Meta separada. Si la copia local no tiene identidad remota pero YCloud
-responde que ya existe, el submit puede reintentar como edicion por nombre e
-idioma. Las plantillas archivadas o en revision no se editan desde Ristak; se
-debe esperar el resultado o crear una nueva con otro nombre.
+activo cambia a Meta directo, el ID YCloud no se reutiliza. Ristak sincroniza
+primero el WABA Meta: si encuentra el mismo `name + language`, adopta su ID y
+estado; si no existe, crea una identidad Meta separada y la manda a revisión.
+Una aprobación YCloud nunca se presenta como aprobación Meta. Si la copia local
+no tiene identidad remota pero YCloud responde que ya existe, el submit puede
+reintentar como edicion por nombre e idioma. Las plantillas archivadas o en
+revision no se editan desde Ristak; se debe esperar el resultado o crear una
+nueva con otro nombre.
+
+La conexión, el cambio explícito a Meta y el arranque con Meta ya conectado
+ejecutan esa reconciliación de manera idempotente después del ACK. Las siete
+plantillas base se actualizan antes de comparar; `cita_programada` usa el
+encabezado `Cita programada para el {{1}}` sin emoji porque Meta rechaza emojis
+y caracteres de formato en encabezados de texto. Si una migración individual
+falla, la copia queda asociada a Meta con el error pendiente de corregir y no
+vuelve a quedar disponible bajo la aprobación histórica YCloud.
 
 Las columnas neutrales `template_provider`, `provider_template_id`,
 `provider_status` y sus campos relacionados son la fuente de verdad para código

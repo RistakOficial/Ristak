@@ -45,6 +45,38 @@ async function withAppConfigValue(key, value, callback) {
   }
 }
 
+async function withAppConfigValues(entries, callback) {
+  if (!entries.length) return callback()
+  const [[key, value], ...rest] = entries
+  return withAppConfigValue(key, value, () => withAppConfigValues(rest, callback))
+}
+
+async function withConnectedYCloudTemplateScope(wabaId, callback) {
+  const keys = getWhatsAppApiConfigKeys()
+  const phoneNumberId = `phone_template_catalog_${randomUUID()}`
+  const phone = `+1555${Date.now()}${Math.floor(Math.random() * 1000)}`
+
+  return withAppConfigValues([
+    [keys.enabled, '1'],
+    [keys.apiKey, 'encrypted-test-key'],
+    [keys.provider, 'ycloud'],
+    [keys.wabaId, wabaId],
+    [keys.phoneNumberId, phoneNumberId]
+  ], async () => {
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number,
+        status, api_send_enabled, qr_send_enabled, is_default_sender
+      ) VALUES (?, 'ycloud', ?, ?, ?, 'CONNECTED', 1, 0, 1)
+    `, [phoneNumberId, wabaId, phone, phone])
+    try {
+      return await callback()
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+    }
+  })
+}
+
 function makeFlow(label = 'Mensaje publicado', viewport = { x: 0, y: 0, zoom: 1 }) {
   return {
     nodes: [
@@ -752,52 +784,53 @@ test('catálogo de plantillas WhatsApp para automatizaciones devuelve aprobadas 
     { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: 'Confirmar' }] }
   ]
 
-  await db.run(
-    `INSERT INTO whatsapp_api_templates (
-      id, official_template_id, waba_id, name, language, status, components_json, raw_payload_json
-    ) VALUES (?, ?, ?, ?, ?, 'APPROVED', ?, ?)`,
-    [
-      approvedId,
-      `official_${approvedId}`,
-      'waba_catalog_test',
-      approvedName,
-      'es_MX',
-      JSON.stringify(components),
-      '{}'
-    ]
-  )
-  await db.run(
-    `INSERT INTO whatsapp_api_templates (
-      id, official_template_id, waba_id, name, language, status, components_json, raw_payload_json
-    ) VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
-    [
-      pendingId,
-      `official_${pendingId}`,
-      'waba_catalog_test',
-      pendingName,
-      'es_MX',
-      JSON.stringify([{ type: 'BODY', text: 'Pendiente' }]),
-      '{}'
-    ]
-  )
+  await withConnectedYCloudTemplateScope('waba_catalog_test', async () => {
+    await db.run(
+      `INSERT INTO whatsapp_api_templates (
+        id, official_template_id, waba_id, name, language, status, components_json, raw_payload_json
+      ) VALUES (?, ?, ?, ?, ?, 'APPROVED', ?, ?)`,
+      [
+        approvedId,
+        `official_${approvedId}`,
+        'waba_catalog_test',
+        approvedName,
+        'es_MX',
+        JSON.stringify(components),
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO whatsapp_api_templates (
+        id, official_template_id, waba_id, name, language, status, components_json, raw_payload_json
+      ) VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+      [
+        pendingId,
+        `official_${pendingId}`,
+        'waba_catalog_test',
+        pendingName,
+        'es_MX',
+        JSON.stringify([{ type: 'BODY', text: 'Pendiente' }]),
+        '{}'
+      ]
+    )
 
-  try {
-    const catalog = await listAutomationWhatsAppTemplatesCatalog()
-    const item = catalog.items.find((template) => template.id === approvedId)
+    try {
+      const catalog = await listAutomationWhatsAppTemplatesCatalog()
+      const item = catalog.items.find((template) => template.id === approvedId)
 
-    assert.ok(item)
-    assert.equal(item.name, approvedName)
-    assert.equal(item.language, 'es_MX')
-    assert.deepEqual(item.components, components)
-    assert.ok(!catalog.items.some((template) => template.id === pendingId))
-  } finally {
-    await db.run('DELETE FROM whatsapp_api_templates WHERE id IN (?, ?)', [approvedId, pendingId])
-  }
+      assert.ok(item)
+      assert.equal(item.name, approvedName)
+      assert.equal(item.language, 'es_MX')
+      assert.deepEqual(item.components, components)
+      assert.ok(!catalog.items.some((template) => template.id === pendingId))
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_templates WHERE id IN (?, ?)', [approvedId, pendingId])
+    }
+  })
 })
 
 test('catálogo de plantillas WhatsApp refleja plantillas locales aprobadas', async () => {
   const suffix = Date.now()
-  const keys = getWhatsAppApiConfigKeys()
   const templateId = `tmpl_local_catalog_${suffix}`
   const officialId = `official_local_catalog_${suffix}`
   const templateName = `seguimiento_local_${suffix}`
@@ -809,7 +842,7 @@ test('catálogo de plantillas WhatsApp refleja plantillas locales aprobadas', as
     { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: 'Agendar' }] }
   ]
 
-  await withAppConfigValue(keys.wabaId, wabaId, async () => {
+  await withConnectedYCloudTemplateScope(wabaId, async () => {
     try {
       await db.run(`
         INSERT INTO whatsapp_message_templates (
@@ -850,7 +883,6 @@ test('catálogo de plantillas WhatsApp refleja plantillas locales aprobadas', as
 
 test('catálogo WhatsApp oculta nombres técnicos de reintento y no duplica plantillas locales', async () => {
   const suffix = Date.now()
-  const keys = getWhatsAppApiConfigKeys()
   const templateId = `tmpl_retry_catalog_${suffix}`
   const officialBaseId = `official_retry_catalog_base_${suffix}`
   const officialRetryId = `official_retry_catalog_retry_${suffix}`
@@ -862,7 +894,7 @@ test('catálogo WhatsApp oculta nombres técnicos de reintento y no duplica plan
     { type: 'FOOTER', text: 'Mensaje automático de Ristak' }
   ]
 
-  await withAppConfigValue(keys.wabaId, wabaId, async () => {
+  await withConnectedYCloudTemplateScope(wabaId, async () => {
     try {
       await db.run(`
         INSERT INTO whatsapp_message_templates (

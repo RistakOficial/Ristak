@@ -204,6 +204,158 @@ test('desconectar YCloud confirma el webhook remoto antes de borrar sus credenci
   }
 })
 
+test('desconectar YCloud retira sus plantillas operativas y deja como principal el único número Meta', async () => {
+  await initializeMasterKey()
+  const { keys, all } = whatsappConnectionKeys()
+  const suffix = Date.now()
+  const ycloudPhoneId = `test_ycloud_template_cleanup_${suffix}`
+  const metaPhoneId = `test_meta_template_fallback_${suffix}`
+  const qrBackupPhoneId = `test_qr_template_fallback_${suffix}`
+  const localTemplateId = `tmpl_ycloud_cleanup_${suffix}`
+  const legacyLocalTemplateId = `tmpl_ycloud_legacy_cleanup_${suffix}`
+  const ycloudSnapshotId = `ycloud_snapshot_cleanup_${suffix}`
+  const metaSnapshotId = `meta_snapshot_cleanup_${suffix}`
+  const sendId = `ycloud_send_cleanup_${suffix}`
+  const templateName = `plantilla_cleanup_${suffix}`
+
+  try {
+    await snapshotAppConfig(all, async () => {
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_template_cleanup_secret'))
+      await setAppConfig(keys.provider, 'ycloud')
+      await setAppConfig(keys.phoneNumberId, ycloudPhoneId)
+      await setAppConfig(keys.senderPhone, '+526561234571')
+      await setAppConfig(keys.wabaId, `waba_ycloud_cleanup_${suffix}`)
+
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, status, api_send_enabled,
+          qr_send_enabled, qr_status, is_default_sender
+        ) VALUES
+          (?, 'ycloud', ?, '+526561234571', 'CONNECTED', 1, 0, 'disconnected', 1),
+          (?, 'meta_direct', ?, '+526561234572', 'CONNECTED', 1, 0, 'disconnected', 0),
+          (?, 'qr', NULL, '+526561234572', 'QR_ONLY', 0, 1, 'connected', 0)
+      `, [
+        ycloudPhoneId,
+        `waba_ycloud_cleanup_${suffix}`,
+        metaPhoneId,
+        `waba_meta_cleanup_${suffix}`,
+        qrBackupPhoneId
+      ])
+      await db.run(`
+        INSERT INTO whatsapp_message_templates (
+          id, name, language, status, body_text, template_provider,
+          provider_template_name, provider_template_id, provider_status,
+          provider_raw_payload_json
+        ) VALUES (?, ?, 'es_MX', 'active', 'Hola desde YCloud', 'ycloud', ?, ?, 'APPROVED', ?)
+      `, [
+        localTemplateId,
+        templateName,
+        templateName,
+        ycloudSnapshotId,
+        JSON.stringify({ wabaId: `waba_ycloud_cleanup_${suffix}` })
+      ])
+      await db.run(`
+        INSERT INTO whatsapp_message_templates (
+          id, name, language, status, body_text, template_provider,
+          provider_template_name, provider_template_id, provider_status,
+          provider_raw_payload_json
+        ) VALUES (?, ?, 'es_MX', 'active', 'Hola desde YCloud legacy', NULL, ?, ?, 'APPROVED', ?)
+      `, [
+        legacyLocalTemplateId,
+        `${templateName}_legacy`,
+        `${templateName}_legacy`,
+        `${ycloudSnapshotId}_legacy`,
+        JSON.stringify({ source: 'legacy_generic_ycloud_state' })
+      ])
+      await db.run(`
+        INSERT INTO whatsapp_api_templates (
+          id, official_template_id, provider_template_id, provider, source_adapter,
+          waba_id, name, language, status, components_json, raw_payload_json
+        ) VALUES
+          (?, ?, ?, 'ycloud', 'ycloud', ?, ?, 'es_MX', 'APPROVED', '[]', '{}'),
+          (?, ?, ?, 'meta_direct', 'meta_direct', ?, ?, 'es_MX', 'APPROVED', '[]', '{}')
+      `, [
+        ycloudSnapshotId,
+        ycloudSnapshotId,
+        ycloudSnapshotId,
+        `waba_ycloud_cleanup_${suffix}`,
+        templateName,
+        metaSnapshotId,
+        metaSnapshotId,
+        metaSnapshotId,
+        `waba_meta_cleanup_${suffix}`,
+        `${templateName}_meta`
+      ])
+      await db.run(`
+        INSERT INTO whatsapp_api_template_sends (
+          id, provider, template_id, template_name, language, status
+        ) VALUES (?, 'ycloud', ?, ?, 'es_MX', 'sent')
+      `, [sendId, ycloudSnapshotId, templateName])
+      await db.run(`
+        INSERT INTO whatsapp_api_balance (id, amount, currency)
+        VALUES ('current', 50, 'USD')
+        ON CONFLICT(id) DO UPDATE SET amount = excluded.amount, currency = excluded.currency
+      `)
+
+      const disconnected = await disconnectWhatsAppApi()
+      const localTemplate = await db.get(`
+        SELECT template_provider, provider_template_name, provider_template_id, provider_status,
+          ycloud_template_name, ycloud_template_id, ycloud_status
+        FROM whatsapp_message_templates
+        WHERE id = ?
+      `, [localTemplateId])
+      const legacyLocalTemplate = await db.get(`
+        SELECT template_provider, provider_template_name, provider_template_id, provider_status,
+          ycloud_template_name, ycloud_template_id, ycloud_status
+        FROM whatsapp_message_templates
+        WHERE id = ?
+      `, [legacyLocalTemplateId])
+      const metaPhone = await db.get(`
+        SELECT is_default_sender, api_send_enabled
+        FROM whatsapp_api_phone_numbers
+        WHERE id = ?
+      `, [metaPhoneId])
+
+      assert.equal(disconnected.activeProvider, 'meta_direct')
+      assert.equal(await getAppConfig(keys.provider), 'meta_direct')
+      assert.equal(await getAppConfig(keys.phoneNumberId), metaPhoneId)
+      assert.equal(Number(metaPhone.is_default_sender), 1)
+      assert.equal(Number(metaPhone.api_send_enabled), 1)
+      assert.deepEqual(localTemplate, {
+        template_provider: null,
+        provider_template_name: null,
+        provider_template_id: null,
+        provider_status: null,
+        ycloud_template_name: templateName,
+        ycloud_template_id: ycloudSnapshotId,
+        ycloud_status: 'APPROVED'
+      })
+      assert.deepEqual(legacyLocalTemplate, {
+        template_provider: null,
+        provider_template_name: null,
+        provider_template_id: null,
+        provider_status: null,
+        ycloud_template_name: `${templateName}_legacy`,
+        ycloud_template_id: `${ycloudSnapshotId}_legacy`,
+        ycloud_status: 'APPROVED'
+      })
+      assert.equal(await db.get('SELECT id FROM whatsapp_api_templates WHERE id = ?', [ycloudSnapshotId]), null)
+      assert.ok(await db.get('SELECT id FROM whatsapp_api_templates WHERE id = ?', [metaSnapshotId]))
+      assert.equal((await db.get('SELECT template_id FROM whatsapp_api_template_sends WHERE id = ?', [sendId])).template_id, null)
+      assert.equal(await db.get("SELECT id FROM whatsapp_api_balance WHERE id = 'current'"), null)
+    })
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_template_sends WHERE id = ?', [sendId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_templates WHERE id IN (?, ?)', [ycloudSnapshotId, metaSnapshotId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_message_templates WHERE id IN (?, ?)', [localTemplateId, legacyLocalTemplateId]).catch(() => undefined)
+    await db.run(
+      'DELETE FROM whatsapp_api_phone_numbers WHERE id IN (?, ?, ?)',
+      [ycloudPhoneId, metaPhoneId, qrBackupPhoneId]
+    ).catch(() => undefined)
+  }
+})
+
 test('si YCloud falla al apagar el webhook, Ristak bloquea la entrada y conserva datos para reintentar', async () => {
   await initializeMasterKey()
   const { keys, all } = whatsappConnectionKeys()

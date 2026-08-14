@@ -1,5 +1,5 @@
 export const DEFAULT_APPOINTMENT_NOTICE_HEADER_TEXT =
-  '🗓️ Cita programada para el {{1}}'
+  'Cita programada para el {{1}}'
 
 export const DEFAULT_APPOINTMENT_NOTICE_BODY_TEXT =
   '🔔 *Importante:* Te llegarán varios recordatorios para *NO* olvidar que tienes una cita programada.\n\n' +

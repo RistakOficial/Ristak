@@ -45,7 +45,7 @@ const APPOINTMENT_PROVIDER_REVISION_KEYS = [
   ...SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS,
   ...ONLINE_MEETING_PROVIDER_REVISION_KEYS
 ]
-const SCHEDULED_APPOINTMENT_HEADER = '🗓️ Cita programada para el {{1}}'
+const SCHEDULED_APPOINTMENT_HEADER = 'Cita programada para el {{1}}'
 const SCHEDULED_APPOINTMENT_BODY = '🔔 *Importante:* Te llegarán varios recordatorios para *NO* olvidar que tienes una cita programada.\n\nTe pedimos de la manera más atenta que *respondas* los mensajes cuando se te solicite, para mantener una comunicación clara y evitar cualquier confusión con las citas.\n\n¡Gracias!'
 const SCHEDULED_APPOINTMENT_FOOTER = 'Este es un mensaje AUTOMÁTICO'
 const ONE_DAY_REMINDER_BODY = '*Recordatorio de cita* ⏰\nHola {{1}}, te recordamos que tienes una cita el {{2}} a las {{3}}. Recuerda estar al pendiente. 😄'
@@ -401,7 +401,7 @@ test('una inicialización local no pierde la actualización pendiente del provee
       assert.equal(captures[0].body.components[2].text, SCHEDULED_APPOINTMENT_FOOTER)
 
       const revision = await getAppConfig(SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS[0])
-      assert.equal(revision, '2')
+      assert.equal(revision, '3')
     } finally {
       setYCloudFetchForTest(null)
       await deleteDefaultTemplates()
@@ -1121,7 +1121,7 @@ test('recrea una plantilla default atorada en revisión después de seis horas',
         JSON.stringify({ wabaId, name: targetName, language: 'es_MX' }),
         targetName
       ])
-      await setAppConfig(SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS[0], '2')
+      await setAppConfig(SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS[0], '3')
 
       const result = await repairDefaultAppointmentMessageTemplatesForCurrentConnection()
       const targetResult = result.templates.find((template) => template.name === targetName)
@@ -1222,7 +1222,7 @@ test('reintenta una plantilla default rechazada con nombre técnico nuevo sin du
         JSON.stringify({ wabaId, name: targetName, language: 'es_MX', status: 'REJECTED' }),
         targetName
       ])
-      await setAppConfig(SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS[0], '2')
+      await setAppConfig(SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS[0], '3')
 
       const result = await repairDefaultAppointmentMessageTemplatesForCurrentConnection()
       const targetResult = result.templates.find((template) => template.name === targetName)
@@ -1306,7 +1306,7 @@ test('crea alerta y no reintenta cuando la plantilla default ya agotó dos reint
         JSON.stringify({ wabaId, name: targetName, language: 'es_MX' }),
         targetName
       ])
-      await setAppConfig(SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS[0], '2')
+      await setAppConfig(SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS[0], '3')
 
       const result = await repairDefaultAppointmentMessageTemplatesForCurrentConnection()
       const targetResult = result.templates.find((template) => template.name === targetName)

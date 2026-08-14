@@ -306,14 +306,20 @@ Modelo local neutral:
 - `whatsapp_api_templates` conserva `provider`, `source_adapter` y
   `provider_template_id`. `official_template_id` sigue disponible como alias
   histórico del ID remoto.
-- Cambiar el proveedor activo no convierte una plantilla existente: si la copia
-  remota pertenece a YCloud y se envía por Meta directo, se crea una identidad
-  Meta nueva. Nunca se manda el ID YCloud al endpoint Graph.
-- El envío manual valida también el proveedor de la plantilla contra el
-  `provider` de la fila seleccionada. Una plantilla YCloud no se intenta por un
-  número Meta directo ni viceversa. La interfaz debe pedir elegir o cambiar el
-  canal correspondiente; no debe afirmar que "WhatsApp no está conectado"
-  cuando otra fila API sí está sana.
+- Cambiar de YCloud a Meta directo migra el contenido, no la identidad remota.
+  Ristak lista primero el WABA Meta activo y adopta una coincidencia exacta por
+  `name + language`; sólo si no existe crea una plantilla nueva y la manda a
+  revisión. Nunca se manda un ID YCloud al endpoint Graph ni se conserva su
+  `APPROVED` como si fuera aprobación Meta.
+- El catálogo operativo se limita a pares `provider + WABA` que tengan una fila
+  oficial activa. Los snapshots de un proveedor o WABA desconectado no aparecen
+  en Chat, Automatizaciones, estado ni conteos, aunque se conserve auditoría
+  histórica fuera de ese catálogo.
+- El envío manual valida proveedor **y WABA** de la plantilla contra la fila
+  seleccionada. Una plantilla YCloud no se intenta por un número Meta directo,
+  ni una plantilla de otro WABA por el número actual. La interfaz debe pedir
+  elegir o cambiar el canal correspondiente; no debe afirmar que "WhatsApp no
+  está conectado" cuando otra fila API sí está sana.
 - `{{1}}`, `{{2}}`, etc. se materializan con `variable_bindings_json` justo
   antes de enviar. Los bindings de contacto leen el contacto actual y los de
   `cita.*` usan la próxima cita activa del contacto, formateada en la zona del
@@ -348,12 +354,16 @@ Coexistence no cambia estos endpoints. Sirve para mantener WhatsApp Business App
 y Cloud API sobre el mismo número, pero las plantillas siguen perteneciendo al
 WABA y se administran mediante el proveedor activo una sola vez.
 
-Al completar una conexión o refresco oficial, Ristak prepara las seis plantillas
-default y las envía al proveedor que acaba de quedar activo. El callback de Meta
-directo debe guardar primero `template_provider=meta_direct` y después crear las
-plantillas por Graph. Una identidad histórica YCloud no cuenta como identidad
-Meta ni puede impedir ese envío. El arranque normal solo repara la copia local y
-nunca llama a Graph o YCloud.
+Al completar una conexión o refresco oficial, Ristak prepara las siete plantillas
+default y las envía al proveedor que acaba de quedar activo. Con Meta directo,
+la tarea posterior al ACK desvincula primero la identidad operativa YCloud,
+actualiza la definición local, sincroniza el WABA y adopta las coincidencias;
+después envía a revisión únicamente las faltantes. El arranque repite esta
+reconciliación de forma idempotente cuando Meta directo ya está conectado para
+reparar instalaciones migradas antes de existir este contrato. Una identidad
+histórica YCloud no cuenta como identidad Meta ni puede impedir el envío. La
+plantilla `cita_programada` usa un encabezado de texto sin emoji porque Meta no
+admite emojis ni caracteres de formato en ese componente.
 
 Después de completar Embedded Signup de Meta directo, Configuración > WhatsApp
 abre un paso de pagos exclusivo de Meta. **Configurar ahora** abre la pantalla de
@@ -731,6 +741,9 @@ base en un falso timeout. La creación/revisión de plantillas default y la
 sincronización de tareas de la integración se ejecutan después, en segundo
 plano: son importantes, pero no pueden retrasar el ACK ni hacer que Installer
 muestre una entrega fallida cuando la conexión crítica ya quedó operativa.
+La misma promoción vuelve ese número la autoridad global compatible; cuando es
+el único número local disponible queda marcado automáticamente como remitente
+principal, junto con su proveedor, WABA y Phone Number ID.
 
 Si la respuesta del ACK se pierde o vence el timeout después de que el tenant ya
 terminó, Installer consulta el callback firmado
@@ -791,11 +804,17 @@ proveedor o transporte y exige escribir `DESCONECTAR`. En este flujo
   acciones separadas. Retirar QR no toca API; retirar API no toca el QR.
 
 Mensajes, contactos, plantillas, eventos e IDs históricos permanecen para
-auditoría aunque desaparezca la fila operativa YCloud. Una sincronización normal
-no puede reactivar YCloud sin integración y credencial activas; una conexión
-explícita posterior vuelve a crear/sincronizar las filas vigentes del proveedor.
+auditoría aunque desaparezca la fila operativa YCloud. En plantillas esto
+significa conservar el contenido editable y los campos `ycloud_*` de diagnóstico,
+pero vaciar la propiedad neutral `template_provider/provider_*`, retirar los
+snapshots YCloud de `whatsapp_api_templates` y liberar sus referencias de envío;
+no siguen disponibles para operar. También se retiran el saldo y las alertas
+operativas propias de esa conexión. Una sincronización normal no puede reactivar
+YCloud sin integración y credencial activas; una conexión explícita posterior
+vuelve a crear/sincronizar las filas vigentes del proveedor.
 Al arrancar, una reparación idempotente retira filas YCloud heredadas que ya no
-tienen credenciales y conserva únicamente sus QR recuperables como filas QR.
+tienen credenciales, ejecuta la misma limpieza de plantillas y conserva
+únicamente sus QR recuperables como filas QR.
 Una fila convertida a QR que después quede `reconnecting` sin auth guardado se
 considera huérfana y también se elimina, aunque conserve el marcador histórico
 de su conversión desde YCloud.

@@ -3790,16 +3790,19 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     })
   }, [defaultHighLevelPhoneNumber?.phoneNumber, highLevelConnected, highLevelPhoneNumbers])
   const filteredTemplates = useMemo(() => {
+    const compatibleTemplates = templates.filter((template) => (
+      isWhatsAppTemplateCompatibleWithPhone(template, selectedBusinessPhone)
+    ))
     const query = templateSearch.trim().toLowerCase()
-    if (!query) return templates
-    return templates.filter((template) => [
+    if (!query) return compatibleTemplates
+    return compatibleTemplates.filter((template) => [
       template.name,
       template.language,
       template.category,
       template.status,
       getTemplateBodyPreview(template)
     ].filter(Boolean).join(' ').toLowerCase().includes(query))
-  }, [templateSearch, templates])
+  }, [selectedBusinessPhone, templateSearch, templates])
   const selectedCalendar = useMemo(
     () => calendars.find((calendar) => calendar.id === selectedCalendarId) || calendars[0] || null,
     [calendars, selectedCalendarId]

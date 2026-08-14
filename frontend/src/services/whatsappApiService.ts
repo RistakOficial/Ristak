@@ -103,12 +103,16 @@ export function getWhatsAppApiProviderLabel(provider?: string | null) {
 }
 
 export function isWhatsAppTemplateCompatibleWithPhone(
-  template?: Pick<WhatsAppApiTemplate, 'provider'> | null,
-  phone?: Pick<WhatsAppApiPhoneNumber, 'provider'> | null
+  template?: Pick<WhatsAppApiTemplate, 'provider' | 'waba_id'> | null,
+  phone?: Pick<WhatsAppApiPhoneNumber, 'provider' | 'waba_id'> | null
 ) {
   const templateProvider = String(template?.provider || '').trim().toLowerCase()
   const phoneProvider = String(phone?.provider || '').trim().toLowerCase()
-  return !templateProvider || !phoneProvider || templateProvider === phoneProvider
+  if (templateProvider && phoneProvider && templateProvider !== phoneProvider) return false
+
+  const templateWabaId = String(template?.waba_id || '').trim()
+  const phoneWabaId = String(phone?.waba_id || '').trim()
+  return !templateWabaId || !phoneWabaId || templateWabaId === phoneWabaId
 }
 
 export interface WhatsAppApiAlert {

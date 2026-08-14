@@ -7102,7 +7102,11 @@ export const PhoneChat: React.FC = () => {
     })
     return alertMap
   }, [activeTemplateAlerts])
-  const sendableTemplates = useMemo(() => filterApprovedWhatsAppApiTemplates(templates), [templates])
+  const sendableTemplates = useMemo(() => (
+    filterApprovedWhatsAppApiTemplates(templates).filter((template) => (
+      isWhatsAppTemplateCompatibleWithPhone(template, selectedBusinessPhone)
+    ))
+  ), [selectedBusinessPhone, templates])
   const filteredTemplates = useMemo(() => {
     const query = templateSearch.trim().toLowerCase()
     if (!query) return sendableTemplates

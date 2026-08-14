@@ -3,8 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
-import { databaseReady, db } from '../src/config/database.js'
+import { databaseReady, db, setAppConfig } from '../src/config/database.js'
 import {
+  getWhatsAppApiConfigKeys,
   getWhatsAppApiStatus,
   getWhatsAppApiTemplatesCatalogPage
 } from '../src/services/whatsappApiService.js'
@@ -24,6 +25,52 @@ test.before(async () => {
 
 function delta(actual, baseline, field) {
   return Number(actual.stats[field] || 0) - Number(baseline.stats[field] || 0)
+}
+
+async function withAppConfigValue(key, value, callback) {
+  const previous = await db.get('SELECT config_value FROM app_config WHERE config_key = ?', [key])
+  try {
+    await setAppConfig(key, value)
+    return await callback()
+  } finally {
+    if (previous) {
+      await setAppConfig(key, previous.config_value)
+    } else {
+      await db.run('DELETE FROM app_config WHERE config_key = ?', [key])
+    }
+  }
+}
+
+async function withAppConfigValues(entries, callback) {
+  if (!entries.length) return callback()
+  const [[key, value], ...rest] = entries
+  return withAppConfigValue(key, value, () => withAppConfigValues(rest, callback))
+}
+
+async function withConnectedYCloudTemplateScope(wabaId, callback) {
+  const keys = getWhatsAppApiConfigKeys()
+  const phoneNumberId = `wa_catalog_phone_${randomUUID()}`
+  const phone = `+1555${Date.now()}${Math.floor(Math.random() * 1000)}`
+
+  return withAppConfigValues([
+    [keys.enabled, '1'],
+    [keys.apiKey, 'encrypted-test-key'],
+    [keys.provider, 'ycloud'],
+    [keys.wabaId, wabaId],
+    [keys.phoneNumberId, phoneNumberId]
+  ], async () => {
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number,
+        status, api_send_enabled, qr_send_enabled, is_default_sender
+      ) VALUES (?, 'ycloud', ?, ?, ?, 'CONNECTED', 1, 0, 1)
+    `, [phoneNumberId, wabaId, phone, phone])
+    try {
+      return await callback()
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+    }
+  })
 }
 
 test('snapshot WhatsApp conserva conteos exactos con inserts, transiciones y deletes sin escanear tablas base', async () => {
@@ -177,7 +224,8 @@ test('catálogo WhatsApp de automatizaciones es local, buscable y usa cursor con
     updatedAt: `2097-04-0${index + 1} 10:00:00.00000${index}`
   }))
 
-  try {
+  await withConnectedYCloudTemplateScope('waba_catalog_projection', async () => {
+    try {
     for (const row of rows) {
       await db.run(`
         INSERT INTO whatsapp_api_templates (
@@ -228,9 +276,10 @@ test('catálogo WhatsApp de automatizaciones es local, buscable y usa cursor con
       }),
       /Cursor de plantillas WhatsApp inválido/
     )
-  } finally {
-    await db.run('DELETE FROM whatsapp_api_templates WHERE id LIKE ?', [`wa_catalog_${suffix}_%`])
-  }
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_templates WHERE id LIKE ?', [`wa_catalog_${suffix}_%`])
+    }
+  })
 })
 
 test('catálogo WhatsApp de automatizaciones conserva los nombres configurados de sus variables', async () => {
@@ -250,7 +299,8 @@ test('catálogo WhatsApp de automatizaciones conserva los nombres configurados d
     }
   }
 
-  try {
+  await withConnectedYCloudTemplateScope('waba_binding_projection', async () => {
+    try {
     await db.run(`
       INSERT INTO whatsapp_message_templates (
         id, name, language, status, body_text, variable_bindings_json,
@@ -289,10 +339,11 @@ test('catálogo WhatsApp de automatizaciones conserva los nombres configurados d
     })
     assert.equal(catalog.items[0].variableBindings.bodyText['1'].label, 'Nombre del contacto')
     assert.equal('example' in catalog.items[0].variableBindings.bodyText['1'], false)
-  } finally {
-    await db.run('DELETE FROM whatsapp_api_templates WHERE id = ?', [apiTemplateId]).catch(() => undefined)
-    await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [localTemplateId]).catch(() => undefined)
-  }
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_templates WHERE id = ?', [apiTemplateId]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [localTemplateId]).catch(() => undefined)
+    }
+  })
 })
 
 test('los GET de plantillas no reparan, sincronizan ni refrescan implícitamente', async () => {

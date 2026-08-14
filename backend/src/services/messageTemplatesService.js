@@ -51,6 +51,7 @@ const INACTIVE_APPOINTMENT_STATUSES = [
   'deleted'
 ]
 const DEFAULT_TEMPLATE_PROVIDER_REVISION_PREFIX = 'whatsapp_default_template_provider_revision'
+let activeProviderTemplateReconciliationPromise = null
 
 const BASE_CONTACT_VARIABLES = [
   ['Full Name', 'contact.name', 'Jane Smith'],
@@ -138,7 +139,7 @@ const DEFAULT_PAYMENT_TEMPLATE_NAME_LIST = [
 const APPOINTMENT_MESSAGE_TEMPLATE_DEFINITIONS = [
   {
     name: 'cita_programada',
-    providerRevision: 2,
+    providerRevision: 3,
     description: 'Plantilla automática de Ristak para avisar cuando una cita queda agendada.',
     category: 'utility',
     language: DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE,
@@ -781,7 +782,25 @@ function mapCustomField(row) {
 }
 
 function mapTemplate(row) {
-  const templateProvider = normalizeWhatsAppProvider(row.template_provider || WHATSAPP_PROVIDER_YCLOUD)
+  const storedTemplateProvider = cleanString(row.template_provider)
+  const hasLegacyGenericProviderState = Boolean(
+    cleanString(row.provider_template_name) ||
+    cleanString(row.provider_template_id) ||
+    cleanString(row.provider_status) ||
+    cleanString(row.provider_reason) ||
+    cleanString(row.provider_status_update_event) ||
+    cleanString(row.provider_quality_rating) ||
+    cleanString(row.provider_raw_payload_json) ||
+    cleanString(row.provider_submitted_at) ||
+    cleanString(row.provider_synced_at)
+  )
+  const templateProvider = storedTemplateProvider
+    ? normalizeWhatsAppProvider(storedTemplateProvider)
+    // Filas anteriores al soporte multi-proveedor guardaban el estado remoto
+    // genérico sin dueño explícito; ese contrato era YCloud. Una desconexión
+    // moderna limpia esos campos, por lo que una fila realmente separada sigue
+    // regresando null y no revive como YCloud por accidente.
+    : hasLegacyGenericProviderState ? WHATSAPP_PROVIDER_YCLOUD : null
   return {
     id: row.id,
     folderId: row.folder_id || null,
@@ -1442,6 +1461,10 @@ function buildWhatsAppApiSnapshot(template) {
 
 async function persistWhatsAppApiSnapshot(template) {
   if (!template?.name || !template?.language || !template?.bodyText) return null
+  const storedProvider = cleanString(template.templateProvider)
+  if (!storedProvider) return null
+  const provider = normalizeWhatsAppProvider(storedProvider, WHATSAPP_PROVIDER_YCLOUD)
+  if (!hasTemplateProviderFootprint(template, provider)) return null
 
   try {
     return await upsertWhatsAppApiTemplateSnapshot(buildWhatsAppApiSnapshot(template))
@@ -2106,6 +2129,169 @@ async function canSubmitDefaultTemplatesToActiveProvider() {
   ])
 
   return enabled !== '0' && Boolean(cleanString(apiKey))
+}
+
+function isDetachedYCloudMessageTemplate(template = {}) {
+  const owner = cleanString(template.templateProvider).toLowerCase()
+  if (owner === WHATSAPP_PROVIDER_META_DIRECT) return false
+  if (owner === WHATSAPP_PROVIDER_YCLOUD) return true
+  return Boolean(
+    cleanString(template.ycloudTemplateName) ||
+    cleanString(template.ycloudTemplateId) ||
+    cleanString(template.ycloudStatus) ||
+    cleanString(template.ycloudSubmittedAt) ||
+    cleanString(template.ycloudSyncedAt) ||
+    (template.ycloudRawPayload && Object.keys(template.ycloudRawPayload).length)
+  )
+}
+
+async function prepareDetachedYCloudTemplatesForMetaDirect() {
+  const rows = await db.all(`
+    SELECT *
+    FROM whatsapp_message_templates
+    WHERE LOWER(COALESCE(template_provider, '')) = 'ycloud'
+      OR (
+        COALESCE(template_provider, '') = ''
+        AND (
+          NULLIF(ycloud_template_name, '') IS NOT NULL
+          OR NULLIF(ycloud_template_id, '') IS NOT NULL
+          OR NULLIF(ycloud_status, '') IS NOT NULL
+          OR NULLIF(ycloud_raw_payload_json, '') IS NOT NULL
+          OR ycloud_submitted_at IS NOT NULL
+          OR ycloud_synced_at IS NOT NULL
+        )
+      )
+    ORDER BY updated_at ASC, id ASC
+  `)
+  const candidates = rows.map(mapTemplate).filter(isDetachedYCloudMessageTemplate)
+  if (!candidates.length) return []
+
+  const ids = candidates.map(template => template.id)
+  const placeholders = ids.map(() => '?').join(', ')
+  await db.run(`
+    UPDATE whatsapp_message_templates
+    SET template_provider = ?,
+        provider_template_name = NULL,
+        provider_template_id = NULL,
+        provider_status = NULL,
+        provider_reason = NULL,
+        provider_status_update_event = NULL,
+        provider_quality_rating = NULL,
+        provider_raw_payload_json = NULL,
+        provider_submitted_at = NULL,
+        provider_synced_at = NULL,
+        last_error = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id IN (${placeholders})
+  `, [WHATSAPP_PROVIDER_META_DIRECT, ...ids])
+
+  return Promise.all(ids.map(id => getMessageTemplateById(id)))
+}
+
+async function runActiveProviderTemplateReconciliation({ publicBaseUrl = '' } = {}) {
+  const provider = await getActiveTemplateProvider()
+  if (provider !== WHATSAPP_PROVIDER_META_DIRECT) {
+    return { skipped: true, reason: 'provider_not_meta_direct', provider }
+  }
+  if (!(await canSubmitDefaultTemplatesToActiveProvider())) {
+    return { skipped: true, reason: 'provider_not_connected', provider }
+  }
+
+  const candidates = await prepareDetachedYCloudTemplatesForMetaDirect()
+
+  // Primero corrige el contenido local administrado (incluida cualquier nueva
+  // revisión de las plantillas base), sin fabricar snapshots remotos.
+  await ensureDefaultWhatsAppApiMessageTemplates({
+    submitToActiveProvider: false,
+    publicBaseUrl
+  })
+
+  // Meta es la autoridad: adoptar por nombre + idioma dentro del WABA activo
+  // evita duplicar una plantilla que ya exista allí.
+  await syncWhatsAppApiTemplates({ provider: WHATSAPP_PROVIDER_META_DIRECT })
+
+  const adoptedIds = new Set()
+  for (const candidate of candidates) {
+    const current = await getMessageTemplateById(candidate.id)
+    if (hasTemplateProviderFootprint(current, WHATSAPP_PROVIDER_META_DIRECT)) {
+      adoptedIds.add(candidate.id)
+    }
+  }
+
+  const defaults = await ensureDefaultWhatsAppApiMessageTemplates({
+    submitToActiveProvider: true,
+    publicBaseUrl
+  })
+  const defaultResultsById = new Map(defaults.templates.map(result => [result.id, result]))
+  const details = []
+
+  for (const candidate of candidates) {
+    const defaultResult = defaultResultsById.get(candidate.id)
+    if (defaultResult?.error) {
+      details.push({
+        id: candidate.id,
+        name: candidate.name,
+        language: candidate.language,
+        action: 'failed',
+        error: defaultResult.error
+      })
+      continue
+    }
+
+    let current = await getMessageTemplateById(candidate.id)
+    if (hasTemplateProviderFootprint(current, WHATSAPP_PROVIDER_META_DIRECT)) {
+      details.push({
+        id: current.id,
+        name: current.name,
+        language: current.language,
+        action: defaultResult?.submitted
+          ? 'submitted'
+          : adoptedIds.has(current.id) ? 'adopted' : 'already_migrated',
+        providerStatus: getMessageTemplateProviderState(current, WHATSAPP_PROVIDER_META_DIRECT).status
+      })
+      continue
+    }
+
+    try {
+      current = (await submitMessageTemplateToActiveProvider(candidate.id)).template
+      details.push({
+        id: current.id,
+        name: current.name,
+        language: current.language,
+        action: 'submitted',
+        providerStatus: getMessageTemplateProviderState(current, WHATSAPP_PROVIDER_META_DIRECT).status
+      })
+    } catch (error) {
+      details.push({
+        id: candidate.id,
+        name: candidate.name,
+        language: candidate.language,
+        action: 'failed',
+        error: getTemplateErrorMessage(error, 'No se pudo migrar la plantilla a Meta directo')
+      })
+    }
+  }
+
+  return {
+    skipped: false,
+    provider,
+    total: details.length,
+    adopted: details.filter(result => result.action === 'adopted').length,
+    submitted: details.filter(result => result.action === 'submitted').length,
+    failed: details.filter(result => result.action === 'failed').length,
+    details,
+    defaults
+  }
+}
+
+export async function reconcileMessageTemplatesForActiveProvider(options = {}) {
+  if (!activeProviderTemplateReconciliationPromise) {
+    activeProviderTemplateReconciliationPromise = runActiveProviderTemplateReconciliation(options)
+      .finally(() => {
+        activeProviderTemplateReconciliationPromise = null
+      })
+  }
+  return activeProviderTemplateReconciliationPromise
 }
 
 export async function ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider = false } = {}) {
