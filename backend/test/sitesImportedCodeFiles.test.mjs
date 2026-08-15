@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import vm from 'node:vm'
 
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -356,11 +357,414 @@ test('imported multistep forms stay idempotent, group choices and receive the Ri
     assert.match(rendered, /retryButton\.setAttribute\('data-rstk-disqualify-retry-button', 'true'\)/)
     assert.match(rendered, /form\.rstkImmediateDisqualifyStepIndex =/)
     assert.match(rendered, /multistep\.showStep\(immediateStepIndex\)/)
+    assert.match(rendered, /form\.dispatchEvent\(new CustomEvent\('ristak:submitted', \{ bubbles: true, detail: submission \}\)\)/)
+    assert.match(rendered, /const isAcceptedImportedSubmission = \(submission\) =>/)
+    assert.match(rendered, /acceptedStatuses = new Set\(\['received', 'qualified', 'accepted', 'completed'\]\)/)
+    assert.match(rendered, /if \(submitEvent\.target !== form\) return/)
+    assert.match(rendered, /return blockImportedPostSubmitActions\(source, submission, 'submission_not_accepted'\)/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
     for (const sourceFormId of sourceFormIds) {
       await deleteSite(sourceFormId).catch(() => undefined)
     }
+  }
+})
+
+test('imported submit actions only navigate after the same form receives an accepted persisted submission', async () => {
+  const {
+    createImportedSiteFromHtml,
+    deleteSite,
+    getSitePreview,
+    renderPublicSiteHtml
+  } = await import('../src/services/sitesService.js')
+
+  let siteId = ''
+  const sourceUrl = 'https://example.test/solicitud'
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'solicitud.html',
+      siteType: 'landing_page',
+      name: `Imported guarded submit ${Date.now()}`,
+      pages: [
+        {
+          id: 'page-1',
+          title: 'Solicitud',
+          filename: 'solicitud.html',
+          html: `<!doctype html><html><head><title>Solicitud</title></head><body>
+            <form data-rstk-form-id="solicitud">
+              <input name="email" type="email" data-rstk-field-id="correo">
+              <button type="submit" data-rstk-button-actions='[{"id":"enviar","action":"submit"},{"id":"agenda","action":"next_page"}]'>Siguiente</button>
+            </form>
+          </body></html>`
+        },
+        {
+          id: 'page-2',
+          title: 'Agenda',
+          filename: 'agenda.html',
+          html: '<!doctype html><html><head><title>Agenda</title></head><body><h1>Agenda</h1></body></html>'
+        }
+      ]
+    })
+    siteId = created.site.id
+    const rendered = await renderPublicSiteHtml(await getSitePreview(siteId), {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+    const scripts = [...rendered.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map(match => match[1])
+    const actionRuntime = scripts.find(script => script.includes('window.ristakRunImportedActions = runImportedActions'))
+    assert.ok(actionRuntime)
+
+    const listeners = new Map()
+    const blockedEvents = []
+    const demoEvents = []
+    const clarityEvents = []
+    class FakeCustomEvent {
+      constructor(type, options = {}) {
+        this.type = type
+        this.detail = options.detail
+        this.bubbles = options.bubbles === true
+        this.target = null
+      }
+    }
+    class FakeEvent extends FakeCustomEvent {}
+    const window = {
+      location: { href: sourceUrl },
+      setTimeout,
+      clearTimeout,
+      addEventListener(name, listener) {
+        const items = listeners.get(name) || new Set()
+        items.add(listener)
+        listeners.set(name, items)
+      },
+      removeEventListener(name, listener) {
+        listeners.get(name)?.delete(listener)
+      },
+      dispatchEvent(event) {
+        if (!event.target) event.target = window
+        if (event.type === 'ristak:imported-actions-blocked') blockedEvents.push(event.detail)
+        if (event.type === 'ristak:imported-action-demo') demoEvents.push(event.detail)
+        for (const listener of listeners.get(event.type) || []) listener(event)
+        return true
+      },
+      ristakClarityTrack(category, detail) {
+        clarityEvents.push({ category, detail })
+      }
+    }
+    window.parent = window
+    const document = {
+      body: {},
+      addEventListener() {},
+      querySelectorAll() { return [] },
+      createElement() {
+        return {
+          style: {},
+          setAttribute() {},
+          appendChild() {},
+          querySelector() { return null }
+        }
+      }
+    }
+    const form = {
+      querySelector: () => null,
+      appendChild() {}
+    }
+    let nextSubmission = null
+    const submitter = {
+      matches: selector => selector.includes('button[type="submit"]'),
+      closest: selector => selector === 'form' ? form : null,
+      getAttribute: () => '',
+      parentElement: null
+    }
+    form.requestSubmit = () => {
+      const event = new FakeCustomEvent('ristak:submitted', { bubbles: true, detail: nextSubmission })
+      event.target = form
+      window.dispatchEvent(event)
+    }
+
+    vm.runInNewContext(actionRuntime, {
+      window,
+      document,
+      CustomEvent: FakeCustomEvent,
+      Event: FakeEvent,
+      URL
+    })
+
+    const actions = [
+      { id: 'demo', action: 'automation', automationName: 'Solo aceptados' },
+      { id: 'enviar', action: 'submit' },
+      { id: 'agenda', action: 'next_page' }
+    ]
+    nextSubmission = { submissionId: 'submission-disqualified', status: 'disqualified' }
+    const rejected = await window.ristakRunImportedActions(submitter, actions, { source: 'button' })
+    assert.equal(rejected.blocked, true)
+    assert.equal(rejected.reason, 'submission_not_accepted')
+    assert.equal(window.location.href, sourceUrl)
+    assert.equal(demoEvents.length, 0, 'las acciones de negocio tampoco deben correr antes de aceptar el submit')
+    assert.equal(blockedEvents.at(-1)?.status, 'disqualified')
+    assert.equal(clarityEvents.at(-1)?.category, 'form_navigation_blocked')
+
+    nextSubmission = { submissionId: 'submission-received', status: 'received' }
+    const accepted = await window.ristakRunImportedActions(submitter, actions, { source: 'button' })
+    assert.equal(accepted.blocked, false)
+    assert.equal(accepted.completed, true)
+    assert.match(window.location.href, /[?&]page=page-2(?:&|$)/)
+    assert.equal(demoEvents.length, 1)
+
+    window.location.href = sourceUrl
+    const missingSubmit = await window.ristakRunImportedActions(submitter, [
+      { id: 'agenda', action: 'next_page' }
+    ], { source: 'button' })
+    assert.equal(missingSubmit.blocked, true)
+    assert.equal(missingSubmit.reason, 'missing_submit_action')
+    assert.equal(window.location.href, sourceUrl)
+
+    window.location.href = sourceUrl
+    const otherForm = {}
+    form.requestSubmit = () => {
+      const unrelated = new FakeCustomEvent('ristak:submitted', {
+        bubbles: true,
+        detail: { submissionId: 'other-form-received', status: 'received' }
+      })
+      unrelated.target = otherForm
+      window.dispatchEvent(unrelated)
+      const own = new FakeCustomEvent('ristak:submitted', {
+        bubbles: true,
+        detail: { submissionId: 'own-disqualified', status: 'disqualified' }
+      })
+      own.target = form
+      window.dispatchEvent(own)
+    }
+    const isolated = await window.ristakRunImportedActions(submitter, [
+      { id: 'enviar', action: 'submit' },
+      { id: 'agenda', action: 'next_page' }
+    ], { source: 'button' })
+    assert.equal(isolated.blocked, true)
+    assert.equal(isolated.submission.submissionId, 'own-disqualified')
+    assert.equal(window.location.href, sourceUrl)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('imported form submit reads the corrected radio value at the exact moment it sends', async () => {
+  const {
+    createImportedSiteFromHtml,
+    deleteSite,
+    getSitePreview,
+    renderPublicSiteHtml
+  } = await import('../src/services/sitesService.js')
+
+  let siteId = ''
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'correccion-radio.html',
+      siteType: 'landing_page',
+      name: `Imported corrected choice ${Date.now()}`,
+      fileBase64: Buffer.from(`<!doctype html><html><head><title>Corrección</title></head><body>
+        <form data-rstk-form-id="solicitud" data-rstk-conversion-condition="qualified_only">
+          <label><input type="radio" name="inversion_minima" value="no" data-rstk-field-id="inversion-minima" data-rstk-choice-actions='[{"id":"no-califica","action":"disqualify"}]'>No puedo invertir</label>
+          <label><input type="radio" name="inversion_minima" value="si" data-rstk-field-id="inversion-minima">Sí puedo invertir</label>
+          <button type="submit">Enviar</button>
+        </form>
+      </body></html>`, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    const rendered = await renderPublicSiteHtml(await getSitePreview(siteId), {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+    const scripts = [...rendered.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map(match => match[1])
+    const captureRuntime = scripts.find(script => (
+      script.includes('const collectRawFields = (form) =>') &&
+      script.includes("fetch('/api/sites/public/submit'")
+    ))
+    assert.ok(captureRuntime)
+
+    class FakeCustomEvent {
+      constructor(type, options = {}) {
+        this.type = type
+        this.detail = options.detail
+        this.bubbles = options.bubbles === true
+        this.cancelable = options.cancelable === true
+        this.target = null
+      }
+    }
+    class FakeEvent extends FakeCustomEvent {}
+    const windowListeners = new Map()
+    const window = {
+      location: { href: 'https://example.test/solicitud' },
+      setTimeout: callback => {
+        callback()
+        return 1
+      },
+      addEventListener(name, listener) {
+        const items = windowListeners.get(name) || []
+        items.push(listener)
+        windowListeners.set(name, items)
+      },
+      dispatchEvent(event) {
+        if (!event.target) event.target = window
+        for (const listener of windowListeners.get(event.type) || []) listener(event)
+        return true
+      }
+    }
+    const makeField = ({ value, choiceActions = '' }) => {
+      const attrs = new Map([
+        ['name', 'inversion_minima'],
+        ['data-rstk-field-id', 'inversion-minima'],
+        ...(choiceActions ? [['data-rstk-choice-actions', choiceActions]] : [])
+      ])
+      return {
+        tagName: 'INPUT',
+        type: 'radio',
+        value,
+        checked: false,
+        disabled: false,
+        getAttribute: name => attrs.has(name) ? attrs.get(name) : null,
+        hasAttribute: name => attrs.has(name),
+        dispatchEvent() { return true }
+      }
+    }
+    const disqualifiedField = makeField({
+      value: 'no',
+      choiceActions: '[{"id":"no-califica","action":"disqualify"}]'
+    })
+    const qualifiedField = makeField({ value: 'si' })
+    const fields = [disqualifiedField, qualifiedField]
+    const formAttrs = new Map([
+      ['data-rstk-form-id', 'solicitud'],
+      ['data-rstk-conversion-condition', 'qualified_only']
+    ])
+    const formListeners = new Map()
+    let messageElement = null
+    const form = {
+      dataset: {},
+      parentElement: null,
+      getAttribute: name => formAttrs.has(name) ? formAttrs.get(name) : null,
+      hasAttribute: name => formAttrs.has(name),
+      setAttribute(name, value) { formAttrs.set(name, String(value)) },
+      removeAttribute(name) { formAttrs.delete(name) },
+      addEventListener(name, listener) { formListeners.set(name, listener) },
+      appendChild(element) { messageElement = element },
+      querySelector(selector) {
+        if (selector === '[data-rstk-import-message]') return messageElement
+        return null
+      },
+      querySelectorAll(selector) {
+        if (selector === 'input, select, textarea') return fields
+        if (selector === '[name="inversion_minima"]') return fields
+        if (selector === 'input[type="radio"]:checked, input[type="checkbox"]:checked') {
+          return fields.filter(field => field.checked)
+        }
+        if (selector === 'select') return []
+        if (selector.includes('data-rstk-conversion-param')) return []
+        return []
+      },
+      dispatchEvent(event) {
+        event.target = form
+        formListeners.get(event.type)?.(event)
+        if (event.bubbles) window.dispatchEvent(event)
+        return true
+      },
+      reset() {
+        fields.forEach(field => { field.checked = false })
+      }
+    }
+    const submitter = {
+      disabled: false,
+      getAttribute: () => null
+    }
+    const document = {
+      cookie: '',
+      referrer: '',
+      querySelectorAll: selector => selector === 'form' ? [form] : [],
+      createElement() {
+        return {
+          style: {},
+          textContent: '',
+          setAttribute() {},
+          appendChild() {},
+          remove() {}
+        }
+      }
+    }
+    let sentBody = null
+    const fetch = async (_url, options) => {
+      sentBody = JSON.parse(options.body)
+      return {
+        ok: true,
+        async json() {
+          return {
+            success: true,
+            data: {
+              submissionId: 'submission-corrected',
+              status: 'received',
+              contactId: 'contact-corrected'
+            }
+          }
+        }
+      }
+    }
+
+    vm.runInNewContext(captureRuntime, {
+      window,
+      document,
+      fetch,
+      CustomEvent: FakeCustomEvent,
+      Event: FakeEvent,
+      URL
+    })
+
+    disqualifiedField.checked = true
+    disqualifiedField.checked = false
+    qualifiedField.checked = true
+    await formListeners.get('submit')({
+      preventDefault() {},
+      submitter
+    })
+
+    assert.deepEqual(sentBody.rawFields, { 'inversion-minima': 'si' })
+    assert.equal(sentBody.meta.importedDisqualified, false)
+    assert.deepEqual(sentBody.meta.importedChoiceActions, [])
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('imported capture forms strip browser escape hatches that bypass the Ristak submit runtime', async () => {
+  const {
+    createImportedSiteFromHtml,
+    deleteSite
+  } = await import('../src/services/sitesService.js')
+
+  let siteId = ''
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'blindaje-formulario.html',
+      siteType: 'landing_page',
+      name: `Imported form escape guard ${Date.now()}`,
+      fileBase64: Buffer.from(`<!doctype html><html><head><title>Blindaje</title></head><body>
+        <form action="https://collector.example.test/lead" target="_blank">
+          <input name="email" type="email" data-rstk-field-id="correo">
+          <button type="submit" formaction="https://collector.example.test/otro" formtarget="_blank">Enviar</button>
+        </form>
+      </body></html>`, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+
+    const savedHtml = created.import.codeFiles[0].content
+    assert.doesNotMatch(savedHtml, /collector\.example\.test/)
+    assert.doesNotMatch(savedHtml, /\s(?:action|target|formaction|formtarget)=/i)
+    assert.match(created.import.securityReport.join(' '), /exclusivamente por Ristak/)
+    assert.match(created.import.securityReport.join(' '), /impedir navegacion antes de confirmar/)
+    assert.match(created.import.securityReport.join(' '), /formaction/)
+    assert.match(created.import.securityReport.join(' '), /formtarget/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
   }
 })
 
@@ -997,6 +1401,10 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /solo crea contacto, dispara automatizaciones y manda Pixel\/CAPI cuando el resultado sea calificado/)
   assert.match(instructions, /data-rstk-contact-capture="all_submissions"/)
   assert.match(instructions, /una salida descalificada nunca crea un contacto genérico ni dispara automatizaciones/)
+  assert.match(instructions, /el orden obligatorio es submit primero y una sola salida terminal despues/)
+  assert.match(instructions, /Nunca declares next_page, specific_page o url como unica accion de un boton submit/)
+  assert.match(instructions, /status="disqualified" debe permanecer en su resultado o correccion y JAMAS llegar/)
+  assert.match(instructions, /audita cada boton final: type="submit", submit como primera accion/)
   assert.match(instructions, /@media \(max-width: 640px\)/)
   assert.match(instructions, /data-rstk-auto-color-mode="time"/)
   assert.match(instructions, /data-rstk-day-start="7"/)

@@ -294,6 +294,11 @@ convierten Clarity en una captura de frames del reproductor.
 Las sesiones que abren una superficie o intentan/terminan un formulario usan la
 API `upgrade` de Clarity para priorizar su grabación cuando el proyecto entra en
 muestreo; no cambia el límite ni la política de retención de Microsoft.
+El resultado conserva dos nombres distintos: solo una submission aceptada emite
+`form_submitted`; un resultado `disqualified` emite `form_disqualified` y nunca
+se promociona como formulario completado. `form_submit_attempt` sigue describiendo
+el intento para ubicarlo en la grabacion, pero no demuestra un lead ni sustituye
+la submission persistida en `public_site_submissions`.
 
 No se envían textos de botones, valores de inputs, nombres, correos, teléfonos ni
 respuestas. Los controles se describen únicamente con tipo de acción e IDs
@@ -1369,6 +1374,23 @@ se personalizan con `data-rstk-disqualify-title` y
 `disqualified`; si la persona corrige y termina el recorrido, el segundo envio
 se evalua de forma independiente y solo un resultado calificado puede disparar
 la conversion protegida por `qualified_only`.
+
+El boton final de un formulario HTML que tambien navega debe declarar `submit`
+primero y como maximo una salida terminal (`next_page`, `specific_page` o `url`).
+El runtime ejecuta el submit antes que cualquier otra accion y solo permite la
+navegacion cuando recibe, desde ese mismo `<form>`, un `submissionId` persistido
+con estado aceptado. `disqualified`, una respuesta incompleta, un error de red o
+un evento emitido por otro formulario bloquean la salida; el visitante conserva
+el resultado o la opcion de corregir. Un boton `type="submit"` que declare una
+salida terminal sin `submit` tambien falla cerrado. Al importar HTML, Ristak
+elimina `action`/`target` del formulario y `formaction`/`formtarget` de botones
+para que el navegador no pueda saltarse esta frontera.
+
+Las opciones radio se recopilan de nuevo en el instante exacto del submit. Si la
+persona marca una respuesta descalificante y luego la cambia antes de enviar, el
+payload usa exclusivamente la opcion que permanezca seleccionada. Si el primer
+intento ya fue enviado como `disqualified`, queda como evidencia historica y la
+correccion genera una submission nueva; no se reescribe el intento anterior.
 
 ### Elementos Nativos Ristak En HTML Importado
 

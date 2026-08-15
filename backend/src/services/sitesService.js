@@ -2645,7 +2645,9 @@ function replaceImportedWistiaPlayers(html = '', report = []) {
   return nextHtml
 }
 
-function normalizeImportedCaptureFormTag(match = '', attrsText = '') {
+function normalizeImportedCaptureFormTag(match = '', attrsText = '', report = []) {
+  const hadExternalAction = /\s+action\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/i.test(String(attrsText || ''))
+  const hadExternalTarget = /\s+target\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/i.test(String(attrsText || ''))
   const normalizedAttrs = String(attrsText || '')
     .replace(
       /\s+data-(?:rstk|ristak|ristack)-import-form(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/gi,
@@ -2655,7 +2657,11 @@ function normalizeImportedCaptureFormTag(match = '', attrsText = '') {
       /\s+novalidate(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/gi,
       ''
     )
+    .replace(/\s+(?:action|target)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
     .replace(/\s+$/g, '')
+
+  if (hadExternalAction) report.push('Se quito el destino externo de 1 formulario; los envios pasan exclusivamente por Ristak')
+  if (hadExternalTarget) report.push('Se quito el target externo de 1 formulario para impedir navegacion antes de confirmar el envio')
 
   return `<form${normalizedAttrs} data-rstk-import-form novalidate>`
 }
@@ -2700,10 +2706,14 @@ function sanitizeImportedHtml(html = '') {
     report.push(`Se bloqueo ${attr} con javascript`)
     return ` ${attr}="#"`;
   })
+  sanitized = sanitized.replace(/\s(formaction|formtarget)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, (_match, attr) => {
+    report.push(`Se quito atributo ${attr}; un boton de formulario no puede saltarse el envio administrado por Ristak`)
+    return ''
+  })
   sanitized = sanitized.replace(/<form\b([^>]*)>/gi, (match, attrsText = '', offset = -1) => (
     isImportedCalendarBookingForm(sanitized, offset, attrsText)
       ? match
-      : normalizeImportedCaptureFormTag(match, attrsText)
+      : normalizeImportedCaptureFormTag(match, attrsText, report)
   ))
 
   if (!/<html[\s>]/i.test(sanitized)) {
@@ -8234,9 +8244,12 @@ ${buildImportedHtmlVideoPlayerRulesText()}
 ${buildImportedHtmlCustomVideoRulesText()}
 ${buildImportedHtmlVideoGateRulesText()}
 ${buildImportedHtmlCustomSocialProfileRulesText()}
-- En botones, cuando sepas la acción, agrega data-rstk-button-actions como JSON. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
+- En botones, cuando sepas la acción, agrega data-rstk-button-actions como JSON. En el boton final de un formulario que deba avanzar, el orden obligatorio es submit primero y una sola salida terminal despues. Ejemplo seguro: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
 - Acciones permitidas: submit, next_page, specific_page, url, automation, none. La acción automation puede quedar como demo.
 - Mantén también data-rstk-button-action con la primera acción para compatibilidad. Si el botón abre enlace, agrega data-rstk-button-url. Si va a una página interna, agrega data-rstk-button-page-id cuando exista un id claro.
+- Nunca declares next_page, specific_page o url como unica accion de un boton submit dentro de un formulario. Tampoco uses href, action, formaction, onclick ni JavaScript propio para avanzar al enviarlo. Ristak solo ejecuta la salida terminal despues de recibir una submission persistida y aceptada por el backend.
+- Un envio fallido o status="disqualified" debe permanecer en su resultado o correccion y JAMAS llegar a la pagina reservada para candidatos calificados. Si el descarte necesita otro destino, declaralo en la opcion con action="disqualify" y disqualifyOutcome; no lo mezcles con la salida calificada del boton submit.
+- Antes de responder status="ready", audita cada boton final: type="submit", submit como primera accion, maximo una salida terminal y ningun mecanismo alterno de navegacion. Si no cumple, corrige el HTML antes de entregarlo.
 - Para copiar texto al portapapeles sin JavaScript propio, usa <button type="button" data-rstk-copy-value="VALOR_EXACTO" aria-label="Copiar ..."><span data-rstk-copy-label>Copiar</span></button>. Ristak cambia temporalmente la etiqueta a "Copiado" y conserva el markup seguro; nunca simules este comportamiento con un botón sin data-rstk-copy-value.
 - En radio buttons, checkboxes y <option> de select, usa data-rstk-choice-actions cuando una respuesta cambie el resultado. Para descartar candidatos usa action="disqualify"; no uses specific_page o url solos porque navegan pero no marcan la submission como descalificada.
 - El descarte admite tres resultados en el mismo objeto: disqualifyOutcome="message" con buttonMessage, disqualifyOutcome="specific_page" con buttonPageId, o disqualifyOutcome="url" con buttonUrl.
@@ -27611,7 +27624,7 @@ function buildClarityInteractionBridgeScript(context = {}, { enabled = true } = 
       ];
       const surfaceStates = new WeakMap();
       const videoMilestones = new Map();
-      const priorityEvents = new Set(['surface_open', 'form_submit_attempt', 'form_submitted', 'form_disqualified']);
+      const priorityEvents = new Set(['surface_open', 'form_submit_attempt', 'form_submitted']);
       let activeHashSurface = null;
       let surfaceScanQueued = false;
       let initialized = false;
@@ -27903,6 +27916,10 @@ function buildClarityInteractionBridgeScript(context = {}, { enabled = true } = 
         window.addEventListener('ristak:native-ready', identifyClaritySession);
         window.addEventListener('ristak:submitted', event => {
           const status = cleanToken(event && event.detail && event.detail.status, 'submitted');
+          if (status === 'disqualified') {
+            track('form_disqualified', status);
+            return;
+          }
           track('form_submitted', status);
         });
         window.addEventListener('ristak:disqualified', () => track('form_disqualified'));
@@ -31890,7 +31907,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
                   }
                 }
               );
-              window.dispatchEvent(new CustomEvent('ristak:submitted', { detail: submission }));
+              form.dispatchEvent(new CustomEvent('ristak:submitted', { bubbles: true, detail: submission }));
               if (
                 disqualifyingAction &&
                 (disqualifyingAction.buttonPageId || disqualifyingAction.buttonUrl) &&
@@ -31907,7 +31924,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
               form.reset();
               clearImportedNotice();
               setMessage(form, submission.message || 'Listo. Recibimos tu información.', 'success');
-              window.dispatchEvent(new CustomEvent('ristak:submitted', { detail: submission }));
+              form.dispatchEvent(new CustomEvent('ristak:submitted', { bubbles: true, detail: submission }));
               if (submission.status !== 'disqualified') {
                 const navigationAction = selectedChoiceActions.find(item => (
                   (item.action === 'url' && item.buttonUrl) ||
@@ -32200,6 +32217,7 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
         }, 10000);
         const handleSubmitted = (submitEvent) => {
           if (done) return;
+          if (submitEvent.target !== form) return;
           done = true;
           window.clearTimeout(timeout);
           window.removeEventListener('ristak:submitted', handleSubmitted);
@@ -32225,12 +32243,38 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
           id: action.id || action.buttonPageId || ''
         });
       };
+      const isAcceptedImportedSubmission = (submission) => {
+        if (!submission || typeof submission !== 'object') return false;
+        const status = String(submission.status || '').trim().toLowerCase();
+        const acceptedStatuses = new Set(['received', 'qualified', 'accepted', 'completed']);
+        return Boolean(submission.submissionId) && acceptedStatuses.has(status);
+      };
+      const blockImportedPostSubmitActions = (source, submission, reason) => {
+        const detail = {
+          reason: reason || 'submission_not_accepted',
+          status: submission && submission.status ? String(submission.status) : '',
+          submissionId: submission && submission.submissionId ? String(submission.submissionId) : '',
+          pageId: CURRENT_PAGE_ID
+        };
+        window.dispatchEvent(new CustomEvent('ristak:imported-actions-blocked', { detail }));
+        if (typeof window.ristakClarityTrack === 'function') {
+          window.ristakClarityTrack('form_navigation_blocked', {
+            action: 'submit',
+            state: detail.status || detail.reason,
+            id: detail.submissionId
+          });
+        }
+        if (detail.reason === 'missing_submit_action') {
+          showActionMessage(source, 'No se pudo confirmar el envío antes de avanzar. Revisa la configuración del botón.', 'error');
+        }
+        return { completed: false, blocked: true, submission: submission || null, reason: detail.reason };
+      };
       const runOneAction = async (source, action, context = {}) => {
         if (!action || !action.action || action.action === 'none') return;
         trackAction(action);
         if (action.action === 'submit') {
-          await submitFormAndWait(source.closest ? source.closest('form') : context.form, source);
-          return;
+          const submission = await submitFormAndWait(source.closest ? source.closest('form') : context.form, source);
+          return { submission };
         }
         if (action.action === 'open_popup') {
           if (!openImportedPopup(source)) showActionMessage(source, 'No encontramos un pop up para abrir', 'error');
@@ -32284,10 +32328,29 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
         const cleanActions = Array.isArray(actions) ? actions.filter(item => item && item.action && item.action !== 'none') : [];
         if (!cleanActions.length) return;
         const { beforeTerminal, terminal } = splitActions(cleanActions);
-        for (const action of beforeTerminal) {
+        const submitAction = beforeTerminal.find(action => action.action === 'submit') || null;
+        const form = source && source.closest ? source.closest('form') : context.form;
+        const terminalRequiresSubmit = Boolean(
+          terminal &&
+          form &&
+          isSubmitter(source) &&
+          ['url', 'next_page', 'specific_page'].includes(terminal.action)
+        );
+        if (terminalRequiresSubmit && !submitAction) {
+          return blockImportedPostSubmitActions(source, null, 'missing_submit_action');
+        }
+        if (submitAction) {
+          const submitResult = await runOneAction(source, submitAction, context);
+          const submission = submitResult && submitResult.submission ? submitResult.submission : null;
+          if (!isAcceptedImportedSubmission(submission)) {
+            return blockImportedPostSubmitActions(source, submission, 'submission_not_accepted');
+          }
+        }
+        for (const action of beforeTerminal.filter(action => action.action !== 'submit')) {
           await runOneAction(source, action, context);
         }
         runTerminalAction(source, terminal);
+        return { completed: true, blocked: false };
       };
       window.ristakRunImportedActions = runImportedActions;
 

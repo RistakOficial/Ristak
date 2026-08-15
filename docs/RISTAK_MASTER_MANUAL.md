@@ -6704,6 +6704,23 @@ visitante al paso exacto que la produjo. El envio original no se reescribe: perm
 `disqualified`, y cualquier reintento posterior crea una evaluacion nueva bajo
 la misma condicion `qualified_only`.
 
+Un boton final de HTML importado puede combinar `submit` con una unica salida
+terminal, pero `submit` debe ser la primera accion. El runtime lo ejecuta antes
+que automatizaciones o navegacion y solo continua cuando el mismo formulario
+recibe una respuesta persistida con `submissionId` y estado aceptado. Un
+`disqualified`, error, payload incompleto o evento perteneciente a otro
+formulario falla cerrado: no abre la agenda ni la pagina de candidatos. Un
+submitter con `next_page`, `specific_page` o `url` sin accion `submit` tambien se
+bloquea. El sanitizador elimina `action`/`target` de formularios importados y
+`formaction`/`formtarget` de sus botones para impedir rutas alternas del
+navegador. El runtime vuelve a leer los radios al enviar, de modo que una opcion
+corregida antes del click final reemplaza la seleccion anterior en el payload.
+
+Clarity conserva la misma frontera semantica: una submission aceptada emite
+`form_submitted`; `disqualified` emite `form_disqualified` y no se etiqueta como
+formulario completado. La base de datos, no el replay del DOM ni un evento de
+intento, sigue siendo la autoridad para afirmar que existe un lead.
+
 Cada submit HTML calificado que produce un contacto dispara `form-submitted`
 despues de guardar contacto, respuestas y submission. Un descarte conserva la
 submission, pero no dispara automatizaciones mientras el formulario use el modo
