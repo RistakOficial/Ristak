@@ -37,6 +37,7 @@ import {
 import { getAccountCurrency } from '../../utils/accountLocale.js'
 import { normalizePhoneForStorage } from '../../utils/phoneUtils.js'
 import {
+  getChangedContactCustomFieldReferences,
   mergeContactCustomFields,
   parseContactCustomFields,
   serializeContactCustomFieldsForDb
@@ -8589,6 +8590,7 @@ export function createConversationalTools(ctx) {
         const updates = []
         const params = []
         const changedFields = []
+        const contactEventChangedFields = []
         const preservedFields = []
         const customUpdates = []
         if (cleanFullName) {
@@ -8603,9 +8605,17 @@ export function createConversationalTools(ctx) {
             String(current.full_name).trim().toLowerCase() === cleanFullName.toLowerCase()
           if (mayReplace) {
             const name = splitConfirmedName(cleanFullName)
-            updates.push('full_name = ?', 'first_name = ?', 'last_name = ?')
-            params.push(name.fullName, name.firstName, name.lastName)
-            changedFields.push('full_name')
+            const fullNameChanged = String(current.full_name || '').trim() !== name.fullName
+            const firstNameChanged = String(current.first_name || '').trim() !== name.firstName
+            const lastNameChanged = String(current.last_name || '').trim() !== name.lastName
+            if (fullNameChanged || firstNameChanged || lastNameChanged) {
+              updates.push('full_name = ?', 'first_name = ?', 'last_name = ?')
+              params.push(name.fullName, name.firstName, name.lastName)
+              changedFields.push('full_name')
+              if (fullNameChanged) contactEventChangedFields.push('name', 'fullName', 'full_name')
+              if (firstNameChanged) contactEventChangedFields.push('firstName', 'first_name')
+              if (lastNameChanged) contactEventChangedFields.push('lastName', 'last_name')
+            }
           } else {
             preservedFields.push('full_name')
             customUpdates.push({ key: 'alternate_name', label: 'Nombre alternativo', value: cleanFullName })
@@ -8624,10 +8634,11 @@ export function createConversationalTools(ctx) {
             if (conflict) {
               preservedFields.push('phone')
               customUpdates.push({ key: 'alternate_phone', label: 'Teléfono alterno', value: cleanPhone })
-            } else {
+            } else if (String(current.phone || '').trim() !== cleanPhone) {
               updates.push('phone = ?')
               params.push(cleanPhone)
               changedFields.push('phone')
+              contactEventChangedFields.push('phone')
             }
           } else {
             customUpdates.push({ key: 'alternate_phone', label: 'Teléfono alterno', value: cleanPhone })
@@ -8648,10 +8659,11 @@ export function createConversationalTools(ctx) {
             if (conflict) {
               preservedFields.push('email')
               customUpdates.push({ key: 'alternate_email', label: 'Correo alterno', value: cleanEmail })
-            } else {
+            } else if (String(current.email || '').trim() !== cleanEmail) {
               updates.push('email = ?')
               params.push(cleanEmail)
               changedFields.push('email')
+              contactEventChangedFields.push('email')
             }
           } else {
             customUpdates.push({ key: 'alternate_email', label: 'Correo alterno', value: cleanEmail })
@@ -8668,9 +8680,14 @@ export function createConversationalTools(ctx) {
         }
         if (customUpdates.length) {
           const merged = mergeContactCustomFields(parseContactCustomFields(current.custom_fields), customUpdates)
-          updates.push(`custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'}`)
-          params.push(serializeContactCustomFieldsForDb(merged))
-          changedFields.push(...customUpdates.map((item) => item.key))
+          const serialized = serializeContactCustomFieldsForDb(merged)
+          const customChangedFields = getChangedContactCustomFieldReferences(current.custom_fields, serialized)
+          if (customChangedFields.length > 0) {
+            updates.push(`custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'}`)
+            params.push(serialized)
+            changedFields.push(...customChangedFields)
+            contactEventChangedFields.push(...customChangedFields)
+          }
         }
         if (!updates.length) return { missing: false, changedFields: [], preservedFields }
 
@@ -8685,7 +8702,7 @@ export function createConversationalTools(ctx) {
           race.code = 'contact_identity_update_race'
           throw race
         }
-        return { missing: false, changedFields, preservedFields }
+        return { missing: false, changedFields, contactEventChangedFields, preservedFields }
       })
 
       let persisted
@@ -8702,6 +8719,7 @@ export function createConversationalTools(ctx) {
       }
       if (persisted?.missing) return missingThreadContactResult(ctx)
       const changedFields = persisted?.changedFields || []
+      const contactEventChangedFields = persisted?.contactEventChangedFields || changedFields
       const preservedFields = persisted?.preservedFields || []
       // La ficha puede preservar un primario humano o legacy por política. El
       // dato que la persona acaba de confirmar sigue siendo evidencia válida
@@ -8722,6 +8740,18 @@ export function createConversationalTools(ctx) {
         }
       } catch (error) {
         logger.warn(`[Agente conversacional] Datos del contacto guardados localmente; sync HighLevel pendiente: ${error.message}`)
+      }
+      if (contactEventChangedFields.length > 0) {
+        try {
+          const engine = await import('../../services/automationEngine.js')
+          await engine.handleAutomationEvent('contact-updated', {
+            contactId: ctx.contactId,
+            changedFields: [...new Set(contactEventChangedFields)],
+            contactChangeSource: 'automation'
+          })
+        } catch (error) {
+          logger.warn(`[Agente conversacional] Datos guardados, pero no se pudo publicar el cambio de contacto: ${error.message}`)
+        }
       }
       settleAction(action, 'ok', { actionCompleted: true, changedFields, preservedFields })
       return { ok: true, actionCompleted: true, changedFields, preservedFields }

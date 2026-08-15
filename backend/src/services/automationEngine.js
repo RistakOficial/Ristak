@@ -23,6 +23,7 @@ import {
   prepareContactPhoneUpsert
 } from './contactIdentityService.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { getChangedContactFields } from '../utils/contactChangeFields.js'
 import { invalidateTrackingAnalyticsCache } from './trackingAnalyticsCache.js'
 import { normalizeContactNameFields } from '../utils/contactNameFormatter.js'
 import {
@@ -803,6 +804,12 @@ function changeFieldCandidates(value) {
     withoutPrefix,
     snake,
     snake.replace(/_/g, ''),
+    raw === 'full_name' ? 'fullName' : '',
+    raw === 'full_name' ? 'name' : '',
+    raw === 'fullName' ? 'full_name' : '',
+    raw === 'fullName' ? 'name' : '',
+    raw === 'name' ? 'fullName' : '',
+    raw === 'name' ? 'full_name' : '',
     raw === 'preferred_whatsapp_phone_number_id' ? 'preferredWhatsAppPhoneNumberId' : '',
     raw === 'preferredWhatsAppPhoneNumberId' ? 'preferred_whatsapp_phone_number_id' : '',
     raw === 'preferred_reply_channel' ? 'preferredReplyChannel' : '',
@@ -4331,10 +4338,6 @@ async function upsertContactFromConfig(config, ctx, overrides = {}) {
   const resolvedPhone = preparedPhone.phone || null
   const customFieldUpdates = { ...customFields }
   const assignedUser = str(config.assignedUser)
-  if (assignedUser) {
-    customFieldUpdates.assignedUser = assignedUser
-    if (str(config.assignedUserName)) customFieldUpdates.assignedUserName = str(config.assignedUserName)
-  }
   const customFieldsPlaceholder = process.env.DATABASE_URL ? '?::jsonb' : '?'
 
   if (existing) {
@@ -4346,6 +4349,7 @@ async function upsertContactFromConfig(config, ctx, overrides = {}) {
            first_name = COALESCE(?, first_name),
            last_name = COALESCE(?, last_name),
            source = COALESCE(?, source),
+           assigned_user_id = COALESCE(?, assigned_user_id),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [
@@ -4355,14 +4359,15 @@ async function upsertContactFromConfig(config, ctx, overrides = {}) {
         firstName || null,
         lastName || null,
         source || null,
+        assignedUser || null,
         contactId
       ]
     )
   } else {
     await db.run(
       `INSERT INTO contacts
-       (id, phone, email, full_name, first_name, last_name, source, custom_fields, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ${customFieldsPlaceholder}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+       (id, phone, email, full_name, first_name, last_name, source, assigned_user_id, custom_fields, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${customFieldsPlaceholder}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [
         contactId,
         resolvedPhone,
@@ -4371,6 +4376,7 @@ async function upsertContactFromConfig(config, ctx, overrides = {}) {
         firstName || null,
         lastName || null,
         source || null,
+        assignedUser || null,
         JSON.stringify([])
       ]
     )
@@ -4385,7 +4391,22 @@ async function upsertContactFromConfig(config, ctx, overrides = {}) {
 
   contactId = await finalizePreparedPhoneUpsert(preparedPhone, contactId)
   await applyContactTags(contactId, config.tags)
+  const persistedContact = await db.get('SELECT * FROM contacts WHERE id = ?', [contactId])
   ctx.contact = await loadContact(contactId, ctx.contact || {})
+  if (existing) {
+    const changedFields = getChangedContactFields(existing, persistedContact)
+    if (changedFields.length > 0) {
+      const nextCascadeDepth = (Number(ctx.__cascadeDepth) || 0) + 1
+      setImmediate(() => {
+        handleAutomationEvent('contact-updated', {
+          contactId,
+          changedFields,
+          contactChangeSource: 'automation',
+          __cascadeDepth: nextCascadeDepth
+        }).catch(() => undefined)
+      })
+    }
+  }
   return ctx.contact
 }
 
@@ -4688,21 +4709,32 @@ async function applyContactUserAction(node, ctx) {
   const userId = str(config.user)
   if (!remove && !userId) return 'Usuario no asignado (falta seleccionar usuario)'
 
-  if (remove) {
-    await mutateAndPersistContactCustomFields({
-      contactId: ctx.contact.id,
-      removeIdentities: ['assignedUser', 'assignedUserName']
-    })
-  } else {
-    await mergeAndPersistContactCustomFields({
-      contactId: ctx.contact.id,
-      updates: {
-        assignedUser: userId,
-        ...(str(config.userName) ? { assignedUserName: str(config.userName) } : {})
-      }
-    })
-  }
+  const contactRow = await db.get(
+    'SELECT assigned_user_id, custom_fields FROM contacts WHERE id = ?',
+    [ctx.contact.id]
+  )
+  const legacyBag = customFieldsBag(contactRow?.custom_fields)
+  const previousUserId = cleanString(contactRow?.assigned_user_id || legacyBag.assignedUser)
+  const nextUserId = remove ? '' : userId
+
+  await db.run(
+    `UPDATE contacts
+     SET assigned_user_id = ?, assignment_test_effect_id = NULL, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [nextUserId || null, ctx.contact.id]
+  )
+  // Versiones anteriores guardaban el responsable como custom field. Se
+  // elimina al tocarlo para que no pueda reaparecer después de desasignar.
+  await mutateAndPersistContactCustomFields({
+    contactId: ctx.contact.id,
+    removeIdentities: ['assignedUser', 'assignedUserName']
+  })
   ctx.contact = await loadContact(ctx.contact.id, ctx.contact)
+  if (previousUserId === nextUserId) {
+    return remove
+      ? 'El contacto ya estaba sin usuario asignado'
+      : `El contacto ya estaba asignado a ${str(config.userName) || userId}`
+  }
   // (AUTO-008) Propaga profundidad de cascada para acotar re-disparos en cadena.
   const nextCascadeDepthUser = (Number(ctx.__cascadeDepth) || 0) + 1
   setImmediate(() => {
@@ -7156,7 +7188,7 @@ async function loadContact(contactId, fallback = {}) {
     country: row?.country || bag.country || '',
     stage: explicitStage,
     lifecycleStage,
-    assignedUser: row?.assigned_user || bag.assignedUser || '',
+    assignedUser: row?.assigned_user_id || row?.assigned_user || bag.assignedUser || '',
     // Atribución de anuncios (filtros "Anuncio de origen", "URL de origen"…)
     adName: row?.attribution_ad_name || '',
     adId: row?.attribution_ad_id || '',

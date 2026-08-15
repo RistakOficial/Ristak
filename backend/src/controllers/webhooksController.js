@@ -22,6 +22,7 @@ import {
 import { resolveHighLevelContactCustomFields } from '../services/highlevelCustomFieldsService.js';
 import { mergeAndPersistContactCustomFields } from '../services/contactCustomFieldsPersistenceService.js';
 import { hasContactCustomFieldsPayload } from '../utils/contactCustomFields.js';
+import { getChangedContactFields } from '../utils/contactChangeFields.js';
 import {
   finalizePreparedPhoneUpsert,
   findContactByPhoneCandidates,
@@ -1049,6 +1050,36 @@ export const handleContactWebhook = async (req, res) => {
       createdAt: data.date_created || data.dateCreated || data.createdAt || null
     });
     const phoneUpsert = await prepareContactPhoneUpsert({ contactId: localContactId, phone });
+    const contactExistedBefore = !contactCreatedNow;
+    const contactBefore = contactExistedBefore
+      ? await db.get('SELECT * FROM contacts WHERE id = ?', [localContactId])
+      : null;
+    const hasIncomingFullName = ['full_name', 'contactName']
+      .some(key => Object.prototype.hasOwnProperty.call(data, key));
+    const hasIncomingFirstName = ['first_name', 'firstName']
+      .some(key => Object.prototype.hasOwnProperty.call(data, key));
+    const hasIncomingLastName = ['last_name', 'lastName']
+      .some(key => Object.prototype.hasOwnProperty.call(data, key));
+    const effectiveNameFields = hasIncomingFullName
+      ? contactNameFields
+      : normalizeContactNameFields({
+        firstName: hasIncomingFirstName
+          ? data.first_name || data.firstName
+          : contactBefore?.first_name,
+        lastName: hasIncomingLastName
+          ? data.last_name || data.lastName
+          : contactBefore?.last_name,
+        fallback: contactBefore?.full_name
+      });
+    const hasIncomingPhone = Object.prototype.hasOwnProperty.call(data, 'phone') ||
+      Object.prototype.hasOwnProperty.call(data, 'contactPhone');
+    const hasIncomingEmail = Object.prototype.hasOwnProperty.call(data, 'email');
+    const hasIncomingAttribution = Array.isArray(data.attributions) ||
+      Object.prototype.hasOwnProperty.call(data, 'attributionSource') ||
+      Object.prototype.hasOwnProperty.call(data.contact || {}, 'attributionSource');
+    const effectiveSource = Object.prototype.hasOwnProperty.call(data, 'source')
+      ? data.source
+      : attribution.sessionSource || attributionSource.sessionSource || contactBefore?.source || 'gohighlevel';
 
     const query = usePostgres
       ? `INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, first_name, last_name, source, created_at,
@@ -1085,23 +1116,31 @@ export const handleContactWebhook = async (req, res) => {
           visitor_id = COALESCE(excluded.visitor_id, contacts.visitor_id),
           updated_at = CURRENT_TIMESTAMP`;
 
-    const contactExistedBefore = !contactCreatedNow;
-
     await db.run(query, [
       localContactId,
       contactId,
-      phoneUpsert.phone || null,
-      data.email,
-      contactNameFields.fullName || 'Sin nombre',
-      contactNameFields.firstName || null,
-      contactNameFields.lastName || null,
-      data.source || attribution.sessionSource || attributionSource.sessionSource || 'gohighlevel',
+      hasIncomingPhone ? (phoneUpsert.phone || null) : (contactBefore?.phone || null),
+      hasIncomingEmail ? data.email : (contactBefore?.email || null),
+      effectiveNameFields.fullName || 'Sin nombre',
+      effectiveNameFields.firstName || null,
+      effectiveNameFields.lastName || null,
+      effectiveSource,
       data.date_created || data.dateCreated || data.createdAt || new Date().toISOString(),
-      attribution.pageUrl || attribution.url || attributionSource.url,
-      attribution.utmSessionSource || attribution.sessionSource || attributionSource.utmSessionSource || attributionSource.sessionSource,
-      attribution.medium || attributionSource.medium,
-      attribution.utmAdId || attributionSource.adId || attributionSource.mediumId,  // Si no hay adId, usar mediumId
-      attribution.adName || attributionSource.adName,
+      hasIncomingAttribution
+        ? attribution.pageUrl || attribution.url || attributionSource.url
+        : contactBefore?.attribution_url,
+      hasIncomingAttribution
+        ? attribution.utmSessionSource || attribution.sessionSource || attributionSource.utmSessionSource || attributionSource.sessionSource
+        : contactBefore?.attribution_session_source,
+      hasIncomingAttribution
+        ? attribution.medium || attributionSource.medium
+        : contactBefore?.attribution_medium,
+      hasIncomingAttribution
+        ? attribution.utmAdId || attributionSource.adId || attributionSource.mediumId
+        : contactBefore?.attribution_ad_id,  // Si no hay adId, usar mediumId
+      hasIncomingAttribution
+        ? attribution.adName || attributionSource.adName
+        : contactBefore?.attribution_ad_name,
       visitorId,
       customFieldsJson
     ]);
@@ -1110,6 +1149,10 @@ export const handleContactWebhook = async (req, res) => {
       updates: customFieldsResult.customFields
     });
     await finalizePreparedPhoneUpsert(phoneUpsert, localContactId);
+    const contactAfter = await db.get('SELECT * FROM contacts WHERE id = ?', [localContactId]);
+    const changedFields = contactExistedBefore
+      ? getChangedContactFields(contactBefore, contactAfter)
+      : [];
 
     // Si viene visitor_id, vincular histórico de sesiones
     if (visitorId && localContactId) {
@@ -1143,12 +1186,14 @@ export const handleContactWebhook = async (req, res) => {
     logger.info(`✅ Contacto ${localContactId} (GHL ${contactId}) procesado exitosamente${visitorId ? ` (visitor_id: ${visitorId})` : ''}`);
     res.status(200).json({ success: true, message: 'Contacto procesado' });
 
-    import('../services/automationEngine.js')
-      .then(engine => engine.handleAutomationEvent(
-        contactExistedBefore ? 'contact-updated' : 'contact-created',
-        { contactId: localContactId, changedFields: [] }
-      ))
-      .catch(() => {});
+    if (!contactExistedBefore || changedFields.length > 0) {
+      import('../services/automationEngine.js')
+        .then(engine => engine.handleAutomationEvent(
+          contactExistedBefore ? 'contact-updated' : 'contact-created',
+          { contactId: localContactId, changedFields, contactChangeSource: 'webhook' }
+        ))
+        .catch(() => {});
+    }
 
   } catch (error) {
     logger.error(`Error en handleContactWebhook: ${error.message}`);

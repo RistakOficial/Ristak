@@ -81,6 +81,7 @@ import {
   parseContactCustomFields,
   serializeContactCustomFieldsForDb
 } from '../utils/contactCustomFields.js'
+import { getChangedContactFields } from '../utils/contactChangeFields.js'
 import { mergeAndPersistContactCustomFields } from '../services/contactCustomFieldsPersistenceService.js'
 import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizePhoneForAccount } from '../utils/accountLocale.js'
@@ -180,8 +181,10 @@ export const getContactConversationalChannelPreference = async (req, res) => {
 
 export const updateContactConversationalChannelPreference = async (req, res) => {
   try {
+    const contactId = cleanString(req.params?.id)
+    const previousPreference = await getContactReplyChannelPreference(contactId)
     const preference = await setContactReplyChannelPreference(
-      req.params?.id,
+      contactId,
       req.body?.channel,
       {
         routeId: req.body?.routeId,
@@ -190,6 +193,20 @@ export const updateContactConversationalChannelPreference = async (req, res) => 
         source: 'manual'
       }
     )
+    const preferenceChanged = cleanString(previousPreference?.channel) !== cleanString(preference?.channel) ||
+      cleanString(previousPreference?.routeId) !== cleanString(preference?.routeId)
+    if (preferenceChanged) {
+      try {
+        const engine = await import('../services/automationEngine.js')
+        await engine.handleAutomationEvent('contact-updated', {
+          contactId,
+          changedFields: ['preferredReplyChannel', 'preferred_reply_channel'],
+          contactChangeSource: 'manual'
+        })
+      } catch (error) {
+        logger.warn(`Canal guardado, pero no se pudo publicar el cambio del contacto ${contactId}: ${error.message}`)
+      }
+    }
     res.json({ success: true, data: preference })
   } catch (error) {
     const status = error.code === 'CONTACT_NOT_FOUND'
@@ -5707,7 +5724,7 @@ export const updateContact = async (req, res) => {
       : req.body.preferred_whatsapp_phone_number_id
 
     // Verificar que el contacto existe
-    const existing = await db.get('SELECT id, custom_fields, preferred_whatsapp_phone_number_id, referred_by_contact_id, tags, full_name, email, phone, source, attribution_ad_name, attribution_ad_id FROM contacts WHERE id = ?', [id])
+    const existing = await db.get('SELECT * FROM contacts WHERE id = ?', [id])
     if (!existing) {
       return res.status(404).json({
         success: false,
@@ -5936,9 +5953,8 @@ export const updateContact = async (req, res) => {
       await db.run(query, params)
     }
 
-    let persistedCustomFields = null
     if (hasCustomFieldsUpdate) {
-      persistedCustomFields = await mergeAndPersistContactCustomFields({
+      await mergeAndPersistContactCustomFields({
         contactId: id,
         updates: preparedCustomFields
       })
@@ -5988,24 +6004,13 @@ export const updateContact = async (req, res) => {
       }
     }
 
+    const persistedContact = await db.get('SELECT * FROM contacts WHERE id = ?', [id])
+
     // Motor de automatizaciones: campo cambiado y etiquetas
     {
-      const changedFields = []
-      if (full_name !== undefined && normalizedFullName !== existing.full_name) changedFields.push('name', 'fullName')
-      if (email !== undefined && email !== existing.email) changedFields.push('email')
-      if (phone !== undefined && cleanString(phoneUpsert?.phone) !== cleanString(existing.phone)) changedFields.push('phone')
-      if (source !== undefined && source !== existing.source) changedFields.push('source')
-      if (attribution_ad_name !== undefined && attribution_ad_name !== existing.attribution_ad_name) changedFields.push('attributionAd')
-      if (attribution_ad_id !== undefined && attribution_ad_id !== existing.attribution_ad_id) changedFields.push('attributionAd')
-      if (hasReferrerUpdate && cleanString(existing.referred_by_contact_id) !== cleanString(normalizedReferrerId)) {
-        changedFields.push('referredByContactId', 'referred_by_contact_id')
-      }
-      if (hasPreferredWhatsAppPhoneNumberUpdate && cleanString(existing.preferred_whatsapp_phone_number_id) !== cleanString(preferredWhatsAppPhoneNumberInput)) {
-        changedFields.push('preferredWhatsAppPhoneNumberId', 'preferred_whatsapp_phone_number_id')
-      }
-      if (hasCustomFieldsUpdate && persistedCustomFields) {
-        changedFields.push(...getChangedContactCustomFieldReferences(existing.custom_fields, persistedCustomFields))
-      }
+      // Las etiquetas se publican como eventos discretos para conservar cuál se
+      // agregó o quitó. El resto sale de un before/after único y verificable.
+      const changedFields = getChangedContactFields(existing, persistedContact, { includeTags: false })
       import('../services/automationEngine.js').then(engine => {
         if (changedFields.length > 0) {
           engine.handleAutomationEvent('contact-updated', { contactId: id, changedFields, contactChangeSource: 'manual' }).catch(() => {})
@@ -6017,10 +6022,7 @@ export const updateContact = async (req, res) => {
     }
 
     // Obtener el contacto actualizado
-    const updated = await db.get(
-      `SELECT * FROM contacts WHERE id = ?`,
-      [id]
-    )
+    const updated = persistedContact
     const [updatedWithPhones] = await attachContactResponseDetails([updated])
     const responseContact = updatedWithPhones || updated
     const phones = buildContactPhonesForResponse(responseContact)

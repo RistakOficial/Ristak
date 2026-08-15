@@ -957,6 +957,69 @@ test('save_contact_data sólo guarda campos autorizados y valida teléfono/corre
   }
 })
 
+test('save_contact_data publica sólo una modificación real del nombre para automatizaciones', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_data_automation_${suffix}`
+  const automationId = `automation_contact_data_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        config: {
+          triggers: [{
+            id: 'contact-name-change',
+            type: 'trigger-contact-updated',
+            config: {
+              filters: [{ field: 'changed_detail', match: 'is', value: 'name' }]
+            }
+          }]
+        }
+      },
+      { id: 'done', type: 'extra-comment', config: {} }
+    ],
+    edges: [{ id: 'start-done', sourceNodeId: 'start', targetNodeId: 'done' }],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  await db.run(
+    `INSERT INTO contacts (id, full_name, phone, created_at, updated_at)
+     VALUES (?, 'Usuario de WhatsApp', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [contactId, uniquePhone()]
+  )
+  await db.run(
+    `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+     VALUES (?, 'Nombre guardado por IA', 'published', ?, ?, CURRENT_TIMESTAMP)`,
+    [automationId, JSON.stringify(flow), JSON.stringify(flow)]
+  )
+
+  try {
+    const saveTool = createConversationalTools(buildContext(contactId, [{
+      field: 'full_name',
+      level: 'required',
+      scope: 'appointment'
+    }])).find((item) => item.name === 'save_contact_data')
+
+    const first = await saveTool.invoke(null, JSON.stringify(contactDataPayload({ fullName: 'Ana López' })))
+    const repeated = await saveTool.invoke(null, JSON.stringify(contactDataPayload({ fullName: 'Ana López' })))
+
+    assert.deepEqual(first.changedFields, ['full_name'])
+    assert.deepEqual(repeated.changedFields, [])
+    assert.equal(
+      Number((await db.get(
+        'SELECT COUNT(*) AS total FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+        [automationId, contactId]
+      )).total),
+      1,
+      'guardar el mismo nombre otra vez no debe crear una segunda ejecución'
+    )
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId]).catch(() => undefined)
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
 test('save_contact_data reemplaza nombres numéricos o con emojis y conserva nombres humanos', async () => {
   const fields = [{ field: 'full_name', level: 'required', scope: 'appointment' }]
   const cases = [

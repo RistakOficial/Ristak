@@ -59,7 +59,7 @@ export const setContactAssignment = async (req, res) => {
     const rawUserId = req.body?.userId
     const userId = rawUserId === null || rawUserId === undefined ? '' : String(rawUserId).trim()
 
-    const contact = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId])
+    const contact = await db.get('SELECT id, assigned_user_id FROM contacts WHERE id = ?', [contactId])
     if (!contact) return res.status(404).json({ success: false, error: 'Contacto no encontrado' })
 
     if (userId) {
@@ -74,6 +74,19 @@ export const setContactAssignment = async (req, res) => {
        WHERE id = ?`,
       [userId || null, contactId]
     )
+    const assignmentChanged = String(contact.assigned_user_id || '') !== userId
+    if (assignmentChanged) {
+      try {
+        const engine = await import('../services/automationEngine.js')
+        await engine.handleAutomationEvent('contact-updated', {
+          contactId,
+          changedFields: ['assignedUser', 'assigned_user', 'assigned_user_id'],
+          contactChangeSource: 'manual'
+        })
+      } catch (error) {
+        logger.warn(`Responsable actualizado, pero no se pudo publicar el cambio del contacto ${contactId}: ${error.message}`)
+      }
+    }
     res.json({ success: true, assignedUserId: userId || null })
   } catch (error) {
     logger.error('Error asignando contacto:', error)

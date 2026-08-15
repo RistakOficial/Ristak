@@ -183,12 +183,41 @@ test('asigna y notifica de verdad una sola vez, luego restaura al responsable an
 test('una reasignación humana quita la marca y la limpieza jamás la revierte', async () => {
   const fixture = await seedAssignmentEffect('manual')
   const now = Date.now()
+  const automationId = uniqueId('automation_assignment_change')
   setConversationalAgentTestAssignmentDependenciesForTests({
     createInternalNotification: async () => ({ created: 1, ids: ['notification_test'], push: { sent: 1 } })
   })
 
   try {
     await assignConversationalAgentTestContact(assignmentInput(fixture, now))
+    const flow = {
+      nodes: [
+        {
+          id: 'start',
+          type: 'start',
+          config: {
+            triggers: [{
+              id: 'assignment-change',
+              type: 'trigger-contact-updated',
+              config: {
+                filters: [
+                  { field: 'changed_detail', match: 'is', value: 'assignedUser' },
+                  { field: 'assigned', match: 'is', value: fixture.manual.id }
+                ]
+              }
+            }]
+          }
+        },
+        { id: 'done', type: 'extra-comment', config: {} }
+      ],
+      edges: [{ id: 'start-done', sourceNodeId: 'start', targetNodeId: 'done' }],
+      settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+    }
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, 'Cambio de responsable', 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, JSON.stringify(flow), JSON.stringify(flow)]
+    )
     const res = mockResponse()
     await setContactAssignment({
       params: { id: fixture.contactId },
@@ -203,6 +232,14 @@ test('una reasignación humana quita la marca y la limpieza jamás la revierte',
     )
     assert.equal(String(humanChoice.assigned_user_id), fixture.manual.id)
     assert.equal(humanChoice.assignment_test_effect_id, null)
+    assert.equal(
+      Number((await db.get(
+        'SELECT COUNT(*) AS total FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+        [automationId, fixture.contactId]
+      )).total),
+      1,
+      'el cambio real de responsable debe disparar Contacto modificado'
+    )
 
     const cleanup = await cleanupDueConversationalAgentTestAssignments({ now: now + 5 * 60 * 1000 + 1 })
     assert.equal(cleanup.cleaned, 1)
@@ -212,6 +249,8 @@ test('una reasignación humana quita la marca y la limpieza jamás la revierte',
     assert.equal(String(finalContact.assigned_user_id), fixture.manual.id)
   } finally {
     setConversationalAgentTestAssignmentDependenciesForTests(null)
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId]).catch(() => undefined)
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId]).catch(() => undefined)
     await removeFixture(fixture)
   }
 })

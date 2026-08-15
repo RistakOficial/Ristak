@@ -8171,6 +8171,25 @@ cadena armada con todas las etiquetas. Guardar nuevamente el mismo valor de un
 campo personalizado tampoco publica una modificación, aunque el guardado haya
 normalizado metadatos internos de ese campo.
 
+Las escrituras vivas del CRM usan una comparación canónica antes/después para
+publicar ese borde. Cubre nombre y apellidos, teléfono, correo, fuente,
+responsable, número y canal de respuesta, referencia, atribución, métricas,
+etiquetas y cualquier campo personalizado —incluidos país, dirección y empresa—.
+La misma regla se aplica a la edición manual, reasignación, acciones de
+automatización, datos confirmados y guardados por el agente conversacional,
+formularios públicos y webhooks de contacto de HighLevel. Los aliases camelCase,
+snake_case y `custom:<key>` se publican juntos cuando corresponde para mantener
+compatibilidad con flujos existentes. IDs técnicos de proveedor, timestamps y
+metadatos internos no fabrican cambios. Un webhook parcial conserva los valores
+que no incluyó en lugar de borrarlos y anunciar una modificación falsa.
+
+`Formulario enviado` y `Contacto modificado` son eventos distintos. Enviar un
+formulario siempre puede activar el primero; sólo activa el segundo cuando el
+guardado cambió de verdad un valor de la ficha. Reenviar exactamente las mismas
+respuestas no produce otra modificación del contacto. Del mismo modo, asignar
+otra vez el mismo responsable, reordenar las mismas etiquetas o guardar de nuevo
+el mismo nombre/correo/campo personalizado queda en silencio.
+
 Los eventos relacionados de etiqueta, cita y pago sólo pueden entrar por este
 disparador cuando también cumplen ese contrato de cambio real. Así una cita
 nueva de alguien que ya era cliente no vuelve a ejecutar una automatización de

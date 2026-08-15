@@ -15,8 +15,10 @@ import { NO_TRACK_REASON, shouldSkipTracking } from '../utils/noTracking.js'
 import { describeMetaCapiResponseError, safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 import { getActiveMetaTestEventCode, isMetaTestModeActive } from '../utils/metaTestCode.js'
 import {
+  getChangedContactCustomFieldReferences,
   parseContactCustomFields
 } from '../utils/contactCustomFields.js'
+import { getChangedContactFields } from '../utils/contactChangeFields.js'
 import { mergeAndPersistContactCustomFields } from './contactCustomFieldsPersistenceService.js'
 import { composePhoneWithDialCode } from '../utils/phoneUtils.js'
 import {
@@ -39120,10 +39122,10 @@ function buildNativeMappedCustomFields(customFields = []) {
 }
 
 async function upsertNativeContactCustomFields({ site, contactId, blocks, responses }) {
-  if (!contactId) return []
+  if (!contactId) return { preparedFields: [], changedFields: [] }
 
   const customFields = buildNativeCustomFieldsFromResponses({ site, blocks, responses })
-  if (!customFields.length) return []
+  if (!customFields.length) return { preparedFields: [], changedFields: [] }
 
   const preparedFields = await prepareContactCustomFieldsForStorage(customFields, {
     sourceType: 'native_site',
@@ -39132,15 +39134,19 @@ async function upsertNativeContactCustomFields({ site, contactId, blocks, respon
     syncTarget: 'local',
     allowSystemContactCustomFields: true
   })
-  await mergeAndPersistContactCustomFields({ contactId, updates: preparedFields })
+  const before = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
+  const persisted = await mergeAndPersistContactCustomFields({ contactId, updates: preparedFields })
 
-  return preparedFields
+  return {
+    preparedFields,
+    changedFields: getChangedContactCustomFieldReferences(before?.custom_fields, persisted)
+  }
 }
 
 async function findExistingContact({ email, phone }) {
   if (email) {
     const byEmail = await db.get(
-      'SELECT id, phone, email, full_name, first_name, last_name FROM contacts WHERE LOWER(email) = LOWER(?) LIMIT 1',
+      'SELECT * FROM contacts WHERE LOWER(email) = LOWER(?) LIMIT 1',
       [email]
     )
     if (byEmail) return byEmail
@@ -39148,7 +39154,7 @@ async function findExistingContact({ email, phone }) {
 
   if (phone) {
     const byPhone = await findContactByPhoneCandidates(phone)
-    if (byPhone) return byPhone
+    if (byPhone?.id) return db.get('SELECT * FROM contacts WHERE id = ?', [byPhone.id])
   }
 
   return null
@@ -39285,13 +39291,6 @@ function buildImportedAutomationFormResponses({ rawFields = {}, mappedFields = {
   return finishAutomationResponses(output)
 }
 
-function customFieldChangeKeys(fields = []) {
-  return fields
-    .map(field => cleanString(field.fieldKey || field.key || field.field_key))
-    .filter(Boolean)
-    .flatMap(key => [`custom:${key}`, key])
-}
-
 function automationImportedFormId(siteId, importedFormId) {
   const site = cleanString(siteId)
   const form = cleanString(importedFormId)
@@ -39330,16 +39329,16 @@ async function emitSiteSubmissionAutomationEvents({ contactResult, formEvent, co
       if (contactResult?.created) {
         await engine.handleAutomationEvent('contact-created', contactEvent)
       } else {
-        await engine.handleAutomationEvent('contact-updated', {
-          ...contactEvent,
-          changedFields: [...new Set([
-            ...(contactResult?.changedFields || []),
-            ...contactChangedFields,
-            'formSubmission',
-            'publicSiteSubmission',
-            'updatedAt'
-          ].filter(Boolean))]
-        })
+        const changedFields = [...new Set([
+          ...(contactResult?.changedFields || []),
+          ...contactChangedFields
+        ].filter(Boolean))]
+        if (changedFields.length > 0) {
+          await engine.handleAutomationEvent('contact-updated', {
+            ...contactEvent,
+            changedFields
+          })
+        }
       }
     }
     await engine.handleAutomationEvent('form-submitted', formEvent)
@@ -39372,14 +39371,6 @@ async function upsertContactFromSubmissionWithResult({ site, contact, meta }) {
   const visitorId = cleanString(meta?.visitorId || meta?.visitor_id)
 
   if (existing) {
-    const changedFields = ['updatedAt']
-    if (!cleanString(existing.phone) && phone) changedFields.push('phone')
-    if (!cleanString(existing.email) && email) changedFields.push('email')
-    if (!cleanString(existing.full_name) && fullName) changedFields.push('fullName')
-    if (!cleanString(existing.first_name) && firstName) changedFields.push('firstName')
-    if (!cleanString(existing.last_name) && lastName) changedFields.push('lastName')
-    if (visitorId) changedFields.push('visitorId')
-
     await db.run(`
       UPDATE contacts SET
         phone = COALESCE(NULLIF(phone, ''), ?),
@@ -39412,10 +39403,11 @@ async function upsertContactFromSubmissionWithResult({ site, contact, meta }) {
       contactId
     ])
     await finalizePreparedPhoneUpsert(phoneUpsert, contactId)
+    const persisted = await db.get('SELECT * FROM contacts WHERE id = ?', [contactId])
     return {
       contactId,
       created: false,
-      changedFields: [...new Set(changedFields)]
+      changedFields: getChangedContactFields(existing, persisted)
     }
   }
 
@@ -40988,13 +40980,14 @@ async function upsertImportedContactFromSubmission({ site, contact, customFields
       : [])
   ]
   if (!preparedFields.length) return contactResult
-  await mergeAndPersistContactCustomFields({ contactId, updates: preparedFields })
+  const before = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
+  const persisted = await mergeAndPersistContactCustomFields({ contactId, updates: preparedFields })
 
   return {
     ...contactResult,
     changedFields: [
       ...(contactResult.changedFields || []),
-      ...customFieldChangeKeys(preparedFields)
+      ...getChangedContactCustomFieldReferences(before?.custom_fields, persisted)
     ]
   }
 }
@@ -41151,8 +41144,7 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
       formDisqualified: submissionStatus === 'disqualified',
       submittedAt: meta.submittedAt,
       formResponses: automationFormResponses
-    },
-    contactChangedFields: customFieldChangeKeys(layers.customFields)
+    }
   })
   const latestContactForMeta = await loadContactForMetaTemplate(contactId, contact)
 
@@ -42701,7 +42693,10 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     ? await upsertContactFromSubmissionWithResult({ site, contact: inferredContact, meta })
     : emptyContactUpsertResult()
   const contactId = contactResult.contactId
-  const preparedCustomFields = await upsertNativeContactCustomFields({
+  const {
+    preparedFields: preparedCustomFields,
+    changedFields: changedCustomFields
+  } = await upsertNativeContactCustomFields({
     site,
     contactId,
     blocks: submissionBlocks,
@@ -42811,7 +42806,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
       formResponses: automationFormResponses,
       immediateDisqualify: immediateDisqualifySubmit
     },
-    contactChangedFields: customFieldChangeKeys(preparedCustomFields)
+    contactChangedFields: changedCustomFields
   })
   const latestContactForMeta = await loadContactForMetaTemplate(contactId, inferredContact)
 

@@ -2540,12 +2540,13 @@ test('webhook encuentra contacto por valor mapeado y asigna usuario', async () =
       }
     })
 
-    const contact = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
+    const contact = await db.get('SELECT assigned_user_id, custom_fields FROM contacts WHERE id = ?', [contactId])
     const customFields = new Map(
       parseContactCustomFields(contact.custom_fields).map(field => [field.fieldKey, field.value])
     )
-    assert.equal(customFields.get('assignedUser'), assignedUser)
-    assert.equal(customFields.get('assignedUserName'), 'Ventas')
+    assert.equal(contact.assigned_user_id, assignedUser)
+    assert.equal(customFields.has('assignedUser'), false)
+    assert.equal(customFields.has('assignedUserName'), false)
 
     const enrollment = await db.get('SELECT * FROM automation_enrollments WHERE automation_id = ?', [automationId])
     assert.equal(enrollment.status, 'completed')
