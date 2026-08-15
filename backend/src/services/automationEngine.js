@@ -874,15 +874,15 @@ const CONTACT_FILTER_CHANGED_FIELD_CANDIDATES = {
   ad_id: ['attributionAd'],
   attribution_url: ['attributionUrl'],
   medium: ['attributionMedium'],
-  first_name: ['name', 'fullName', 'firstName'],
-  last_name: ['name', 'fullName', 'lastName'],
+  first_name: ['firstName', 'first_name'],
+  last_name: ['lastName', 'last_name'],
   source: ['source'],
   tag: ['tags'],
   stage: ['stage'],
   country: ['country'],
   email: ['email'],
   phone: ['phone'],
-  assigned: ['assignedUser', 'assigned_user'],
+  assigned: ['assignedUser', 'assigned_user', 'assigned_user_id'],
   preferred_whatsapp_number: ['preferredWhatsAppPhoneNumberId', 'preferred_whatsapp_phone_number_id'],
   preferred_reply_channel: ['preferredReplyChannel', 'preferred_reply_channel'],
   created_at: ['createdAt'],
@@ -901,6 +901,8 @@ const CONTACT_FILTER_CHANGED_FIELD_CANDIDATES = {
   active_appointment_date: ['appointmentDate', 'appointment_date']
 }
 
+const CONTACT_CHANGE_QUALIFIER_FILTER_FIELDS = new Set(['change_source'])
+
 function changedFieldCandidatesForContactFilter(filter = {}) {
   const field = cleanString(filter.field)
   if (field === 'custom') {
@@ -911,13 +913,40 @@ function changedFieldCandidatesForContactFilter(filter = {}) {
 }
 
 /**
- * `Contacto modificado` es un disparador de borde, no una consulta del estado.
- * Primero debe existir por lo menos un campo realmente cambiado. Si el usuario
- * eligió `Detalle que cambió`, ese filtro manda y el resto sólo califica el
- * estado final. Sin ese selector explícito, inferimos los campos observados de
- * los propios filtros (por ejemplo `Etapa = Cliente` observa `stage`).
+ * Evalúa los filtros modernos de `Contacto modificado` como predicados de
+ * transición: cada condición sólo puede ser verdadera si su propio campo cambió
+ * y además el valor final cumple la comparación. Así, `Etapa = Cliente O Correo
+ * = x` no entra por un cambio de correo distinto de x sólo porque el contacto ya
+ * era Cliente.
  */
-function contactUpdatedTriggerHasRealChange(trigger, ctx = {}) {
+function contactUpdatedObservedFiltersMatch(filters, ctx = {}) {
+  const list = (Array.isArray(filters) ? filters : []).filter(
+    (filter) =>
+      filter?.field &&
+      (NO_VALUE_FILTER_OPERATORS.has(filter.match) || String(filter.value || '').trim())
+  )
+  if (list.length === 0) return true
+
+  return list.reduce((accumulated, filter, index) => {
+    const field = cleanString(filter.field)
+    const valueMatches = evaluateFilter(filter, ctx)
+    const changedCandidates = changedFieldCandidatesForContactFilter(filter)
+    const fieldChanged = CONTACT_CHANGE_QUALIFIER_FILTER_FIELDS.has(field)
+      ? true
+      : changedCandidates.some(candidate => changedFieldMatches(ctx.changedFields, candidate))
+    const met = fieldChanged && valueMatches
+    if (index === 0) return met
+    return filter.connector === 'or' ? accumulated || met : accumulated && met
+  }, true)
+}
+
+/**
+ * `Contacto modificado` es un disparador de borde, no una consulta del estado.
+ * Los flujos nuevos infieren el campo observado de cada filtro. Los flujos
+ * históricos que guardaron `Detalle que cambió` o `config.field` conservan su
+ * semántica explícita para no alterar automatizaciones ya publicadas.
+ */
+function contactUpdatedTriggerMatches(trigger, ctx = {}) {
   const changedFields = Array.isArray(ctx.changedFields) ? ctx.changedFields : []
   if (changedFields.length === 0) return false
 
@@ -926,26 +955,15 @@ function contactUpdatedTriggerHasRealChange(trigger, ctx = {}) {
   if (legacyField && !changedFieldMatches(changedFields, legacyField)) return false
 
   const filters = Array.isArray(config.filters) ? config.filters : []
-  if (filters.some(filter => filter?.field === 'changed_detail')) return true
-
-  const inferredFields = filters.flatMap(changedFieldCandidatesForContactFilter)
-  if (inferredFields.length === 0) return true
-  return inferredFields.some(field => changedFieldMatches(changedFields, field))
+  if (legacyField || filters.some(filter => filter?.field === 'changed_detail')) {
+    return filtersMatch(filters, ctx)
+  }
+  return contactUpdatedObservedFiltersMatch(filters, ctx)
 }
 
 function contactUpdatedTriggerAcceptsRelatedEvent(trigger, eventType, ctx = {}) {
   if (!CONTACT_CHANGE_EVENT_TYPES.has(eventType)) return false
-  if (!contactUpdatedTriggerHasRealChange(trigger, ctx)) return false
-  const filters = Array.isArray(trigger?.config?.filters) ? trigger.config.filters : []
-  const explicitlyMatchesRelatedChange = filters.some((filter) => (
-    filter?.field === 'changed_detail' || filter?.field === 'change_source'
-  ) && evaluateFilter(filter, ctx))
-  if (explicitlyMatchesRelatedChange) return true
-
-  // Un flujo sin selector explícito también es válido: la compuerta anterior
-  // ya confirmó que cambió de verdad uno de los campos inferidos por sus filtros
-  // (o cualquier campo, cuando no existen filtros de contacto).
-  return !filters.some(filter => filter?.field === 'changed_detail' || filter?.field === 'change_source')
+  return contactUpdatedTriggerMatches(trigger, ctx)
 }
 
 function paymentActionMatches(configAction, ctx = {}, eventType = '') {
@@ -2348,7 +2366,12 @@ const APPOINTMENT_AUTOMATION_EVENT_TYPES = new Set(['appointment-booked', 'appoi
 function triggerMatches(trigger, eventType, ctx) {
   const config = trigger.config || {}
   const matchCtx = trigger.type === 'trigger-contact-updated' ? withContactChangeContext(eventType, ctx) : ctx
-  if (!filtersMatch(config.filters, matchCtx)) return false
+  if (trigger.type === 'trigger-contact-updated') {
+    if (!CONTACT_CHANGE_EVENT_TYPES.has(eventType)) return false
+    if (!contactUpdatedTriggerMatches(trigger, matchCtx)) return false
+  } else if (!filtersMatch(config.filters, matchCtx)) {
+    return false
+  }
 
   switch (eventType) {
     case 'message-received': {
@@ -2381,7 +2404,7 @@ function triggerMatches(trigger, eventType, ctx) {
 
     case 'contact-updated': {
       if (trigger.type !== 'trigger-contact-updated') return false
-      return contactUpdatedTriggerHasRealChange(trigger, matchCtx)
+      return true
     }
 
     case 'tag-changed': {

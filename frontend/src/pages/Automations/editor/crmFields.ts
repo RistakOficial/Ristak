@@ -639,6 +639,8 @@ export interface TriggerFilterField {
   appliesTo?: string[]
   /** Pide elegir una llave/subcampo antes de elegir el operador */
   needsCustomKey?: boolean
+  /** Conserva configuraciones históricas, pero ya no permite elegir este campo en flujos nuevos */
+  hiddenFromPicker?: boolean
 }
 
 export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
@@ -650,7 +652,8 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
     catalog: 'contactChangeFields',
     category: 'Cambio',
     appliesTo: ['contact_change'],
-    operators: ['is', 'not', 'contains', 'not_contains']
+    operators: ['is', 'not', 'contains', 'not_contains'],
+    hiddenFromPicker: true
   },
   {
     id: 'change_source',
@@ -846,6 +849,85 @@ export function filterFieldsFor(contextKey?: string, excludedFieldIds: string[] 
       !excluded.has(field.id) &&
       (!field.appliesTo || field.appliesTo.some((context) => contexts.includes(context)))
   )
+}
+
+const CONTACT_CHANGED_FILTER_DETAIL_KEYS: Record<string, string[]> = {
+  ad: ['attributionAd'],
+  ad_id: ['attributionAd'],
+  attribution_url: ['attributionUrl'],
+  medium: ['attributionMedium'],
+  first_name: ['firstName', 'first_name'],
+  last_name: ['lastName', 'last_name'],
+  source: ['source'],
+  tag: ['tags'],
+  stage: ['stage'],
+  country: ['country'],
+  email: ['email'],
+  phone: ['phone'],
+  assigned: ['assignedUser', 'assigned_user', 'assigned_user_id'],
+  preferred_whatsapp_number: ['preferredWhatsAppPhoneNumberId', 'preferred_whatsapp_phone_number_id'],
+  preferred_reply_channel: ['preferredReplyChannel', 'preferred_reply_channel'],
+  created_at: ['createdAt'],
+  updated_at: ['updatedAt'],
+  visitor_id: ['visitorId', 'visitor_id'],
+  total_paid: ['totalPaid', 'total_paid'],
+  payments_count: ['paymentsCount', 'payments_count'],
+  successful_payments_count: ['purchasesCount', 'purchases_count'],
+  last_purchase_date: ['lastPurchaseDate', 'last_purchase_date'],
+  appointments_count: ['appointmentsCount', 'appointments_count'],
+  active_appointments_count: ['activeAppointmentsCount', 'active_appointments_count'],
+  has_active_appointment: ['activeAppointment', 'active_appointment', 'activeAppointmentsCount', 'active_appointments_count'],
+  active_appointment_status: ['appointmentStatus', 'appointment_status'],
+  active_appointment_calendar: ['appointmentCalendar', 'appointment_calendar'],
+  active_appointment_assigned: ['appointmentAssignedUser', 'appointment_assigned_user'],
+  active_appointment_date: ['appointmentDate', 'appointment_date']
+}
+
+const normalizedContactChangeReference = (value: unknown) => String(value || '')
+  .trim()
+  .replace(/^custom:/i, '')
+  .replace(/[^a-z0-9]/gi, '')
+  .toLowerCase()
+
+function contactChangedFilterReferences(filter: TriggerFilter): string[] {
+  if (filter.field === 'custom') {
+    const customKey = String(filter.customKey || '').trim()
+    return customKey ? [customKey, `custom:${customKey}`] : []
+  }
+  return CONTACT_CHANGED_FILTER_DETAIL_KEYS[filter.field] || []
+}
+
+/**
+ * Oculta del editor el selector histórico `Detalle que cambió` cuando sólo
+ * repite el mismo campo que ya está configurado. La serialización antigua sigue
+ * siendo válida en backend; al próximo guardado queda en el formato moderno.
+ */
+export function contactChangedFiltersForEditor(value: unknown): TriggerFilter[] {
+  const filters = asTriggerFilters(value)
+  const explicitDetails = filters.filter((filter) => filter.field === 'changed_detail')
+  const observed = filters.filter((filter) => !['changed_detail', 'change_source'].includes(filter.field))
+  if (explicitDetails.length !== 1 || observed.length !== 1 || explicitDetails[0].match !== 'is') {
+    return filters
+  }
+
+  const expected = normalizedContactChangeReference(explicitDetails[0].value)
+  const duplicatesObservedField = contactChangedFilterReferences(observed[0])
+    .some((candidate) => normalizedContactChangeReference(candidate) === expected)
+  return duplicatesObservedField
+    ? filters.filter((filter) => filter !== explicitDetails[0])
+    : filters
+}
+
+export function contactChangedTriggerLead(value: unknown): string {
+  const observed = contactChangedFiltersForEditor(value)
+    .filter((filter) => !['changed_detail', 'change_source'].includes(filter.field))
+  if (observed.length === 0) return 'Cuando cambie cualquier detalle del contacto'
+  if (observed.length > 1) return 'Cuando cambie uno de los campos configurados del contacto'
+  const field = TRIGGER_FILTER_FIELDS.find((candidate) => candidate.id === observed[0].field)
+  const phrase = field?.needsCustomKey && (observed[0].customLabel || observed[0].customKey)
+    ? `el campo "${observed[0].customLabel || observed[0].customKey}"`
+    : field?.phrase || 'el campo configurado'
+  return `Cuando cambie ${phrase} del contacto`
 }
 
 // ---------------------------------------------------------------------------

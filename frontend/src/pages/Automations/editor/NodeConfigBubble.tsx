@@ -36,7 +36,12 @@ import { MessageBlocksEditor } from './config/MessageBlocksEditor'
 import { EmailConfigEditor, type EmailRichEditorRequest } from './config/EmailConfigEditor'
 import { TriggerFiltersEditor } from './config/TriggerFiltersEditor'
 import { SchedulerConfigEditor } from './config/SchedulerConfigEditor'
-import { asTriggerFilters, triggerFiltersWithLegacyForm, type TriggerFilter } from './crmFields'
+import {
+  asTriggerFilters,
+  contactChangedFiltersForEditor,
+  triggerFiltersWithLegacyForm,
+  type TriggerFilter
+} from './crmFields'
 import { MessageComposer, VariableTextInput } from './composer/MessageComposer'
 import styles from './AutomationEditor.module.css'
 
@@ -185,7 +190,9 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
 
   const visibleTriggerFilters = definition.type === 'trigger-form-submitted'
     ? triggerFiltersWithLegacyForm(config)
-    : asTriggerFilters(config.filters)
+    : definition.type === 'trigger-contact-updated'
+      ? contactChangedFiltersForEditor(config.filters)
+      : asTriggerFilters(config.filters)
 
   const updateTriggerFilters = (filters: TriggerFilter[]) => {
     if (definition.type !== 'trigger-form-submitted') {

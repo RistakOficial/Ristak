@@ -113,3 +113,27 @@ test('Formulario enviado elige el formulario dentro de filtros y no en un campo 
   assert.match(automationEditor, /specificFormFromConfig\(trigger\.config\)/)
   assert.match(variablesCatalog, /specificFormFromConfig\(config\)/)
 })
+
+test('Contacto modificado vigila los campos elegidos sin pedir Detalle que cambió', () => {
+  const registry = readRepoFile('frontend/src/pages/Automations/editor/nodeRegistry.tsx')
+  const fields = readRepoFile('frontend/src/pages/Automations/editor/crmFields.ts')
+  const filtersEditor = readRepoFile(
+    'frontend/src/pages/Automations/editor/config/TriggerFiltersEditor.tsx'
+  )
+  const nodeBubble = readRepoFile('frontend/src/pages/Automations/editor/NodeConfigBubble.tsx')
+
+  assert.match(fields, /id: 'changed_detail',[\s\S]*hiddenFromPicker: true/)
+  assert.match(fields, /contactChangedFiltersForEditor/)
+  assert.match(filtersEditor, /if \(field\.hiddenFromPicker\) return/)
+  assert.match(filtersEditor, /Cada campo que agregues queda vigilado automáticamente/)
+  assert.match(filtersEditor, /Añadir campo vigilado/)
+  assert.match(filtersEditor, /Selecciona el campo que debe cambiar/)
+  assert.match(nodeBubble, /contactChangedFiltersForEditor\(config\.filters\)/)
+
+  const triggerStart = registry.indexOf("type: 'trigger-contact-updated'")
+  const triggerEnd = registry.indexOf("type: 'trigger-contact-created'", triggerStart)
+  const definition = registry.slice(triggerStart, triggerEnd)
+  assert.ok(triggerStart >= 0 && triggerEnd > triggerStart)
+  assert.match(definition, /Vigila automáticamente los campos configurados/)
+  assert.match(definition, /contactChangedTriggerLead\(filters\)/)
+})

@@ -45,6 +45,8 @@ import {
   summarizeAdvancedCondition,
   specificFormFromConfig,
   validateAdvancedCondition,
+  contactChangedFiltersForEditor,
+  contactChangedTriggerLead,
   triggerFiltersSentence,
   triggerFiltersWithLegacyForm,
   validateTriggerFilters
@@ -1085,7 +1087,7 @@ const TRIGGERS: NodeDefinition[] = [
     kind: 'trigger',
     label: 'Contacto modificado',
     category: 'trigger-contacts',
-    description: 'Se activa cuando cambie cualquier detalle del contacto en el CRM',
+    description: 'Vigila automáticamente los campos configurados y se activa sólo cuando uno cambia de verdad',
     icon: UserCog,
     accent: 'green',
     addButtonLabel: 'Configurar filtros',
@@ -1094,10 +1096,11 @@ const TRIGGERS: NodeDefinition[] = [
     outputs: () => SINGLE_OUTPUT,
     summary: (config) => {
       const legacyField = str(config.fieldName) || str(config.field)
+      const filters = contactChangedFiltersForEditor(config.filters)
       return {
         text: legacyField
           ? `Cuando cambie "${legacyField}" del contacto${triggerFiltersSentence(config.filters)}`
-          : `Cuando cambie cualquier detalle del contacto${triggerFiltersSentence(config.filters)}`
+          : `${contactChangedTriggerLead(filters)}${triggerFiltersSentence(filters)}`
       }
     }
   },

@@ -39,10 +39,12 @@ export const TriggerFiltersEditor: React.FC<{
   )
   const filters = asTriggerFilters(value)
   const fields = filterFieldsFor(contextKey, excludedFieldIds)
+  const isContactChanged = contextKey === 'trigger-contact-updated'
   const formIdForQuestions = filters.find((filter) => filter.field === 'form-specific' && filter.value)?.value || selectedFormId || ''
 
   const groups: DrillGroup[] = []
   fields.forEach((field) => {
+    if (field.hiddenFromPicker) return
     let group = groups.find((candidate) => candidate.id === field.category)
     if (!group) {
       group = { id: field.category, label: field.category, items: [] }
@@ -68,6 +70,11 @@ export const TriggerFiltersEditor: React.FC<{
 
   return (
     <div>
+      {isContactChanged && (
+        <p className={styles.configHelp}>
+          Cada campo que agregues queda vigilado automáticamente. El flujo sólo entra cuando ese campo cambia de verdad y el valor final cumple la condición.
+        </p>
+      )}
       {filters.map((filter, index) => {
         const field = fields.find((candidate) => candidate.id === filter.field)
         const needsCustomKey = Boolean(field?.needsCustomKey)
@@ -80,13 +87,21 @@ export const TriggerFiltersEditor: React.FC<{
           <div key={index} className={styles.filterRow}>
             <div className={styles.filterHeaderRow}>
               {index === 0 ? (
-                <span className={styles.filterSentenceLead}>Sólo continuar cuando</span>
+                <span className={styles.filterSentenceLead}>
+                  {isContactChanged ? 'Disparar cuando cambie' : 'Sólo continuar cuando'}
+                </span>
               ) : (
                 <div className={styles.filterConnectorSelect}>
                   <CustomSelect
                     options={[
-                      { value: 'and', label: 'También debe cumplir' },
-                      { value: 'or', label: 'O puede cumplir' }
+                      {
+                        value: 'and',
+                        label: isContactChanged ? 'También cambió y cumple' : 'También debe cumplir'
+                      },
+                      {
+                        value: 'or',
+                        label: isContactChanged ? 'O cambió y cumple' : 'O puede cumplir'
+                      }
                     ]}
                     value={filter.connector === 'or' ? 'or' : 'and'}
                     onValueChange={(next) => update(index, { connector: next === 'or' ? 'or' : 'and' })}
@@ -119,7 +134,7 @@ export const TriggerFiltersEditor: React.FC<{
                       customLabel: ''
                     })
                   }
-                  placeholder="Selecciona qué dato revisar"
+                  placeholder={isContactChanged ? 'Selecciona el campo que debe cambiar' : 'Selecciona qué dato revisar'}
                   aria-label="Campo del filtro"
                 />
               </div>
@@ -175,7 +190,7 @@ export const TriggerFiltersEditor: React.FC<{
                         ...(triggerOperatorNeedsValue(next) ? {} : { value: '', valueLabel: '' })
                       })
                     }
-                    placeholder="Selecciona qué debe pasar"
+                    placeholder={isContactChanged ? 'Selecciona cómo debe quedar' : 'Selecciona qué debe pasar'}
                     aria-label="Qué debe pasar"
                   />
                 </div>
@@ -232,7 +247,7 @@ export const TriggerFiltersEditor: React.FC<{
         onClick={() => onChange([...filters, { field: '', match: '', value: '', connector: 'and' }])}
       >
         <Plus size={11} />
-        Añadir filtro
+        {isContactChanged ? 'Añadir campo vigilado' : 'Añadir filtro'}
       </button>
     </div>
   )

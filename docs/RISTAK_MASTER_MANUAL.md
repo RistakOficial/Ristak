@@ -8160,16 +8160,21 @@ La compuerta de licencia `canRunAutomationFlow` se conserva despues del lookup.
 `Contacto modificado` es un disparador por transicion, no una consulta periodica
 del estado del contacto. Primero debe existir al menos un campo realmente
 modificado; un webhook repetido con `changedFields` vacio no cuenta como cambio.
-Si el flujo usa `Detalle que cambio`, ese selector define el campo observado y
-los demas filtros califican el valor final ya persistido. Si no lo usa, el motor
-infiere los campos observados de los filtros del contacto: por ejemplo,
-`Pipeline / etapa = Cliente` sólo coincide cuando `stage` formó parte de esa
-modificacion real, no cuando cambió el correo de alguien que ya era Cliente. Un
-disparador sin filtros acepta cualquier campo que haya cambiado de verdad. Los
-filtros de etiqueta comprueban pertenencia real por ID o alias legible, no una
-cadena armada con todas las etiquetas. Guardar nuevamente el mismo valor de un
-campo personalizado tampoco publica una modificación, aunque el guardado haya
-normalizado metadatos internos de ese campo.
+Cada filtro de contacto configura al mismo tiempo el campo vigilado y el valor
+final requerido, siguiendo el modelo de `Contact Changed` de HighLevel. No se
+agrega un segundo filtro `Detalle que cambio`: `Pipeline / etapa = Cliente`
+significa automaticamente "la etapa cambió y ahora es Cliente"; `Correo = x`
+significa "el correo cambió y ahora es x". Con varias condiciones, cada una se
+acopla a su propio campo antes de aplicar su conector `Y`/`O`; un cambio de correo
+que no coincide no puede entrar por un `O` sólo porque la etapa final ya era
+Cliente. Un disparador sin filtros acepta cualquier campo que haya cambiado de
+verdad. `Detalle que cambio` queda reconocido únicamente para compatibilidad con
+flujos históricos y ya no se ofrece para configuraciones nuevas; cuando sólo
+duplicaba el mismo campo, el editor lo omite y lo retira en el siguiente guardado.
+Los filtros de etiqueta comprueban pertenencia real por ID o alias legible, no
+una cadena armada con todas las etiquetas. Guardar nuevamente el mismo valor de
+un campo personalizado tampoco publica una modificación, aunque el guardado
+haya normalizado metadatos internos de ese campo.
 
 Las escrituras vivas del CRM usan una comparación canónica antes/después para
 publicar ese borde. Cubre nombre y apellidos, teléfono, correo, fuente,
@@ -8199,9 +8204,9 @@ lista cerrada: `lead`, `appointment`, `attended` y `customer`, mostrados con los
 labels de cuenta como Interesado/Prospecto, Agendo cita, Asistio a cita y
 Cliente. Pagos exitosos tienen prioridad sobre asistencia, y asistencia sobre
 una cita activa. Pagos y cambios de cita agregan `stage` a `changedFields`
-únicamente cuando el hecho actual cambia esa etapa canónica; por eso `Detalle
-que cambio = Pipeline / etapa` puede combinarse con la etapa final deseada sin
-disparos repetidos por citas, estados o pagos posteriores.
+únicamente cuando el hecho actual cambia esa etapa canónica; por eso basta con
+configurar la etapa final deseada y no hay disparos repetidos por citas, estados
+o pagos posteriores.
 
 La transición comercial causada por pagos no depende del nombre de la pasarela.
 Cada vez que `updateSingleContactStats` reconcilia los pagos persistidos, compara
