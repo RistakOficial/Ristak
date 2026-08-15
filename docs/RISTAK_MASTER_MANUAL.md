@@ -8157,23 +8157,32 @@ ejemplo, `trigger-contact-updated` tambien participa en eventos de etiquetas,
 citas y pagos porque el motor vuelve a evaluar sus filtros antes de inscribir.
 La compuerta de licencia `canRunAutomationFlow` se conserva despues del lookup.
 
-`Contacto modificado` evalua el estado final ya persistido del contacto. Sus
-filtros de nombre, fuente y demas datos estandar comparan el valor actual; el
-filtro de etiqueta comprueba pertenencia real por ID o alias legible, no una
-cadena armada con todas las etiquetas. Los eventos relacionados de etiqueta,
-cita y pago sólo pueden entrar por este disparador cuando el flujo los pide de
-forma explícita mediante `Detalle que cambio`/`Origen del cambio`, o cuando un
-filtro legacy de etapa coincide con una transición comercial que ocurrió de
-verdad. Así una cita nueva de alguien que ya era cliente no vuelve a ejecutar
-una automatización de conversión sólo porque su estado final siga siendo
-Cliente. `Pipeline / etapa` representa el ciclo comercial calculado por Ristak y
-se configura desde una lista cerrada: `lead`, `appointment`, `attended` y
-`customer`, mostrados con los labels de cuenta como Interesado/Prospecto, Agendo
-cita, Asistio a cita y Cliente. Pagos exitosos tienen prioridad sobre asistencia,
-y asistencia sobre una cita activa. Pagos y cambios de cita agregan `stage` a
-`changedFields` únicamente cuando el hecho actual cambia esa etapa canónica; por
-eso `Detalle que cambio = Pipeline / etapa` puede combinarse con la etapa final
-deseada sin disparos repetidos por citas, estados o pagos posteriores.
+`Contacto modificado` es un disparador por transicion, no una consulta periodica
+del estado del contacto. Primero debe existir al menos un campo realmente
+modificado; un webhook repetido con `changedFields` vacio no cuenta como cambio.
+Si el flujo usa `Detalle que cambio`, ese selector define el campo observado y
+los demas filtros califican el valor final ya persistido. Si no lo usa, el motor
+infiere los campos observados de los filtros del contacto: por ejemplo,
+`Pipeline / etapa = Cliente` sólo coincide cuando `stage` formó parte de esa
+modificacion real, no cuando cambió el correo de alguien que ya era Cliente. Un
+disparador sin filtros acepta cualquier campo que haya cambiado de verdad. Los
+filtros de etiqueta comprueban pertenencia real por ID o alias legible, no una
+cadena armada con todas las etiquetas. Guardar nuevamente el mismo valor de un
+campo personalizado tampoco publica una modificación, aunque el guardado haya
+normalizado metadatos internos de ese campo.
+
+Los eventos relacionados de etiqueta, cita y pago sólo pueden entrar por este
+disparador cuando también cumplen ese contrato de cambio real. Así una cita
+nueva de alguien que ya era cliente no vuelve a ejecutar una automatización de
+conversión sólo porque su estado final siga siendo Cliente. `Pipeline / etapa`
+representa el ciclo comercial calculado por Ristak y se configura desde una
+lista cerrada: `lead`, `appointment`, `attended` y `customer`, mostrados con los
+labels de cuenta como Interesado/Prospecto, Agendo cita, Asistio a cita y
+Cliente. Pagos exitosos tienen prioridad sobre asistencia, y asistencia sobre
+una cita activa. Pagos y cambios de cita agregan `stage` a `changedFields`
+únicamente cuando el hecho actual cambia esa etapa canónica; por eso `Detalle
+que cambio = Pipeline / etapa` puede combinarse con la etapa final deseada sin
+disparos repetidos por citas, estados o pagos posteriores.
 
 La transición comercial causada por pagos no depende del nombre de la pasarela.
 Cada vez que `updateSingleContactStats` reconcilia los pagos persistidos, compara

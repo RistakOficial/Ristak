@@ -808,6 +808,7 @@ function changeFieldCandidates(value) {
     raw === 'preferred_reply_channel' ? 'preferredReplyChannel' : '',
     raw === 'preferredReplyChannel' ? 'preferred_reply_channel' : '',
     raw === 'assignedUser' ? 'assigned_user' : '',
+    raw === 'contact.stage' ? 'stage' : '',
     raw === 'totalPaid' ? 'total_paid' : '',
     raw === 'purchasesCount' ? 'purchases_count' : '',
     raw === 'paymentsCount' ? 'payments_count' : '',
@@ -831,7 +832,6 @@ function changedFieldMatches(changedFields = [], expectedValue = '') {
 function contactChangeFieldsForEvent(eventType, ctx = {}) {
   const explicit = Array.isArray(ctx.changedFields) ? ctx.changedFields : []
   const fields = [...explicit]
-  if (CONTACT_CHANGE_EVENT_TYPES.has(eventType)) fields.push('updatedAt')
   if (eventType === 'tag-changed') fields.push('tags')
   if (eventType === 'payment-received' || eventType === 'refund') {
     fields.push('payments', 'paymentsCount', 'totalPaid', 'purchasesCount', 'lastPurchaseDate')
@@ -845,6 +845,10 @@ function contactChangeFieldsForEvent(eventType, ctx = {}) {
     fields.push('appointments', 'activeAppointment', 'appointmentStatus')
     if (ctx.lifecycleStageChanged === true) fields.push('stage')
   }
+  // `updatedAt` sirve como detalle observable, pero no puede fabricar por sí
+  // solo una modificación. Un webhook repetido con `changedFields: []` no es
+  // un cambio de contacto y no debe despertar automatizaciones.
+  if (fields.length > 0) fields.push('updatedAt')
   return [...new Set(fields.map(cleanString).filter(Boolean))]
 }
 
@@ -858,21 +862,83 @@ function withContactChangeContext(eventType, ctx = {}) {
   }
 }
 
+const CONTACT_FILTER_CHANGED_FIELD_CANDIDATES = {
+  ad: ['attributionAd'],
+  ad_id: ['attributionAd'],
+  attribution_url: ['attributionUrl'],
+  medium: ['attributionMedium'],
+  first_name: ['name', 'fullName', 'firstName'],
+  last_name: ['name', 'fullName', 'lastName'],
+  source: ['source'],
+  tag: ['tags'],
+  stage: ['stage'],
+  country: ['country'],
+  email: ['email'],
+  phone: ['phone'],
+  assigned: ['assignedUser', 'assigned_user'],
+  preferred_whatsapp_number: ['preferredWhatsAppPhoneNumberId', 'preferred_whatsapp_phone_number_id'],
+  preferred_reply_channel: ['preferredReplyChannel', 'preferred_reply_channel'],
+  created_at: ['createdAt'],
+  updated_at: ['updatedAt'],
+  visitor_id: ['visitorId', 'visitor_id'],
+  total_paid: ['totalPaid', 'total_paid'],
+  payments_count: ['paymentsCount', 'payments_count'],
+  successful_payments_count: ['purchasesCount', 'purchases_count'],
+  last_purchase_date: ['lastPurchaseDate', 'last_purchase_date'],
+  appointments_count: ['appointmentsCount', 'appointments_count'],
+  active_appointments_count: ['activeAppointmentsCount', 'active_appointments_count'],
+  has_active_appointment: ['activeAppointment', 'active_appointment', 'activeAppointmentsCount', 'active_appointments_count'],
+  active_appointment_status: ['appointmentStatus', 'appointment_status'],
+  active_appointment_calendar: ['appointmentCalendar', 'appointment_calendar'],
+  active_appointment_assigned: ['appointmentAssignedUser', 'appointment_assigned_user'],
+  active_appointment_date: ['appointmentDate', 'appointment_date']
+}
+
+function changedFieldCandidatesForContactFilter(filter = {}) {
+  const field = cleanString(filter.field)
+  if (field === 'custom') {
+    const customKey = cleanString(filter.customKey || filter.custom_key)
+    return customKey ? [customKey, `custom:${customKey}`] : []
+  }
+  return CONTACT_FILTER_CHANGED_FIELD_CANDIDATES[field] || []
+}
+
+/**
+ * `Contacto modificado` es un disparador de borde, no una consulta del estado.
+ * Primero debe existir por lo menos un campo realmente cambiado. Si el usuario
+ * eligió `Detalle que cambió`, ese filtro manda y el resto sólo califica el
+ * estado final. Sin ese selector explícito, inferimos los campos observados de
+ * los propios filtros (por ejemplo `Etapa = Cliente` observa `stage`).
+ */
+function contactUpdatedTriggerHasRealChange(trigger, ctx = {}) {
+  const changedFields = Array.isArray(ctx.changedFields) ? ctx.changedFields : []
+  if (changedFields.length === 0) return false
+
+  const config = trigger?.config || {}
+  const legacyField = cleanString(config.field)
+  if (legacyField && !changedFieldMatches(changedFields, legacyField)) return false
+
+  const filters = Array.isArray(config.filters) ? config.filters : []
+  if (filters.some(filter => filter?.field === 'changed_detail')) return true
+
+  const inferredFields = filters.flatMap(changedFieldCandidatesForContactFilter)
+  if (inferredFields.length === 0) return true
+  return inferredFields.some(field => changedFieldMatches(changedFields, field))
+}
+
 function contactUpdatedTriggerAcceptsRelatedEvent(trigger, eventType, ctx = {}) {
-  if (eventType === 'contact-updated') return true
   if (!CONTACT_CHANGE_EVENT_TYPES.has(eventType)) return false
+  if (!contactUpdatedTriggerHasRealChange(trigger, ctx)) return false
   const filters = Array.isArray(trigger?.config?.filters) ? trigger.config.filters : []
   const explicitlyMatchesRelatedChange = filters.some((filter) => (
     filter?.field === 'changed_detail' || filter?.field === 'change_source'
   ) && evaluateFilter(filter, ctx))
   if (explicitlyMatchesRelatedChange) return true
 
-  // Compatibilidad con flujos antiguos que sólo guardaron "etapa = cliente"
-  // o "etapa = cita": un hecho relacional puede activarlos, pero únicamente
-  // cuando ese hecho acaba de producir esa transición real.
-  return ctx.lifecycleStageChanged === true && filters.some((filter) => (
-    filter?.field === 'stage' && evaluateFilter(filter, ctx)
-  ))
+  // Un flujo sin selector explícito también es válido: la compuerta anterior
+  // ya confirmó que cambió de verdad uno de los campos inferidos por sus filtros
+  // (o cualquier campo, cuando no existen filtros de contacto).
+  return !filters.some(filter => filter?.field === 'changed_detail' || filter?.field === 'change_source')
 }
 
 function paymentActionMatches(configAction, ctx = {}, eventType = '') {
@@ -2308,9 +2374,7 @@ function triggerMatches(trigger, eventType, ctx) {
 
     case 'contact-updated': {
       if (trigger.type !== 'trigger-contact-updated') return false
-      const field = str(config.field)
-      if (!field) return true
-      return changedFieldMatches(matchCtx.changedFields, field)
+      return contactUpdatedTriggerHasRealChange(trigger, matchCtx)
     }
 
     case 'tag-changed': {

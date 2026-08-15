@@ -77,6 +77,7 @@ import {
 } from '../services/crmListProjectionService.js'
 import {
   buildHighLevelCustomFieldsPayload,
+  getChangedContactCustomFieldReferences,
   parseContactCustomFields,
   serializeContactCustomFieldsForDb
 } from '../utils/contactCustomFields.js'
@@ -5706,7 +5707,7 @@ export const updateContact = async (req, res) => {
       : req.body.preferred_whatsapp_phone_number_id
 
     // Verificar que el contacto existe
-    const existing = await db.get('SELECT id, custom_fields, preferred_whatsapp_phone_number_id, referred_by_contact_id, tags, full_name, email, phone, source FROM contacts WHERE id = ?', [id])
+    const existing = await db.get('SELECT id, custom_fields, preferred_whatsapp_phone_number_id, referred_by_contact_id, tags, full_name, email, phone, source, attribution_ad_name, attribution_ad_id FROM contacts WHERE id = ?', [id])
     if (!existing) {
       return res.status(404).json({
         success: false,
@@ -5935,8 +5936,9 @@ export const updateContact = async (req, res) => {
       await db.run(query, params)
     }
 
+    let persistedCustomFields = null
     if (hasCustomFieldsUpdate) {
-      await mergeAndPersistContactCustomFields({
+      persistedCustomFields = await mergeAndPersistContactCustomFields({
         contactId: id,
         updates: preparedCustomFields
       })
@@ -5989,21 +5991,21 @@ export const updateContact = async (req, res) => {
     // Motor de automatizaciones: campo cambiado y etiquetas
     {
       const changedFields = []
-      if (full_name !== undefined && full_name !== existing.full_name) changedFields.push('name', 'fullName')
+      if (full_name !== undefined && normalizedFullName !== existing.full_name) changedFields.push('name', 'fullName')
       if (email !== undefined && email !== existing.email) changedFields.push('email')
-      if (phone !== undefined && phone !== existing.phone) changedFields.push('phone')
+      if (phone !== undefined && cleanString(phoneUpsert?.phone) !== cleanString(existing.phone)) changedFields.push('phone')
       if (source !== undefined && source !== existing.source) changedFields.push('source')
-      if (attribution_ad_name !== undefined) changedFields.push('attributionAd')
-      if (attribution_ad_id !== undefined) changedFields.push('attributionAd')
+      if (attribution_ad_name !== undefined && attribution_ad_name !== existing.attribution_ad_name) changedFields.push('attributionAd')
+      if (attribution_ad_id !== undefined && attribution_ad_id !== existing.attribution_ad_id) changedFields.push('attributionAd')
       if (hasReferrerUpdate && cleanString(existing.referred_by_contact_id) !== cleanString(normalizedReferrerId)) {
         changedFields.push('referredByContactId', 'referred_by_contact_id')
       }
       if (hasPreferredWhatsAppPhoneNumberUpdate && cleanString(existing.preferred_whatsapp_phone_number_id) !== cleanString(preferredWhatsAppPhoneNumberInput)) {
         changedFields.push('preferredWhatsAppPhoneNumberId', 'preferred_whatsapp_phone_number_id')
       }
-      if (Array.isArray(customFields)) customFields.forEach(field => {
-        if (field?.key) changedFields.push(field.key, `custom:${field.key}`)
-      })
+      if (hasCustomFieldsUpdate && persistedCustomFields) {
+        changedFields.push(...getChangedContactCustomFieldReferences(existing.custom_fields, persistedCustomFields))
+      }
       import('../services/automationEngine.js').then(engine => {
         if (changedFields.length > 0) {
           engine.handleAutomationEvent('contact-updated', { contactId: id, changedFields, contactChangeSource: 'manual' }).catch(() => {})
@@ -6184,31 +6186,27 @@ export const bulkUpdateContactCustomFields = async (req, res) => {
       contactIds
     )
 
-    const changedFields = [
-      ...new Set(preparedCustomFields.flatMap((field) => [
-        cleanString(field.key || field.fieldKey),
-        cleanString(field.fieldKey),
-        cleanString(field.id),
-        cleanString(field.definitionId),
-        cleanString(field.key || field.fieldKey) ? `custom:${cleanString(field.key || field.fieldKey)}` : ''
-      ]).filter(Boolean))
-    ]
-
     let updated = 0
+    const contactChangeEvents = []
     for (const row of rows) {
       const persisted = await mergeAndPersistContactCustomFields({
         contactId: row.id,
         updates: preparedCustomFields
       })
-      if (persisted) updated += 1
+      if (!persisted) continue
+      updated += 1
+      const changedFields = getChangedContactCustomFieldReferences(row.custom_fields, persisted)
+      if (changedFields.length > 0) {
+        contactChangeEvents.push({ contactId: row.id, changedFields })
+      }
     }
 
-    if (updated > 0 && changedFields.length > 0) {
+    if (contactChangeEvents.length > 0) {
       import('../services/automationEngine.js').then(engine => {
-        rows.forEach(row => {
+        contactChangeEvents.forEach(event => {
           engine.handleAutomationEvent('contact-updated', {
-            contactId: row.id,
-            changedFields,
+            contactId: event.contactId,
+            changedFields: event.changedFields,
             contactChangeSource: 'manual'
           }).catch(() => {})
         })

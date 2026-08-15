@@ -5194,6 +5194,121 @@ test('agendar una cita a un cliente existente no vuelve a disparar su automatiza
   }
 })
 
+test('contacto modificado exige un cambio real del campo y no sólo que el estado final coincida', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_existing_customer_edit_${suffix}`
+  const paymentId = `payment_existing_customer_edit_${suffix}`
+  const stageAutomationId = `automation_customer_stage_edge_${suffix}`
+  const anyChangeAutomationId = `automation_any_real_change_${suffix}`
+  const flowFor = (filters) => ({
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-contact-updated',
+              type: 'trigger-contact-updated',
+              config: { filters }
+            }
+          ]
+        }
+      },
+      { id: 'done', type: 'extra-comment', label: 'Listo', config: {} }
+    ],
+    edges: [
+      { id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  })
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, 'Cliente existente editado', 'Cliente', '{}')`,
+      [contactId, `+523${Date.now().toString().slice(-10)}`, `existing-customer-edit-${suffix}@test.com`]
+    )
+    await db.run(
+      `INSERT INTO payments (id, contact_id, amount, currency, status, payment_method, payment_mode, reference, title, date)
+       VALUES (?, ?, 500, 'MXN', 'paid', 'card', 'live', ?, 'Compra previa', ?)`,
+      [paymentId, contactId, `REF-EDIT-${suffix}`, '2026-08-01T12:00:00.000Z']
+    )
+    await updateSingleContactStats(contactId)
+
+    for (const [automationId, filters] of [
+      [stageAutomationId, [{ field: 'stage', match: 'is', value: 'customer' }]],
+      [anyChangeAutomationId, []]
+    ]) {
+      const flow = flowFor(filters)
+      await db.run(
+        `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+         VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+        [automationId, `Cambio real ${automationId}`, JSON.stringify(flow), JSON.stringify(flow)]
+      )
+    }
+
+    await handleAutomationEvent('contact-updated', {
+      contactId,
+      changedFields: ['email'],
+      contactChangeSource: 'manual'
+    })
+
+    assert.equal(
+      Number((await db.get(
+        'SELECT COUNT(*) AS total FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+        [stageAutomationId, contactId]
+      )).total),
+      0,
+      'seguir siendo Cliente mientras cambia el correo no es una transición de etapa'
+    )
+    assert.equal(
+      Number((await db.get(
+        'SELECT COUNT(*) AS total FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+        [anyChangeAutomationId, contactId]
+      )).total),
+      1,
+      'un disparador sin filtros sí acepta cualquier campo realmente modificado'
+    )
+
+    await handleAutomationEvent('contact-updated', {
+      contactId,
+      changedFields: [],
+      contactChangeSource: 'webhook'
+    })
+
+    assert.equal(
+      Number((await db.get(
+        'SELECT COUNT(*) AS total FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+        [anyChangeAutomationId, contactId]
+      )).total),
+      1,
+      'un webhook repetido sin campos modificados no inventa otra actualización'
+    )
+
+    await handleAutomationEvent('contact-updated', {
+      contactId,
+      changedFields: ['contact.stage'],
+      contactChangeSource: 'manual'
+    })
+
+    assert.equal(
+      Number((await db.get(
+        'SELECT COUNT(*) AS total FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+        [stageAutomationId, contactId]
+      )).total),
+      1,
+      'el filtro Cliente sí entra cuando el evento confirma un cambio real de etapa'
+    )
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM automations WHERE id IN (?, ?)', [stageAutomationId, anyChangeAutomationId])
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
 test('una primera cita sí publica el cambio real a etapa cita una sola vez', async () => {
   const suffix = randomUUID()
   const automationId = `automation_first_appointment_stage_${suffix}`

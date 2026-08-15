@@ -8,6 +8,7 @@ import {
   mutateAndPersistContactCustomFields
 } from '../src/services/contactCustomFieldsPersistenceService.js'
 import {
+  getChangedContactCustomFieldReferences,
   mergeContactCustomFields,
   parseContactCustomFields,
   serializeContactCustomFieldsForDb
@@ -151,6 +152,29 @@ test('la mezcla colapsa la identidad legacy y materializada del mismo campo', ()
   assert.equal(merged[0].dataType, 'dropdown')
   assert.equal(merged[0].value, '10k_o_mas')
   assert.deepEqual(merged[0].options.map(option => option.value), ['menos_de_10k', '10k_o_mas'])
+})
+
+test('guardar el mismo valor personalizado no finge una modificación del contacto', () => {
+  const before = [{
+    id: 'contact_stage_definition',
+    definitionId: 'contact_stage_definition',
+    key: 'stage',
+    fieldKey: 'stage',
+    label: 'Etapa',
+    value: 'customer'
+  }]
+  const sameValueWithNormalizedMetadata = [{
+    ...before[0],
+    label: 'Pipeline / etapa',
+    sourceType: 'manual'
+  }]
+  const changedValue = [{ ...sameValueWithNormalizedMetadata[0], value: 'lead' }]
+
+  assert.deepEqual(getChangedContactCustomFieldReferences(before, sameValueWithNormalizedMetadata), [])
+  assert.deepEqual(
+    new Set(getChangedContactCustomFieldReferences(before, changedValue)),
+    new Set(['contact_stage_definition', 'custom:contact_stage_definition', 'stage', 'custom:stage'])
+  )
 })
 
 test('la recuperación sólo rellena ausentes y normaliza duplicados sin pisar el valor actual', async () => {

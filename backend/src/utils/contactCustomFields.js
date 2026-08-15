@@ -243,6 +243,64 @@ export function getContactCustomFieldIdentityAliases(field = {}) {
   return [...new Set(aliases)]
 }
 
+function comparableCustomFieldValue(value) {
+  if (Array.isArray(value)) return value.map(comparableCustomFieldValue)
+  if (isPlainObject(value)) {
+    return Object.keys(value)
+      .sort()
+      .reduce((result, key) => {
+        result[key] = comparableCustomFieldValue(value[key])
+        return result
+      }, {})
+  }
+  return value ?? null
+}
+
+function customFieldValuesEqual(left, right) {
+  return JSON.stringify(comparableCustomFieldValue(left)) === JSON.stringify(comparableCustomFieldValue(right))
+}
+
+/**
+ * Devuelve sólo las identidades de campos personalizados cuyo valor cambió de
+ * verdad. Guardar otra vez el mismo valor puede normalizar metadatos internos,
+ * pero no debe fingir una modificación del contacto ante Automatizaciones.
+ */
+export function getChangedContactCustomFieldReferences(beforeValue, afterValue) {
+  const beforeFields = parseContactCustomFields(beforeValue)
+  const afterFields = parseContactCustomFields(afterValue)
+  const matchedAfterIndexes = new Set()
+  const changedAliases = new Set()
+
+  const registerAliases = (...fields) => {
+    fields
+      .filter(Boolean)
+      .flatMap(getContactCustomFieldIdentityAliases)
+      .forEach(alias => {
+        changedAliases.add(alias)
+        changedAliases.add(`custom:${alias}`)
+      })
+  }
+
+  beforeFields.forEach(beforeField => {
+    const beforeAliases = new Set(getContactCustomFieldIdentityAliases(beforeField))
+    const afterIndex = afterFields.findIndex((afterField, index) => (
+      !matchedAfterIndexes.has(index) &&
+      getContactCustomFieldIdentityAliases(afterField).some(alias => beforeAliases.has(alias))
+    ))
+    const afterField = afterIndex >= 0 ? afterFields[afterIndex] : null
+    if (afterIndex >= 0) matchedAfterIndexes.add(afterIndex)
+    if (!afterField || !customFieldValuesEqual(beforeField.value, afterField.value)) {
+      registerAliases(beforeField, afterField)
+    }
+  })
+
+  afterFields.forEach((afterField, index) => {
+    if (!matchedAfterIndexes.has(index)) registerAliases(afterField)
+  })
+
+  return [...changedAliases]
+}
+
 function mergeNormalizedCustomField(current = {}, update = {}) {
   const hasHumanUpdateLabel = update.label &&
     update.label !== update.key &&
