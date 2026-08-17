@@ -949,15 +949,23 @@ enum WhatsAppReplyWindowRules {
         return now.timeIntervalSince(lastInboundDate) < windowDuration
     }
 
-    /// Selección de transporte estricta: la ventana de conversación nunca
-    /// convierte al QR en canal primario. QR sólo aplica cuando la API oficial
-    /// de ese número no está disponible.
-    static func resolveTransport(apiAvailable: Bool, qrReady: Bool) -> WhatsAppSendTransport {
-        qrReady && !apiAvailable ? .qr : .api
+    /// El número oficial conserva la autoridad, pero su QR compatible toma el
+    /// envío cuando la API no está disponible o la ventana no admite contenido
+    /// libre. El backend vuelve a validar la ventana antes de tocar el proveedor.
+    static func resolveTransport(
+        apiAvailable: Bool,
+        qrReady: Bool,
+        replyWindowOpen: Bool
+    ) -> WhatsAppSendTransport {
+        qrReady && (!apiAvailable || !replyWindowOpen) ? .qr : .api
     }
 
-    static func requiresOfficialTemplate(apiAvailable: Bool, replyWindowOpen: Bool) -> Bool {
-        apiAvailable && !replyWindowOpen
+    static func requiresOfficialTemplate(
+        apiAvailable: Bool,
+        qrReady: Bool,
+        replyWindowOpen: Bool
+    ) -> Bool {
+        apiAvailable && !replyWindowOpen && !qrReady
     }
 }
 

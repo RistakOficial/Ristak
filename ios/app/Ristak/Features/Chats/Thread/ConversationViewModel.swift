@@ -1484,12 +1484,23 @@ final class ConversationViewModel {
         return (whatsAppStatus?.connected ?? false) && phone.apiSendEnabled
     }
 
-    /// QR sólo es transporte primario para un número QR standalone o cuando la
-    /// API oficial del mismo número dejó de estar disponible.
+    /// El respaldo QR del mismo número toma los mensajes libres cuando la API
+    /// oficial no está disponible o su ventana de respuesta ya cerró.
     private func resolveWhatsAppTransport() -> WhatsAppSendTransport {
         WhatsAppReplyWindowRules.resolveTransport(
             apiAvailable: selectedPhoneAPIAvailable,
-            qrReady: selectedPhoneQRReady
+            qrReady: selectedPhoneQRReady,
+            replyWindowOpen: apiReplyWindowOpen
+        )
+    }
+
+    /// Un mensaje programado decide su ventana al despacharse, no al guardarse.
+    /// Sólo fija QR desde ahora cuando la API del número ya no está disponible.
+    private func resolveScheduledWhatsAppTransport() -> WhatsAppSendTransport {
+        WhatsAppReplyWindowRules.resolveTransport(
+            apiAvailable: selectedPhoneAPIAvailable,
+            qrReady: selectedPhoneQRReady,
+            replyWindowOpen: true
         )
     }
 
@@ -1612,10 +1623,11 @@ final class ConversationViewModel {
                 )
                 return
             }
-            // Con API operativa, una ventana cerrada siempre exige plantilla.
-            // El QR conectado sigue siendo respaldo, no un atajo de política.
+            // Una ventana cerrada exige plantilla sólo cuando el mismo número
+            // no tiene un respaldo QR compatible listo.
             if WhatsAppReplyWindowRules.requiresOfficialTemplate(
                 apiAvailable: selectedPhoneAPIAvailable,
+                qrReady: selectedPhoneQRReady,
                 replyWindowOpen: apiReplyWindowOpen
             ) {
                 presentTemplatesSheet(reason: WhatsAppReplyWindowRules.closedReason)
@@ -2839,7 +2851,7 @@ final class ConversationViewModel {
                 contactId: contactID,
                 provider: origin.provider,
                 channel: isWhatsAppApi ? nil : (origin.channel.isEmpty ? nil : origin.channel),
-                transport: isWhatsAppApi ? (origin.transport.isEmpty ? resolveWhatsAppTransport().rawValue : origin.transport) : nil,
+                transport: isWhatsAppApi ? (origin.transport.isEmpty ? resolveScheduledWhatsAppTransport().rawValue : origin.transport) : nil,
                 messageType: origin.messageType,
                 text: text,
                 templateId: isTemplate && !origin.templateId.isEmpty ? origin.templateId : nil,
@@ -2881,7 +2893,7 @@ final class ConversationViewModel {
                     id: nil,
                     contactId: contactID,
                     provider: "whatsapp_api",
-                    transport: resolveWhatsAppTransport().rawValue,
+                    transport: resolveScheduledWhatsAppTransport().rawValue,
                     messageType: "text",
                     text: text,
                     toPhone: phone,
