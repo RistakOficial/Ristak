@@ -12997,6 +12997,11 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
+    if (!selectedBusinessPhone?.id) {
+      showToast('warning', 'Selecciona un número', 'Elige el número de WhatsApp API que administrará esta plantilla.')
+      return
+    }
+
     setCreatingTemplate(true)
     try {
       const saved = await messageTemplatesService.createTemplate(createQuickTemplatePayload({
@@ -13005,7 +13010,9 @@ export const PhoneChat: React.FC = () => {
         category: newTemplateCategory,
         language: newTemplateLanguage
       }))
-      await messageTemplatesService.submitTemplate(saved.id)
+      await messageTemplatesService.submitTemplate(saved.id, {
+        phoneNumberId: selectedBusinessPhone.id
+      })
       setNewTemplateName('')
       setNewTemplateBody('')
       setNewTemplateCategory('utility')

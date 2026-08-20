@@ -23,6 +23,14 @@ function cleanString(value) {
   return String(value).trim()
 }
 
+function requireTemplatePhoneNumberId(req) {
+  const phoneNumberId = cleanString(req.body?.phoneNumberId)
+  if (!phoneNumberId) {
+    throw new Error('Selecciona el número de WhatsApp API que administrará la plantilla.')
+  }
+  return phoneNumberId
+}
+
 function getPublicBaseUrl(req) {
   const forwardedHost = cleanString(req.headers?.['x-forwarded-host']).split(',')[0].trim()
   const host = forwardedHost || req.headers?.host || req.get?.('host')
@@ -104,7 +112,9 @@ export async function updateMessageTemplateView(req, res) {
 
 export async function submitMessageTemplateToActiveProviderView(req, res) {
   try {
-    const data = await submitMessageTemplateToActiveProvider(req.params.id)
+    const data = await submitMessageTemplateToActiveProvider(req.params.id, {
+      phoneNumberId: requireTemplatePhoneNumberId(req)
+    })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando plantilla al proveedor oficial activo: ${error.message}`)
@@ -114,7 +124,9 @@ export async function submitMessageTemplateToActiveProviderView(req, res) {
 
 export async function syncMessageTemplateStatusView(req, res) {
   try {
-    const data = await syncMessageTemplateStatus(req.params.id)
+    const data = await syncMessageTemplateStatus(req.params.id, {
+      phoneNumberId: requireTemplatePhoneNumberId(req)
+    })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error sincronizando plantilla con su proveedor oficial: ${error.message}`)
@@ -124,7 +136,9 @@ export async function syncMessageTemplateStatusView(req, res) {
 
 export async function syncAllMessageTemplatesWithActiveProviderView(req, res) {
   try {
-    const data = await syncAllMessageTemplatesWithActiveProvider()
+    const data = await syncAllMessageTemplatesWithActiveProvider({
+      phoneNumberId: requireTemplatePhoneNumberId(req)
+    })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error sincronizando plantillas con el proveedor oficial activo: ${error.message}`)
@@ -134,7 +148,10 @@ export async function syncAllMessageTemplatesWithActiveProviderView(req, res) {
 
 export async function sendMessageTemplateTestView(req, res) {
   try {
-    const data = await sendMessageTemplateTest(req.params.id, req.body || {})
+    const data = await sendMessageTemplateTest(req.params.id, {
+      ...(req.body || {}),
+      phoneNumberId: requireTemplatePhoneNumberId(req)
+    })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando prueba de plantilla: ${error.message}`)

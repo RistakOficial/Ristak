@@ -4082,6 +4082,47 @@ async function loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone } = {}) {
   }
 }
 
+// La administración de plantillas también pertenece a una fila concreta de
+// WhatsApp. Usar sólo el proveedor global puede crear la plantilla en el WABA
+// de otro número cuando la cuenta tiene varias conexiones oficiales.
+export async function resolveWhatsAppTemplateTarget({ phoneNumberId } = {}) {
+  const requestedPhoneNumberId = cleanString(phoneNumberId)
+  const config = await loadWhatsAppOutboundConfig({ phoneNumberId: requestedPhoneNumberId })
+  const requestedRow = config.requestedPhoneRow
+  const selectedRow = config.selectedPhoneRow
+
+  if (requestedPhoneNumberId && cleanString(requestedRow?.id) !== requestedPhoneNumberId) {
+    throw new Error('El número de WhatsApp seleccionado ya no existe en esta cuenta.')
+  }
+
+  const provider = cleanString(config.provider).toLowerCase()
+  if (![PROVIDER_NAME, META_DIRECT_PROVIDER_NAME].includes(provider)) {
+    throw new Error('El número seleccionado usa WhatsApp QR y no administra plantillas oficiales. Elige un número con WhatsApp API.')
+  }
+  if (!config.officialApiAvailable) {
+    throw new Error('El número seleccionado no tiene activa su conexión oficial de WhatsApp API. Reconéctalo o elige otro número antes de enviar la plantilla a revisión.')
+  }
+
+  const targetPhoneNumberId = cleanString(selectedRow?.id || config.phoneNumberId)
+  const wabaId = cleanString(selectedRow?.waba_id || config.wabaId)
+  if (requestedPhoneNumberId && !targetPhoneNumberId) {
+    throw new Error('Falta el número oficial que administrará la plantilla.')
+  }
+  if (!wabaId) throw new Error('El número seleccionado no tiene una cuenta de WhatsApp Business asociada.')
+
+  return {
+    provider,
+    phoneNumberId: targetPhoneNumberId,
+    requestedPhoneNumberId: requestedPhoneNumberId || targetPhoneNumberId || null,
+    wabaId,
+    phone: cleanString(
+      selectedRow?.display_phone_number ||
+      selectedRow?.phone_number ||
+      config.senderPhone
+    )
+  }
+}
+
 function isQrFallbackReady(phoneRow = {}) {
   if (!phoneRow?.id) return false
   const status = cleanString(phoneRow.qr_status).toLowerCase()
@@ -13402,8 +13443,11 @@ async function createMetaDirectWhatsAppApiTemplate(templatePayload = {}) {
   const config = await loadMetaDirectConfig({ includeSecrets: true })
   if (!config.connected) throw new Error('Meta directo no está conectado')
 
+  const wabaId = cleanString(templatePayload.wabaId || config.wabaId)
+  if (!wabaId) throw new Error('Falta el WABA ID de WhatsApp Business para crear la plantilla')
+
   const body = buildMetaDirectTemplateCreatePayload(templatePayload)
-  const response = await metaDirectGraphRequest(`/${encodeURIComponent(config.wabaId)}/message_templates`, {
+  const response = await metaDirectGraphRequest(`/${encodeURIComponent(wabaId)}/message_templates`, {
     method: 'POST',
     token: config.systemUserToken,
     body
@@ -13412,7 +13456,7 @@ async function createMetaDirectWhatsAppApiTemplate(templatePayload = {}) {
     ...body,
     ...response,
     status: cleanString(response?.status).toUpperCase() || 'PENDING'
-  }, { wabaId: config.wabaId })
+  }, { wabaId })
   await syncTemplates([enriched], { provider: META_DIRECT_PROVIDER_NAME, eventType: 'manual_template_submit' })
   return enriched
 }
@@ -13480,6 +13524,9 @@ async function editMetaDirectWhatsAppApiTemplate(templatePayload = {}) {
   const config = await loadMetaDirectConfig({ includeSecrets: true })
   if (!config.connected) throw new Error('Meta directo no está conectado')
 
+  const wabaId = cleanString(templatePayload.wabaId || config.wabaId)
+  if (!wabaId) throw new Error('Falta el WABA ID de WhatsApp Business para editar la plantilla')
+
   const templateId = cleanString(templatePayload.providerTemplateId || templatePayload.officialTemplateId || templatePayload.id)
   if (!templateId) throw new Error('Meta directo necesita el ID oficial de la plantilla para editarla')
   const body = buildMetaDirectTemplateEditPayload(templatePayload)
@@ -13494,7 +13541,7 @@ async function editMetaDirectWhatsAppApiTemplate(templatePayload = {}) {
     ...response,
     id: templateId,
     status: cleanString(response?.status).toUpperCase() || 'PENDING'
-  }, { wabaId: config.wabaId })
+  }, { wabaId })
   await syncTemplates([enriched], { provider: META_DIRECT_PROVIDER_NAME, eventType: 'manual_template_edit' })
   return enriched
 }

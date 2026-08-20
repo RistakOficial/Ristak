@@ -480,6 +480,138 @@ test('el flujo local envía a Meta directo sin escribir el ID en columnas YCloud
   })
 })
 
+test('enviar una plantilla usa el WABA del número seleccionado y no la identidad vieja', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const selectedWabaId = `waba_selected_${suffix}`
+  const staleWabaId = `waba_stale_${suffix}`
+  const phoneNumberId = `phone_selected_${suffix}`
+  const templateName = `plantilla_numero_seleccionado_${suffix}`
+  const staleTemplateId = `template_stale_${suffix}`
+  const selectedTemplateId = `template_selected_${suffix}`
+  const requests = []
+
+  await snapshotConfig([
+    keys.provider,
+    keys.metaStatus,
+    keys.metaWabaId,
+    keys.metaPhoneNumberId,
+    keys.metaDisplayPhoneNumber,
+    keys.metaSystemUserToken
+  ], async () => {
+    await setAppConfig(keys.provider, 'meta_direct')
+    await setAppConfig(keys.metaStatus, 'connected')
+    await setAppConfig(keys.metaWabaId, selectedWabaId)
+    await setAppConfig(keys.metaPhoneNumberId, phoneNumberId)
+    await setAppConfig(keys.metaDisplayPhoneNumber, '+526561112255')
+    await setAppConfig(keys.metaSystemUserToken, encrypt('meta_direct_selected_phone_template_token'))
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number, verified_name,
+        is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+      ) VALUES (?, 'meta_direct', ?, '+526561112255', '+52 656 111 2255',
+        'Selected Phone Test', 0, 1, 0, 'disconnected', 'CONNECTED')
+    `, [phoneNumberId, selectedWabaId])
+
+    setMetaDirectFetchForTest(async (url, options = {}) => {
+      const requestUrl = new URL(url)
+      requests.push({
+        method: options.method || 'GET',
+        path: requestUrl.pathname,
+        body: options.body ? JSON.parse(options.body) : null
+      })
+      return graphResponse({ id: selectedTemplateId, status: 'PENDING', category: 'UTILITY' })
+    })
+
+    const local = await createMessageTemplate({
+      name: templateName,
+      description: 'Prueba de ruteo por número',
+      category: 'utility',
+      language: 'es_MX',
+      status: 'active',
+      headerEnabled: false,
+      headerType: 'none',
+      bodyText: 'Esta plantilla pertenece al número seleccionado',
+      footerText: '',
+      buttons: [],
+      variableExamples: {},
+      variableBindings: { headerText: {}, bodyText: {} }
+    })
+
+    try {
+      await db.run(`
+        UPDATE whatsapp_message_templates
+        SET template_provider = 'meta_direct',
+            provider_template_id = ?,
+            provider_template_name = ?,
+            provider_status = 'REJECTED',
+            provider_raw_payload_json = ?
+        WHERE id = ?
+      `, [
+        staleTemplateId,
+        templateName,
+        JSON.stringify({ wabaId: staleWabaId, id: staleTemplateId }),
+        local.id
+      ])
+
+      const result = await submitMessageTemplateToActiveProvider(local.id, { phoneNumberId })
+      assert.equal(result.provider, 'meta_direct')
+      assert.equal(result.targetPhoneNumberId, phoneNumberId)
+      assert.equal(result.template.providerTemplateId, selectedTemplateId)
+      assert.equal(result.template.providerRawPayload.wabaId, selectedWabaId)
+      assert.ok(requests.some((request) => (
+        request.method === 'POST' &&
+        request.path === `/v25.0/${selectedWabaId}/message_templates`
+      )))
+      assert.equal(requests.some((request) => request.path.endsWith(`/${staleTemplateId}`)), false)
+    } finally {
+      await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [local.id])
+      await db.run('DELETE FROM whatsapp_api_templates WHERE name = ? AND language = ?', [templateName, 'es_MX'])
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+    }
+  })
+})
+
+test('una fila QR seleccionada no puede administrar plantillas oficiales', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const phoneNumberId = `phone_qr_template_${suffix}`
+  const templateName = `plantilla_qr_rechazada_${suffix}`
+
+  await db.run(`
+    INSERT INTO whatsapp_api_phone_numbers (
+      id, provider, phone_number, display_phone_number, verified_name,
+      is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+    ) VALUES (?, 'qr', '+526561119988', '+52 656 111 9988',
+      'QR Template Test', 0, 0, 1, 'ready', 'CONNECTED')
+  `, [phoneNumberId])
+
+  const local = await createMessageTemplate({
+    name: templateName,
+    description: 'Prueba de rechazo QR',
+    category: 'utility',
+    language: 'es_MX',
+    status: 'active',
+    headerEnabled: false,
+    headerType: 'none',
+    bodyText: 'Esta plantilla no se debe enviar por QR',
+    footerText: '',
+    buttons: [],
+    variableExamples: {},
+    variableBindings: { headerText: {}, bodyText: {} }
+  })
+
+  try {
+    await assert.rejects(
+      () => submitMessageTemplateToActiveProvider(local.id, { phoneNumberId }),
+      /WhatsApp QR.*no administra plantillas oficiales/
+    )
+  } finally {
+    await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [local.id])
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+  }
+})
+
 test('webhook Meta actualiza estado y calidad sin tocar columnas YCloud', async () => {
   const suffix = Date.now()
   const wabaId = `waba_meta_webhook_${suffix}`

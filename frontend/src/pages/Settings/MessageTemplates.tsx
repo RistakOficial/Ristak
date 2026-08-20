@@ -418,6 +418,27 @@ function templateMatchesPhone(template: MessageTemplate, phone?: WhatsAppApiPhon
   return false
 }
 
+function findTemplateAssociationPhone(
+  template: MessageTemplate | null | undefined,
+  phones: WhatsAppApiPhoneNumber[]
+) {
+  if (!template) return null
+
+  const rawPayload = template.providerRawPayload || null
+  const templateWabaIds = collectAssociationValues(rawPayload, templateAssociationKeys.waba)
+  const templatePhoneIds = collectAssociationValues(rawPayload, templateAssociationKeys.phone)
+  if (!templateWabaIds.size && !templatePhoneIds.size) return null
+
+  return phones.find((phone) => {
+    const phoneId = normalizeFilterValue(phone.id)
+    const wabaId = normalizeFilterValue(phone.waba_id)
+    return Boolean(
+      (phoneId && templatePhoneIds.has(phoneId)) ||
+      (wabaId && templateWabaIds.has(wabaId))
+    )
+  }) || null
+}
+
 function getVariableGroupLabel(variable: MessageTemplateVariable) {
   return String(variable.group || '').trim() || 'Otros datos'
 }
@@ -595,6 +616,12 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const defaultWhatsappPhone = useMemo(() => (
     whatsappPhones.find((phone) => phone.is_default_sender) || whatsappPhones[0] || null
   ), [whatsappPhones])
+
+  const getTemplateTargetPhone = (template?: MessageTemplate | null) => (
+    selectedFilterPhone ||
+    findTemplateAssociationPhone(template, whatsappPhones) ||
+    defaultWhatsappPhone
+  )
 
   const previewBusinessName = useMemo(() => {
     const phone = selectedFilterPhone || defaultWhatsappPhone
@@ -990,9 +1017,17 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     const saved = await saveDraft({ silent: true })
     if (!saved) return
 
+    const targetPhone = getTemplateTargetPhone(saved)
+    if (!targetPhone?.id) {
+      showToast('warning', 'Selecciona un número', 'Elige el número de WhatsApp API que enviará la plantilla a revisión.')
+      return
+    }
+
     setSubmitting(true)
     try {
-      const result = await messageTemplatesService.submitTemplate(saved.id)
+      const result = await messageTemplatesService.submitTemplate(saved.id, {
+        phoneNumberId: targetPhone.id
+      })
       setSelectedTemplateId(null)
       setDraft(createEmptyDraft(result.template.folderId || null))
       setActiveFolderId(result.template.folderId || null)
@@ -1013,9 +1048,18 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       return
     }
 
+    const currentTemplate = bundle.templates.find((template) => template.id === selectedTemplateId) || null
+    const targetPhone = getTemplateTargetPhone(currentTemplate)
+    if (!targetPhone?.id) {
+      showToast('warning', 'Selecciona un número', 'Elige el número de WhatsApp API que administra esta plantilla.')
+      return
+    }
+
     setSyncing(true)
     try {
-      const result = await messageTemplatesService.syncTemplate(selectedTemplateId)
+      const result = await messageTemplatesService.syncTemplate(selectedTemplateId, {
+        phoneNumberId: targetPhone.id
+      })
       setDraft(templateToDraft(result.template))
       await loadBundle()
       if (isTemplateUnderReviewStatus(getMessageTemplateProviderStatus(result.template))) {
@@ -1032,9 +1076,15 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   }
 
   const syncAllTemplates = async () => {
+    const targetPhone = selectedFilterPhone || defaultWhatsappPhone
+    if (!targetPhone?.id) {
+      showToast('warning', 'Selecciona un número', 'Elige el número de WhatsApp API que quieres sincronizar.')
+      return
+    }
+
     setSyncing(true)
     try {
-      const data = await messageTemplatesService.syncAll()
+      const data = await messageTemplatesService.syncAll({ phoneNumberId: targetPhone.id })
       setBundle(data)
       showToast('success', 'Plantillas sincronizadas', 'Estados actualizados desde WhatsApp API')
     } catch (error) {
@@ -1090,7 +1140,9 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     setBulkWorking(true)
     try {
       for (const template of selectedTemplates) {
-        await messageTemplatesService.syncTemplate(template.id)
+        const targetPhone = getTemplateTargetPhone(template)
+        if (!targetPhone?.id) throw new Error(`Selecciona el número que administra ${template.name}.`)
+        await messageTemplatesService.syncTemplate(template.id, { phoneNumberId: targetPhone.id })
       }
       await loadBundle()
       showToast('success', 'Plantillas sincronizadas', 'Se actualizo el estado de la selección')
@@ -1247,7 +1299,16 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
     setSendingTest(true)
     try {
-      const result = await messageTemplatesService.sendTest(selectedTemplateId, { to: testPhone.trim() })
+      const currentTemplate = bundle.templates.find((template) => template.id === selectedTemplateId) || null
+      const targetPhone = getTemplateTargetPhone(currentTemplate)
+      if (!targetPhone?.id) {
+        showToast('warning', 'Selecciona un número', 'Elige el número de WhatsApp API desde el que saldrá la prueba.')
+        return
+      }
+      const result = await messageTemplatesService.sendTest(selectedTemplateId, {
+        to: testPhone.trim(),
+        phoneNumberId: targetPhone.id
+      })
       showToast('success', 'Prueba enviada', result.message || 'WhatsApp Business aceptó el envío')
     } catch (error) {
       await loadBundle()

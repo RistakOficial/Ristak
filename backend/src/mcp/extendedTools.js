@@ -2116,39 +2116,43 @@ const settingsTools = [
   }),
   writeTool({
     name: 'settings_message_template_submit',
-    description: 'Envía una plantilla al proveedor oficial activo para revisión; no garantiza aprobación.',
+    description: 'Envía una plantilla a revisión usando el proveedor y WABA del número de WhatsApp seleccionado; no garantiza aprobación.',
     module: 'settings_whatsapp',
     featureKeys: ['whatsapp_templates'],
     scope: 'ristak.execute',
     risk: 'critical',
     openWorld: true,
     handler: messageTemplatesController.submitMessageTemplateToActiveProviderView,
-    inputSchema: schema({ templateId: ID }, ['templateId']),
+    inputSchema: schema({ templateId: ID, phoneNumberId: ID }, ['templateId', 'phoneNumberId']),
     params: (args) => ({ id: args.templateId }),
+    body: (args) => compactDefined({ phoneNumberId: args.phoneNumberId }),
     mapResponse: stripSensitiveResponse
   }),
   writeTool({
     name: 'settings_message_template_sync',
-    description: 'Sincroniza con el proveedor oficial el estado de una plantilla concreta.',
+    description: 'Sincroniza el estado de una plantilla para el proveedor y WABA del número seleccionado.',
     module: 'settings_whatsapp',
     featureKeys: ['whatsapp_templates'],
     scope: 'ristak.execute',
     risk: 'high',
     openWorld: true,
     handler: messageTemplatesController.syncMessageTemplateStatusView,
-    inputSchema: schema({ templateId: ID }, ['templateId']),
+    inputSchema: schema({ templateId: ID, phoneNumberId: ID }, ['templateId', 'phoneNumberId']),
     params: (args) => ({ id: args.templateId }),
+    body: (args) => compactDefined({ phoneNumberId: args.phoneNumberId }),
     mapResponse: stripSensitiveResponse
   }),
   writeTool({
     name: 'settings_message_templates_sync_all',
-    description: 'Sincroniza con el proveedor oficial todas las plantillas administradas.',
+    description: 'Sincroniza las plantillas administradas para el proveedor y WABA del número seleccionado.',
     module: 'settings_whatsapp',
     featureKeys: ['whatsapp_templates'],
     scope: 'ristak.execute',
     risk: 'critical',
     openWorld: true,
     handler: messageTemplatesController.syncAllMessageTemplatesWithActiveProviderView,
+    inputSchema: schema({ phoneNumberId: ID }, ['phoneNumberId']),
+    body: (args) => compactDefined({ phoneNumberId: args.phoneNumberId }),
     mapResponse: stripSensitiveResponse
   }),
   writeTool({
@@ -2175,10 +2179,16 @@ const settingsTools = [
       templateId: ID,
       to: { type: 'string', minLength: 5, maxLength: 80 },
       from: { type: 'string', maxLength: 80 },
-      externalId: { type: 'string', maxLength: 180 }
-    }, ['templateId', 'to']),
+      externalId: { type: 'string', maxLength: 180 },
+      phoneNumberId: ID
+    }, ['templateId', 'to', 'phoneNumberId']),
     params: (args) => ({ id: args.templateId }),
-    body: (args) => compactDefined({ to: args.to, from: args.from, externalId: args.externalId }),
+    body: (args) => compactDefined({
+      to: args.to,
+      from: args.from,
+      externalId: args.externalId,
+      phoneNumberId: args.phoneNumberId
+    }),
     mapResponse: stripSensitiveResponse
   }),
   writeTool({

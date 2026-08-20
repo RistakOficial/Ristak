@@ -6,6 +6,7 @@ import {
   deleteWhatsAppApiTemplateSnapshot,
   editWhatsAppApiTemplate,
   retrieveWhatsAppApiTemplate,
+  resolveWhatsAppTemplateTarget,
   sendWhatsAppApiTemplateMessage,
   syncWhatsAppApiTemplates,
   upsertWhatsAppApiTemplateSnapshot
@@ -51,6 +52,7 @@ const INACTIVE_APPOINTMENT_STATUSES = [
   'deleted'
 ]
 const DEFAULT_TEMPLATE_PROVIDER_REVISION_PREFIX = 'whatsapp_default_template_provider_revision'
+const DEFAULT_TEMPLATE_SUPPRESSIONS_CONFIG_KEY = 'whatsapp_default_template_suppressions_v1'
 let activeProviderTemplateReconciliationPromise = null
 
 const BASE_CONTACT_VARIABLES = [
@@ -594,6 +596,41 @@ function normalizeHeaderType(value, enabled) {
 function normalizeLanguage(value) {
   const language = cleanString(value).replace('-', '_')
   return language || 'es_MX'
+}
+
+function getDefaultTemplateSuppressionKey(name, language) {
+  return `${normalizeTemplateName(name)}|${normalizeLanguage(language)}`
+}
+
+function isManagedDefaultTemplate(template = {}) {
+  const name = normalizeTemplateName(template.name)
+  const language = normalizeLanguage(template.language)
+  return language === DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE && (
+    DEFAULT_APPOINTMENT_TEMPLATE_NAMES.has(name) ||
+    DEFAULT_PAYMENT_TEMPLATE_NAME_LIST.includes(name)
+  )
+}
+
+async function getSuppressedDefaultTemplateKeys() {
+  const stored = parseJson(await getAppConfig(DEFAULT_TEMPLATE_SUPPRESSIONS_CONFIG_KEY), [])
+  return new Set(Array.isArray(stored) ? stored.map(cleanString).filter(Boolean) : [])
+}
+
+async function suppressDefaultMessageTemplate(template = {}) {
+  if (!isManagedDefaultTemplate(template)) return false
+  const key = getDefaultTemplateSuppressionKey(template.name, template.language)
+  const suppressed = await getSuppressedDefaultTemplateKeys()
+  if (suppressed.has(key)) return true
+  suppressed.add(key)
+  await setAppConfig(DEFAULT_TEMPLATE_SUPPRESSIONS_CONFIG_KEY, JSON.stringify([...suppressed].sort()))
+  return true
+}
+
+async function filterSuppressedDefaultDefinitions(definitions = []) {
+  const suppressed = await getSuppressedDefaultTemplateKeys()
+  return definitions.filter((definition) => (
+    !suppressed.has(getDefaultTemplateSuppressionKey(definition.name, definition.language))
+  ))
 }
 
 function clampText(value, maxLength) {
@@ -2299,7 +2336,9 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToActiveP
   const folder = await ensureDefaultTemplateFolder()
   const provider = await getActiveTemplateProvider()
   const ensuredTemplates = []
-  const definitions = await getManagedAppointmentTemplateDefinitions()
+  const definitions = await filterSuppressedDefaultDefinitions(
+    await getManagedAppointmentTemplateDefinitions()
+  )
 
   for (const definition of definitions) {
     ensuredTemplates.push(await ensureDefaultMessageTemplate(definition, folder.id, {
@@ -2425,9 +2464,11 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToActiveP
 }
 
 export async function ensureOnlineMeetingMessageTemplate({ submitToActiveProvider = false } = {}) {
+  const [definition] = await filterSuppressedDefaultDefinitions([ONLINE_MEETING_MESSAGE_TEMPLATE])
+  if (!definition) return null
   const folder = await ensureDefaultTemplateFolder()
   const provider = submitToActiveProvider ? await getActiveTemplateProvider() : undefined
-  const ensured = await ensureDefaultMessageTemplate(ONLINE_MEETING_MESSAGE_TEMPLATE, folder.id, { provider })
+  const ensured = await ensureDefaultMessageTemplate(definition, folder.id, { provider })
   let template = ensured.template
   if (submitToActiveProvider) {
     const providerState = getMessageTemplateProviderState(template, provider)
@@ -2449,7 +2490,10 @@ export async function ensureDefaultPaymentMessageTemplates({ submitToActiveProvi
   const ensuredTemplates = []
   const canSubmitToActiveProvider = submitToActiveProvider && Boolean(normalizePublicBaseUrl(publicBaseUrl))
 
-  for (const definition of getDefaultPaymentMessageTemplates({ publicBaseUrl })) {
+  const definitions = await filterSuppressedDefaultDefinitions(
+    getDefaultPaymentMessageTemplates({ publicBaseUrl })
+  )
+  for (const definition of definitions) {
     ensuredTemplates.push(await ensureDefaultMessageTemplate(definition, folder.id, {
       provider: canSubmitToActiveProvider ? provider : undefined
     }))
@@ -2546,34 +2590,57 @@ export async function repairDefaultMessageTemplatesForCurrentConnection({ public
   })
 }
 
-export async function submitMessageTemplateToActiveProvider(id) {
+function templateIdentityMatchesTarget(identity = {}, target = {}, { requireWaba = false } = {}) {
+  const identityWabaId = cleanString(identity.wabaId)
+  const targetWabaId = cleanString(target.wabaId)
+  if (!targetWabaId) return true
+  if (!identityWabaId) return !requireWaba
+  return identityWabaId === targetWabaId
+}
+
+export async function submitMessageTemplateToActiveProvider(id, { phoneNumberId } = {}) {
   const template = await getMessageTemplateById(id)
-  const provider = await getActiveTemplateProvider()
+  // Validar el contenido antes de consultar la conexión conserva errores de
+  // autoría accionables aunque el proveedor todavía no esté disponible.
+  buildProviderTemplatePayload(template, template.templateProvider)
+  const target = await resolveWhatsAppTemplateTarget({ phoneNumberId })
+  const provider = target.provider
   const providerPayload = buildProviderTemplatePayload(template, provider)
-  const providerIdentity = hasTemplateProviderFootprint(template, provider)
+  const existingProviderIdentity = hasTemplateProviderFootprint(template, provider)
     ? getTemplateProviderIdentity(template, provider)
+    : { wabaId: '', providerTemplateId: '', officialTemplateId: '' }
+  const identityBelongsToTarget = templateIdentityMatchesTarget(existingProviderIdentity, target, {
+    requireWaba: Boolean(cleanString(phoneNumberId))
+  })
+  const providerIdentity = identityBelongsToTarget
+    ? existingProviderIdentity
     : { wabaId: '', providerTemplateId: '', officialTemplateId: '' }
   const editPayload = {
     ...providerPayload,
     provider,
-    ...providerIdentity
+    ...providerIdentity,
+    phoneNumberId: target.phoneNumberId,
+    wabaId: target.wabaId
   }
   let shouldEdit = false
 
   try {
-    shouldEdit = shouldEditExistingProviderTemplate(template, provider)
+    shouldEdit = identityBelongsToTarget && shouldEditExistingProviderTemplate(template, provider)
     const response = shouldEdit
       ? await editWhatsAppApiTemplate(editPayload)
-      : await createWhatsAppApiTemplate({ ...providerPayload, provider })
+      : await createWhatsAppApiTemplate(editPayload)
     const label = getTemplateProviderLabel(provider)
+    const targetLabel = cleanString(target.phone) || target.phoneNumberId || target.wabaId
     return {
       template: await applyProviderTemplateResponse(id, response, { submitted: true, provider }),
       provider,
+      targetPhoneNumberId: target.phoneNumberId,
+      targetPhone: cleanString(target.phone) || null,
       providerResponse: response,
       ...(provider === WHATSAPP_PROVIDER_YCLOUD ? { ycloud: response } : { metaDirect: response }),
       message: shouldEdit
-        ? `Plantilla existente actualizada y reenviada a revisión con ${label}.`
-        : `Plantilla enviada a revisión con ${label}.`
+        ? `Plantilla existente actualizada y reenviada a revisión con ${label} para ${targetLabel}.`
+        : `Plantilla enviada a revisión con ${label} para ${targetLabel}.`
     }
   } catch (error) {
     if (
@@ -2601,21 +2668,32 @@ export async function submitMessageTemplateToActiveProvider(id) {
   }
 }
 
-export async function syncMessageTemplateStatus(id) {
+export async function syncMessageTemplateStatus(id, { phoneNumberId } = {}) {
   const template = await getMessageTemplateById(id)
-  const provider = normalizeWhatsAppProvider(template.templateProvider || await getActiveTemplateProvider(), WHATSAPP_PROVIDER_YCLOUD)
+  const target = await resolveWhatsAppTemplateTarget({ phoneNumberId })
+  const provider = target.provider
   const providerState = getMessageTemplateProviderState(template, provider)
+  const existingIdentity = getTemplateProviderIdentity(template, provider)
+  const identity = templateIdentityMatchesTarget(existingIdentity, target, {
+    requireWaba: Boolean(cleanString(phoneNumberId))
+  })
+    ? existingIdentity
+    : { wabaId: '', providerTemplateId: '', officialTemplateId: '' }
 
   try {
     const response = await retrieveWhatsAppApiTemplate({
-      name: providerState.name,
+      name: providerState.name || template.name,
       language: template.language,
       provider,
-      ...getTemplateProviderIdentity(template, provider)
+      ...identity,
+      phoneNumberId: target.phoneNumberId,
+      wabaId: target.wabaId
     })
     return {
       template: await applyProviderTemplateResponse(id, response, { provider }),
       provider,
+      targetPhoneNumberId: target.phoneNumberId,
+      targetPhone: cleanString(target.phone) || null,
       providerResponse: response,
       ...(provider === WHATSAPP_PROVIDER_YCLOUD ? { ycloud: response } : { metaDirect: response }),
       message: `Estado sincronizado con ${getTemplateProviderLabel(provider)}.`
@@ -2626,8 +2704,9 @@ export async function syncMessageTemplateStatus(id) {
   }
 }
 
-export async function syncAllMessageTemplatesWithActiveProvider() {
-  await syncWhatsAppApiTemplates()
+export async function syncAllMessageTemplatesWithActiveProvider({ phoneNumberId } = {}) {
+  const target = await resolveWhatsAppTemplateTarget({ phoneNumberId })
+  await syncWhatsAppApiTemplates({ provider: target.provider, wabaId: target.wabaId })
   await syncLocalMessageTemplateSnapshots({ onlyApproved: true })
   return getMessageTemplateBundle()
 }
@@ -3238,6 +3317,7 @@ export async function sendMessageTemplateTest(id, payload = {}) {
     const response = await sendWhatsAppApiTemplateMessage({
       to,
       from: payload.from,
+      phoneNumberId: payload.phoneNumberId,
       templateName: providerState.name,
       language: template.language,
       components: await buildSendComponentsFromTemplate(template, { allowExampleFallback: true }),
@@ -3301,9 +3381,11 @@ export async function deleteMessageTemplate(id) {
     language: template.language,
     ids: [template.id, providerState.templateId]
   })
+  const suppressedDefault = await suppressDefaultMessageTemplate(template)
   const result = await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [id])
   return {
     deleted: result.changes > 0,
+    suppressedDefault,
     provider,
     providerResponse,
     ...(provider === WHATSAPP_PROVIDER_YCLOUD ? { ycloud: providerResponse } : { metaDirect: providerResponse }),

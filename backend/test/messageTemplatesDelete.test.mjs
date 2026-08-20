@@ -5,6 +5,7 @@ import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   createMessageTemplate,
   deleteMessageTemplate,
+  ensureDefaultAppointmentMessageTemplates,
   getMessageTemplateBundle
 } from '../src/services/messageTemplatesService.js'
 import {
@@ -191,6 +192,37 @@ test('limpia Ristak aunque YCloud responda 404 porque la plantilla ya no existe'
     } finally {
       setYCloudFetchForTest(null)
       await cleanupTemplate(templateName)
+    }
+  })
+})
+
+test('una plantilla predeterminada borrada por el usuario no reaparece al reparar defaults', async () => {
+  const suppressionKey = 'whatsapp_default_template_suppressions_v1'
+  const templateName = 'cita_programada'
+
+  await snapshotAppConfig([suppressionKey], async () => {
+    await cleanupTemplate(templateName)
+    try {
+      await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
+      const created = await db.get(
+        'SELECT id FROM whatsapp_message_templates WHERE name = ? AND language = ?',
+        [templateName, 'es_MX']
+      )
+      assert.ok(created?.id)
+
+      const deleted = await deleteMessageTemplate(created.id)
+      assert.equal(deleted.deleted, true)
+      assert.equal(deleted.suppressedDefault, true)
+
+      await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
+      const recreated = await db.get(
+        'SELECT id FROM whatsapp_message_templates WHERE name = ? AND language = ?',
+        [templateName, 'es_MX']
+      )
+      assert.equal(recreated, null)
+    } finally {
+      await cleanupTemplate(templateName)
+      await db.run("DELETE FROM whatsapp_message_templates WHERE folder_id = 'Reminders'")
     }
   })
 })

@@ -1509,6 +1509,17 @@ la coloca en la ubicacion que el usuario esta viendo. La raiz contiene las
 plantillas sin carpeta y las carpetas de primer nivel; no existe una columna
 lateral separada que duplique la jerarquia.
 
+El selector **Número** también gobierna la administración remota de plantillas,
+no sólo el filtro visible. Crear, enviar a revisión, sincronizar o mandar una
+prueba usa el proveedor y WABA de ese número exacto; la creación rápida desde
+Chat usa el número seleccionado en la conversación. Si el número sólo tiene QR
+o su API oficial está inactiva, Ristak detiene la operación y pide elegir o
+reconectar una ruta oficial. Una identidad vieja de otro WABA nunca se edita por
+accidente: la copia remota se crea o adopta dentro del WABA elegido.
+Cuando el usuario elimina una plantilla predeterminada que ya no utiliza,
+Ristak conserva esa decisión y no la vuelve a crear durante el arranque, una
+reparación o una reconexión de WhatsApp.
+
 La accion **Cambiar canal de respuesta predeterminado** guarda, para el contacto
 que atraviesa el nodo, el canal que debe aparecer seleccionado al abrir una
 conversacion. Admite WhatsApp, Instagram Direct, Messenger y correo. Si se elige

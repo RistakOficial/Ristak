@@ -315,6 +315,19 @@ Modelo local neutral:
   oficial activa. Los snapshots de un proveedor o WABA desconectado no aparecen
   en Chat, Automatizaciones, estado ni conteos, aunque se conserve auditoría
   histórica fuera de ese catálogo.
+- Crear, enviar a revisión, sincronizar y probar una plantilla desde
+  Configuración o desde Chat transporta el `phoneNumberId` elegido. El backend
+  resuelve desde esa fila su proveedor y WABA; la preferencia global histórica
+  nunca puede cambiar el destino silenciosamente. Una fila QR sin contraparte
+  API oficial o una fila API inactiva se rechaza con un error accionable.
+- Si una plantilla local conserva identidad remota de otro WABA y el usuario la
+  envía para el número seleccionado, Ristak no edita el ID anterior. Crea o
+  adopta la copia correspondiente dentro del WABA elegido y reemplaza la
+  asociación operativa sólo después de una respuesta válida del proveedor.
+- Borrar explícitamente una plantilla predeterminada registra su supresión en
+  `whatsapp_default_template_suppressions_v1`. Los procesos de arranque,
+  reparación y reconexión respetan esa decisión y no vuelven a fabricar una
+  ficha local huérfana con el mismo nombre.
 - El envío manual valida proveedor **y WABA** de la plantilla contra la fila
   seleccionada. Una plantilla YCloud no se intenta por un número Meta directo,
   ni una plantilla de otro WABA por el número actual. La interfaz debe pedir

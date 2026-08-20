@@ -140,6 +140,8 @@ export interface MessageTemplatePreview {
 export interface MessageTemplateProviderResult {
   template: MessageTemplate
   provider?: MessageTemplateProvider
+  targetPhoneNumberId?: string
+  targetPhone?: string | null
   providerResponse?: Record<string, any>
   ycloud?: Record<string, any>
   metaDirect?: Record<string, any>
@@ -165,6 +167,10 @@ export interface CreateCustomFieldPayload {
   dataType?: string
 }
 
+export interface MessageTemplateTargetOptions {
+  phoneNumberId: string
+}
+
 export const messageTemplatesService = {
   getBundle: () => apiClient.get<MessageTemplateBundle>('/settings/message-templates'),
   getVariables: () => apiClient.get<MessageTemplateVariable[]>('/settings/message-templates/variables'),
@@ -177,14 +183,16 @@ export const messageTemplatesService = {
   updateTemplate: (id: string, payload: MessageTemplatePayload) => (
     apiClient.put<MessageTemplate>(`/settings/message-templates/${id}`, payload)
   ),
-  submitTemplate: (id: string) => (
-    apiClient.post<MessageTemplateProviderResult>(`/settings/message-templates/${id}/submit`)
+  submitTemplate: (id: string, target: MessageTemplateTargetOptions) => (
+    apiClient.post<MessageTemplateProviderResult>(`/settings/message-templates/${id}/submit`, target)
   ),
-  syncTemplate: (id: string) => (
-    apiClient.post<MessageTemplateProviderResult>(`/settings/message-templates/${id}/sync`)
+  syncTemplate: (id: string, target: MessageTemplateTargetOptions) => (
+    apiClient.post<MessageTemplateProviderResult>(`/settings/message-templates/${id}/sync`, target)
   ),
-  syncAll: () => apiClient.post<MessageTemplateBundle>('/settings/message-templates/sync'),
-  sendTest: (id: string, payload: { to: string; from?: string; externalId?: string }) => (
+  syncAll: (target: MessageTemplateTargetOptions) => (
+    apiClient.post<MessageTemplateBundle>('/settings/message-templates/sync', target)
+  ),
+  sendTest: (id: string, payload: { to: string; phoneNumberId: string; from?: string; externalId?: string }) => (
     apiClient.post<MessageTemplateSendTestResult>(`/settings/message-templates/${id}/send-test`, payload)
   ),
   deleteTemplate: (id: string) => apiClient.delete<{ deleted: boolean }>(`/settings/message-templates/${id}`),
