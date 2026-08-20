@@ -151,6 +151,107 @@ test('CRUD y sincronización de plantillas Meta directo usan Graph e identidad n
   })
 })
 
+test('un envío recupera de Meta una plantilla aprobada ausente del catálogo local', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const suffix = Date.now()
+  const wabaId = `waba_meta_recovery_${suffix}`
+  const phoneNumberId = `phone_meta_recovery_${suffix}`
+  const templateId = `meta_template_recovery_${suffix}`
+  const templateName = `plantilla_recuperada_${suffix}`
+  const messageId = `wamid_recovery_${suffix}`
+  const requests = []
+
+  await snapshotConfig([
+    keys.provider,
+    keys.metaStatus,
+    keys.metaWabaId,
+    keys.metaPhoneNumberId,
+    keys.metaDisplayPhoneNumber,
+    keys.metaSystemUserToken
+  ], async () => {
+    await setAppConfig(keys.provider, 'meta_direct')
+    await setAppConfig(keys.metaStatus, 'connected')
+    await setAppConfig(keys.metaWabaId, wabaId)
+    await setAppConfig(keys.metaPhoneNumberId, phoneNumberId)
+    await setAppConfig(keys.metaDisplayPhoneNumber, '+526561112244')
+    await setAppConfig(keys.metaSystemUserToken, encrypt('meta_direct_recovery_test_token'))
+
+    setMetaDirectFetchForTest(async (url, options = {}) => {
+      const requestUrl = new URL(url)
+      const method = String(options.method || 'GET').toUpperCase()
+      requests.push({ method, path: requestUrl.pathname, name: requestUrl.searchParams.get('name') })
+
+      if (method === 'GET' && requestUrl.pathname.endsWith(`/${wabaId}/message_templates`)) {
+        return graphResponse({
+          data: [{
+            id: templateId,
+            name: templateName,
+            language: 'es_MX',
+            category: 'UTILITY',
+            status: 'APPROVED',
+            components: [{ type: 'BODY', text: 'Tu cita quedó confirmada para {{1}}.' }]
+          }],
+          paging: {}
+        })
+      }
+      if (method === 'POST' && requestUrl.pathname.endsWith(`/${wabaId}/subscribed_apps`)) {
+        return graphResponse({ success: true })
+      }
+      if (method === 'POST' && requestUrl.pathname.endsWith(`/${phoneNumberId}/messages`)) {
+        return graphResponse({ messages: [{ id: messageId, message_status: 'accepted' }] })
+      }
+      throw new Error(`Solicitud inesperada durante recuperación: ${method} ${requestUrl.pathname}`)
+    })
+
+    try {
+      assert.equal(
+        await db.get(
+          'SELECT id FROM whatsapp_api_templates WHERE waba_id = ? AND name = ? AND language = ?',
+          [wabaId, templateName, 'es_MX']
+        ),
+        null
+      )
+
+      const result = await sendWhatsAppApiTemplateMessage({
+        to: '+526561234567',
+        templateName,
+        language: 'es_MX',
+        variables: ['21 de agosto a las 3:00 p.m.'],
+        variablesResolved: true,
+        allowQrFallback: false
+      })
+
+      assert.equal(result.id, messageId)
+      assert.equal(
+        requests.filter(request => request.method === 'GET' && request.name === templateName).length,
+        1
+      )
+      assert.equal(
+        requests.filter(request => request.method === 'POST' && request.path.endsWith(`/${phoneNumberId}/messages`)).length,
+        1
+      )
+      const recovered = await db.get(`
+        SELECT provider, waba_id, status
+        FROM whatsapp_api_templates
+        WHERE waba_id = ? AND name = ? AND language = ?
+      `, [wabaId, templateName, 'es_MX'])
+      assert.deepEqual(recovered, {
+        provider: 'meta_direct',
+        waba_id: wabaId,
+        status: 'APPROVED'
+      })
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_templates WHERE waba_id = ?', [wabaId])
+      await db.run('DELETE FROM whatsapp_api_template_sends WHERE template_name = ?', [templateName])
+      await db.run(
+        'DELETE FROM whatsapp_api_messages WHERE provider_message_id = ? OR wamid = ?',
+        [messageId, messageId]
+      )
+    }
+  })
+})
+
 test('errores de plantillas Meta directo conservan el detalle accionable de Graph', async () => {
   await initializeMasterKey()
   const keys = getWhatsAppApiConfigKeys()

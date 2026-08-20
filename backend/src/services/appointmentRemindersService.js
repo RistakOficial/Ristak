@@ -795,12 +795,24 @@ async function listSenderOptions() {
 // nueva también invalida errores de la versión anterior. El historial completo permanece en
 // appointment_reminder_sends para auditoría, pero no deja la tarjeta roja para siempre.
 async function getRecentReminderFailures() {
+  const sendOccurredAt = 'COALESCE(sends.sent_at, sends.send_at, sends.created_at)'
+  const normalizedSendOccurredAt = databaseDialect === 'postgres'
+    ? sendOccurredAt
+    : `datetime(${sendOccurredAt})`
+  const normalizedReminderUpdatedAt = databaseDialect === 'postgres'
+    ? 'COALESCE(reminder.updated_at, reminder.created_at)'
+    : 'datetime(COALESCE(reminder.updated_at, reminder.created_at))'
+  const normalizedTemplateUpdatedAt = databaseDialect === 'postgres'
+    ? 'COALESCE(api_template.updated_at, api_template.created_at)'
+    : 'datetime(COALESCE(api_template.updated_at, api_template.created_at))'
   const rows = await db.all(`
     WITH send_state AS (
       SELECT reminder_id,
         MAX(
           CASE WHEN status = 'sent'
-            THEN COALESCE(sent_at, send_at, created_at)
+            THEN ${databaseDialect === 'postgres'
+              ? 'COALESCE(sent_at, send_at, created_at)'
+              : 'datetime(COALESCE(sent_at, send_at, created_at))'}
           END
         ) AS last_success_at
       FROM appointment_reminder_sends
@@ -816,13 +828,46 @@ async function getRecentReminderFailures() {
         ) AS latest_rank
       FROM appointment_reminder_sends sends
       INNER JOIN appointment_reminders reminder ON reminder.id = sends.reminder_id
+      LEFT JOIN whatsapp_message_templates local_template ON local_template.id = reminder.template_id
       LEFT JOIN send_state state ON state.reminder_id = sends.reminder_id
       WHERE sends.status = 'error'
-        AND COALESCE(sends.sent_at, sends.send_at, sends.created_at) >=
-          COALESCE(reminder.updated_at, reminder.created_at)
+        AND ${normalizedSendOccurredAt} >= ${normalizedReminderUpdatedAt}
         AND (
           state.last_success_at IS NULL OR
-          COALESCE(sends.sent_at, sends.send_at, sends.created_at) > state.last_success_at
+          ${normalizedSendOccurredAt} > state.last_success_at
+        )
+        AND NOT (
+          sends.error_message LIKE 'La plantilla % no está sincronizada; sincroniza las plantillas y verifica que esté APPROVED antes de enviar'
+          AND EXISTS (
+            SELECT 1
+            FROM whatsapp_api_templates api_template
+            WHERE api_template.name = COALESCE(
+                NULLIF(local_template.provider_template_name, ''),
+                NULLIF(reminder.template_name, ''),
+                local_template.name
+              )
+              AND api_template.language = COALESCE(
+                NULLIF(reminder.template_language, ''),
+                local_template.language
+              )
+              AND UPPER(COALESCE(api_template.status, '')) = 'APPROVED'
+              AND LOWER(COALESCE(api_template.provider, 'ycloud')) =
+                LOWER(COALESCE(NULLIF(local_template.template_provider, ''), 'ycloud'))
+              AND ${normalizedTemplateUpdatedAt} >= ${normalizedSendOccurredAt}
+              AND EXISTS (
+                SELECT 1
+                FROM whatsapp_api_phone_numbers sender
+                WHERE sender.waba_id = api_template.waba_id
+                  AND LOWER(COALESCE(sender.provider, 'ycloud')) =
+                    LOWER(COALESCE(api_template.provider, 'ycloud'))
+                  AND sender.api_send_enabled = 1
+                  AND (
+                    (reminder.sender_mode = 'specific' AND sender.id = reminder.sender_phone_number_id)
+                    OR (reminder.sender_mode = 'default' AND sender.is_default_sender = 1)
+                    OR reminder.sender_mode = 'contact'
+                  )
+              )
+          )
         )
     )
     SELECT reminder_id, error_count, occurred_at, error_message

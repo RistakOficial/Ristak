@@ -128,6 +128,7 @@ const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-image
 let ycloudFetch = nodeFetch
 let metaDirectFetch = nodeFetch
 let metaDirectInboundMediaHydratorForTest = null
+const templateCatalogRefreshes = new Map()
 
 export function setYCloudFetchForTest(fetchImpl) {
   ycloudFetch = typeof fetchImpl === 'function' ? fetchImpl : nodeFetch
@@ -13726,6 +13727,39 @@ export async function syncWhatsAppApiTemplates(options = {}) {
     : syncWhatsAppApiTemplatesFromYCloud(options)
 }
 
+async function refreshTemplateCatalogEntryForSend({ provider, wabaId, name, language } = {}) {
+  const cleanProvider = cleanString(provider).toLowerCase() || PROVIDER_NAME
+  const cleanWabaId = cleanString(wabaId)
+  const cleanName = cleanString(name)
+  const cleanLanguage = cleanString(language)
+  if (!cleanWabaId || !cleanName || !cleanLanguage) return null
+
+  // Una ráfaga de recordatorios puede detectar el mismo hueco del catálogo al
+  // mismo tiempo. Compartimos una sola consulta al proveedor para no golpear a
+  // Meta/YCloud varias veces ni mandar varios intentos de reparación idénticos.
+  const refreshKey = [cleanProvider, cleanWabaId, cleanName, cleanLanguage].join('|')
+  const existingRefresh = templateCatalogRefreshes.get(refreshKey)
+  if (existingRefresh) return existingRefresh
+
+  const refresh = (
+    cleanProvider === META_DIRECT_PROVIDER_NAME
+      ? retrieveMetaDirectWhatsAppApiTemplate({
+          wabaId: cleanWabaId,
+          name: cleanName,
+          language: cleanLanguage
+        })
+      : retrieveYCloudWhatsAppApiTemplate({
+          wabaId: cleanWabaId,
+          name: cleanName,
+          language: cleanLanguage
+        })
+  ).finally(() => {
+    templateCatalogRefreshes.delete(refreshKey)
+  })
+  templateCatalogRefreshes.set(refreshKey, refresh)
+  return refresh
+}
+
 function normalizeTemplateVariables(value) {
   const parsed = typeof value === 'string' ? parseJsonValue(value, value) : value
   if (Array.isArray(parsed)) return parsed
@@ -13810,11 +13844,12 @@ function templateQuickReplyButtonComponents(template = {}, components = []) {
 
 async function findTemplateForSend({ templateId, templateName, language, provider, wabaId }) {
   if (templateId) {
-    return db.get(`
+    const templateById = await db.get(`
       SELECT id, provider, waba_id, name, language, status, quality_rating, components_json
       FROM whatsapp_api_templates
       WHERE id = ?
     `, [templateId])
+    if (templateById) return templateById
   }
 
   if (!templateName || !language) return null
@@ -13978,13 +14013,41 @@ export async function sendWhatsAppApiTemplateMessage({
   if (!toPhone) throw new Error('Falta el número destino')
   if (!templateId && !cleanTemplateName) throw new Error('Elige una plantilla')
 
-  const template = await findTemplateForSend({
+  let template = await findTemplateForSend({
     templateId: cleanString(templateId),
     templateName: cleanTemplateName,
     language: cleanLanguage,
     provider: config.provider,
     wabaId: config.wabaId
   })
+
+  // WA-010: el catálogo operativo puede quedar vacío o atrasado aunque Meta ya
+  // tenga la plantilla aprobada (por ejemplo, tras una reconexión). Antes de
+  // rechazar el envío hacemos una sola recuperación exacta, acotada al proveedor,
+  // WABA, nombre e idioma del remitente. Nunca asumimos que está aprobada: el
+  // snapshot recién consultado todavía debe pasar la validación APPROVED.
+  if (!template && cleanTemplateName && cleanLanguage) {
+    try {
+      await refreshTemplateCatalogEntryForSend({
+        provider: config.provider,
+        wabaId: config.wabaId,
+        name: cleanTemplateName,
+        language: cleanLanguage
+      })
+    } catch (error) {
+      logger.warn(
+        `[WhatsApp API] No se pudo recuperar la plantilla ${cleanTemplateName} (${cleanLanguage}) ` +
+        `para ${cleanString(config.provider) || PROVIDER_NAME}: ${error.message}`
+      )
+    }
+    template = await findTemplateForSend({
+      templateId: cleanString(templateId),
+      templateName: cleanTemplateName,
+      language: cleanLanguage,
+      provider: config.provider,
+      wabaId: config.wabaId
+    })
+  }
 
   const finalTemplate = template || {
     id: cleanString(templateId),

@@ -1634,6 +1634,90 @@ test('overview limpia errores resueltos por un envío correcto o por reconfigura
   })
 })
 
+test('overview limpia el error de catálogo cuando una sincronización posterior recupera la plantilla', async () => {
+  await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder, template }) => {
+    const suffix = randomUUID()
+    const configuredAt = DateTime.utc().minus({ hours: 4 })
+    const staleSnapshotAt = configuredAt.plus({ minutes: 5 })
+    const catalogErrorAt = configuredAt.plus({ minutes: 10 })
+    const recoveredSnapshotAt = configuredAt.plus({ minutes: 20 })
+    const unrelatedErrorAt = configuredAt.plus({ minutes: 30 })
+    const catalogError = `La plantilla ${template.name} (es_MX) no está sincronizada; sincroniza las plantillas y verifica que esté APPROVED antes de enviar`
+    const appointmentIds = {
+      catalog: `appointment_catalog_error_${suffix}`,
+      unrelated: `appointment_catalog_unrelated_${suffix}`
+    }
+
+    try {
+      await db.run(
+        'UPDATE appointment_reminders SET updated_at = ? WHERE id = ?',
+        [configuredAt.toISO(), reminder.id]
+      )
+      await db.run(
+        'UPDATE whatsapp_api_templates SET updated_at = ? WHERE name = ? AND language = ?',
+        [staleSnapshotAt.toISO(), template.name, 'es_MX']
+      )
+      await db.run(`
+        INSERT INTO appointment_reminder_sends (
+          id, reminder_id, appointment_id, status, error_message, send_at, sent_at, created_at
+        ) VALUES (?, ?, ?, 'error', ?, ?, ?, ?)
+      `, [
+        `send_catalog_error_${suffix}`,
+        reminder.id,
+        appointmentIds.catalog,
+        catalogError,
+        catalogErrorAt.toISO(),
+        catalogErrorAt.toISO(),
+        catalogErrorAt.toISO()
+      ])
+
+      let overview = await getAppointmentRemindersOverview()
+      let overviewReminder = overview.reminders.find((item) => item.id === reminder.id)
+      assert.equal(overviewReminder?.failures?.errorCount, 1)
+      assert.equal(overviewReminder?.failures?.lastErrorMessage, catalogError)
+
+      await db.run(
+        "UPDATE whatsapp_api_templates SET status = 'APPROVED', updated_at = ? WHERE name = ? AND language = ?",
+        [recoveredSnapshotAt.toISO(), template.name, 'es_MX']
+      )
+
+      overview = await getAppointmentRemindersOverview()
+      overviewReminder = overview.reminders.find((item) => item.id === reminder.id)
+      assert.deepEqual(overviewReminder?.failures, {
+        errorCount: 0,
+        lastErrorAt: null,
+        lastErrorMessage: null
+      })
+
+      await db.run(`
+        INSERT INTO appointment_reminder_sends (
+          id, reminder_id, appointment_id, status, error_message, send_at, sent_at, created_at
+        ) VALUES (?, ?, ?, 'error', 'Meta rechazó el contenido de la plantilla', ?, ?, ?)
+      `, [
+        `send_catalog_unrelated_${suffix}`,
+        reminder.id,
+        appointmentIds.unrelated,
+        unrelatedErrorAt.toISO(),
+        unrelatedErrorAt.toISO(),
+        unrelatedErrorAt.toISO()
+      ])
+
+      overview = await getAppointmentRemindersOverview()
+      overviewReminder = overview.reminders.find((item) => item.id === reminder.id)
+      assert.equal(overviewReminder?.failures?.errorCount, 1)
+      assert.equal(
+        overviewReminder?.failures?.lastErrorMessage,
+        'Meta rechazó el contenido de la plantilla'
+      )
+    } finally {
+      await db.run(
+        'DELETE FROM appointment_reminder_sends WHERE reminder_id = ? AND appointment_id IN (?, ?)',
+        [reminder.id, appointmentIds.catalog, appointmentIds.unrelated]
+      )
+    }
+  })
+})
+
 test('una regla histórica sin plazo todavía puede pausarse sin inventar un ultimátum', async () => {
   await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder }) => {
     await db.run(`

@@ -304,6 +304,14 @@ puede usar el texto renderizado bajo sus reglas existentes.
   por QR, API-only sale por API y API+QR del mismo número intenta API primero y
   usa QR sólo si la API realmente pierde disponibilidad. Una plantilla sin
   aprobar o una ventana cerrada no cambian a QR.
+- Si el catálogo operativo perdió una plantilla que el recordatorio necesita,
+  el envío hace una única consulta exacta al proveedor y WABA del remitente,
+  guarda el snapshot recuperado y vuelve a validar que esté `APPROVED`. No asume
+  una aprobación ni usa una copia de otro proveedor o WABA.
+- La tarjeta conserva los fallos para auditoría, pero deja de mostrar **Con
+  errores** cuando una sincronización posterior recuperó como `APPROVED` esa
+  misma plantilla para el remitente correspondiente. La limpieza no altera el
+  historial y no oculta rechazos de contenido, conexión u otros fallos reales.
 - Una cuenta nueva recibe únicamente tres mensajes automáticos en su calendario
   predeterminado, todos pausados:
   `Aviso al agendar`, exactamente al crear la cita, sin horario inteligente y

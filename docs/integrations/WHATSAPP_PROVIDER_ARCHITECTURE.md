@@ -320,6 +320,16 @@ Modelo local neutral:
   ni una plantilla de otro WABA por el número actual. La interfaz debe pedir
   elegir o cambiar el canal correspondiente; no debe afirmar que "WhatsApp no
   está conectado" cuando otra fila API sí está sana.
+- Si un envío por nombre e idioma no encuentra su snapshot operativo, Ristak
+  consulta una sola vez la plantilla exacta en el proveedor y WABA del remitente,
+  comparte esa recuperación entre envíos simultáneos y repite la búsqueda local.
+  El snapshot recuperado todavía debe ser `APPROVED`; este mecanismo no permite
+  enviar una plantilla pendiente/rechazada ni reutilizar una copia de otro canal.
+- Un error histórico de catálogo no gobierna para siempre el estado visual de un
+  recordatorio. Una sincronización posterior del mismo proveedor, WABA, nombre e
+  idioma que deje la plantilla `APPROVED` resuelve ese indicador, sin modificar
+  ni borrar `appointment_reminder_sends`. Los errores de contenido, autorización
+  o entrega conservan su estado hasta una recuperación real.
 - `{{1}}`, `{{2}}`, etc. se materializan con `variable_bindings_json` justo
   antes de enviar. Los bindings de contacto leen el contacto actual y los de
   `cita.*` usan la próxima cita activa del contacto, formateada en la zona del
