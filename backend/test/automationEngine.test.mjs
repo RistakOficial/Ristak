@@ -850,6 +850,17 @@ test('filtersMatch: coincide / NO coincide / contiene / NO contiene', () => {
   assert.equal(filtersMatch([{ field: 'product', match: 'is', value: 'curso' }], ctx, { requireKnown: true }), false)
   // Un campo de contacto reconocido cuyo valor no coincide sí bloquea
   assert.equal(filtersMatch([{ field: 'stage', match: 'is', value: 'x' }], ctx), false)
+  // El origen de una cita siempre falla cerrado: una cita histórica sin origen
+  // verificable no se puede hacer pasar por contacto, admin o calendario público.
+  assert.equal(filtersMatch([{ field: 'booking_origin', match: 'is', value: 'contact' }], {}), false)
+  assert.equal(filtersMatch(
+    [{ field: 'booking_origin', match: 'is', value: 'public_calendar' }],
+    { bookingOrigin: 'public_calendar' }
+  ), true)
+  assert.equal(filtersMatch(
+    [{ field: 'booking_origin', match: 'not', value: 'admin' }],
+    { booking_origin: 'contact' }
+  ), true)
 })
 
 test('filtersMatch: compara etapa comercial y pertenencia real de etiquetas', () => {

@@ -50,6 +50,7 @@ import {
   mergeAndPersistContactCustomFields,
   mutateAndPersistContactCustomFields
 } from './contactCustomFieldsPersistenceService.js'
+import { normalizeAppointmentBookingOrigin } from '../utils/appointmentBookingOrigin.js'
 
 /**
  * Motor de ejecución de automatizaciones.
@@ -2108,6 +2109,7 @@ function filterFieldValue(filter, ctx) {
     // Campos del evento (cita, pago, anuncio…)
     case 'calendar': return ctx.calendarId || null
     case 'appointment_type': return ctx.appointmentType || null
+    case 'booking_origin': return ctx.bookingOrigin || ctx.booking_origin || null
     case 'payment_status': return paymentTriggerFieldValue(filter.field, ctx) || null
     case 'amount': return paymentTriggerFieldValue(filter.field, ctx) || null
     case 'product': return paymentProductCandidatesFromContext(ctx)[0] || null
@@ -2261,6 +2263,17 @@ function evaluateFormCandidateFilter(filter, ctx) {
   }
 }
 
+function evaluateAppointmentBookingOriginFilter(filter, ctx) {
+  const actual = normalizeAppointmentBookingOrigin(ctx.bookingOrigin || ctx.booking_origin)
+  if (filter.match === 'empty') return !actual
+  if (filter.match === 'not_empty') return Boolean(actual)
+
+  const expected = normalizeAppointmentBookingOrigin(filter.value)
+  if (!actual || !expected) return false
+  if (filter.match === 'not') return actual !== expected
+  return actual === expected
+}
+
 const PAYMENT_CANDIDATE_FILTER_FIELDS = new Set([
   'product',
   'product_name',
@@ -2300,6 +2313,7 @@ function evaluateFilter(filter, ctx, { requireKnown = false } = {}) {
   if (filter.field === 'tag') return evaluateTagFilter(filter, ctx)
   if (filter.field === 'stage') return evaluateLifecycleStageFilter(filter, ctx)
   if (filter.field === 'form-specific') return evaluateFormCandidateFilter(filter, ctx)
+  if (filter.field === 'booking_origin') return evaluateAppointmentBookingOriginFilter(filter, ctx)
   if (PAYMENT_CANDIDATE_FILTER_FIELDS.has(filter.field)) {
     return evaluatePaymentCandidateFilter(filter, ctx, { requireKnown })
   }

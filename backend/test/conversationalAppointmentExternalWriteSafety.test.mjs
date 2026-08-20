@@ -81,6 +81,56 @@ async function cleanupFixture({ calendarId, contactId, clientRequestId }) {
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
 }
 
+test('una cita autenticada normal se clasifica como admin y no acepta un origen falsificado', async () => {
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_admin_origin_${suffix}`
+  const contactId = `rstk_contact_admin_origin_${suffix}`
+  const clientRequestId = `admin-origin:${suffix}`
+  const window = appointmentWindow(29)
+  const previousHighLevelConfig = await db.all('SELECT * FROM highlevel_config')
+
+  try {
+    await db.run('DELETE FROM highlevel_config')
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Contacto creado desde admin', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await createLinkedCalendar({ calendarId, window })
+
+    const response = await invokeController(createAppointment, {
+      body: {
+        clientRequestId,
+        calendarId,
+        contactId,
+        title: 'Cita creada desde el CRM',
+        startTime: window.startTime,
+        endTime: window.endTime,
+        timeZone: 'UTC',
+        source: 'ristak',
+        bookingOrigin: 'public_calendar'
+      }
+    })
+
+    assert.equal(response.statusCode, 201, JSON.stringify(response.payload))
+    assert.equal(response.payload?.data?.bookingOrigin, 'admin')
+    assert.equal(
+      (await db.get('SELECT booking_origin FROM appointments WHERE calendar_id = ?', [calendarId]))?.booking_origin,
+      'admin'
+    )
+  } finally {
+    await cleanupFixture({ calendarId, contactId, clientRequestId })
+    await db.run('DELETE FROM highlevel_config').catch(() => undefined)
+    for (const row of previousHighLevelConfig) {
+      const columns = Object.keys(row)
+      await db.run(
+        `INSERT INTO highlevel_config (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+        columns.map(column => row[column])
+      ).catch(() => undefined)
+    }
+  }
+})
+
 test('GHL desconectado no invalida la cita local ni permite duplicarla al reintentar', async () => {
   const suffix = randomUUID()
   const calendarId = `rstk_cal_ghl_mirror_offline_${suffix}`
@@ -105,12 +155,13 @@ test('GHL desconectado no invalida la cita local ni permite duplicarla al reinte
     assert.ok(appointmentId)
 
     const stored = await db.get(
-      'SELECT id, sync_status, ghl_appointment_id FROM appointments WHERE calendar_id = ?',
+      'SELECT id, sync_status, ghl_appointment_id, booking_origin FROM appointments WHERE calendar_id = ?',
       [calendarId]
     )
     assert.equal(stored.id, appointmentId)
     assert.equal(stored.sync_status, 'pending')
     assert.equal(stored.ghl_appointment_id, null)
+    assert.equal(stored.booking_origin, 'contact')
 
     const retry = await callStrictAgentCreate({ calendarId, contactId, clientRequestId, window })
     assert.equal(retry.statusCode, 201)

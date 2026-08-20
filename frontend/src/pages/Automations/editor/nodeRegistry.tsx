@@ -1188,9 +1188,9 @@ const TRIGGERS: NodeDefinition[] = [
   {
     type: 'trigger-appointment-booked',
     kind: 'trigger',
-    label: 'Contacto agendó una cita',
+    label: 'Cita agendada',
     category: 'trigger-appointments',
-    description: 'Se activa cuando el contacto agenda una cita',
+    description: 'Se activa cuando se agenda una cita',
     icon: CalendarCheck,
     accent: 'green',
     requiredFeature: 'appointments',
@@ -1210,7 +1210,7 @@ const TRIGGERS: NodeDefinition[] = [
     summary: (config) => {
       const calendar = str(config.calendarName) || str(config.calendar)
       return {
-        text: `Cuando el contacto agende una cita${calendar ? ` en "${calendar}"` : ''}${triggerFiltersSentence(config.filters)}`
+        text: `Cuando se agende una cita${calendar ? ` en "${calendar}"` : ''}${triggerFiltersSentence(config.filters)}`
       }
     }
   },

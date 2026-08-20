@@ -67,6 +67,12 @@ const APPOINTMENT_STATUS_OPTIONS = [
   { value: 'no_show', label: 'No asistió' }
 ]
 
+const APPOINTMENT_BOOKING_ORIGIN_OPTIONS = [
+  { value: 'contact', label: 'Contacto' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'public_calendar', label: 'Calendario público' }
+]
+
 const PAYMENT_STATUS_OPTIONS = [
   { value: 'paid', label: 'Pagado' },
   { value: 'succeeded', label: 'Exitoso' },
@@ -677,6 +683,15 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   { id: 'comment_platform', label: 'Red social', phrase: 'la red social', options: [{ value: 'facebook', label: 'Facebook' }, { value: 'instagram', label: 'Instagram' }], category: 'Comentario', appliesTo: ['comment'], operators: ['is', 'not'] },
   { id: 'comment_post', label: 'Publicación comentada', phrase: 'la publicación', category: 'Comentario', appliesTo: ['comment'], operators: ['is', 'not'] },
   { id: 'calendar', label: 'Calendario', phrase: 'el calendario', catalog: 'calendars', category: 'Cita', appliesTo: ['appointment'] },
+  {
+    id: 'booking_origin',
+    label: 'Agendado por',
+    phrase: 'el origen del agendado',
+    options: APPOINTMENT_BOOKING_ORIGIN_OPTIONS,
+    operators: ['is', 'not'],
+    category: 'Cita',
+    appliesTo: ['appointment']
+  },
   { id: 'appointment_type', label: 'Tipo de cita', phrase: 'el tipo de cita', category: 'Cita', appliesTo: ['appointment'] },
   { id: 'payment_status', label: 'Status del pago', phrase: 'el status del pago', options: PAYMENT_STATUS_OPTIONS, category: 'Pago', appliesTo: ['payment'] },
   { id: 'amount', label: 'Monto', phrase: 'el monto', category: 'Pago', appliesTo: ['payment'] },

@@ -202,6 +202,16 @@ La ruta pública resuelve el calendario desde el slug y aplica el mismo contrato
 local más espejo. Las importaciones de citas que ya nacieron en HighLevel son
 conciliación entrante, no una nueva alta, y no deben volver a publicarse.
 
+Cada alta propia guarda además `appointments.booking_origin`. La ruta pública
+fija `public_calendar`; una creación autenticada fija `admin`; y el controller
+invocado internamente por el agente conversacional fija `contact`. Esta
+clasificación no se toma del payload del cliente. Automatizaciones la conserva
+en `appointment-booked` y `appointment-status`, por lo que ambos disparadores
+pueden usar el filtro **Agendado por** (`Contacto`, `Admin` o `Calendario
+público`). Un origen importado o histórico que no pueda demostrarse queda vacío
+y falla cerrado frente a esos filtros; la migración sólo recupera como
+`contact` las citas históricas con `source=conversational_agent_v2`.
+
 ## Adopción Definitiva De Calendarios HighLevel
 
 Desconectar HighLevel conserva por defecto los calendarios importados como

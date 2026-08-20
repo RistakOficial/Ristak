@@ -137,3 +137,25 @@ test('Contacto modificado vigila los campos elegidos sin pedir Detalle que cambi
   assert.match(definition, /Vigila automáticamente los campos configurados/)
   assert.match(definition, /contactChangedTriggerLead\(filters\)/)
 })
+
+test('los dos disparadores de cita ofrecen el filtro Agendado por con valores cerrados', () => {
+  const registry = readRepoFile('frontend/src/pages/Automations/editor/nodeRegistry.tsx')
+  const fields = readRepoFile('frontend/src/pages/Automations/editor/crmFields.ts')
+
+  assert.match(fields, /id: 'booking_origin'/)
+  assert.match(fields, /label: 'Agendado por'/)
+  assert.match(fields, /value: 'contact', label: 'Contacto'/)
+  assert.match(fields, /value: 'admin', label: 'Admin'/)
+  assert.match(fields, /value: 'public_calendar', label: 'Calendario público'/)
+  assert.match(fields, /id: 'booking_origin',[\s\S]*operators: \['is', 'not'\],[\s\S]*appliesTo: \['appointment'\]/)
+  assert.match(fields, /'trigger-appointment-booked': \['appointment'\]/)
+  assert.match(fields, /'trigger-appointment-status': \['appointment'\]/)
+
+  const bookedStart = registry.indexOf("type: 'trigger-appointment-booked'")
+  const bookedEnd = registry.indexOf("type: 'trigger-payment-received'", bookedStart)
+  const bookedDefinition = registry.slice(bookedStart, bookedEnd)
+  assert.ok(bookedStart >= 0 && bookedEnd > bookedStart)
+  assert.match(bookedDefinition, /label: 'Cita agendada'/)
+  assert.match(bookedDefinition, /Cuando se agende una cita/)
+  assert.doesNotMatch(bookedDefinition, /Cuando el contacto agende una cita/)
+})

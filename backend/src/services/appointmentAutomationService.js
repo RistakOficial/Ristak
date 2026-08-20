@@ -3,6 +3,7 @@ import {
   clearAppointmentReminderSends,
   executeSafeTestAppointmentReminders
 } from './appointmentRemindersService.js'
+import { normalizeAppointmentBookingOrigin } from '../utils/appointmentBookingOrigin.js'
 
 const CANCELLED_STATUSES = new Set(['cancelled', 'canceled', 'no_show', 'no-show', 'noshow', 'deleted'])
 
@@ -53,6 +54,12 @@ function buildEventData(appointment = {}, extra = {}) {
     appointment.replacementAppointmentId,
     appointment.replacement_appointment_id
   )
+  const bookingOrigin = normalizeAppointmentBookingOrigin(firstAppointmentValue(
+    extra.bookingOrigin,
+    extra.booking_origin,
+    appointment.bookingOrigin,
+    appointment.booking_origin
+  ))
 
   return {
     contactId: appointmentValue(appointment, 'contactId', 'contact_id'),
@@ -71,6 +78,8 @@ function buildEventData(appointment = {}, extra = {}) {
     testEffectId: appointmentValue(appointment, 'testEffectId', 'test_effect_id'),
     testExpiresAt: appointmentValue(appointment, 'testExpiresAt', 'test_expires_at'),
     ...extra,
+    bookingOrigin,
+    booking_origin: bookingOrigin,
     appointmentChange,
     previousAppointmentId,
     replacesAppointmentId,

@@ -4546,6 +4546,18 @@ Reglas base:
   normal de creación. Si la cita no fue atendida, incluida `noshow`, conserva su
   ID, adopta la nueva hora y queda `rescheduled`; dispara sólo el cambio de estado
   con las horas anteriores para que recordatorios y esperas se recalculen.
+- `appointments.booking_origin` conserva quién o qué superficie creó la cita:
+  `contact` cuando el contacto termina de agendar mediante el agente
+  conversacional, `admin` para una creación autenticada desde el CRM/API y
+  `public_calendar` para la URL pública o un calendario embebido en Sites. El
+  backend deriva este valor desde la superficie real y no acepta que el payload
+  autenticado se haga pasar por calendario público. Los disparadores **Cita
+  agendada** y **Estado de la cita** ofrecen el filtro **Agendado por** con
+  `Contacto`, `Admin` y `Calendario público`; el mismo origen acompaña los
+  cambios posteriores de estado. Citas importadas o históricas cuyo origen no se
+  pueda probar conservan el valor vacío y no coinciden con ninguno de esos tres
+  filtros. Sólo se recupera automáticamente el histórico inequívoco con
+  `source=conversational_agent_v2` como `contact`.
 - La sincronización Google procesa primero el pull y después el push. Sólo acepta
   un cambio horario cuyo `event.updated` sea posterior a la versión local; una
   edición local pendiente sigue mandando en título, notas, ubicación,

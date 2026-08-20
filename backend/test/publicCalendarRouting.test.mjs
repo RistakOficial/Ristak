@@ -202,11 +202,12 @@ test('public booking keeps a mirrored HighLevel calendar working from local DB w
     assert.equal(res.body?.data?.appointment?.syncStatus, 'pending')
 
     const storedAppointment = await db.get(
-      'SELECT id, calendar_id, booking_channel, sync_status FROM appointments WHERE calendar_id = ? AND sync_status = ?',
+      'SELECT id, calendar_id, booking_channel, booking_origin, sync_status FROM appointments WHERE calendar_id = ? AND sync_status = ?',
       [calendarId, 'pending']
     )
     assert.equal(storedAppointment?.calendar_id, calendarId)
     assert.equal(storedAppointment?.booking_channel, 'whatsapp_qr')
+    assert.equal(storedAppointment?.booking_origin, 'public_calendar')
   } finally {
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)

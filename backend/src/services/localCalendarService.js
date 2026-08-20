@@ -38,6 +38,7 @@ import { createEntityId, generateShortId } from '../utils/idGenerator.js'
 import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js'
 import { getConversationalTestMode } from '../agents/conversational/nativeRuntimeConfig.js'
 import { hashPaginationCursorScope } from '../utils/paginationCursorScope.js'
+import { normalizeAppointmentBookingOrigin } from '../utils/appointmentBookingOrigin.js'
 
 const LOCAL_CALENDAR_PREFIX = 'rstk_cal'
 const LOCAL_APPOINTMENT_PREFIX = 'rstk_appt'
@@ -4959,6 +4960,7 @@ function appointmentRowToApi(row = {}) {
     dateUpdated: normalizeToUtcIso(row.date_updated, 'UTC') || undefined,
     source: row.source || 'ristak',
     bookingChannel: normalizeAppointmentBookingChannel(row.booking_channel),
+    bookingOrigin: normalizeAppointmentBookingOrigin(row.booking_origin),
     syncStatus: row.sync_status || 'pending',
     syncError: row.sync_error || null,
     syncedAt: normalizeToUtcIso(row.synced_at, 'UTC') || null,
@@ -5032,6 +5034,10 @@ function normalizeAppointmentRecord(raw = {}, options = {}) {
       options.channel || options.origin || appointment.bookingChannel || appointment.booking_channel ||
       appointment.sourceChannel || appointment.source_channel || appointment.channel || appointment.origin ||
       options.source || appointment.source
+    ),
+    bookingOrigin: normalizeAppointmentBookingOrigin(
+      options.bookingOrigin || options.booking_origin ||
+      appointment.bookingOrigin || appointment.booking_origin
     ),
     syncStatus: options.syncStatus || appointment.syncStatus || appointment.sync_status || (source === 'ghl' ? 'synced' : 'pending'),
     syncError: options.syncError || appointment.syncError || appointment.sync_error || null,
@@ -5742,10 +5748,10 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
       id, ghl_appointment_id, google_event_id, google_provider_calendar_id, google_mirror_generation,
       calendar_id, contact_id, location_id, title, status,
       appointment_status, assigned_user_id, notes, address, start_time, end_time,
-      date_added, date_updated, source, booking_channel, sync_status, sync_error, synced_at,
+      date_added, date_updated, source, booking_channel, booking_origin, sync_status, sync_error, synced_at,
       google_sync_status, google_sync_error, google_synced_at,
       follow_up_from_appointment_id, is_test, test_run_id, test_effect_id, test_expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET
       ghl_appointment_id = COALESCE(excluded.ghl_appointment_id, appointments.ghl_appointment_id),
       google_event_id = COALESCE(excluded.google_event_id, appointments.google_event_id),
@@ -5770,6 +5776,7 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
       date_updated = CASE WHEN ${lastWriteWins} = 1 AND (appointments.sync_status IN ('pending','pending_delete') OR appointments.date_updated >= excluded.date_updated) THEN appointments.date_updated ELSE excluded.date_updated END,
       source = COALESCE(excluded.source, appointments.source),
       booking_channel = COALESCE(excluded.booking_channel, appointments.booking_channel),
+      booking_origin = COALESCE(excluded.booking_origin, appointments.booking_origin),
       sync_status = CASE WHEN ${lastWriteWins} = 1 AND appointments.sync_status IN ('pending','pending_delete') THEN appointments.sync_status ELSE excluded.sync_status END,
       sync_error = excluded.sync_error,
       synced_at = CASE WHEN excluded.sync_status = 'synced' THEN CURRENT_TIMESTAMP ELSE appointments.synced_at END,
@@ -5803,6 +5810,7 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
     normalized.dateUpdated,
     normalized.source,
     normalized.bookingChannel,
+    normalized.bookingOrigin,
     normalized.syncStatus,
     normalized.syncError,
     normalized.syncStatus === 'synced' ? new Date().toISOString() : null,
@@ -7374,7 +7382,7 @@ export async function applyFreshGoogleTimeChangeToCanonicalAppointment({
         INSERT INTO appointments (
           id, ghl_appointment_id, google_event_id, google_provider_calendar_id, google_mirror_generation,
           calendar_id, contact_id, location_id, title, status, appointment_status,
-          assigned_user_id, notes, address, start_time, end_time, booking_channel,
+          assigned_user_id, notes, address, start_time, end_time, booking_channel, booking_origin,
           date_added, date_updated, source, sync_status, sync_error, synced_at,
           google_sync_status, google_sync_error, google_synced_at,
           follow_up_from_appointment_id, is_test, test_run_id, test_effect_id, test_expires_at,
@@ -7382,7 +7390,7 @@ export async function applyFreshGoogleTimeChangeToCanonicalAppointment({
         ) VALUES (
           ?, NULL, ?, ?, 0,
           ?, ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?,
           ?, ?, 'ristak', 'pending', NULL, NULL,
           'pending', NULL, NULL,
           ?, 0, NULL, NULL, NULL,
@@ -7404,6 +7412,7 @@ export async function applyFreshGoogleTimeChangeToCanonicalAppointment({
         normalizedStartTime,
         normalizedEndTime,
         row.booking_channel,
+        row.booking_origin,
         normalizedRemoteUpdatedAt,
         normalizedRemoteUpdatedAt,
         row.id

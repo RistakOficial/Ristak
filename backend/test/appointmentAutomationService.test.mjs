@@ -69,6 +69,117 @@ test('crear una cita dispara la automatización de cita agendada', async () => {
   }
 })
 
+test('los dos disparadores de cita filtran por el origen canónico del agendado', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_appt_origin_${suffix}`
+  const appointmentId = `appointment_appt_origin_${suffix}`
+  const bookedAutomationId = `automation_appt_origin_booked_${suffix}`
+  const statusAutomationId = `automation_appt_origin_status_${suffix}`
+  const adminAutomationId = `automation_appt_origin_admin_${suffix}`
+  const automationIds = [bookedAutomationId, statusAutomationId, adminAutomationId]
+  const flowFor = (trigger) => ({
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: { triggers: [trigger] }
+      },
+      { id: 'done', type: 'extra-comment', label: 'Listo', config: {} }
+    ],
+    edges: [{ id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }],
+    settings: { allowReentry: false, preventDuplicateActiveEnrollment: true }
+  })
+
+  const automations = [
+    {
+      id: bookedAutomationId,
+      name: 'Cita pública agendada',
+      flow: flowFor({
+        id: 'trigger-booked-public',
+        type: 'trigger-appointment-booked',
+        config: {
+          filters: [{ field: 'booking_origin', match: 'is', value: 'public_calendar' }]
+        }
+      })
+    },
+    {
+      id: statusAutomationId,
+      name: 'Cita pública confirmada',
+      flow: flowFor({
+        id: 'trigger-status-public',
+        type: 'trigger-appointment-status',
+        config: {
+          status: 'confirmed',
+          filters: [{ field: 'booking_origin', match: 'is', value: 'public_calendar' }]
+        }
+      })
+    },
+    {
+      id: adminAutomationId,
+      name: 'Cita admin agendada',
+      flow: flowFor({
+        id: 'trigger-booked-admin',
+        type: 'trigger-appointment-booked',
+        config: {
+          filters: [{ field: 'booking_origin', match: 'is', value: 'admin' }]
+        }
+      })
+    }
+  ]
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, full_name, first_name, custom_fields)
+       VALUES (?, ?, 'Contacto calendario público', 'Contacto', '{}')`,
+      [contactId, `+521${Date.now().toString().slice(-10)}`]
+    )
+    await db.run(
+      `INSERT INTO appointments (
+         id, calendar_id, contact_id, title, status, appointment_status,
+         start_time, end_time, booking_origin
+       ) VALUES (?, 'calendar-origin', ?, 'Consulta pública', 'confirmed', 'confirmed', ?, ?, 'public_calendar')`,
+      [appointmentId, contactId, '2026-09-20T18:00:00.000Z', '2026-09-20T19:00:00.000Z']
+    )
+    for (const automation of automations) {
+      await db.run(
+        `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+         VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+        [automation.id, automation.name, JSON.stringify(automation.flow), JSON.stringify(automation.flow)]
+      )
+    }
+
+    await dispatchAppointmentCreatedAutomations({
+      id: appointmentId,
+      contactId,
+      calendarId: 'calendar-origin',
+      appointmentStatus: 'confirmed',
+      status: 'confirmed',
+      bookingOrigin: 'public_calendar'
+    })
+
+    const enrollments = await db.all(
+      `SELECT automation_id, status
+       FROM automation_enrollments
+       WHERE contact_id = ? AND automation_id IN (?, ?, ?)
+       ORDER BY automation_id`,
+      [contactId, ...automationIds]
+    )
+    assert.deepEqual(
+      enrollments.map(row => row.automation_id).sort(),
+      [bookedAutomationId, statusAutomationId].sort()
+    )
+    assert.ok(enrollments.every(row => row.status === 'completed'))
+  } finally {
+    for (const automationId of automationIds) {
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+      await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    }
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
 test('una cita de Modo test valida automatizaciones sin crear inscripciones ni efectos permanentes', async () => {
   const suffix = randomUUID()
   const contactId = `contact_appt_automation_test_${suffix}`

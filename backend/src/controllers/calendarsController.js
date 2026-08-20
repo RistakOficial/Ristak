@@ -61,6 +61,7 @@ import {
   syncCalendarMeetingResources
 } from '../services/calendarMeetingService.js';
 import { ensureOnlineMeetingMessageTemplate } from '../services/messageTemplatesService.js';
+import { APPOINTMENT_BOOKING_ORIGINS } from '../utils/appointmentBookingOrigin.js';
 
 /**
  * Controlador para calendarios de Ristak con sincronizaciones externas opcionales.
@@ -2143,6 +2144,7 @@ export async function createPublicAppointment(req, res) {
       contactId,
       calendarId: calendar.id,
       bookingChannel: getAppointmentBookingChannel(body),
+      bookingOrigin: APPOINTMENT_BOOKING_ORIGINS.PUBLIC_CALENDAR,
       appointmentStatus: calendar.autoConfirm ? 'confirmed' : 'pending',
       status: calendar.autoConfirm ? 'confirmed' : 'pending',
       startTime: start.toISOString(),
@@ -2819,7 +2821,12 @@ export async function createAppointment(req, res) {
     const localAppointmentData = {
       ...appointmentData,
       title: renderedTemplates.title,
-      notes: renderedTemplates.notes
+      notes: renderedTemplates.notes,
+      // No se acepta esta clasificación desde el payload autenticado: la
+      // superficie que ejecuta el controller es la fuente de verdad.
+      bookingOrigin: internalAppointmentContext.conversationalAgentAppointment === true
+        ? APPOINTMENT_BOOKING_ORIGINS.CONTACT
+        : APPOINTMENT_BOOKING_ORIGINS.ADMIN
     };
 
     // (APT-001) Siempre validamos el rango y los bloqueos dentro del mismo candado.

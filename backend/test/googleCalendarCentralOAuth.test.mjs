@@ -1821,6 +1821,7 @@ test('mover una cita canónica desde Google reagenda el no-show y crea seguimien
       googleEventId: attendedEventId,
       googleProviderCalendarId: googleFetch.calendarA,
       googleSyncStatus: 'synced',
+      bookingOrigin: 'public_calendar',
       title: 'Videollamada realizada',
       appointmentStatus: 'showed',
       status: 'showed',
@@ -1901,6 +1902,7 @@ test('mover una cita canónica desde Google reagenda el no-show y crea seguimien
     assert.equal(followUp.startTime, '2031-09-08T17:00:00.000Z')
     assert.equal(followUp.googleEventId, attendedEventId)
     assert.equal(followUp.followUpFromAppointmentId, attendedAppointmentId)
+    assert.equal(followUp.bookingOrigin, 'public_calendar')
     assert.equal(followUp.participants.length, 2)
     assert.equal(followUp.participants.every(participant => participant.contactId === contactId), true)
 
