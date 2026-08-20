@@ -433,6 +433,14 @@ En `/settings/calendars`:
 - `meetingUrl`: sólo aparece y se exige en modo `online`; acepta la URL de Zoom,
   Google Meet u otra plataforma HTTP/HTTPS. El backend la reemplaza al enviar
   por un enlace seguro ligado a la cita.
+- `description`: se edita en `Detalles > Lo básico` y alimenta el texto de la
+  URL pública aunque el calendario haya sido importado desde HighLevel.
+- `calendarCoverImage`: se edita en `Estilos y diseños` con
+  `ImageUploadField`. Admite JPG, PNG, WebP o AVIF de hasta 2 MB, URL pública y
+  eliminación. Un archivo nuevo se conserva como borrador local y sólo se sube
+  a Media (`module=appointments`) al guardar; cancelar no crea un asset huérfano.
+  El preview y el widget público regresan a la inicial del calendario si la URL
+  está vacía o la imagen ya no carga.
 
 El wizard usa ocho pasos: `Detalles`, `Disponibilidad`, `URL y Datos`, `Cobro`,
 `Mensajes automáticos`, `Avanzado`, `Eventos` y `Estilos y diseños`.

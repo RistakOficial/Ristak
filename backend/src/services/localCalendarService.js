@@ -458,6 +458,16 @@ function safeCalendarImageUrl(value, fallback = '') {
   }
 }
 
+function calendarCoverImageFromRecord(record = {}) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return ''
+  for (const key of ['calendarCoverImage', 'calendar_cover_image']) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      return safeCalendarImageUrl(record[key])
+    }
+  }
+  return ''
+}
+
 function toInt(value, fallback = 0) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
@@ -956,6 +966,13 @@ function getCalendarRawJsonWithBookingForm(calendar = {}, options = {}) {
         ''
       ))
     },
+    calendarCoverImage: safeCalendarImageUrl(firstDefined(
+      calendar.calendarCoverImage,
+      calendar.calendar_cover_image,
+      baseRaw.calendarCoverImage,
+      baseRaw.calendar_cover_image,
+      ''
+    )),
     bookingForm: normalizeCalendarBookingFormConfig(
       calendar.bookingForm ||
       calendar.booking_form ||
@@ -1636,6 +1653,7 @@ function calendarRowToApi(row = {}) {
     allowReschedule: row.allow_reschedule !== 0,
     allowCancellation: row.allow_cancellation !== 0,
     notes: row.notes || '',
+    calendarCoverImage: calendarCoverImageFromRecord(rawJson),
     bookingForm: normalizeCalendarBookingFormConfig(rawJson.bookingForm || rawJson.booking_form || rawJson),
     bookingCompletion: normalizeCalendarBookingCompletionConfig(rawJson.bookingCompletion || rawJson.booking_completion || rawJson),
     bookingPayment: normalizePaymentGateConfig(rawJson.bookingPayment || rawJson.booking_payment || {}),
@@ -2865,7 +2883,7 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
   }
   const fontStack = getCalendarBookingFontStack(effectiveBookingDisplay.fontFamily)
   const widgetTheme = normalizeCalendarBookingWidgetTheme(effectiveBookingDisplay.widgetTheme)
-  const coverImage = safeCalendarImageUrl(style.coverImage, calendar.calendarCoverImage || calendar.calendar_cover_image || '')
+  const coverImage = safeCalendarImageUrl(style.coverImage, calendarCoverImageFromRecord(calendar))
   const bookingCompletion = normalizeCalendarBookingCompletionConfig(calendar.bookingCompletion || calendar.booking_completion || {})
   const bookingPayment = normalizePaymentGateConfig(calendar.bookingPayment || calendar.booking_payment || {})
   const customEvents = normalizeCalendarCustomEventsConfig(calendar.customEvents || calendar.custom_events || calendar.metaEvent || calendar.meta_event || {})
@@ -3329,6 +3347,14 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
           return '';
         }
       };
+      const setAvatarFallback = () => {
+        if (!avatar) return;
+        avatar.textContent = '';
+        const initial = document.createElement('span');
+        initial.dataset.calendarInitial = 'true';
+        initial.textContent = String(calendar.name || 'R').trim()[0] || 'R';
+        avatar.appendChild(initial);
+      };
       const setAvatarImage = (value) => {
         if (!avatar) return;
         const imageUrl = cleanImageUrl(value);
@@ -3336,14 +3362,14 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         if (imageUrl) {
           const image = document.createElement('img');
           image.alt = '';
+          image.addEventListener('error', () => {
+            if (avatar.contains(image)) setAvatarFallback();
+          }, { once: true });
           image.src = imageUrl;
           avatar.appendChild(image);
           return;
         }
-        const initial = document.createElement('span');
-        initial.dataset.calendarInitial = 'true';
-        initial.textContent = String(calendar.name || 'R').trim()[0] || 'R';
-        avatar.appendChild(initial);
+        setAvatarFallback();
       };
       const applyEmbedStyle = (style = {}) => {
         const designMode = style.designMode === 'original' ? 'original' : 'custom';
@@ -8289,6 +8315,7 @@ export function buildHighLevelCalendarPayload(calendar = {}, locationId) {
     widgetType: calendar.widgetType || 'classic',
     eventTitle: calendar.eventTitle || calendar.name || 'Cita',
     eventColor: calendar.eventColor || DEFAULT_EVENT_COLOR,
+    calendarCoverImage: calendarCoverImageFromRecord(calendar),
     slotDuration: toInt(calendar.slotDuration, 60),
     slotDurationUnit: calendar.slotDurationUnit || 'mins',
     slotInterval: toInt(calendar.slotInterval, toInt(calendar.slotDuration, 60)),

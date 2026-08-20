@@ -21,6 +21,8 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   MetaParameterValueInput,
+  ExpandableTextareaField,
+  ImageUploadField,
   type MetaParameterVariable,
   WeeklyAvailabilityEditor,
   type WeeklyAvailability,
@@ -100,6 +102,7 @@ import {
   type MessageTemplate
 } from '@/services/messageTemplatesService'
 import { sitesService, type PublicSite } from '@/services/sitesService'
+import mediaService from '@/services/mediaService'
 import AppointmentReminderModal from '@/pages/Appointments/AppointmentReminderModal'
 import {
   BASE_VARIABLES,
@@ -189,6 +192,8 @@ const CALENDAR_DEFAULT_FORM_SITE_ID = 'system-calendar-booking-form'
 const CALENDAR_DEFAULT_COMPLETION_MESSAGE = 'Listo. Tu cita quedó agendada.'
 const CALENDAR_DEFAULT_META_EVENT_NAME = 'Schedule'
 const CALENDAR_DEFAULT_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
+const MAX_CALENDAR_COVER_IMAGE_SIZE = 2 * 1024 * 1024
+const ALLOWED_CALENDAR_COVER_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif'])
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i
 const CALENDAR_BOOKING_DISPLAY_COLOR_DEFAULTS: CalendarBookingDisplayColors = {
   accent: '#3b82f6',
@@ -810,6 +815,19 @@ const isValidCalendarMeetingUrl = (value: string) => {
   try {
     const parsed = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`)
     return ['http:', 'https:'].includes(parsed.protocol) && parsed.hostname.includes('.')
+  } catch {
+    return false
+  }
+}
+
+const isValidCalendarCoverImage = (value: string) => {
+  const text = value.trim()
+  if (!text || /^\/(?!\/)/.test(text)) return true
+  if (/^data:/i.test(text)) {
+    return /^data:image\/(?:jpeg|png|webp|avif);base64,/i.test(text)
+  }
+  try {
+    return ['http:', 'https:'].includes(new URL(text).protocol)
   } catch {
     return false
   }
@@ -1880,6 +1898,12 @@ export const CalendarsConfiguration: React.FC = () => {
   const handleSaveCalendarConfig = async () => {
     if (!selectedCalendar) return
 
+    if (!isValidCalendarCoverImage(selectedCalendar.calendarCoverImage || '')) {
+      setCalendarWizardStep('design')
+      showToast('error', 'Imagen inválida', 'Sube una imagen o pega una URL completa con http/https.')
+      return
+    }
+
     // Guardamos desde el borrador vivo (lo que realmente configuró la persona),
     // no desde openHours, para no perder ningún bloque en la conversión.
     const weeklyAvailability = resolveEditingAvailability(selectedCalendar)
@@ -1966,14 +1990,33 @@ export const CalendarsConfiguration: React.FC = () => {
         return
       }
 
+      let nextCalendarCoverImage = selectedCalendar.calendarCoverImage?.trim() || ''
+      if (/^data:image\//i.test(nextCalendarCoverImage)) {
+        const uploaded = await mediaService.uploadDataUrl({
+          fileBase64: nextCalendarCoverImage,
+          filename: `calendar-cover-${selectedCalendar.id}`,
+          module: 'appointments',
+          moduleEntityId: selectedCalendar.id,
+          isPublic: true
+        })
+        nextCalendarCoverImage = uploaded.publicUrl || `/api/media/assets/${encodeURIComponent(uploaded.id)}/file`
+        setSelectedCalendar(current => (
+          current?.id === selectedCalendar.id
+            ? { ...current, calendarCoverImage: nextCalendarCoverImage }
+            : current
+        ))
+      }
+
       const updateData: any = {
         name: selectedCalendar.name?.trim() || 'Calendario',
+        description: selectedCalendar.description?.trim() || '',
         slug: nextSlug,
         widgetSlug: nextSlug,
         eventTitle: selectedCalendar.eventTitle?.trim() || selectedCalendar.name?.trim() || 'Cita',
         meetingMode: selectedCalendar.meetingMode === 'online' ? 'online' : 'in_person',
         meetingUrl: selectedCalendar.meetingMode === 'online' ? selectedCalendar.meetingUrl?.trim() || '' : '',
         notes: selectedCalendar.notes?.trim() || '',
+        calendarCoverImage: nextCalendarCoverImage,
         eventColor: selectedCalendar.eventColor || '#3b82f6',
         isActive: selectedCalendar.isActive,
         slotDuration: selectedCalendar.slotDuration,
@@ -2612,6 +2655,31 @@ export const CalendarsConfiguration: React.FC = () => {
       setSelectedCalendar({ ...selectedCalendar, ...patch })
     }
 
+    const handleCalendarCoverImageFile = (file: File) => {
+      if (!ALLOWED_CALENDAR_COVER_IMAGE_TYPES.has(file.type)) {
+        showToast('error', 'Formato no compatible', 'Usa una imagen JPG, PNG, WebP o AVIF.')
+        return
+      }
+      if (file.size > MAX_CALENDAR_COVER_IMAGE_SIZE) {
+        showToast('error', 'Imagen muy pesada', 'La imagen del calendario debe pesar máximo 2 MB.')
+        return
+      }
+
+      const reader = new FileReader()
+      reader.onload = () => {
+        if (typeof reader.result !== 'string') return
+        setSelectedCalendar(current => (
+          current?.id === selectedCalendar.id
+            ? { ...current, calendarCoverImage: reader.result as string }
+            : current
+        ))
+      }
+      reader.onerror = () => {
+        showToast('error', 'No se pudo leer la imagen', 'Intenta elegir el archivo otra vez.')
+      }
+      reader.readAsDataURL(file)
+    }
+
     const customFormSites = hasCalendarCustomFormsAccess
       ? formSites.filter(site => site.id !== CALENDAR_DEFAULT_FORM_SITE_ID)
       : []
@@ -2912,7 +2980,8 @@ export const CalendarsConfiguration: React.FC = () => {
     const previewDuration = Math.max(1, Number(selectedCalendar.slotDuration || 60))
     const previewCalendarName = selectedCalendar.name || 'Mi calendario'
     const previewEventTitle = selectedCalendar.eventTitle || 'Cita'
-    const previewDescription = selectedCalendar.description || 'Calendario principal creado en Ristak'
+    const previewDescription = selectedCalendar.description || 'Selecciona una fecha y horario disponible para confirmar tu cita.'
+    const previewCoverImage = selectedCalendar.calendarCoverImage?.trim() || ''
     const previewStyle = {
       '--calendar-preview-accent': bookingDisplayConfig.colors.accent,
       '--calendar-preview-bg': bookingDisplayConfig.colors.background,
@@ -2971,7 +3040,15 @@ export const CalendarsConfiguration: React.FC = () => {
             <aside className={pageStyles.bookingPreviewIntro}>
               {bookingDisplayConfig.showIcon && (
                 <div className={pageStyles.bookingPreviewAvatar}>
-                  {(previewCalendarName.trim()[0] || 'R').toUpperCase()}
+                  <span>{(previewCalendarName.trim()[0] || 'R').toUpperCase()}</span>
+                  {previewCoverImage && (
+                    <img
+                      key={previewCoverImage}
+                      src={previewCoverImage}
+                      alt=""
+                      onError={(event) => event.currentTarget.remove()}
+                    />
+                  )}
                 </div>
               )}
               {bookingDisplayConfig.showEventTitle && <span>{previewEventTitle}</span>}
@@ -3210,6 +3287,18 @@ export const CalendarsConfiguration: React.FC = () => {
                         placeholder: 'Ej. Cita con {{contact.full_name}}',
                         help: 'Este texto será el título de cada cita nueva. Puedes meter parámetros.'
                       })}
+
+                      <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                        <ExpandableTextareaField
+                          id={`calendar-description-${calendar.id}`}
+                          label="Descripción pública"
+                          description="Cuenta qué incluye la cita. Este texto aparece en la página pública y puedes cambiarlo aunque el calendario venga de HighLevel."
+                          value={selectedCalendar.description || ''}
+                          onChange={(value) => updateSelectedCalendar({ description: value })}
+                          rows={5}
+                          placeholder="Ej. En esta asesoría revisaremos tu caso y definiremos los siguientes pasos."
+                        />
+                      </div>
 
                       <div className={pageStyles.editorField}>
                         <span>Confirmación</span>
@@ -4220,6 +4309,22 @@ export const CalendarsConfiguration: React.FC = () => {
                   </div>
                   {renderCalendarBookingPreview()}
                   <div className={pageStyles.editorFields}>
+                    <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+                      <ImageUploadField
+                        id={`calendar-cover-image-${calendar.id}`}
+                        label="Imagen del calendario"
+                        description="Sube la portada que verá el contacto. Si la imagen anterior de HighLevel ya no existe, reemplázala aquí y se acabó el signo de interrogación."
+                        value={selectedCalendar.calendarCoverImage || ''}
+                        fallbackText={selectedCalendar.name || 'R'}
+                        previewAlt={`Imagen de ${selectedCalendar.name || 'calendario'}`}
+                        onFileSelect={handleCalendarCoverImageFile}
+                        onRemove={() => updateSelectedCalendar({ calendarCoverImage: '' })}
+                        onUrlChange={(value) => updateSelectedCalendar({ calendarCoverImage: value })}
+                        helperText="JPG, PNG, WebP o AVIF · máximo 2 MB. También puedes pegar una URL pública."
+                        disabled={savingConfig}
+                      />
+                    </div>
+
                     <label className={pageStyles.editorField}>
                       <span>Vista pública</span>
                       <CustomSelect

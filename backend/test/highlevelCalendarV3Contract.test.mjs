@@ -49,6 +49,8 @@ test('HighLevel calendar create and update use the current v3 contract', async (
 test('calendar payload canonicalizes legacy Sunday before sending openHours', () => {
   const payload = buildHighLevelCalendarPayload({
     name: 'Agenda',
+    description: 'Descripción editable desde Ristak',
+    calendarCoverImage: 'https://cdn.example.test/calendar-cover.webp',
     availabilityScheduleConfigured: true,
     openHours: [{
       daysOfTheWeek: [7],
@@ -60,6 +62,21 @@ test('calendar payload canonicalizes legacy Sunday before sending openHours', ()
     daysOfTheWeek: [0],
     hours: [{ openHour: 9, openMinute: 0, closeHour: 17, closeMinute: 0 }]
   }])
+  assert.equal(payload.description, 'Descripción editable desde Ristak')
+  assert.equal(payload.calendarCoverImage, 'https://cdn.example.test/calendar-cover.webp')
+
+  const unsafeImagePayload = buildHighLevelCalendarPayload({
+    name: 'Agenda sin imagen insegura',
+    calendarCoverImage: 'data:image/svg+xml,<svg onload="alert(1)"></svg>'
+  }, 'loc_test')
+  assert.equal(unsafeImagePayload.calendarCoverImage, '')
+
+  const clearedImagePayload = buildHighLevelCalendarPayload({
+    name: 'Agenda sin portada',
+    calendarCoverImage: '',
+    calendar_cover_image: 'https://cdn.example.test/legacy-cover.webp'
+  }, 'loc_test')
+  assert.equal(clearedImagePayload.calendarCoverImage, '')
 })
 
 test('successful calendar sync clears a previous provider error', async () => {

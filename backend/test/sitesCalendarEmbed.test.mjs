@@ -219,6 +219,22 @@ test('public calendar applies per-embed display overrides from style params', ()
   assert.doesNotMatch(hiddenName, /<h1>Agenda overrides<\/h1>/)
 })
 
+test('public calendar replaces a broken cover image with the calendar initial', () => {
+  const html = renderPublicCalendarHtml({
+    id: 'calendar-broken-cover',
+    slug: 'agenda-broken-cover',
+    name: 'Agenda médica',
+    calendarCoverImage: 'https://cdn.example.test/missing-cover.webp',
+    slotDuration: 30,
+    eventColor: '#146FC5'
+  })
+
+  assert.match(html, /const setAvatarFallback = \(\) => \{/)
+  assert.match(html, /image\.addEventListener\('error', \(\) => \{/)
+  assert.match(html, /if \(avatar\.contains\(image\)\) setAvatarFallback\(\);/)
+  assert.match(html, /initial\.dataset\.calendarInitial = 'true';/)
+})
+
 test('public calendar renders configured widget themes and per-embed theme overrides', () => {
   const calendar = {
     id: 'calendar-widget-theme',

@@ -222,6 +222,9 @@ test('mirrored HighLevel calendar and appointment changes remain pending until r
   const remoteCalendarId = `ghl_remote_pending_${suffix}`
   const appointmentId = `ghl_appt_local_${suffix}`
   const remoteAppointmentId = `ghl_appt_remote_${suffix}`
+  const calendarSlug = `ghl-pending-${suffix}`
+  const importedCoverImage = 'https://cdn.example.test/calendar-imported.webp'
+  const editedCoverImage = 'https://cdn.example.test/calendar-edited.webp'
   const highLevelSnapshot = await snapshotRows('highlevel_config')
   const start = DateTime.utc().plus({ days: 20 }).set({ hour: 16, minute: 0, second: 0, millisecond: 0 })
   const end = start.plus({ minutes: 60 })
@@ -233,8 +236,10 @@ test('mirrored HighLevel calendar and appointment changes remain pending until r
       ghlCalendarId: remoteCalendarId,
       locationId: 'loc_disconnected_pending',
       name: 'Agenda pendiente GHL',
-      slug: `ghl-pending-${suffix}`,
-      widgetSlug: `ghl-pending-${suffix}`,
+      description: 'Descripción importada desde HighLevel',
+      calendarCoverImage: importedCoverImage,
+      slug: calendarSlug,
+      widgetSlug: calendarSlug,
       source: 'ghl',
       openHours: [
         {
@@ -250,8 +255,45 @@ test('mirrored HighLevel calendar and appointment changes remain pending until r
       syncStatus: 'synced'
     })
 
-    const updatedCalendar = await updateLocalCalendar(calendarId, { name: 'Agenda editada sin GHL' }, { syncStatus: 'pending' })
+    const importedCalendar = await getPublicCalendarBySlug(calendarSlug)
+    assert.equal(importedCalendar?.description, 'Descripción importada desde HighLevel')
+    assert.equal(importedCalendar?.calendarCoverImage, importedCoverImage)
+
+    const updatedCalendar = await updateLocalCalendar(calendarId, {
+      name: 'Agenda editada sin GHL',
+      description: 'Descripción editada desde Ristak',
+      calendarCoverImage: editedCoverImage
+    }, { syncStatus: 'pending' })
     assert.equal(updatedCalendar.syncStatus, 'pending')
+    assert.equal(updatedCalendar.description, 'Descripción editada desde Ristak')
+    assert.equal(updatedCalendar.calendarCoverImage, editedCoverImage)
+
+    const storedCalendar = await db.get(
+      'SELECT description, raw_json FROM calendars WHERE id = ?',
+      [calendarId]
+    )
+    assert.equal(storedCalendar?.description, 'Descripción editada desde Ristak')
+    assert.equal(JSON.parse(storedCalendar?.raw_json || '{}').calendarCoverImage, editedCoverImage)
+
+    const staleRemoteRefresh = await upsertLocalCalendar({
+      id: calendarId,
+      ghlCalendarId: remoteCalendarId,
+      locationId: 'loc_disconnected_pending',
+      name: 'Agenda pendiente GHL',
+      description: 'Descripción vieja de HighLevel',
+      calendarCoverImage: importedCoverImage,
+      slug: calendarSlug,
+      widgetSlug: calendarSlug,
+      source: 'ghl'
+    }, {
+      id: calendarId,
+      source: 'ghl',
+      ghlCalendarId: remoteCalendarId,
+      locationId: 'loc_disconnected_pending',
+      syncStatus: 'synced'
+    })
+    assert.equal(staleRemoteRefresh.description, 'Descripción editada desde Ristak')
+    assert.equal(staleRemoteRefresh.calendarCoverImage, editedCoverImage)
 
     await upsertLocalAppointment({
       id: appointmentId,
@@ -289,6 +331,13 @@ test('mirrored HighLevel calendar and appointment changes remain pending until r
     )
     assert.equal(deletedAppointment?.sync_status, 'pending_delete')
     assert.ok(deletedAppointment?.deleted_at)
+
+    const clearedCalendar = await updateLocalCalendar(calendarId, {
+      calendarCoverImage: ''
+    }, { syncStatus: 'pending' })
+    assert.equal(clearedCalendar.calendarCoverImage, '')
+    const clearedRow = await db.get('SELECT raw_json FROM calendars WHERE id = ?', [calendarId])
+    assert.equal(JSON.parse(clearedRow?.raw_json || '{}').calendarCoverImage, '')
   } finally {
     await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => undefined)
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)

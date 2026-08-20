@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  assertAppointmentsImageUploadContract,
   directChatCompatibilityFromRequest,
   mediaUploadRequestDescriptor,
   replaceMediaAssetHandler,
@@ -19,7 +20,8 @@ import { db } from '../src/config/database.js'
 import {
   resetCentralStorageConfigCache,
   softDeleteMediaAsset,
-  uploadMediaAsset
+  uploadMediaAsset,
+  uploadMediaAssetFromDataUrl
 } from '../src/services/mediaStorageService.js'
 import { createMediaUploadRequestHash } from '../src/services/mediaUploadSafetyService.js'
 import {
@@ -108,6 +110,7 @@ test('el query de upload manda sobre el body y autoriza media de chat como chat'
   assert.equal(resolveMediaUploadModule({ query: {}, body: { module: 'sites' } }), 'sites')
   assert.equal(resolveMediaUploadAccessModule({ mediaUploadModule: 'sites' }), 'sites')
   assert.equal(resolveMediaUploadAccessModule({ mediaUploadModule: 'forms' }), 'sites')
+  assert.equal(resolveMediaUploadAccessModule({ mediaUploadModule: 'appointments' }), 'appointments')
   assert.equal(resolveMediaUploadAccessModule({ mediaUploadModule: 'media' }), 'settings_media')
   assert.equal(resolveMediaUploadAccessModule({ directChatUpload: { enabled: true } }), 'chat')
   assert.equal(directChatCompatibilityFromRequest({
@@ -130,6 +133,41 @@ test('el query de upload manda sobre el body y autoriza media de chat como chat'
       chatMediaKind: 'video'
     }
   }).enabled, false, 'el multipart no puede activar después el parser directo de 25 MB')
+})
+
+test('la subida de portadas de calendario sólo acepta imágenes pequeñas', () => {
+  assert.doesNotThrow(() => assertAppointmentsImageUploadContract({
+    module: 'appointments',
+    dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl5rXcAAAAASUVORK5CYII='
+  }))
+  assert.throws(
+    () => assertAppointmentsImageUploadContract({
+      module: 'appointments',
+      dataUrl: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='
+    }),
+    error => error?.code === 'appointments_image_type_invalid' && error?.status === 400
+  )
+  assert.throws(
+    () => assertAppointmentsImageUploadContract({
+      module: 'appointments',
+      mimeType: 'image/png',
+      size: (2 * 1024 * 1024) + 1
+    }),
+    error => error?.code === 'appointments_image_too_large' && error?.status === 413
+  )
+})
+
+test('storage rechaza una portada cuyo contenido real no es imagen', async () => {
+  await assert.rejects(
+    uploadMediaAssetFromDataUrl({
+      businessId: `calendar_cover_sniff_${Date.now()}`,
+      module: 'appointments',
+      moduleEntityId: 'calendar_test',
+      filename: 'calendar-cover.png',
+      fileBase64: 'data:image/png;base64,aGVsbG8='
+    }),
+    error => error?.code === 'appointments_image_type_invalid' && error?.status === 400
+  )
 })
 
 test('Sites conserva el módulo autorizado del query y rechaza un body contradictorio', () => {

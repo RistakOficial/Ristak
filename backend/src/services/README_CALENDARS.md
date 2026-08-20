@@ -241,6 +241,24 @@ crear la cita, el backend resuelve el contacto local con esta prioridad:
 2. Telefono existente.
 3. Contacto nuevo.
 
+La presentación propia del calendario también es local: `description` vive en
+la columna del calendario y `calendarCoverImage` se conserva de forma canónica
+en `raw_json`. Ambos valores se devuelven en la API autenticada y pública, se
+pueden editar aunque el registro sea un espejo de HighLevel desconectado y se
+incluyen en el PUT/reintento v3 cuando la integración está disponible. Vaciar la
+portada queda persistido como cadena vacía; un refresh remoto viejo no puede
+restaurarla mientras exista una edición local pendiente. El HTML público sólo
+acepta rutas internas o URLs HTTP/HTTPS y, si la imagen falla al cargar, sustituye
+el `<img>` por la inicial del calendario para no mostrar el ícono roto del
+navegador.
+
+Las portadas subidas desde Configuración usan `POST /api/media/upload?module=appointments`.
+Ese módulo se autoriza con la licencia y el permiso de Citas; no obliga a comprar
+Sites/Media ni permite abrir la biblioteca administrativa completa. El backend
+repite el límite de 2 MB y sólo acepta MIME JPG, PNG, WebP o AVIF, incluso si la
+petición no vino de la interfaz; Media vuelve a detectar el tipo por los bytes y
+rechaza archivos disfrazados con un MIME de imagen.
+
 Si el correo ya existe y el telefono pertenece a otro contacto, el correo manda:
 la cita se agenda sobre el contacto del correo y el helper de identidad resuelve
 el telefono sin romper el indice unico `contacts.email`. No cambies esto a

@@ -4337,6 +4337,16 @@ Reglas base:
   calendarios. Una lista vacía en `app_config.attribution_calendar_ids` significa
   todos —incluidos los que se creen o sincronicen después— y la UI debe mostrar
   ese estado como activo; una lista con IDs es una selección explícita.
+- En `Detalles > Lo básico` se edita la descripción pública y en `Estilos y
+  diseños` se administra la imagen del calendario mediante archivo, URL o la
+  acción de quitar. Los archivos aceptados (JPG, PNG, WebP o AVIF, máximo 2 MB)
+  se suben a Media sólo al guardar; el preview se actualiza desde el borrador.
+  `description` se guarda en la columna canónica y `calendarCoverImage` en
+  `raw_json`, por lo que ambas propiedades siguen editables en calendarios
+  importados aunque HighLevel esté desconectado. Si una URL vieja deja de cargar,
+  tanto el preview como la URL pública muestran la inicial del calendario en vez
+  del ícono de imagen rota. La subida `module=appointments` usa la licencia y el
+  permiso de Citas; no depende del acceso a la biblioteca de Media.
 - La cabecera de Configuración > Calendarios refleja el estado real de Google:
   cuando la integración está activa muestra un check y `Conectado a Google
   Calendar` sobre un botón verde con icono y texto de alto contraste; en modo
@@ -4424,7 +4434,8 @@ Reglas base:
 - El espejo saliente de calendarios usa el contrato vigente `v3` de HighLevel.
   Antes de crear o actualizar el calendario remoto, `openHours` se canoniza al
   formato de días `0..6` y rangos completos; el domingo legacy `7` se convierte
-  en `0` y nunca se manda un horario local ambiguo al proveedor. La creación
+  en `0` y nunca se manda un horario local ambiguo al proveedor. El payload
+  incluye también `description` y la URL segura de `calendarCoverImage`. La creación
   incluye la ubicación requerida, pero una actualización omite `locationId` y
   cualquier identificador inmutable porque HighLevel v3 los rechaza en el PUT.
   Cuando el reintento termina bien, también se limpia el error remoto anterior

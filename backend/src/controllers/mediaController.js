@@ -220,6 +220,66 @@ function mediaUploadRequestError(message, code = 'media_upload_module_mismatch')
   return error
 }
 
+const APPOINTMENTS_IMAGE_UPLOAD_MAX_BYTES = 2 * 1024 * 1024
+const APPOINTMENTS_IMAGE_UPLOAD_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/avif'
+])
+
+export function assertAppointmentsImageUploadContract({
+  module = '',
+  mimeType = '',
+  size = null,
+  dataUrl = ''
+} = {}) {
+  if (cleanString(module).toLowerCase() !== 'appointments') return
+
+  let normalizedMimeType = cleanString(mimeType).split(';')[0].toLowerCase()
+  let normalizedSize = Number(size)
+  if (dataUrl) {
+    const match = /^data:([^;,]+)(?:;[^,]*)?;base64,(.+)$/s.exec(cleanString(dataUrl))
+    if (!match) {
+      throw mediaUploadRequestError(
+        'La portada del calendario debe ser una imagen válida.',
+        'appointments_image_invalid'
+      )
+    }
+    normalizedMimeType = cleanString(match[1]).toLowerCase()
+    const encoded = match[2].replace(/\s+/g, '')
+    if (!/^[a-z0-9+/]*={0,2}$/i.test(encoded)) {
+      throw mediaUploadRequestError(
+        'La portada del calendario contiene datos inválidos.',
+        'appointments_image_invalid'
+      )
+    }
+    const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0
+    normalizedSize = Math.max(0, Math.floor((encoded.length * 3) / 4) - padding)
+  }
+
+  if (!APPOINTMENTS_IMAGE_UPLOAD_MIME_TYPES.has(normalizedMimeType)) {
+    throw mediaUploadRequestError(
+      'La portada del calendario debe ser JPG, PNG, WebP o AVIF.',
+      'appointments_image_type_invalid'
+    )
+  }
+  if (!Number.isFinite(normalizedSize) || normalizedSize <= 0) {
+    throw mediaUploadRequestError(
+      'La portada del calendario está vacía.',
+      'appointments_image_invalid'
+    )
+  }
+  if (normalizedSize > APPOINTMENTS_IMAGE_UPLOAD_MAX_BYTES) {
+    const error = mediaUploadRequestError(
+      'La portada del calendario debe pesar máximo 2 MB.',
+      'appointments_image_too_large'
+    )
+    error.status = 413
+    throw error
+  }
+}
+
 function mcpMediaUploadError(message, status = 400, code = 'invalid_mcp_media_upload') {
   const error = new Error(message)
   error.status = status
@@ -952,6 +1012,14 @@ async function compatibleReplayBelongsToAccount(response, row, expectedAccountId
 export async function uploadInputFromRequest(req) {
   const body = req.body || {}
   const common = trustedUploadContextFromRequest(req)
+  const bodyDataUrl = body.fileBase64 || body.file_base64 || body.dataUrl || body.content || ''
+
+  assertAppointmentsImageUploadContract({
+    module: common.module,
+    mimeType: req.file?.mimetype,
+    size: req.file?.size ?? req.file?.buffer?.length,
+    dataUrl: req.file ? '' : bodyDataUrl
+  })
 
   if (req.file?.path) {
     const chatCompatibility = directChatCompatibilityFromRequest(req)
@@ -1010,7 +1078,7 @@ export async function uploadInputFromRequest(req) {
     mode: 'dataUrl',
     input: {
       ...common,
-      fileBase64: body.fileBase64 || body.file_base64 || body.dataUrl || body.content,
+      fileBase64: bodyDataUrl,
       filename: body.filename || body.fileName || body.originalFilename || 'archivo'
     }
   }

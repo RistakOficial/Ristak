@@ -212,6 +212,35 @@ const MEDIA_MODULES = new Set([
   'ad_creatives',   // creativos de anuncios (Meta Ads) rehospedados
   'other'
 ])
+const APPOINTMENTS_IMAGE_UPLOAD_MAX_BYTES = 2 * 1024 * 1024
+const APPOINTMENTS_IMAGE_UPLOAD_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/avif'
+])
+
+function matchesAppointmentsImageSignature(buffer, mimeType) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) return false
+  const normalizedMimeType = mimeBase(mimeType)
+  if (normalizedMimeType === 'image/jpeg') {
+    return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff
+  }
+  if (normalizedMimeType === 'image/png') {
+    return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+  }
+  if (normalizedMimeType === 'image/webp') {
+    return buffer.length >= 12 &&
+      buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+      buffer.subarray(8, 12).toString('ascii') === 'WEBP'
+  }
+  if (normalizedMimeType === 'image/avif') {
+    return buffer.length >= 12 &&
+      buffer.subarray(4, 8).toString('ascii') === 'ftyp' &&
+      /avif|avis/.test(buffer.subarray(8, Math.min(buffer.length, 64)).toString('ascii'))
+  }
+  return false
+}
 
 const MIME_EXTENSION = {
   'image/jpeg': 'jpg',
@@ -4593,6 +4622,25 @@ export async function uploadMediaAsset(input = {}) {
         : detectedMedia.mimeType
     }
     const mediaType = mediaTypeFromMime(detected.mimeType)
+    if (module === 'appointments') {
+      if (
+        !APPOINTMENTS_IMAGE_UPLOAD_MIME_TYPES.has(mimeBase(detected.mimeType)) ||
+        !matchesAppointmentsImageSignature(headerSample, detected.mimeType)
+      ) {
+        throw errorWithStatus(
+          'La portada del calendario debe ser JPG, PNG, WebP o AVIF.',
+          400,
+          'appointments_image_type_invalid'
+        )
+      }
+      if (sizeBytes > APPOINTMENTS_IMAGE_UPLOAD_MAX_BYTES) {
+        throw errorWithStatus(
+          'La portada del calendario debe pesar máximo 2 MB.',
+          413,
+          'appointments_image_too_large'
+        )
+      }
+    }
     assertPremiumStreamReady(config, { mediaType, module })
     validateMediaType({ mimeType: detected.mimeType, mediaType, sizeBytes, settings: config })
 

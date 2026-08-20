@@ -153,6 +153,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Código telefónico internacional | `<PhoneCountryCodeSelect>`; muestra únicamente bandera + código (`🇲🇽 +52`) | un select local que agregue el nombre del país |
 | Campo numérico | `<NumberInput>`; en primitivas móviles, `type="text"` + `inputMode="numeric\|decimal"` | `<input type="number">` nativo o controles con flechas subir/bajar |
 | Texto largo enfocable | `<ExpandableTextareaField>`; comparte el mismo valor entre el campo y su editor `<Modal size="xl">` | duplicar estado, recortar silenciosamente o construir un overlay local |
+| Imagen editable con preview | `<ImageUploadField>`; concentra archivo, URL pública, preview con fallback y acción de quitar | duplicar inputs de archivo, previews y estados de imagen rota dentro de cada página |
 | Ruta / slug con prefijo fijo | `<PathInput prefix="…">` | un wrapper con prefijo + `<input className={styles.input}>` que crea doble contenedor |
 | Menú | `<DropdownMenu>`; se portalea, evita colisiones y cambia arriba/abajo según el espacio real | posicionar `DropdownMenuContent` con `top`/`right`/`bottom`/`left` desde CSS local |
 | Centro de notificaciones del topbar | `<NotificationCenter>`; usa `<DropdownMenu>`, lista plana con divisores, acciones de lectura e historial en el mismo panel | dropdown manual, cards anidadas o estado leído en `localStorage` |

@@ -45,11 +45,15 @@ const router = express.Router()
 const requireMediaAccess = requireModuleAccess('settings_media')
 const requireMediaLicense = requireFeature('settings_media')
 const requireChatAccess = requireModuleAccess('chat')
+const requireAppointmentsAccess = requireModuleAccess('appointments')
 const requireSitesAccess = requireModuleAccess('sites')
+const requireAppointmentsLicense = requireFeature('appointments')
 const requireSitesLicense = requireFeature('sites')
 const requireDevelopersLicense = requireFeature('developers')
 const SITES_MEDIA_UPLOAD_MODULES = new Set(['sites', 'forms', 'landing'])
+const APPOINTMENTS_MEDIA_UPLOAD_MODULES = new Set(['appointments'])
 const maxChatUploadBytes = 25 * 1024 * 1024
+const maxAppointmentsImageUploadBytes = 2 * 1024 * 1024
 const upload = multer({
   dest: join(tmpdir(), 'ristak-media-uploads'),
   limits: {
@@ -77,6 +81,17 @@ const chatUpload = multer({
     headerPairs: 64
   }
 })
+const appointmentsImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: maxAppointmentsImageUploadBytes,
+    files: 1,
+    fields: 8,
+    parts: 9,
+    fieldSize: 8 * 1024,
+    headerPairs: 64
+  }
+})
 
 function formatUploadLimit(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return '600 MB'
@@ -87,7 +102,12 @@ function formatUploadLimit(bytes) {
 
 function uploadSingleFile(req, res, next) {
   const isDirectChatUpload = Boolean(req.directChatUpload?.enabled)
-  const parser = isDirectChatUpload ? chatUpload : upload
+  const isAppointmentsImageUpload = req.mediaUploadModule === 'appointments'
+  const parser = isDirectChatUpload
+    ? chatUpload
+    : isAppointmentsImageUpload
+      ? appointmentsImageUpload
+      : upload
   parser.single('file')(req, res, (error) => {
     if (!error) {
       next()
@@ -95,9 +115,14 @@ function uploadSingleFile(req, res, next) {
     }
 
     if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+      const uploadLimit = isDirectChatUpload
+        ? maxChatUploadBytes
+        : isAppointmentsImageUpload
+          ? maxAppointmentsImageUploadBytes
+          : MEDIA_MAX_UPLOAD_BYTES
       res.status(413).json({
         success: false,
-        error: `El archivo pesa demasiado. Límite máximo: ${formatUploadLimit(isDirectChatUpload ? maxChatUploadBytes : MEDIA_MAX_UPLOAD_BYTES)}.`,
+        error: `El archivo pesa demasiado. Límite máximo: ${formatUploadLimit(uploadLimit)}.`,
         code: 'media_upload_too_large'
       })
       return
@@ -148,6 +173,7 @@ export function resolveMediaUploadModule(req = {}) {
 
 export function resolveMediaUploadAccessModule(req = {}) {
   if (req.directChatUpload?.enabled) return 'chat'
+  if (APPOINTMENTS_MEDIA_UPLOAD_MODULES.has(req.mediaUploadModule || resolveMediaUploadModule(req))) return 'appointments'
   return SITES_MEDIA_UPLOAD_MODULES.has(req.mediaUploadModule || resolveMediaUploadModule(req))
     ? 'sites'
     : 'settings_media'
@@ -157,6 +183,12 @@ export function requireMediaUploadAccess(req, res, next) {
   const accessModule = resolveMediaUploadAccessModule(req)
   if (accessModule === 'chat') {
     return requireChatAccess(req, res, next)
+  }
+  if (accessModule === 'appointments') {
+    return requireAppointmentsLicense(req, res, (licenseError) => {
+      if (licenseError) return next(licenseError)
+      return requireAppointmentsAccess(req, res, next)
+    })
   }
   if (accessModule === 'sites') {
     return requireSitesLicense(req, res, (licenseError) => {
@@ -213,7 +245,7 @@ router.get(
 
 router.use(requireAuth)
 
-// Todas las superficies autenticadas (Chat, Sites, Automatizaciones y Media)
+// Todas las superficies autenticadas (Chat, Calendarios, Sites, Automatizaciones y Media)
 // consultan el mismo guard antes de transmitir contenido. El límite duro se
 // vuelve a validar dentro de mediaStorageService al reservar los bytes.
 router.post('/upload-preflight', getMediaUploadPreflightHandler)

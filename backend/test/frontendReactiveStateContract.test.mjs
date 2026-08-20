@@ -64,6 +64,23 @@ test('la cabecera de calendarios comunica claramente el estado de Google Calenda
   assert.match(styles, /:global\(body\.light\) \.googleHeaderButtonConnected \{[\s\S]*?color: var\(--text\);/)
 })
 
+test('configuración de calendarios permite editar descripción y portada sin depender de HighLevel', async () => {
+  const [page, styles, imageField] = await Promise.all([
+    readSource('frontend/src/pages/Settings/CalendarsConfiguration.tsx'),
+    readSource('frontend/src/pages/Settings/CalendarsConfiguration.module.css'),
+    readSource('frontend/src/components/common/ImageUploadField/ImageUploadField.tsx')
+  ])
+
+  assert.match(page, /<ExpandableTextareaField[\s\S]*?label="Descripción pública"/)
+  assert.match(page, /<ImageUploadField[\s\S]*?label="Imagen del calendario"/)
+  assert.match(page, /description: selectedCalendar\.description\?\.trim\(\) \|\| ''/)
+  assert.match(page, /calendarCoverImage: nextCalendarCoverImage/)
+  assert.match(page, /mediaService\.uploadDataUrl\(\{[\s\S]*?module: 'appointments'/)
+  assert.match(styles, /\.bookingPreviewAvatar img \{[\s\S]*?object-fit: cover;/)
+  assert.match(imageField, /onError=\{\(\) => setPreviewFailed\(true\)\}/)
+  assert.match(imageField, /La imagen se subirá a Media cuando guardes los cambios\./)
+})
+
 test('la disponibilidad compartida de IA no reutiliza snapshots de otra cuenta', async () => {
   const source = await readSource('frontend/src/hooks/useAIAvailability.ts')
 
