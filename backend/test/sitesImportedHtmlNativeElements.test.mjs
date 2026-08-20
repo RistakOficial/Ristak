@@ -1370,6 +1370,16 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
     assert.match(html, /const progressVisitorId = \(\) =>/)
     assert.match(html, /ristak:video-gate-progress:v2/)
     assert.match(html, /legacyStorageKey/)
+    assert.equal(
+      html.includes('Math.min(100, (uniqueWatchedSecondsValue / durationSeconds) * 100)'),
+      true
+    )
+    assert.equal(
+      html.includes('Math.min(100, (uniqueWatchedSeconds(state) / duration) * 100)'),
+      true
+    )
+    assert.match(html, /event\?\.type === 'ended'/)
+    assert.match(html, /state\.watchedOnlyFrontierSeconds = duration/)
     assert.match(html, /gate\.progress = Math\.max\(0, \.\.\.Array\.from\(gate\.progressByVideo\.values\(\)\)\)/)
     assert.match(html, /filter:blur\(var\(--rstk-video-gate-blur,3px\)\)!important/)
     assert.match(html, /position:absolute!important;\s*inset:0!important;\s*z-index:2!important/)
@@ -1775,6 +1785,65 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
     assert.equal(locked.hidden, true)
     assert.equal(unlocked.hidden, false)
     assert.equal(unlocked.attrs.has('aria-hidden'), false)
+
+    // Simula una recarga en Safari donde sobrevivió el avance agregado y la
+    // posición de reanudación, pero no el arreglo de rangos de una versión previa.
+    // El porcentaje debe recuperarse sin obligar al usuario a repetir el video.
+    localStorage.setItem(persistedKey, JSON.stringify({
+      playbackSeconds: 72,
+      uniqueWatchedSeconds: 72,
+      watchedRanges: [],
+      resumeRatio: 0.6,
+      savedAt: Date.now(),
+      expiresAt: Date.now() + 45 * 86400 * 1000
+    }))
+    const recoverySource = new FakeElement({
+      'data-rstk-video-gate-id': 'agenda-admision',
+      'data-rstk-video-gate-trigger': 'unique_watched_percent',
+      'data-rstk-video-gate-value': '60',
+      'data-rstk-video-gate-persist': 'visitor',
+      'data-rstk-video-gate-resume': 'true',
+      'data-rstk-video-gate-seek-policy': 'watched_only',
+      'data-rstk-video-gate-progress-key': 'admision-v1',
+      'data-rstk-video-gate-progress-days': '45'
+    })
+    const recoveryVideo = new FakeVideo(recoverySource)
+    recoveryVideo.dataset.rstkVideoRealPlayed = 'true'
+    const recoveryDocument = {
+      documentElement: {},
+      cookie: '',
+      querySelectorAll: selector => {
+        if (selector === gateVideoSelector) return [recoveryVideo]
+        return []
+      },
+      querySelector: () => null,
+      getElementById: () => null
+    }
+    const recoveryWindow = {
+      CSS: { escape: value => String(value) },
+      CustomEvent: FakeCustomEvent,
+      localStorage,
+      sessionStorage,
+      performance: { now: () => 0 },
+      requestAnimationFrame: () => 1,
+      cancelAnimationFrame: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => {}
+    }
+    class RecoveryMutationObserver {
+      observe() {}
+    }
+    vm.runInNewContext(actionRuntime, {
+      window: recoveryWindow,
+      document: recoveryDocument,
+      MutationObserver: RecoveryMutationObserver
+    })
+    const recoveredProgress = recoveryWindow.ristakGetVideoProgress('agenda-admision')
+    assert.equal(Number(recoveredProgress.uniqueWatchedSeconds.toFixed(3)), 72)
+    assert.equal(Number(recoveredProgress.uniqueWatchedPercent.toFixed(3)), 60)
+    assert.equal(Number(recoveryVideo.currentTime.toFixed(3)), 72)
+    assert.equal(Number(Number(recoveryVideo.getAttribute('data-rstk-video-max-seek-ratio')).toFixed(3)), 0.6)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }

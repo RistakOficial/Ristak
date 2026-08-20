@@ -317,6 +317,12 @@ variantes responsive comparten el mayor progreso individual y nunca se suman.
 Al desbloquear, el flujo comienza en `date`; `time` y todas las preguntas siguen
 ocultos hasta que el visitante seleccione los pasos previos.
 
+En `watched_only`, la persistencia conserva además un frente monotónico como
+respaldo de los rangos. Esto cubre recargas, reanudaciones y el orden de eventos
+de Safari al repetir un video terminado. Si una reproducción real llega a
+`ended`, el gate completa la cobertura: esa política ya impidió adelantar y el
+preview decorativo queda expresamente fuera de la regla.
+
 El runtime vive en `sitesService.js`. Consulta
 `GET /api/calendars/public/:slug/free-slots` por el mes visible, recibe instantes
 UTC, los agrupa en la zona mostrada al visitante y pinta los estados sin confiar

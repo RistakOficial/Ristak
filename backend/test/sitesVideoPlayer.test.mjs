@@ -1202,6 +1202,177 @@ test('video actions fire when preview playback becomes real without a second pla
   assert.equal(typeof frameCallback, 'function')
 })
 
+test('native video tracking resumes watched time after Safari replays an ended video', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    videoControlsMode: 'clean',
+    videoControlBar: true
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: true,
+    preview: false
+  })
+  const runtimeScript = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+    .map(match => match[1])
+    .find(script => script.includes('ristakVideoTrackingLoaded'))
+  assert.ok(runtimeScript, 'expected native video tracking runtime script')
+
+  class FakeStorage {
+    constructor() {
+      this.values = new Map()
+    }
+
+    getItem(key) {
+      return this.values.has(key) ? this.values.get(key) : null
+    }
+
+    setItem(key, value) {
+      this.values.set(key, String(value))
+    }
+  }
+
+  class FakeVideo {
+    constructor() {
+      this.dataset = {
+        rstkVideoTrack: 'true',
+        rstkVideoRealPlayed: 'true',
+        rstkBlockId: 'video-block',
+        rstkBlockLabel: 'Video'
+      }
+      this.autoplay = false
+      this.paused = true
+      this.ended = false
+      this.currentTime = 0
+      this.duration = 800
+      this.listeners = new Map()
+    }
+
+    getAttribute(name) {
+      return name === 'title' ? 'Video de instrucciones' : ''
+    }
+
+    addEventListener(name, listener) {
+      const listeners = this.listeners.get(name) || []
+      listeners.push(listener)
+      this.listeners.set(name, listeners)
+    }
+
+    dispatch(name) {
+      for (const listener of this.listeners.get(name) || []) listener({ type: name })
+    }
+  }
+
+  const video = new FakeVideo()
+  const payloads = []
+  const localStorage = new FakeStorage()
+  const sessionStorage = new FakeStorage()
+  const document = {
+    readyState: 'complete',
+    documentElement: {},
+    cookie: '',
+    referrer: '',
+    title: 'Página de agenda',
+    querySelectorAll: selector => selector === 'video[data-rstk-video-track="true"]' ? [video] : [],
+    querySelector: () => null,
+    addEventListener: () => {}
+  }
+  const cryptoApi = { randomUUID: () => `playback-${payloads.length + 1}` }
+  const window = {
+    crypto: cryptoApi,
+    location: {
+      href: 'https://example.test/agenda',
+      search: '',
+      protocol: 'https:'
+    },
+    ristakNativeIdentity: () => ({
+      visitorId: 'visitor-safari-test',
+      sessionId: 'session-safari-test',
+      contactId: null
+    }),
+    ristakNativeBuildData: extra => ({ ...extra }),
+    addEventListener: () => {},
+    dispatchEvent: () => {},
+    screen: {},
+    innerWidth: 390,
+    innerHeight: 844,
+    devicePixelRatio: 3
+  }
+  class FakeMutationObserver {
+    observe() {}
+  }
+  class FakeCustomEvent {
+    constructor(type, options = {}) {
+      this.type = type
+      this.detail = options.detail
+    }
+  }
+  const navigator = {
+    language: 'es-MX',
+    userAgent: 'Mobile Safari test',
+    cookieEnabled: true,
+    sendBeacon: () => false
+  }
+  const fetch = (_url, options = {}) => {
+    payloads.push(JSON.parse(options.body || '{}'))
+    return Promise.resolve({ ok: true })
+  }
+
+  vm.runInNewContext(runtimeScript, {
+    window,
+    document,
+    navigator,
+    localStorage,
+    sessionStorage,
+    MutationObserver: FakeMutationObserver,
+    CustomEvent: FakeCustomEvent,
+    Blob,
+    fetch,
+    crypto: cryptoApi,
+    URL,
+    URLSearchParams,
+    Intl,
+    Date,
+    Math,
+    Promise,
+    setTimeout,
+    clearTimeout
+  })
+
+  video.paused = false
+  video.dispatch('play')
+  video.dispatch('playing')
+  for (let second = 10; second <= 800; second += 10) {
+    video.currentTime = second
+    video.dispatch('timeupdate')
+  }
+  video.paused = true
+  video.ended = true
+  video.dispatch('ended')
+
+  // WebKit puede mandar estos eventos en este orden al tocar repetir. Antes,
+  // seeked apagaba el reloj después de play y playing nunca lo encendía de nuevo.
+  video.currentTime = 0
+  video.ended = false
+  video.paused = false
+  video.dispatch('seeking')
+  video.dispatch('play')
+  video.dispatch('seeked')
+  video.dispatch('playing')
+  video.currentTime = 5
+  video.dispatch('timeupdate')
+  video.paused = true
+  video.dispatch('pause')
+
+  const replayPause = payloads
+    .map(payload => payload?.data)
+    .filter(data => data?.video_event_name === 'video_pause')
+    .at(-1)
+  assert.ok(replayPause, 'expected replay pause payload')
+  assert.equal(replayPause.position_seconds, 5)
+  assert.equal(replayPause.watched_delta_seconds, 5)
+  assert.equal(replayPause.watch_from_seconds, 0)
+  assert.equal(replayPause.watch_to_seconds, 5)
+})
+
 test('video player keeps the customized Ristak player in preview and live for Stream-synced assets', async () => {
   const assetId = `site_parity_stream_${Date.now()}`
   const plainUrl = 'https://cdn.example.com/sites/plain-parity-video.mp4'

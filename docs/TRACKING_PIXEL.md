@@ -1589,6 +1589,16 @@ restantes para `unique_watched_seconds`, o convierte el porcentaje faltante a
 tiempo real usando la duración del video activo. Así conserva una lectura
 `MM:SS` en ambos contratos de cobertura única.
 
+La recuperación es defensiva frente a diferencias de eventos entre navegadores.
+Además de la unión de rangos, `watched_only` conserva un frente monotónico y usa
+el total único persistido como respaldo cuando WebKit restaura posición pero
+omite un rango. Si el video llega al evento nativo `ended` con reproducción real,
+ese final certifica cobertura completa porque la misma política impidió saltos
+hacia delante. Al repetir después de terminar, `playing` y el estado real del
+medio vuelven a activar la medición aunque Safari entregue
+`seeking -> play -> seeked -> playing`. La reproducción decorativa de preview no
+puede activar ninguno de estos respaldos.
+
 `videoTimelineMode:"duration"` conserva un reproductor normal y expone la
 duración completa. `videoTimelineMode:"live_frontier"` presenta únicamente la
 franja alcanzada: mientras la persona avanza, la barra se ve llena y termina en

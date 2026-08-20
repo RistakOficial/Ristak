@@ -7126,6 +7126,14 @@ descuenta el contador hasta alcanzar material nuevo. El hook
 restantes o traduce el porcentaje restante a `MM:SS` con la duración del video
 que lidera el gate.
 
+Para tolerar recargas y el orden distinto de eventos de Safari/WebKit,
+`watched_only` mantiene también un frente monotónico y recupera el total único
+persistido aunque falte un rango normalizado. Un `ended` real completa la
+cobertura porque esta política ya bloqueó cualquier adelanto; los loops de
+preview quedan excluidos. Al repetir un video terminado, `playing` reactiva la
+medición aun si WebKit entregó `seeked` después de `play`. Así el gate y la
+analítica no dependen de que la persona haga pausa/play para destrabar el reloj.
+
 La presentación de la línea de tiempo es independiente del gate.
 `videoTimelineMode:"duration"` muestra desde el inicio la duración física
 completa, como un reproductor normal. `videoTimelineMode:"live_frontier"` hace

@@ -21370,7 +21370,8 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       ), 0);
       const uniqueWatchedSeconds = state => Math.max(
         watchedSeconds(state),
-        Math.max(0, Number(state.persistedUniqueWatchedSeconds || 0))
+        Math.max(0, Number(state.persistedUniqueWatchedSeconds || 0)),
+        Math.max(0, Number(state.watchedOnlyFrontierSeconds || 0))
       );
       const GATE_ID_ATTRS = ['data-rstk-video-gate-id','data-ristak-video-gate-id','data-ristack-video-gate-id'];
       const GATE_PERSIST_ATTRS = ['data-rstk-video-gate-persist','data-ristak-video-gate-persist','data-ristack-video-gate-persist'];
@@ -21594,6 +21595,22 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
               duration
             );
           });
+          if (state.persistence.seekPolicy === 'watched_only') {
+            const storedRangeFrontier = record.watchedRanges.reduce((maxValue, range) => (
+              Math.max(maxValue, Number(range[1] || 0) * duration)
+            ), 0);
+            state.watchedOnlyFrontierSeconds = Math.max(
+              Number(state.watchedOnlyFrontierSeconds || 0),
+              Math.min(
+                duration,
+                Math.max(
+                  Number(record.uniqueWatchedSeconds || 0),
+                  Number(record.resumeRatio || 0) * duration,
+                  storedRangeFrontier
+                )
+              )
+            );
+          }
           if (state.persistence.resume && !state.resumeRatioApplied && record.resumeRatio > 0) {
             state.video.setAttribute('data-rstk-video-resume-ratio', String(record.resumeRatio));
             state.resumeRatioApplied = true;
@@ -21619,9 +21636,13 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       const maxWatchedRatio = state => {
         const duration = finiteMediaDuration(state.video);
         if (!(duration > 0)) return 0;
-        return Math.max(0, Math.min(1, state.watchedRanges.reduce((maxValue, range) => (
+        const rangeFrontierRatio = state.watchedRanges.reduce((maxValue, range) => (
           Math.max(maxValue, Number(range[1] || 0) / duration)
-        ), 0)));
+        ), 0);
+        const watchedOnlyFrontierRatio = state.persistence?.seekPolicy === 'watched_only'
+          ? Number(state.watchedOnlyFrontierSeconds || 0) / duration
+          : 0;
+        return Math.max(0, Math.min(1, Math.max(rangeFrontierRatio, watchedOnlyFrontierRatio)));
       };
       const syncSeekPolicyAttributes = state => {
         if (!state?.video || typeof state.video.setAttribute !== 'function') return;
@@ -21686,9 +21707,8 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         const currentTimeSeconds = finiteMediaTime(state.video);
         const durationSeconds = finiteMediaDuration(state.video);
         const uniqueWatchedSecondsValue = uniqueWatchedSeconds(state);
-        const rangeWatchedSeconds = watchedSeconds(state);
         const uniqueWatchedPercent = durationSeconds > 0
-          ? Math.min(100, (rangeWatchedSeconds / durationSeconds) * 100)
+          ? Math.min(100, (uniqueWatchedSecondsValue / durationSeconds) * 100)
           : 0;
         return {
           sourceId: getProgressSourceId(state.video),
@@ -21795,13 +21815,22 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           previousMediaTime + creditedMediaDelta,
           finiteMediaDuration(state.video)
         );
+        if (state.persistence?.seekPolicy === 'watched_only') {
+          const frontier = Math.max(0, Number(state.watchedOnlyFrontierSeconds || 0));
+          if (previousMediaTime <= frontier + 1) {
+            state.watchedOnlyFrontierSeconds = Math.max(
+              frontier,
+              previousMediaTime + creditedMediaDelta
+            );
+          }
+        }
       };
       const getActionProgress = (state, action) => {
         if (action.triggerType === 'playback_seconds') return state.playbackSeconds;
         if (action.triggerType === 'unique_watched_seconds') return uniqueWatchedSeconds(state);
         if (action.triggerType === 'unique_watched_percent') {
           const duration = finiteMediaDuration(state.video);
-          return duration > 0 ? Math.min(100, (watchedSeconds(state) / duration) * 100) : 0;
+          return duration > 0 ? Math.min(100, (uniqueWatchedSeconds(state) / duration) * 100) : 0;
         }
         return finiteMediaTime(state.video);
       };
@@ -22060,6 +22089,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           seeking: false,
           playbackSeconds: 0,
           persistedUniqueWatchedSeconds: 0,
+          watchedOnlyFrontierSeconds: 0,
           watchedRanges: [],
           persistence: persistenceConfigForVideo(video),
           persistedProgressLoaded: false,
@@ -22127,7 +22157,26 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           resetMeasurementBaseline(state);
           sync();
         };
-        const handleInactive = () => {
+        const handleInactive = event => {
+          if (
+            event?.type === 'ended' &&
+            state.persistence?.seekPolicy === 'watched_only' &&
+            !isPreviewPlayback(video) &&
+            hasRealPlaybackStarted(video)
+          ) {
+            const duration = finiteMediaDuration(video);
+            if (duration > 0) {
+              // Con watched_only el usuario no puede saltar hacia delante. Llegar
+              // al ended nativo demuestra que recorrió toda la línea de tiempo,
+              // incluso si Safari omitió el último timeupdate al recargar/repetir.
+              state.watchedOnlyFrontierSeconds = duration;
+              state.persistedUniqueWatchedSeconds = Math.max(
+                Number(state.persistedUniqueWatchedSeconds || 0),
+                duration
+              );
+              state.watchedRanges = mergeWatchedRange(state.watchedRanges, 0, duration, duration);
+            }
+          }
           syncState(state);
           state.playbackActive = false;
           persistProgress(state, true);
@@ -28431,6 +28480,10 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
           if (video.dataset.rstkVideoPreviewing === 'true') return;
           ensurePlaybackStarted();
           if (!state.hasPlaybackStarted) return;
+          // Safari puede emitir seeking -> play -> seeked -> playing al repetir
+          // un video. El evento playing es la fuente definitiva: desde aquí el
+          // reloj debe volver a acreditar avance aunque seeked haya llegado tarde.
+          state.isPlaying = !video.paused && !video.ended;
           if (!state.hasRenderedFirstFrame) {
             state.hasRenderedFirstFrame = true;
             emit('video_playing', true);
@@ -28456,7 +28509,7 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
         });
         video.addEventListener('seeked', () => {
           emit('video_seeked', true, false, false);
-          state.isPlaying = resumeAfterSeek && !video.paused;
+          state.isPlaying = Boolean((resumeAfterSeek || !video.paused) && !video.ended);
           resumeAfterSeek = false;
         });
         video.addEventListener('ended', () => emit('video_ended', true, true));
