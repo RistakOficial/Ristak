@@ -1563,6 +1563,14 @@ por Automatizaciones. Citas y Automatizaciones pueden conservar mensajes
 distintos para la misma agenda, pero el administrador debe evitar programar dos
 solicitudes de confirmación equivalentes.
 
+En el editor de Automatizaciones, el momento del envío y la espera de respuesta
+son controles primarios distintos. **Tiempo para enviar la solicitud** define
+únicamente cuándo sale el mensaje; **Tiempo de espera para confirmar**, su unidad,
+el modo de conteo y el horario diario permanecen visibles junto a **Si no confirma
+a tiempo**. No se esconden dentro de Opciones avanzadas. El resumen del nodo
+muestra tanto el momento del envío como la espera configurada, para que una
+cantidad nunca pueda confundirse con la otra al revisar el flujo.
+
 ### Ejecuciones, reingreso y eventos dentro de Automatizaciones
 
 Cada entrada de un contacto a una automatizacion es una ejecucion independiente

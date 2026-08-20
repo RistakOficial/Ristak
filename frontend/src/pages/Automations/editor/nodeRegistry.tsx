@@ -3421,7 +3421,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     kind: 'action',
     label: 'Confirmar cita',
     category: 'action-data',
-    description: 'Programa y envía una solicitud de confirmación para la cita del contacto',
+    description: 'Programa la solicitud, cuánto esperar la respuesta y qué hacer si el contacto no confirma',
     icon: BellRing,
     accent: 'teal',
     requiredFeature: 'appointments',
@@ -3481,15 +3481,16 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         key: 'timingAnchor',
         label: 'Cuándo se enviará',
         type: 'select',
+        help: 'Este ajuste sólo programa el envío. Más abajo defines cuánto tiempo esperar la confirmación.',
         options: [
           { value: 'before_appointment', label: 'Antes de la cita' },
           { value: 'after_booking', label: 'Después de agendar' }
         ]
       },
-      { key: 'offsetValue', label: 'Cantidad', type: 'number', placeholder: '1' },
+      { key: 'offsetValue', label: 'Tiempo para enviar la solicitud', type: 'number', placeholder: '1' },
       {
         key: 'offsetUnit',
-        label: 'Unidad',
+        label: 'Unidad del envío',
         type: 'select',
         showIf: (config) => str(config.timingAnchor) !== 'after_booking',
         options: [
@@ -3500,7 +3501,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       },
       {
         key: 'offsetUnit',
-        label: 'Unidad',
+        label: 'Unidad del envío',
         type: 'select',
         showIf: (config) => str(config.timingAnchor) === 'after_booking',
         options: [
@@ -3577,21 +3578,37 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         ]
       },
       {
-        key: 'confirmationTimeoutMode',
-        label: 'Cómo contar el plazo para responder',
+        key: 'noConfirmAction',
+        label: 'Si no confirma a tiempo',
         type: 'select',
-        advanced: true,
         options: [
-          { value: 'response_window', label: 'Solo dentro del horario de respuesta' },
-          { value: 'elapsed', label: 'Tiempo corrido' }
-        ]
+          { value: 'no_action', label: 'Conservar la cita y avisar' },
+          { value: 'cancel_appointment', label: 'Cancelar la cita' }
+        ],
+        help: 'Ristak aplica esta acción únicamente cuando termina la espera configurada abajo sin una confirmación válida.'
       },
-      { key: 'confirmationTimeoutValue', label: 'Plazo para responder', type: 'number', placeholder: '6', advanced: true },
+      {
+        key: 'confirmationTimeoutValue',
+        label: 'Tiempo de espera para confirmar',
+        type: 'number',
+        placeholder: '6',
+        help: 'El plazo empieza cuando Ristak termina de enviar la solicitud de confirmación.'
+      },
       {
         key: 'confirmationTimeoutUnit',
-        label: 'Unidad del plazo',
+        label: 'Unidad de la espera',
         type: 'select',
-        advanced: true,
+        showIf: (config) => (str(config.confirmationTimeoutMode) || 'response_window') === 'response_window',
+        options: [
+          { value: 'minutes', label: 'Minutos' },
+          { value: 'hours', label: 'Horas' }
+        ]
+      },
+      {
+        key: 'confirmationTimeoutUnit',
+        label: 'Unidad de la espera',
+        type: 'select',
+        showIf: (config) => str(config.confirmationTimeoutMode) === 'elapsed',
         options: [
           { value: 'minutes', label: 'Minutos' },
           { value: 'hours', label: 'Horas' },
@@ -3599,27 +3616,27 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         ]
       },
       {
+        key: 'confirmationTimeoutMode',
+        label: 'Cómo contar la espera',
+        type: 'select',
+        options: [
+          { value: 'response_window', label: 'Solo dentro del horario de respuesta' },
+          { value: 'elapsed', label: 'Tiempo corrido' }
+        ],
+        help: 'El horario de respuesta pausa el contador fuera de esas horas; el tiempo corrido cuenta cada minuto desde el envío.'
+      },
+      {
         key: 'confirmationResponseStart',
-        label: 'Inicio del horario de respuesta',
+        label: 'El contador corre desde',
         type: 'time',
-        advanced: true,
-        showIf: (config) => str(config.confirmationTimeoutMode) === 'response_window'
+        showIf: (config) => (str(config.confirmationTimeoutMode) || 'response_window') === 'response_window'
       },
       {
         key: 'confirmationResponseEnd',
-        label: 'Fin del horario de respuesta',
+        label: 'El contador corre hasta',
         type: 'time',
-        advanced: true,
-        showIf: (config) => str(config.confirmationTimeoutMode) === 'response_window'
-      },
-      {
-        key: 'noConfirmAction',
-        label: 'Si no confirma a tiempo',
-        type: 'select',
-        options: [
-          { value: 'no_action', label: 'Conservar la cita y avisar' },
-          { value: 'cancel_appointment', label: 'Cancelar la cita' }
-        ]
+        showIf: (config) => (str(config.confirmationTimeoutMode) || 'response_window') === 'response_window',
+        help: 'Este horario se aplica todos los días en la zona horaria del negocio. La persona puede responder a cualquier hora.'
       },
       {
         key: 'confirmationReplyText',
@@ -3702,8 +3719,24 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       const message = channel === 'whatsapp'
         ? str(config.templateName) || str(config.template)
         : str(config.messageText)
+      const offsetValue = Number(config.offsetValue) || 0
+      const offsetUnit = str(config.offsetUnit) || 'days'
+      const timeoutValue = Number(config.confirmationTimeoutValue) || 6
+      const timeoutUnit = str(config.confirmationTimeoutUnit) || 'hours'
+      const timeoutMode = str(config.confirmationTimeoutMode) || 'response_window'
+      const durationUnitLabel = (unit: string, value: number) => {
+        const labels: Record<string, [string, string]> = {
+          seconds: ['segundo', 'segundos'],
+          minutes: ['minuto', 'minutos'],
+          hours: ['hora', 'horas'],
+          days: ['día', 'días']
+        }
+        const label = labels[unit]
+        return label ? label[value === 1 ? 0 : 1] : unit
+      }
+      const timeoutModeLabel = timeoutMode === 'elapsed' ? 'corridos' : 'en horario de respuesta'
       return {
-        text: `${channelLabel[channel] || 'Canal'} · ${Number(config.offsetValue) || 0} ${str(config.offsetUnit) || 'días'} ${anchor}`,
+        text: `${channelLabel[channel] || 'Canal'} · ${offsetValue} ${durationUnitLabel(offsetUnit, offsetValue)} ${anchor} · espera ${timeoutValue} ${durationUnitLabel(timeoutUnit, timeoutValue)} ${timeoutModeLabel}`,
         box: message || undefined,
         empty: 'Configura la confirmación de cita'
       }

@@ -159,3 +159,34 @@ test('los dos disparadores de cita ofrecen el filtro Agendado por con valores ce
   assert.match(bookedDefinition, /Cuando se agende una cita/)
   assert.doesNotMatch(bookedDefinition, /Cuando el contacto agende una cita/)
 })
+
+test('Confirmar cita muestra la espera de respuesta como configuración principal y separada del envío', () => {
+  const registry = readRepoFile('frontend/src/pages/Automations/editor/nodeRegistry.tsx')
+  const confirmationStart = registry.indexOf("type: 'action-appointment-confirmation'")
+  const confirmationEnd = registry.indexOf("type: 'extra-comment'", confirmationStart)
+  const definition = registry.slice(confirmationStart, confirmationEnd)
+
+  assert.ok(confirmationStart >= 0 && confirmationEnd > confirmationStart)
+  assert.match(definition, /label: 'Tiempo para enviar la solicitud'/)
+  assert.match(definition, /label: 'Tiempo de espera para confirmar'/)
+  assert.match(definition, /label: 'Unidad de la espera'/)
+  assert.match(definition, /label: 'Cómo contar la espera'/)
+  assert.match(definition, /label: 'El contador corre desde'/)
+  assert.match(definition, /label: 'El contador corre hasta'/)
+  assert.match(definition, /Ristak aplica esta acción únicamente cuando termina la espera/)
+  assert.match(definition, /espera \$\{timeoutValue\}/)
+
+  const deadlineStart = definition.indexOf("key: 'noConfirmAction'")
+  const deadlineEnd = definition.indexOf("key: 'confirmationReplyText'", deadlineStart)
+  const visibleDeadlineFields = definition.slice(deadlineStart, deadlineEnd)
+  assert.ok(deadlineStart >= 0 && deadlineEnd > deadlineStart)
+  assert.doesNotMatch(visibleDeadlineFields, /advanced: true/)
+  assert.ok(
+    visibleDeadlineFields.indexOf("key: 'confirmationTimeoutValue'") <
+      visibleDeadlineFields.indexOf("key: 'confirmationTimeoutMode'")
+  )
+  assert.match(
+    visibleDeadlineFields,
+    /confirmationTimeoutMode\) \|\| 'response_window'\) === 'response_window'/
+  )
+})
