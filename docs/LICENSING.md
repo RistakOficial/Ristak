@@ -101,8 +101,10 @@ cobra en nombre de terceros y no actúa como marketplace.
 5. `allowed=false` → 403 con `code: license_blocked`, `reason` y, cuando el bloqueo se
    resuelve pagando, `payment_url`. El frontend conserva esos datos aunque la respuesta ocurra
    a media sesión y muestra `/license-blocked`. Para `reason: trial_expired` enseña
-   **Tu periodo gratis terminó** y el botón **Continuar con el pago**; la liga sólo se acepta si
-   usa HTTPS (o HTTP local durante desarrollo).
+   **Tu periodo gratis terminó** y el botón **Continuar con el pago**. Para
+   `payment_failed` o `mdp_payment_failed` muestra **Actualiza tu forma de pago** y
+   abre el enlace seguro de Rebill para reemplazar la tarjeta, sin crear otra cuenta ni
+   otra suscripción. La liga sólo se acepta si usa HTTPS (o HTTP local durante desarrollo).
 6. Todas las rutas privadas pasan por `requireAuth`, que re-valida el cache de licencia; si la
    licencia se suspende a media sesión, el siguiente request expulsa al usuario a la pantalla de bloqueo.
 7. Si el servidor central no responde: con token vigente se mantiene el acceso; sin token,

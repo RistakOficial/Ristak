@@ -99,12 +99,20 @@ function startMockServer() {
             res.statusCode = 403
             res.end(JSON.stringify({
               allowed: false,
-              reason: serverMode === 'block_trial_expired' ? 'trial_expired' : 'subscription_inactive',
+              reason: serverMode === 'block_trial_expired'
+                ? 'trial_expired'
+                : serverMode === 'block_payment_failed'
+                  ? 'payment_failed'
+                  : 'subscription_inactive',
               message: serverMode === 'block_trial_expired'
                 ? 'Tu periodo gratis terminó. Activa tu suscripción para seguir usando Ristak.'
-                : 'Tu licencia de Ristak no está activa.',
-              ...(serverMode === 'block_trial_expired'
-                ? { payment_url: 'https://www.ristak.com/login?next=%2Fstart' }
+                : serverMode === 'block_payment_failed'
+                  ? 'No pudimos procesar tu último cobro. Actualiza tu forma de pago.'
+                  : 'Tu licencia de Ristak no está activa.',
+              ...(['block_trial_expired', 'block_payment_failed'].includes(serverMode)
+                ? { payment_url: serverMode === 'block_payment_failed'
+                    ? 'https://pay.rebill.test/card-update'
+                    : 'https://www.ristak.com/login?next=%2Fstart' }
                 : {})
             }))
           }
@@ -489,6 +497,17 @@ test('fin de prueba conserva la liga segura para mostrar la pantalla de pago', a
   assert.equal(state.reason, 'trial_expired')
   assert.equal(state.paymentUrl, 'https://www.ristak.com/login?next=%2Fstart')
   assert.ok(state.message.includes('periodo gratis terminó'))
+})
+
+test('cobro fallido conserva la liga de Rebill para actualizar la tarjeta', async () => {
+  serverMode = 'block_payment_failed'
+
+  const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
+
+  assert.equal(state.allowed, false)
+  assert.equal(state.reason, 'payment_failed')
+  assert.equal(state.paymentUrl, 'https://pay.rebill.test/card-update')
+  assert.ok(state.message.includes('Actualiza tu forma de pago'))
 })
 
 test('el token temporal evita consultar al servidor en cada request', async () => {
