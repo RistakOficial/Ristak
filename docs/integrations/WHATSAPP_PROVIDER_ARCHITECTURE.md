@@ -1,6 +1,6 @@
 # Arquitectura de proveedores WhatsApp
 
-Ultima actualizacion: 2026-08-06.
+Ultima actualizacion: 2026-08-20.
 
 ## Proposito
 
@@ -350,6 +350,13 @@ Modelo local neutral:
   de prueba explícito: nunca sustituyen datos reales faltantes en un envío
   productivo. Si falta el contacto, la cita o un campo requerido, el envío se
   detiene con el nombre del dato faltante.
+- Un encabezado de texto se valida después de materializar sus parámetros: copy
+  fijo más datos dinámicos no puede exceder 60 caracteres. Si una fecha y hora
+  larga rebasa el límite, Ristak omite primero el año y conserva día, mes y hora;
+  si otro valor sigue siendo excesivo, aplica un recorte Unicode-seguro que
+  preserva la hora final cuando existe. El mismo constructor gobierna los
+  envíos manuales, avisos de Citas, recordatorios y reintentos legacy para que
+  Meta/YCloud no reciban payloads que ya se sabe que rechazarán.
 - El POST de plantilla devuelve `renderedText`, que es el mismo texto persistido
   y entregado. Desktop y móvil muestran un estado neutral mientras se resuelve
   el request y reemplazan ese estado con `renderedText`; nunca presentan el

@@ -4087,9 +4087,16 @@ La conexión, el cambio explícito a Meta y el arranque con Meta ya conectado
 ejecutan esa reconciliación de manera idempotente después del ACK. Las siete
 plantillas base se actualizan antes de comparar; `cita_programada` usa el
 encabezado `Cita programada para el {{1}}` sin emoji porque Meta rechaza emojis
-y caracteres de formato en encabezados de texto. Si una migración individual
-falla, la copia queda asociada a Meta con el error pendiente de corregir y no
-vuelve a quedar disponible bajo la aprobación histórica YCloud.
+y caracteres de formato en encabezados de texto. Antes de cada envío, el backend
+mide el encabezado ya materializado —texto fijo más parámetros— contra el límite
+de 60 caracteres de WhatsApp. Para `cita.fecha_hora`, primero omite el año cuando
+sea necesario y conserva día, mes y hora; cualquier otro valor todavía excesivo
+se recorta de forma Unicode-segura preservando la hora final cuando existe. Este
+ajuste ocurre en el constructor compartido y también en el contrato legacy de
+recordatorios, por lo que aplica igual a envíos manuales, avisos y reintentos. Si
+una migración individual falla, la copia queda asociada a Meta con el error
+pendiente de corregir y no vuelve a quedar disponible bajo la aprobación
+histórica YCloud.
 
 Las columnas neutrales `template_provider`, `provider_template_id`,
 `provider_status` y sus campos relacionados son la fuente de verdad para código
@@ -5559,9 +5566,11 @@ configura, debe usar `after_booking` y la plantilla `cita_programada`, que muest
 la fecha y hora reales de la cita.
 
 El contenido canonico de `cita_programada` replica la presentacion nativa de
-WhatsApp. El `HEADER` es `🗓️ Cita programada para el {{1}}`, ligado a
-`cita.fecha_hora`; por ser encabezado, WhatsApp lo muestra en negritas. El
-`BODY` empieza con `🔔 *Importante:*`, resalta `*NO*` y `*respondas*`, pide
+WhatsApp. El `HEADER` es `Cita programada para el {{1}}`, ligado a
+`cita.fecha_hora`; no lleva emoji y, por ser encabezado, WhatsApp lo muestra en
+negritas. El valor dinámico se compacta antes del envío sólo cuando el texto
+materializado rebasaría 60 caracteres; la cita conserva siempre su fecha y hora.
+El `BODY` empieza con `🔔 *Importante:*`, resalta `*NO*` y `*respondas*`, pide
 atender los recordatorios y termina con `¡Gracias!`. `Este es un mensaje
 AUTOMÁTICO` vive en el componente `FOOTER`, no dentro del cuerpo. Los avisos que
 siguen seleccionando esta plantilla predeterminada reciben esa definicion; una

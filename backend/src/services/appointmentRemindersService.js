@@ -55,6 +55,7 @@ import {
   LEGACY_DEFAULT_APPOINTMENT_NOTICE_TEXT
 } from './appointmentMessageDefaults.js'
 import { requireOpenAIApiKey } from './aiRuntimeService.js'
+import { fitWhatsAppTemplateHeaderParameters } from './whatsappTemplateTextLimits.js'
 
 export {
   DEFAULT_APPOINTMENT_NOTICE_TEXT,
@@ -1676,7 +1677,10 @@ function buildTemplateParameters(template, target, context) {
 
 function buildReminderTemplateComponents(template, context) {
   const components = []
-  const headerParameters = buildTemplateParameters(template, 'headerText', context)
+  const headerParameters = fitWhatsAppTemplateHeaderParameters({
+    templateText: template?.headerText,
+    parameters: buildTemplateParameters(template, 'headerText', context)
+  })
   if (headerParameters.length) {
     components.push({ type: 'header', parameters: headerParameters })
   }

@@ -30,6 +30,7 @@ import {
   DEFAULT_APPOINTMENT_NOTICE_HEADER_TEXT,
   DEFAULT_ONE_HOUR_REMINDER_TEMPLATE_BODY_TEXT
 } from './appointmentMessageDefaults.js'
+import { fitWhatsAppTemplateHeaderParameters } from './whatsappTemplateTextLimits.js'
 
 const TEMPLATE_CATEGORIES = new Set(['utility', 'marketing', 'authentication', 'service'])
 const TEMPLATE_STATUSES = new Set(['draft', 'active', 'archived'])
@@ -3082,7 +3083,12 @@ async function buildTextSendParametersFromTemplate(
     }
     parameters.push({ type: 'text', text: value })
   }
-  return parameters
+  return target === 'headerText'
+    ? fitWhatsAppTemplateHeaderParameters({
+        templateText: getTemplateTextForTarget(template, target),
+        parameters
+      })
+    : parameters
 }
 
 async function buildUrlButtonSendComponentsFromTemplate(template, variableOptions = {}, renderOptions = {}) {

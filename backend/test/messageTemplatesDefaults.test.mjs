@@ -154,6 +154,33 @@ async function deleteAllDefaultTemplates() {
   await deleteDefaultPaymentTemplates()
 }
 
+test('el envío de cita ajusta el header dinámico al límite real de WhatsApp', async () => {
+  await deleteDefaultTemplates()
+
+  try {
+    const components = await buildDefaultMessageTemplateSendComponents({
+      templateName: 'cita_programada',
+      language: 'es_MX',
+      variableOptions: {
+        extraVariables: {
+          'cita.fecha_hora': 'miércoles, 26 de agosto de 2026 13:00'
+        }
+      }
+    })
+    const header = components.find(component => component.type === 'header')
+
+    assert.deepEqual(header, {
+      type: 'header',
+      parameters: [{ type: 'text', text: 'miércoles, 26 de agosto 13:00' }]
+    })
+    assert.ok(
+      Array.from(`Cita programada para el ${header.parameters[0].text}`).length <= 60
+    )
+  } finally {
+    await deleteDefaultTemplates()
+  }
+})
+
 test('el catálogo de plantillas incluye los campos variables reales de la cuenta', async () => {
   const suffix = randomUUID().replace(/-/g, '_')
   const field = await createVariableField({
