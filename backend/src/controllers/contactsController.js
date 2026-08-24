@@ -4628,6 +4628,35 @@ ${CONTACT_META_PROFILE_SELECT},
       [id]
     ) : []
 
+    const activeAppointmentConfirmation = await db.get(`
+      SELECT
+        a.*,
+        s.id AS confirmation_reminder_send_id,
+        s.source_type AS confirmation_source_type,
+        s.sent_at AS confirmation_sent_at
+      FROM appointment_reminder_sends s
+      JOIN appointments a ON a.id = s.appointment_id
+      WHERE s.contact_id = ?
+        AND s.status = 'sent'
+        AND s.message_type = 'confirmation'
+        AND COALESCE(s.confirmation_timeout_status, 'pending') = 'pending'
+        AND a.deleted_at IS NULL
+        AND a.start_time > ?
+        AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN (
+          'cancelled', 'canceled', 'showed', 'noshow', 'invalid'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM appointment_confirmation_windows resolved_window
+          WHERE resolved_window.reminder_send_id = s.id
+            AND resolved_window.status = 'done'
+      )
+      ORDER BY ${timestampSortExpression('a.start_time')} ASC,
+               ${timestampSortExpression('COALESCE(s.sent_at, s.created_at)')} DESC,
+               s.id DESC
+      LIMIT 1
+    `, [id, new Date().toISOString()])
+
     const dedupedAppointments = dedupeAppointments(appointments)
 
     let firstAppointmentDate = null
@@ -4756,6 +4785,12 @@ ${CONTACT_META_PROFILE_SELECT},
       notes: '',
       payments: payments.map(serializePaymentRowAmount),
       appointments: appointmentsOrdered,
+      activeAppointmentConfirmation: activeAppointmentConfirmation ? {
+        ...activeAppointmentConfirmation,
+        reminderSendId: activeAppointmentConfirmation.confirmation_reminder_send_id,
+        sourceType: activeAppointmentConfirmation.confirmation_source_type,
+        sentAt: activeAppointmentConfirmation.confirmation_sent_at
+      } : null,
       appointmentsTotal: Number(contact.appointments_total || appointmentsOrdered.length),
       appointmentsTruncated: Number(contact.appointments_total || 0) > appointmentsOrdered.length,
       firstAppointmentDate,

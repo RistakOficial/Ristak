@@ -8,11 +8,13 @@ import {
   maybeConfirmAppointmentFromReply,
   processExpiredConfirmationTimeouts,
   processExpiredConfirmationWindows,
+  resolveAppointmentConfirmationFlow,
   setAppointmentConfirmationReplySenderForTest
 } from '../src/services/appointmentConfirmationService.js'
 import { createAppointmentReminder } from '../src/services/appointmentRemindersService.js'
 import { setAppNotificationPayloadSenderForTest } from '../src/services/pushNotificationsService.js'
-import { getContactJourney } from '../src/controllers/contactsController.js'
+import { getContactById, getContactJourney } from '../src/controllers/contactsController.js'
+import { updateAppointment } from '../src/controllers/calendarsController.js'
 
 const TEST_CALENDAR_ID = 'calendar_confirmation_test'
 
@@ -780,6 +782,64 @@ test('confirmacion IA difiere la acción si entra otro mensaje mientras clasific
   })
 })
 
+test('una acción manual gana si cierra la ventana mientras la IA todavía clasifica', async () => {
+  await withConfirmationFixture({}, async ({ contactId, appointmentId, sendId }) => {
+    let releaseClassifier
+    let notifyClassifierStarted
+    const classifierStarted = new Promise(resolve => { notifyClassifierStarted = resolve })
+    const releaseClassification = new Promise(resolve => { releaseClassifier = resolve })
+    const payloads = []
+
+    setAppointmentConfirmationClassifierForTest(async () => {
+      notifyClassifierStarted()
+      await releaseClassification
+      return { result: 'cancel', confidence: 'high', reason: 'La IA entendió una cancelación' }
+    })
+    setAppNotificationPayloadSenderForTest(async (payload, options) => {
+      payloads.push({ payload, options })
+      return { sent: 1, webSent: 1, nativeSent: 0, skipped: false }
+    })
+
+    await handleInboundForConfirmation({ contactId, text: 'Espera, déjame revisar' })
+    const window = await db.get(
+      'SELECT id FROM appointment_confirmation_windows WHERE appointment_id = ?',
+      [appointmentId]
+    )
+    await expireWindow(window.id)
+
+    const processing = processExpiredConfirmationWindows()
+    await classifierStarted
+    await db.run(`
+      UPDATE appointments
+      SET appointment_status = 'confirmed', status = 'confirmed'
+      WHERE id = ?
+    `, [appointmentId])
+    await resolveAppointmentConfirmationFlow({
+      appointmentId,
+      result: 'manual_confirmed',
+      resultDetail: 'Confirmada manualmente mientras la IA revisaba.'
+    })
+    releaseClassifier()
+
+    const outcome = await processing
+    assert.equal(outcome.processed, 0)
+    assert.equal(payloads.length, 0)
+
+    const terminalWindow = await db.get(
+      'SELECT status, result FROM appointment_confirmation_windows WHERE id = ?',
+      [window.id]
+    )
+    assert.equal(terminalWindow.status, 'done')
+    assert.equal(terminalWindow.result, 'manual_confirmed')
+
+    const send = await db.get(
+      'SELECT confirmation_timeout_status FROM appointment_reminder_sends WHERE id = ?',
+      [sendId]
+    )
+    assert.equal(send.confirmation_timeout_status, 'confirmed')
+  })
+})
+
 test('accion chat_card crea evento y el push global se procesa por defecto', async () => {
   await withConfirmationFixture({ confirmationSuccessAction: 'chat_card' }, async ({ contactId, appointmentId }) => {
     const payloads = []
@@ -986,13 +1046,127 @@ test('modo sin IA confirma sólo respuestas afirmativas sin abrir ventana', asyn
     `, [sendId])
     assert.equal(send.confirmation_timeout_status, 'confirmed')
     assert.ok(send.confirmation_timeout_processed_at)
+
+    const repeatedConfirmation = await maybeConfirmAppointmentFromReply({
+      contactId,
+      text: 'Sí, ya confirmé'
+    })
+    assert.equal(repeatedConfirmation, null)
   })
 })
 
-test('respuesta ambigua nunca cancela aunque la acción configurada sea cancelar', async () => {
+test('una resolución manual cierra la espera y la retira del detalle del chat', async () => {
+  await withConfirmationFixture({}, async ({ contactId, appointmentId, sendId }) => {
+    const detailBefore = makeResponseRecorder()
+    await getContactById({ params: { id: contactId }, query: {} }, detailBefore)
+    assert.equal(detailBefore.payload.data.activeAppointmentConfirmation?.id, appointmentId)
+    assert.equal(detailBefore.payload.data.activeAppointmentConfirmation?.reminderSendId, sendId)
+
+    const inbound = await handleInboundForConfirmation({ contactId, text: 'Todavía lo estoy revisando' })
+    assert.equal(inbound.windowActive, true)
+
+    const updateResponse = makeResponseRecorder()
+    await updateAppointment({
+      params: { id: appointmentId },
+      query: {},
+      body: {
+        appointmentStatus: 'confirmed',
+        expectedAppointmentStatus: 'pending'
+      }
+    }, updateResponse)
+    assert.equal(updateResponse.statusCode, 200)
+
+    const window = await db.get(`
+      SELECT status, result, result_detail
+      FROM appointment_confirmation_windows
+      WHERE appointment_id = ?
+    `, [appointmentId])
+    assert.equal(window.status, 'done')
+    assert.equal(window.result, 'manual_confirmed')
+    assert.match(window.result_detail, /confirmó manualmente/i)
+
+    const send = await db.get(
+      'SELECT confirmation_timeout_status FROM appointment_reminder_sends WHERE id = ?',
+      [sendId]
+    )
+    assert.equal(send.confirmation_timeout_status, 'confirmed')
+
+    const repeatedInbound = await handleInboundForConfirmation({
+      contactId,
+      text: '¿Me mandas la ubicación?'
+    })
+    assert.equal(repeatedInbound.windowActive, false)
+
+    const detailAfter = makeResponseRecorder()
+    await getContactById({ params: { id: contactId }, query: {} }, detailAfter)
+    assert.equal(detailAfter.payload.data.activeAppointmentConfirmation, null)
+  })
+})
+
+test('cancelar manualmente cierra la espera y rechaza una acción basada en estado viejo', async () => {
+  await withConfirmationFixture({}, async ({ contactId, appointmentId, sendId }) => {
+    const staleResponse = makeResponseRecorder()
+    await updateAppointment({
+      params: { id: appointmentId },
+      query: {},
+      body: {
+        appointmentStatus: 'cancelled',
+        expectedAppointmentStatus: 'confirmed',
+        strictLifecycleMutation: 'cancel'
+      }
+    }, staleResponse)
+    assert.equal(staleResponse.statusCode, 409)
+    assert.equal(staleResponse.payload.code, 'appointment_status_stale')
+
+    const stillPending = await db.get(
+      'SELECT appointment_status FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    assert.equal(stillPending.appointment_status, 'pending')
+
+    const cancelResponse = makeResponseRecorder()
+    await updateAppointment({
+      params: { id: appointmentId },
+      query: {},
+      body: {
+        appointmentStatus: 'cancelled',
+        expectedAppointmentStatus: 'pending',
+        strictLifecycleMutation: 'cancel'
+      }
+    }, cancelResponse)
+    assert.equal(cancelResponse.statusCode, 200)
+    assert.equal(cancelResponse.payload.data.appointmentStatus, 'cancelled')
+    assert.equal(cancelResponse.payload.data.status, 'cancelled')
+
+    const cancelled = await db.get(
+      'SELECT appointment_status, status FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    assert.equal(cancelled.appointment_status, 'cancelled')
+    assert.equal(cancelled.status, 'cancelled')
+
+    const send = await db.get(
+      'SELECT confirmation_timeout_status FROM appointment_reminder_sends WHERE id = ?',
+      [sendId]
+    )
+    assert.equal(send.confirmation_timeout_status, 'responded')
+
+    const laterInbound = await handleInboundForConfirmation({
+      contactId,
+      text: 'Oye, mejor sí quiero otra fecha'
+    })
+    assert.equal(laterInbound.windowActive, false)
+
+    const detail = makeResponseRecorder()
+    await getContactById({ params: { id: contactId }, query: {} }, detail)
+    assert.equal(detail.payload.data.activeAppointmentConfirmation, null)
+  })
+})
+
+test('respuesta ambigua nunca cancela, avisa una vez y cierra la escucha automática', async () => {
   await withConfirmationFixture({
     noConfirmAction: 'cancel_appointment'
-  }, async ({ contactId, appointmentId }) => {
+  }, async ({ contactId, appointmentId, sendId }) => {
     const payloads = []
     setAppointmentConfirmationClassifierForTest(async () => ({
       result: 'ambiguous',
@@ -1019,6 +1193,29 @@ test('respuesta ambigua nunca cancela aunque la acción configurada sea cancelar
     assert.equal(appointment.appointment_status, 'pending')
     assert.equal(payloads.length, 1)
     assert.match(payloads[0].payload.title, /respuesta ambigua/)
+
+    const laterInbound = await handleInboundForConfirmation({
+      contactId,
+      text: 'También necesito saber si hay estacionamiento'
+    })
+    assert.equal(laterInbound.windowActive, false)
+    await processExpiredConfirmationWindows()
+    assert.equal(payloads.length, 1)
+
+    const terminalWindow = await db.get(`
+      SELECT status, result, message_revision
+      FROM appointment_confirmation_windows
+      WHERE id = ?
+    `, [window.id])
+    assert.equal(terminalWindow.status, 'done')
+    assert.equal(terminalWindow.result, 'ambiguous')
+    assert.equal(Number(terminalWindow.message_revision), 1)
+
+    const send = await db.get(
+      'SELECT confirmation_timeout_status FROM appointment_reminder_sends WHERE id = ?',
+      [sendId]
+    )
+    assert.equal(send.confirmation_timeout_status, 'responded')
   })
 })
 
@@ -1179,7 +1376,7 @@ test('una respuesta recibida antes del límite difiere el ultimátum hasta termi
   })
 })
 
-test('una falla técnica del clasificador conserva la cita al vencer el ultimátum y pide revisión', async () => {
+test('una falla técnica del clasificador conserva la cita, avisa una vez y cierra la escucha', async () => {
   await withConfirmationFixture({
     noConfirmAction: 'cancel_appointment',
     confirmationTimeoutValue: 30,
@@ -1199,10 +1396,10 @@ test('una falla técnica del clasificador conserva la cita al vencer el ultimát
     )
     await expireWindow(window.id)
     await processExpiredConfirmationWindows()
-    await expireConfirmationTimeout(sendId)
 
     const result = await processExpiredConfirmationTimeouts()
-    assert.equal(result.reviewRequired, 1)
+    assert.equal(result.processed, 0)
+    assert.equal(result.reviewRequired, 0)
     assert.equal(result.cancelled, 0)
 
     const appointment = await db.get(
@@ -1215,8 +1412,9 @@ test('una falla técnica del clasificador conserva la cita al vencer el ultimát
       'SELECT confirmation_timeout_status FROM appointment_reminder_sends WHERE id = ?',
       [sendId]
     )
-    assert.equal(send.confirmation_timeout_status, 'review_required')
-    assert.ok(payloads.some(({ payload }) => /pendiente de revisión/i.test(payload.title)))
+    assert.equal(send.confirmation_timeout_status, 'responded')
+    assert.equal(payloads.length, 1)
+    assert.match(payloads[0].payload.title, /requiere atención humana/i)
   })
 })
 

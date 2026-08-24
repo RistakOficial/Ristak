@@ -54,6 +54,7 @@ import {
   dispatchAppointmentAutomationEvent,
   dispatchAppointmentCreatedAutomations
 } from '../services/appointmentAutomationService.js';
+import { resolveAppointmentConfirmationFlow } from '../services/appointmentConfirmationService.js';
 import { INTERNAL_CONTROLLER_CONTEXT } from '../agents/invokeController.js';
 import {
   archiveCalendarMeetingResources,
@@ -3252,6 +3253,9 @@ export async function updateAppointment(req, res) {
     )
       ? cleanString(updateData.strictLifecycleMutation || updateData.strict_lifecycle_mutation).toLowerCase()
       : null;
+    const requestedAppointmentStatus = cleanString(
+      updateData.appointmentStatus || updateData.appointment_status || updateData.status
+    ).toLowerCase();
     delete updateData.strictAvailabilityCheck;
     delete updateData.ignoreAppointmentConflicts;
     delete updateData.expectedStartTime;
@@ -3275,17 +3279,17 @@ export async function updateAppointment(req, res) {
       });
     }
 
-    // (APT-006) Normaliza el nuevo estado ANTES de hablar con HL. El front puede
-    // mandar el estado como status / appointmentStatus / appointment_status; usamos
-    // el MISMO patrón que más abajo (previousStatus/nextStatus). Si el nuevo estado
-    // es 'cancelled' nos aseguramos de que el payload a HL lleve appointmentStatus
-    // para que highlevelCalendarService.mapAppointmentStatus lo reciba y propague la
-    // cancelación remota en este mismo PUT. NO duplicamos el mapeo de status aquí.
+    // (APT-006) Normaliza el nuevo estado ANTES de persistir o hablar con HL. El
+    // front puede mandarlo como status / appointmentStatus / appointment_status,
+    // pero la cita canónica conserva ambos campos. Si sólo actualizábamos uno,
+    // `updateLocalAppointment` podía heredar el otro valor anterior y devolver una
+    // cita contradictoria (por ejemplo appointmentStatus=cancelled, status=pending).
     const incomingStatus = String(
       updateData.appointmentStatus || updateData.appointment_status || updateData.status || ''
     ).trim().toLowerCase();
-    if (incomingStatus === 'cancelled' && !updateData.appointmentStatus && !updateData.appointment_status) {
+    if (incomingStatus) {
       updateData.appointmentStatus = incomingStatus;
+      updateData.status = incomingStatus;
     }
     const cancellationMutationRequested = ['cancelled', 'canceled'].includes(incomingStatus);
     if (!existing && cancellationMutationRequested) {
@@ -3455,6 +3459,19 @@ export async function updateAppointment(req, res) {
     // HighLevel respondía bien, se marcaba el espejo como sincronizado y la
     // cita canónica conservaba los datos viejos.
     if (!appointment) {
+      const assertExpectedAppointmentStatus = async () => {
+        if (!expectedAppointmentStatus) return;
+        const current = await localCalendarService.getLocalAppointment(id);
+        const currentStatus = cleanString(
+          current?.appointmentStatus || current?.appointment_status || current?.status
+        ).toLowerCase();
+        if (!current?.id || currentStatus !== expectedAppointmentStatus) {
+          const error = new Error('El estado de la cita cambió mientras se procesaba. No se aplicó la acción.');
+          error.status = 409;
+          error.code = 'appointment_status_stale';
+          throw error;
+        }
+      };
       const persistOrdinaryLocalUpdate = () => localCalendarService.updateLocalAppointment(
         id,
         updateData,
@@ -3464,9 +3481,13 @@ export async function updateAppointment(req, res) {
       appointment = updateLockKey
         ? await db.transaction(async () => {
             await lockCalendarAppointmentCreation(updateLockKey);
+            await assertExpectedAppointmentStatus();
             return persistOrdinaryLocalUpdate();
           })
-        : await persistOrdinaryLocalUpdate();
+        : await (async () => {
+            await assertExpectedAppointmentStatus();
+            return persistOrdinaryLocalUpdate();
+          })();
       if (!appointment?.id) {
         return res.status(404).json({
           success: false,
@@ -3476,6 +3497,16 @@ export async function updateAppointment(req, res) {
       }
     }
     const localProviderFence = appointment;
+    const requestedCancellation = ['cancelled', 'canceled'].includes(requestedAppointmentStatus);
+    if (requestedAppointmentStatus === 'confirmed' || requestedCancellation) {
+      await resolveAppointmentConfirmationFlow({
+        appointmentId: appointment?.id || id,
+        result: requestedAppointmentStatus === 'confirmed' ? 'manual_confirmed' : 'manual_cancelled',
+        resultDetail: requestedAppointmentStatus === 'confirmed'
+          ? 'La cita se confirmó manualmente y se cerró la espera automática.'
+          : 'La cita se canceló manualmente y se cerró la espera automática.'
+      });
+    }
 
     // (APT-006) Token de fallback: cuando un admin cancela por cambio de estado puede
     // NO venir accessToken en el body. Si la cita está vinculada a HL pero no tenemos

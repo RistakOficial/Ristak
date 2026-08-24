@@ -2703,6 +2703,65 @@
   white-space: nowrap;
 }
 
+.appointmentConfirmationBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.appointmentConfirmationBar + .composer {
+  border-top: 0;
+}
+
+.appointmentConfirmationIcon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-ctl);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.appointmentConfirmationCopy {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 2px;
+  color: var(--text-mute);
+  font-size: var(--font-size-xs);
+  line-height: 1.3;
+}
+
+.appointmentConfirmationCopy strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appointmentConfirmationEyebrow {
+  color: var(--accent);
+  font: var(--label-font);
+  text-transform: var(--label-transform);
+  letter-spacing: var(--label-spacing);
+}
+
+.appointmentConfirmationActions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
 .composer {
   --composer-inline-menu-offset: 0px;
 
@@ -4470,6 +4529,20 @@
 }
 
 @media (max-width: 640px) {
+  .appointmentConfirmationBar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .appointmentConfirmationActions {
+    width: 100%;
+    padding-left: 46px;
+  }
+
+  .appointmentConfirmationActions [data-btn] {
+    flex: 1 1 0;
+  }
+
   .emailFooter {
     align-items: stretch;
     flex-direction: column;

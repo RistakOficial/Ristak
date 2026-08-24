@@ -20,6 +20,12 @@ export interface ContactAppointment {
   notes?: string | null
 }
 
+export interface ActiveAppointmentConfirmation extends ContactAppointment {
+  reminderSendId?: string | null
+  sourceType?: string | null
+  sentAt?: string | null
+}
+
 export interface ContactFirstSession {
   started_at?: string | null
   page_url?: string | null
@@ -234,6 +240,7 @@ export interface Contact {
   paymentsTruncated?: boolean
   paymentsNextCursor?: string | null
   appointments?: ContactAppointment[]
+  activeAppointmentConfirmation?: ActiveAppointmentConfirmation | null
   appointmentsTotal?: number
   appointmentsTruncated?: boolean
   appointmentsNextCursor?: string | null

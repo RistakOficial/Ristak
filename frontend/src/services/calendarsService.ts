@@ -254,6 +254,11 @@ export interface CalendarEvent {
   participants?: AppointmentParticipant[];
 }
 
+export type AppointmentUpdatePayload = Partial<CalendarEvent> & {
+  expectedAppointmentStatus?: string;
+  strictLifecycleMutation?: 'cancel' | 'reschedule';
+};
+
 export interface AppointmentParticipant {
   id?: string;
   appointmentId?: string;
@@ -879,7 +884,7 @@ export const calendarsService = {
    */
   async updateAppointment(
     eventId: string,
-    updateData: Partial<CalendarEvent>,
+    updateData: AppointmentUpdatePayload,
     accessToken?: string
   ): Promise<CalendarEvent | null> {
     try {

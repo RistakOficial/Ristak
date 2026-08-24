@@ -231,30 +231,70 @@ async function finishClaimedWindow({
   ])
 }
 
-async function markConfirmationSendConfirmed(sendId) {
-  const id = String(sendId || '').trim()
-  if (!id) return
-  const timestamp = nowIso()
-  await db.run(`
+async function markAppointmentConfirmationSendsResolved({
+  appointmentId,
+  resolution,
+  timestamp = nowIso(),
+  executor = db
+}) {
+  const id = String(appointmentId || '').trim()
+  const terminalStatus = resolution === 'confirmed' ? 'confirmed' : 'responded'
+  if (!id) return { changes: 0 }
+
+  return executor.run(`
     UPDATE appointment_reminder_sends
-    SET confirmation_timeout_status = 'confirmed',
-        confirmation_timeout_processed_at = ?
-    WHERE id = ?
-      AND confirmation_timeout_status = 'pending'
-  `, [timestamp, id])
+    SET confirmation_timeout_status = ?,
+        confirmation_timeout_processed_at = COALESCE(confirmation_timeout_processed_at, ?)
+    WHERE appointment_id = ?
+      AND status = 'sent'
+      AND message_type = 'confirmation'
+      AND COALESCE(confirmation_timeout_status, 'pending') = 'pending'
+  `, [terminalStatus, timestamp, id])
 }
 
-async function markConfirmationSendResponded(sendId) {
-  const id = String(sendId || '').trim()
-  if (!id) return
+/**
+ * Cierra cualquier espera de confirmación todavía activa para una cita.
+ * La usan las acciones humanas y los cambios de estado hechos fuera del
+ * clasificador para que el siguiente mensaje vuelva al chat normal.
+ */
+export async function resolveAppointmentConfirmationFlow({
+  appointmentId,
+  result,
+  resultDetail = ''
+} = {}) {
+  const id = String(appointmentId || '').trim()
+  if (!id) return { windowsClosed: 0, sendsClosed: 0 }
+
+  const normalizedResult = String(result || '').trim().toLowerCase()
+  const resolution = ['confirmed', 'manual_confirmed'].includes(normalizedResult)
+    ? 'confirmed'
+    : 'responded'
+  const storedResult = normalizedResult || (resolution === 'confirmed' ? 'confirmed' : 'cancel')
   const timestamp = nowIso()
-  await db.run(`
-    UPDATE appointment_reminder_sends
-    SET confirmation_timeout_status = 'responded',
-        confirmation_timeout_processed_at = ?
-    WHERE id = ?
-      AND confirmation_timeout_status = 'pending'
-  `, [timestamp, id])
+
+  return db.transaction(async transaction => {
+    const windows = await transaction.run(`
+      UPDATE appointment_confirmation_windows
+      SET status = 'done',
+          result = ?,
+          result_detail = ?,
+          processed_at = COALESCE(processed_at, ?),
+          updated_at = ?
+      WHERE appointment_id = ?
+        AND status <> 'done'
+    `, [storedResult, String(resultDetail || '').slice(0, 500), timestamp, timestamp, id])
+    const sends = await markAppointmentConfirmationSendsResolved({
+      appointmentId: id,
+      resolution,
+      timestamp,
+      executor: transaction
+    })
+
+    return {
+      windowsClosed: Number(windows?.changes || 0),
+      sendsClosed: Number(sends?.changes || 0)
+    }
+  })
 }
 
 /**
@@ -319,13 +359,14 @@ export async function handleInboundForConfirmation({
         AND s.status = 'sent'
         AND s.message_type = 'confirmation'
         AND s.ai_enabled = 1
+        AND COALESCE(s.confirmation_timeout_status, 'pending') = 'pending'
         AND NOT EXISTS (
           SELECT 1
           FROM appointment_confirmation_windows resolved_window
           WHERE resolved_window.contact_id = s.contact_id
             AND resolved_window.appointment_id = s.appointment_id
             AND resolved_window.reminder_send_id = s.id
-            AND resolved_window.result = 'confirmed'
+            AND resolved_window.status = 'done'
         )
         AND a.deleted_at IS NULL
         AND a.start_time > ?
@@ -401,7 +442,7 @@ export async function handleInboundForConfirmation({
         END,
         updated_at = excluded.updated_at
       WHERE appointment_confirmation_windows.reminder_send_id <> excluded.reminder_send_id
-         OR COALESCE(appointment_confirmation_windows.result, '') <> 'confirmed'
+         OR appointment_confirmation_windows.status <> 'done'
     `, [
       makeWindowId(), id, pending.appointment_id, pending.send_id,
       JSON.stringify(storedMessage ? [storedMessage] : []),
@@ -412,9 +453,8 @@ export async function handleInboundForConfirmation({
       ),
       now, now, now
     ])
-    // La decisión `confirmed` es terminal para el mismo envío desde que el
-    // procesador la reserva, incluso antes de terminar sus efectos secundarios.
-    // Esta segunda compuerta cubre la carrera donde un inbound entra después del
+    // Cualquier decisión terminada es terminal para el mismo envío. Esta
+    // segunda compuerta cubre la carrera donde un inbound entra después del
     // SELECT anterior pero mientras la confirmación pasa de `deciding` a `done`.
     // Un envío nuevo (por ejemplo tras reprogramar) sí inicia un ciclo limpio.
     if (!stored || Number(stored.changes || 0) === 0) return null
@@ -901,12 +941,25 @@ async function processConfirmationWindow(candidate, cutoff) {
     return { processed: false, deferred: true }
   }
 
+  // La clasificación ya ganó de forma atómica. Cerramos todos los envíos de
+  // confirmación que ya estaban activos para esta cita antes de disparar pushes,
+  // automatizaciones o sincronizaciones externas. Así otro mensaje no puede
+  // colarse por un segundo recordatorio y repetir el resultado.
+  await markAppointmentConfirmationSendsResolved({
+    appointmentId,
+    resolution: result === 'confirmed' ? 'confirmed' : 'responded'
+  })
+
   // Ejecutar la acción según la clasificación.
   if (result === 'confirmed') {
     await db.run(`
       UPDATE appointments
       SET appointment_status = 'confirmed', status = 'confirmed', date_updated = CURRENT_TIMESTAMP
-      WHERE id = ? AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('confirmed')
+      WHERE id = ?
+        AND deleted_at IS NULL
+        AND LOWER(COALESCE(appointment_status, status, '')) NOT IN (
+          'confirmed', 'cancelled', 'canceled', 'showed', 'noshow', 'invalid'
+        )
     `, [appointmentId])
     publishAppointmentChanged(contactId, appointmentId)
     await resyncAppointmentToGoogle(appointmentId)
@@ -979,11 +1032,6 @@ async function processConfirmationWindow(candidate, cutoff) {
     expectedStatus: 'deciding'
   })
   const processed = Number(finished?.changes || 0) > 0
-  if (processed && result === 'confirmed') {
-    await markConfirmationSendConfirmed(win.reminder_send_id)
-  } else if (processed && ['cancel', 'reschedule'].includes(result)) {
-    await markConfirmationSendResponded(win.reminder_send_id)
-  }
   return {
     processed,
     deferred: !processed
@@ -1252,6 +1300,7 @@ export async function maybeConfirmAppointmentFromReply({ contactId, text } = {})
       AND s.status = 'sent'
       AND s.message_type = 'confirmation'
       AND s.ai_enabled = 0
+      AND COALESCE(s.confirmation_timeout_status, 'pending') = 'pending'
       AND a.deleted_at IS NULL
       AND a.start_time > ?
       AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN (
@@ -1268,7 +1317,10 @@ export async function maybeConfirmAppointmentFromReply({ contactId, text } = {})
     SET appointment_status = 'confirmed', status = 'confirmed', date_updated = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [pending.appointment_id])
-  await markConfirmationSendConfirmed(pending.send_id)
+  await markAppointmentConfirmationSendsResolved({
+    appointmentId: pending.appointment_id,
+    resolution: 'confirmed'
+  })
   publishAppointmentChanged(id, pending.appointment_id)
   await resyncAppointmentToGoogle(pending.appointment_id)
   await sendAppointmentConfirmationNotification({

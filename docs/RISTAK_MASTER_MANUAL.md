@@ -5316,14 +5316,30 @@ acciones sí se procesan. Una respuesta de reagendamiento no busca ni reserva po
 si sola otro horario; la politica de vencimiento sólo decide si conservar o
 cancelar la cita actual.
 
-Una decisión `confirmed` es terminal para ese envío de confirmación. Desde que
-el procesador reserva esa decisión, los mensajes posteriores ya no reabren
-`appointment_confirmation_windows`, no vuelven a invocar al clasificador y no
-repiten el cierre ni el push de cita confirmada. Esos mensajes continúan por el
-flujo normal del chat; por ejemplo, una solicitud posterior del enlace o de la
-ubicacion no se mezcla con la respuesta que ya confirmó la asistencia. Si una
-reprogramación genera un envío nuevo, la misma fila se reinicia sin arrastrar los
-mensajes ni el resultado de la confirmación anterior.
+Cualquier decisión completada (`confirmed`, `reschedule`, `cancel`, `ambiguous`
+o `human_needed`) es terminal para el envío de confirmación que recibió la
+respuesta. Desde que el procesador reserva esa decisión, cierra todos los envíos
+de confirmación que ya estaban activos para la misma cita. Los mensajes
+posteriores ya no reabren `appointment_confirmation_windows`, no vuelven a
+invocar al clasificador y no repiten el cierre ni el push. Esos mensajes continúan
+por el flujo normal del chat; por ejemplo, una solicitud posterior del enlace o
+de la ubicación no se mezcla con la respuesta que ya resolvió la espera. El modo
+afirmativo sin clasificador IA guarda la misma resolución durable y tampoco
+reacciona varias veces al mismo envío. Si una reprogramación genera un envío
+nuevo, la misma fila puede iniciar un ciclo limpio sin arrastrar los mensajes ni
+el resultado de la confirmación anterior.
+
+Desktop Chat consulta en el detalle local del contacto la confirmación activa más
+próxima. Mientras exista, muestra una barra plana inmediatamente arriba del
+composer con el título, horario en la zona del negocio y origen (recordatorio de
+Calendario o Automatización), además de **Confirmar** y **Cancelar**. Ambas
+acciones usan el modal global de confirmación. Al aceptarlas actualizan la cita
+canónica mediante `/api/calendars/appointments/:id`, cierran ventanas y plazos
+pendientes de esa cita y recargan el estado canónico; los mensajes siguientes
+regresan al chat normal. La cancelación mantiene el flujo estándar de
+sincronización con Google/HighLevel, notificaciones y evento de cambio de estado.
+Una resolución manual se registra como tal y nunca fabrica una tarjeta que diga
+"confirmada por IA".
 
 Una regla con IA puede guardar `confirmation_reply_text`, un cierre opcional de
 hasta 4096 caracteres. Después de clasificar `confirmed`, Ristak lo renderiza con

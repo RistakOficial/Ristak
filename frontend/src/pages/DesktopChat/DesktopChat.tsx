@@ -3223,7 +3223,7 @@ export interface DesktopChatProps {
 export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null }) => {
   const { accessToken, locationId, user } = useAuth()
   const { labels } = useLabels()
-  const { showToast } = useNotification()
+  const { showConfirm, showToast } = useNotification()
   const { timezone, formatLocalDateTime } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
   const paymentCapabilities = usePaymentGatewayCapabilities()
@@ -3447,6 +3447,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
   const [selectedCalendarId, setSelectedCalendarId] = useState('')
   const [appointmentOpen, setAppointmentOpen] = useState(false)
   const [editingAppointmentEvent, setEditingAppointmentEvent] = useState<CalendarEvent | null>(null)
+  const [appointmentConfirmationAction, setAppointmentConfirmationAction] = useState<'confirm' | 'cancel' | null>(null)
   const [paymentFlow, setPaymentFlow] = useState<DesktopPaymentFlow>('closed')
   const [savingTags, setSavingTags] = useState(false)
   const [savingWhatsAppPreference, setSavingWhatsAppPreference] = useState(false)
@@ -3819,6 +3820,12 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     () => getContactInfoAppointments(contactInfoData || activeContact, contactJourney),
     [activeContact, contactInfoData, contactJourney]
   )
+  const activeAppointmentConfirmation = contactInfoData?.activeAppointmentConfirmation || null
+  const activeAppointmentConfirmationStatus = activeAppointmentConfirmation
+    ? String(
+        activeAppointmentConfirmation.appointment_status || activeAppointmentConfirmation.status || ''
+      ).trim().toLowerCase()
+    : ''
   const trackingData = useMemo(
     () => getTrackingData(contactInfoData || activeContact, contactJourney),
     [activeContact, contactInfoData, contactJourney]
@@ -6335,6 +6342,67 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     ))
     setAppointmentOpen(true)
   }, [activeContact, contactInfoData, locationId, selectedCalendar, timezone])
+
+  const handleManualAppointmentConfirmation = useCallback((action: 'confirm' | 'cancel') => {
+    if (!activeAppointmentConfirmation?.id || appointmentConfirmationAction) return
+
+    const appointmentTitle = String(activeAppointmentConfirmation.title || 'Cita').trim() || 'Cita'
+    const appointmentDate = formatLocalDateTime(activeAppointmentConfirmation.start_time)
+    const isConfirming = action === 'confirm'
+    showConfirm(
+      isConfirming ? 'Confirmar cita' : 'Cancelar cita',
+      isConfirming
+        ? `Vas a confirmar “${appointmentTitle}”${appointmentDate ? ` para ${appointmentDate}` : ''} y cerrar su espera automática.`
+        : `Vas a cancelar “${appointmentTitle}”${appointmentDate ? ` de ${appointmentDate}` : ''} y cerrar su espera automática.`,
+      async () => {
+        setAppointmentConfirmationAction(action)
+        try {
+          const currentStatus = String(
+            activeAppointmentConfirmation.appointment_status || activeAppointmentConfirmation.status || ''
+          ).trim().toLowerCase()
+          await calendarsService.updateAppointment(activeAppointmentConfirmation.id, {
+            appointmentStatus: isConfirming ? 'confirmed' : 'cancelled',
+            ...(currentStatus ? { expectedAppointmentStatus: currentStatus } : {}),
+            ...(isConfirming ? {} : { strictLifecycleMutation: 'cancel' as const })
+          }, accessToken || undefined)
+          showToast(
+            'success',
+            isConfirming ? 'Cita confirmada' : 'Cita cancelada',
+            'La espera automática terminó y los siguientes mensajes seguirán como conversación normal.'
+          )
+          if (activeContactId) {
+            await Promise.all([
+              loadConversation(activeContactId, { silent: true }),
+              loadChats({ silent: true })
+            ])
+          }
+          return true
+        } catch (error: any) {
+          showToast(
+            'error',
+            isConfirming ? 'No se pudo confirmar la cita' : 'No se pudo cancelar la cita',
+            error?.message || 'La cita pudo cambiar mientras realizabas la acción. Recarga el chat e intenta otra vez.'
+          )
+          if (activeContactId) await loadConversation(activeContactId, { silent: true })
+          return false
+        } finally {
+          setAppointmentConfirmationAction(null)
+        }
+      },
+      isConfirming ? 'Confirmar' : 'Cancelar',
+      'Volver'
+    )
+  }, [
+    accessToken,
+    activeAppointmentConfirmation,
+    activeContactId,
+    appointmentConfirmationAction,
+    formatLocalDateTime,
+    loadChats,
+    loadConversation,
+    showConfirm,
+    showToast
+  ])
 
   const handleSaveAppointment = async (
     eventIdOrPayload: string | CreateAppointmentPayload,
@@ -10085,6 +10153,52 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
                   </div>
                 ) : null}
               </div>
+
+              {activeAppointmentConfirmation ? (
+                <section
+                  className={styles.appointmentConfirmationBar}
+                  aria-label="Control de confirmación de cita"
+                >
+                  <span className={styles.appointmentConfirmationIcon} aria-hidden="true">
+                    <CalendarDays size={18} />
+                  </span>
+                  <span className={styles.appointmentConfirmationCopy}>
+                    <span className={styles.appointmentConfirmationEyebrow}>
+                      {activeAppointmentConfirmationStatus === 'confirmed'
+                        ? 'Reconfirmación pendiente'
+                        : 'Confirmación pendiente'}
+                    </span>
+                    <strong>{activeAppointmentConfirmation.title || 'Cita'}</strong>
+                    <span>
+                      {formatLocalDateTime(activeAppointmentConfirmation.start_time)}
+                      {' · '}
+                      {activeAppointmentConfirmation.sourceType === 'automation'
+                        ? 'Automatización'
+                        : 'Recordatorio del calendario'}
+                    </span>
+                  </span>
+                  <span className={styles.appointmentConfirmationActions}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={Boolean(appointmentConfirmationAction)}
+                      onClick={() => handleManualAppointmentConfirmation('confirm')}
+                    >
+                      <CheckCheck size={15} aria-hidden="true" />
+                      Confirmar
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={Boolean(appointmentConfirmationAction)}
+                      onClick={() => handleManualAppointmentConfirmation('cancel')}
+                    >
+                      <X size={15} aria-hidden="true" />
+                      Cancelar
+                    </Button>
+                  </span>
+                </section>
+              ) : null}
 
 	              <form
 	                className={styles.composer}
