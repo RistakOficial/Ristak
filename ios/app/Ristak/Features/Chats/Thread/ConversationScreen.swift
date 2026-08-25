@@ -32,6 +32,7 @@ struct ConversationScreen: View {
     /// real. Un relayout o una descarga de media nunca deben dispararlo.
     @State private var historyBoundaryIsNear = false
     @State private var conversationDragIsActive = false
+    @State private var pendingAppointmentConfirmationAction: AppointmentConfirmationAction?
 
     @Environment(AppConfigStore.self) private var appConfig
     @Environment(AccessStore.self) private var access
@@ -113,6 +114,32 @@ struct ConversationScreen: View {
                 Button("Entendido", role: .cancel) {}
             } message: { alert in
                 Text(alert.message)
+            }
+            .confirmationDialog(
+                pendingAppointmentConfirmationAction == .confirm ? "Confirmar cita" : "Cancelar cita",
+                isPresented: Binding(
+                    get: { pendingAppointmentConfirmationAction != nil },
+                    set: { if !$0 { pendingAppointmentConfirmationAction = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                if let action = pendingAppointmentConfirmationAction {
+                    Button(
+                        action == .confirm ? "Confirmar" : "Cancelar",
+                        role: action == .cancel ? .destructive : nil
+                    ) {
+                        pendingAppointmentConfirmationAction = nil
+                        Task { await viewModel.resolveAppointmentConfirmation(action) }
+                    }
+                }
+                Button("Volver", role: .cancel) {
+                    pendingAppointmentConfirmationAction = nil
+                }
+            } message: {
+                if let action = pendingAppointmentConfirmationAction,
+                   let confirmation = viewModel.activeAppointmentConfirmation {
+                    Text(appointmentConfirmationPrompt(confirmation, action: action))
+                }
             }
             .sheet(item: bindableViewModel.infoMessage) { message in
                 MessageInfoSheet(message: message, formatters: appConfig.formatters)
@@ -308,7 +335,12 @@ struct ConversationScreen: View {
             )
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if access.canWrite(module: .chat) {
-                    ComposerView(viewModel: viewModel)
+                    VStack(spacing: 0) {
+                        if let confirmation = viewModel.activeAppointmentConfirmation {
+                            appointmentConfirmationBar(confirmation)
+                        }
+                        ComposerView(viewModel: viewModel)
+                    }
                 }
             }
             .onChange(of: viewModel.scrollToBottomSignal) { _, _ in
@@ -521,6 +553,117 @@ struct ConversationScreen: View {
                     ?? message.providerMessageId.flatMap { viewModel.commentContexts[$0] }
             }
         )
+    }
+
+    private func appointmentConfirmationBar(_ confirmation: ActiveAppointmentConfirmation) -> some View {
+        HStack(spacing: RistakTheme.Spacing.sm) {
+            Image(systemName: "calendar.badge.exclamationmark")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(RistakTheme.accent)
+                .frame(width: 32, height: 32)
+                .background(RistakTheme.accentSoft, in: Circle())
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(confirmation.currentStatus == "confirmed" ? "RECONFIRMACIÓN PENDIENTE" : "CONFIRMACIÓN PENDIENTE")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(RistakTheme.accent)
+                    .lineLimit(1)
+                Text(confirmation.title.isEmpty ? "Cita" : confirmation.title)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(RistakTheme.textPrimary)
+                    .lineLimit(1)
+                Text(appointmentConfirmationMeta(confirmation))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(RistakTheme.textDim)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(spacing: 5) {
+                Button {
+                    pendingAppointmentConfirmationAction = .confirm
+                } label: {
+                    appointmentConfirmationButtonLabel(
+                        "Confirmar",
+                        icon: "checkmark.circle",
+                        action: .confirm
+                    )
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .controlSize(.small)
+                .tint(RistakTheme.accent)
+                .disabled(viewModel.appointmentConfirmationAction != nil)
+
+                Button {
+                    pendingAppointmentConfirmationAction = .cancel
+                } label: {
+                    appointmentConfirmationButtonLabel(
+                        "Cancelar",
+                        icon: "xmark.circle",
+                        action: .cancel
+                    )
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .controlSize(.small)
+                .tint(RistakTheme.neg)
+                .disabled(viewModel.appointmentConfirmationAction != nil)
+            }
+        }
+        .padding(.horizontal, RistakTheme.Spacing.sm)
+        .padding(.vertical, RistakTheme.Spacing.xs)
+        .background(RistakTheme.surface)
+        .overlay(alignment: .top) {
+            Divider()
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("ristak-appointment-confirmation-control")
+    }
+
+    @ViewBuilder
+    private func appointmentConfirmationButtonLabel(
+        _ title: String,
+        icon: String,
+        action: AppointmentConfirmationAction
+    ) -> some View {
+        if viewModel.appointmentConfirmationAction == action {
+            ProgressView()
+                .controlSize(.small)
+                .frame(minWidth: 70)
+        } else {
+            Label(title, systemImage: icon)
+                .font(.system(size: 11, weight: .bold))
+                .frame(minWidth: 70)
+        }
+    }
+
+    private func appointmentConfirmationMeta(_ confirmation: ActiveAppointmentConfirmation) -> String {
+        let source = confirmation.sourceType == "automation"
+            ? "Automatización"
+            : "Recordatorio del calendario"
+        let date = appointmentConfirmationDate(confirmation)
+        return [date, source].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    private func appointmentConfirmationDate(_ confirmation: ActiveAppointmentConfirmation) -> String {
+        guard let date = RistakDateParsing.date(fromISO: confirmation.startTime) else { return "" }
+        return [
+            appConfig.formatters.daySeparatorLabel(date),
+            appConfig.formatters.messageTime(date)
+        ].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    private func appointmentConfirmationPrompt(
+        _ confirmation: ActiveAppointmentConfirmation,
+        action: AppointmentConfirmationAction
+    ) -> String {
+        let title = confirmation.title.isEmpty ? "Cita" : confirmation.title
+        let date = appointmentConfirmationDate(confirmation)
+        if action == .confirm {
+            return "Vas a confirmar “\(title)”\(date.isEmpty ? "" : " para \(date)") y cerrar su espera automática."
+        }
+        return "Vas a cancelar “\(title)”\(date.isEmpty ? "" : " de \(date)") y cerrar su espera automática."
     }
 
     // MARK: - Piezas

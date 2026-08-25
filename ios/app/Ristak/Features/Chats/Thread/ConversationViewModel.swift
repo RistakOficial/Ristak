@@ -43,6 +43,11 @@ final class ConversationViewModel {
 
     private(set) var seedContact: ChatContact?
     private(set) var contactDetail: ContactDetail?
+    private(set) var appointmentConfirmationAction: AppointmentConfirmationAction?
+
+    var activeAppointmentConfirmation: ActiveAppointmentConfirmation? {
+        contactDetail?.activeAppointmentConfirmation
+    }
 
     var displayName: String {
         let candidates = [contactDetail?.name, seedContact?.name, contactPhone]
@@ -473,6 +478,7 @@ final class ConversationViewModel {
 
     private func performSilentRefreshOnce() async {
         let isBootstrapRecovery = !hasLoadedOnce
+        async let contactTask: Void = hydrateContactDetail()
         do {
             try await loadConversation(reset: isBootstrapRecovery)
             if isBootstrapRecovery {
@@ -493,6 +499,7 @@ final class ConversationViewModel {
         } catch {
             // Silencioso: el próximo SSE/fallback vuelve a intentar.
         }
+        _ = await contactTask
     }
 
     /// El POST aceptado ya deja la burbuja optimista y la fila de bandeja en su
@@ -1204,6 +1211,36 @@ final class ConversationViewModel {
                 seed.destinationPhoneRequiresValidation = false
                 seedContact = seed
             }
+        }
+    }
+
+    func resolveAppointmentConfirmation(_ action: AppointmentConfirmationAction) async {
+        guard appointmentConfirmationAction == nil,
+              let confirmation = activeAppointmentConfirmation,
+              !confirmation.id.isEmpty else { return }
+
+        appointmentConfirmationAction = action
+        defer { appointmentConfirmationAction = nil }
+
+        do {
+            _ = try await CalendarsService.resolveAppointmentConfirmation(
+                id: confirmation.id,
+                action: action,
+                expectedStatus: confirmation.currentStatus.isEmpty ? nil : confirmation.currentStatus
+            )
+            await hydrateContactDetail()
+        } catch let error as RistakAPIError {
+            await hydrateContactDetail()
+            alert = ConversationAlert(
+                title: action == .confirm ? "No se pudo confirmar la cita" : "No se pudo cancelar la cita",
+                message: error.message
+            )
+        } catch {
+            await hydrateContactDetail()
+            alert = ConversationAlert(
+                title: action == .confirm ? "No se pudo confirmar la cita" : "No se pudo cancelar la cita",
+                message: "La cita pudo cambiar mientras realizabas la acción. Recarga el chat e intenta otra vez."
+            )
         }
     }
 

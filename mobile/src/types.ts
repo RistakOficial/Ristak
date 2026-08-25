@@ -70,6 +70,18 @@ export type ContactMetaAttribution = {
   date?: string | null;
 };
 
+export type ActiveAppointmentConfirmation = {
+  id: string;
+  title?: string | null;
+  status?: string | null;
+  appointment_status?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  reminderSendId?: string | null;
+  sourceType?: string | null;
+  sentAt?: string | null;
+};
+
 export type ChatContact = {
   id: string;
   phone?: string;
@@ -141,6 +153,7 @@ export type ChatContact = {
     sourceFormId?: string;
     sourceFieldId?: string;
   }>;
+  activeAppointmentConfirmation?: ActiveAppointmentConfirmation | null;
 };
 
 export type ContactTag = {

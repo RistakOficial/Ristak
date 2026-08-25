@@ -273,6 +273,15 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 
 ### 2. Conversacion
 
+- [x] Control manual de confirmacion de cita sobre el composer.
+  - `/movil`, Android e iOS consumen `activeAppointmentConfirmation` del detalle
+    canonico del contacto, muestran titulo, fecha/hora en la zona del negocio y
+    origen, y ofrecen **Confirmar**/**Cancelar** con confirmacion explicita.
+  - La mutacion usa estado esperado para no pisar cambios de otro dispositivo;
+    cancelar conserva el ciclo estricto. Tras resolver, el detalle se relee y el
+    panel desaparece sin toast de exito. SSE/reconciliacion tambien refrescan el
+    detalle para retirar el control cuando la IA ya cerro la espera.
+
 - [ ] Header de conversacion con avatar/canal/estado como `/movil`.
   - Avance: `mobile/` ya abre `NativeConversationScreen` desde la bandeja, usa
     avatar/foto/inicial sin aro de canal, badge nativo, nombre del contacto,

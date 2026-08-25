@@ -21481,6 +21481,7 @@ function NativeConversationScreen({
   const [closingSheet, setClosingSheet] = useState<ConversationSheetMode>(null);
   const [contactInfoOpen, setContactInfoOpen] = useState(false);
   const [contactInfo, setContactInfo] = useState<ChatContact | null>(null);
+  const [appointmentConfirmationAction, setAppointmentConfirmationAction] = useState<'confirm' | 'cancel' | null>(null);
   const [contactInfoJourneyEvents, setContactInfoJourneyEvents] = useState<JourneyEvent[] | null>(null);
   const [contactInfoSaving, setContactInfoSaving] = useState(false);
   const [contactInfoError, setContactInfoError] = useState('');
@@ -21571,6 +21572,8 @@ function NativeConversationScreen({
   const conversationPrimaryAbortRef = useRef<AbortController | null>(null);
   const conversationSupplementalAbortRef = useRef<AbortController | null>(null);
   const conversationSupplementalGenerationRef = useRef(0);
+  const contactDetailRefreshInFlightRef = useRef<Promise<void> | null>(null);
+  const contactDetailRefreshGenerationRef = useRef(0);
 
   // La lista está invertida: offset 0 es el mensaje más reciente. Mantenerse
   // pegado al último mensaje y compensar prepends lo hace el nativo vía
@@ -21625,6 +21628,36 @@ function NativeConversationScreen({
   const releaseConversationActionLock = useCallback((key: string) => {
     conversationActionLocksRef.current.delete(key);
   }, []);
+
+  const refreshActiveContactDetail = useCallback((force = false) => {
+    if (!force && contactDetailRefreshInFlightRef.current) return contactDetailRefreshInFlightRef.current;
+    const contactId = contact.id;
+    const generation = contactDetailRefreshGenerationRef.current + 1;
+    contactDetailRefreshGenerationRef.current = generation;
+    const request = api.getContact(contactId).then((details) => {
+      if (
+        activeConversationContactIdRef.current !== contactId
+        || contactDetailRefreshGenerationRef.current !== generation
+      ) return;
+      setContactInfo((current) => ({
+        ...(current?.id === contactId ? current : conversationContactSummaryRef.current),
+        ...details,
+      }));
+      onContactPatchRef.current(contactId, details);
+    }).catch(() => undefined);
+    contactDetailRefreshInFlightRef.current = request;
+    void request.finally(() => {
+      if (contactDetailRefreshInFlightRef.current === request) {
+        contactDetailRefreshInFlightRef.current = null;
+      }
+    });
+    return request;
+  }, [api, contact.id]);
+
+  useEffect(() => {
+    setContactInfo(null);
+    void refreshActiveContactDetail();
+  }, [contact.id, refreshActiveContactDetail]);
 
   useEffect(() => {
     onContactPatchRef.current = onContactPatch;
@@ -22089,6 +22122,7 @@ function NativeConversationScreen({
   const requestSilentConversationRefresh = useCallback((event?: ChatLiveEvent) => {
     const eventContactId = String(event?.contactId || '').trim();
     if (eventContactId && eventContactId !== contact.id) return;
+    void refreshActiveContactDetail();
     if (event?.type === 'chat_data_changed' && event.domains.includes('scheduled_messages')) {
       // El poll normal limita programados a una lectura cada 30 s. Una mutacion
       // confirmada por SSE debe saltarse ese throttle y reconciliar el estado
@@ -22107,7 +22141,7 @@ function NativeConversationScreen({
       conversationRealtimeRefreshTimeoutRef.current = null;
       conversationRefreshExecutorRef.current();
     }, CHAT_REALTIME_REFRESH_DEBOUNCE_MS);
-  }, [contact.id]);
+  }, [contact.id, refreshActiveContactDetail]);
   conversationRefreshKickRef.current = requestSilentConversationRefresh;
 
   useEffect(() => {
@@ -22388,6 +22422,16 @@ function NativeConversationScreen({
     return { phone, qrReady, apiUnavailable, replyWindowOpen, transport, sender };
   }, [businessPhones, contact, selectedRoutePhoneNumberId]);
   const hasComposerContent = Boolean(draft.trim() || draftAttachments.length > 0 || paymentLinkDraftPreview);
+  const activeAppointmentConfirmation = contactInfo
+    ? (contactInfo.activeAppointmentConfirmation ?? null)
+    : (contact.activeAppointmentConfirmation ?? null);
+  const activeAppointmentConfirmationStatus = String(
+    activeAppointmentConfirmation?.appointment_status || activeAppointmentConfirmation?.status || '',
+  ).trim().toLowerCase();
+  const activeAppointmentConfirmationDate = formatAppointmentConfirmationDate(
+    activeAppointmentConfirmation?.start_time,
+    timezone,
+  );
   const voiceDraftAttachment = draftAttachments.length === 1 && draftAttachments[0]?.kind === 'audio' ? draftAttachments[0] : null;
   const voiceRecordingVisible = voiceRecordingActive || audioRecorderState.isRecording;
   const primaryAgentState = useMemo(() => selectPrimaryAgentState(agentStates), [agentStates]);
@@ -23891,6 +23935,52 @@ function NativeConversationScreen({
     }
   };
 
+  const resolveAppointmentConfirmation = (action: 'confirm' | 'cancel') => {
+    if (!activeAppointmentConfirmation?.id || appointmentConfirmationAction) return;
+    const isConfirming = action === 'confirm';
+    const title = String(activeAppointmentConfirmation.title || 'Cita').trim() || 'Cita';
+    Alert.alert(
+      isConfirming ? 'Confirmar cita' : 'Cancelar cita',
+      isConfirming
+        ? `Vas a confirmar “${title}”${activeAppointmentConfirmationDate ? ` para ${activeAppointmentConfirmationDate}` : ''} y cerrar su espera automática.`
+        : `Vas a cancelar “${title}”${activeAppointmentConfirmationDate ? ` de ${activeAppointmentConfirmationDate}` : ''} y cerrar su espera automática.`,
+      [
+        { text: 'Volver', style: 'cancel' },
+        {
+          text: isConfirming ? 'Confirmar' : 'Cancelar',
+          style: isConfirming ? 'default' : 'destructive',
+          onPress: () => {
+            if (!acquireConversationActionLock('appointment-confirmation')) return;
+            setAppointmentConfirmationAction(action);
+            const currentStatus = String(
+              activeAppointmentConfirmation.appointment_status || activeAppointmentConfirmation.status || '',
+            ).trim().toLowerCase();
+            void api.updateAppointment(activeAppointmentConfirmation.id, {
+              appointmentStatus: isConfirming ? 'confirmed' : 'cancelled',
+              ...(currentStatus ? { expectedAppointmentStatus: currentStatus } : {}),
+              ...(isConfirming ? {} : { strictLifecycleMutation: 'cancel' }),
+            }).then(async () => {
+              await refreshActiveContactDetail(true);
+              requestSilentConversationRefresh();
+              onRefreshChats();
+            }).catch(async (error) => {
+              await refreshActiveContactDetail(true);
+              Alert.alert(
+                isConfirming ? 'No se pudo confirmar la cita' : 'No se pudo cancelar la cita',
+                error instanceof Error
+                  ? error.message
+                  : 'La cita pudo cambiar mientras realizabas la acción. Recarga el chat e intenta otra vez.',
+              );
+            }).finally(() => {
+              setAppointmentConfirmationAction(null);
+              releaseConversationActionLock('appointment-confirmation');
+            });
+          },
+        },
+      ],
+    );
+  };
+
   const openContactInfo = async () => {
     setContactInfoOpen(true);
     setContactInfo((current) => current?.id === contact.id ? current : contact);
@@ -24293,6 +24383,64 @@ function NativeConversationScreen({
             styles.conversationComposerDock,
           ]}
         >
+          {activeAppointmentConfirmation ? (
+            <View style={styles.appointmentConfirmationBar} accessibilityLabel="Control de confirmación de cita">
+              <View style={styles.appointmentConfirmationIcon}>
+                <CalendarDays size={18} color={COLORS.accent} strokeWidth={2.2} />
+              </View>
+              <View style={styles.appointmentConfirmationCopy}>
+                <Text numberOfLines={1} style={styles.appointmentConfirmationEyebrow}>
+                  {activeAppointmentConfirmationStatus === 'confirmed'
+                    ? 'Reconfirmación pendiente'
+                    : 'Confirmación pendiente'}
+                </Text>
+                <Text numberOfLines={1} style={styles.appointmentConfirmationTitle}>
+                  {activeAppointmentConfirmation.title || 'Cita'}
+                </Text>
+                <Text numberOfLines={1} style={styles.appointmentConfirmationMeta}>
+                  {[activeAppointmentConfirmationDate, activeAppointmentConfirmation.sourceType === 'automation'
+                    ? 'Automatización'
+                    : 'Recordatorio del calendario'].filter(Boolean).join(' · ')}
+                </Text>
+              </View>
+              <View style={styles.appointmentConfirmationActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Confirmar cita"
+                  disabled={Boolean(appointmentConfirmationAction)}
+                  onPress={() => resolveAppointmentConfirmation('confirm')}
+                  style={({ pressed }) => [
+                    styles.appointmentConfirmationButton,
+                    styles.appointmentConfirmationConfirm,
+                    pressed && styles.pressed,
+                    appointmentConfirmationAction && styles.disabledButton,
+                  ]}
+                >
+                  {appointmentConfirmationAction === 'confirm'
+                    ? <ActivityIndicator color={COLORS.accent} size="small" />
+                    : <CheckCheck size={15} color={COLORS.accent} strokeWidth={2.4} />}
+                  <Text style={styles.appointmentConfirmationConfirmText}>Confirmar</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancelar cita"
+                  disabled={Boolean(appointmentConfirmationAction)}
+                  onPress={() => resolveAppointmentConfirmation('cancel')}
+                  style={({ pressed }) => [
+                    styles.appointmentConfirmationButton,
+                    styles.appointmentConfirmationCancel,
+                    pressed && styles.pressed,
+                    appointmentConfirmationAction && styles.disabledButton,
+                  ]}
+                >
+                  {appointmentConfirmationAction === 'cancel'
+                    ? <ActivityIndicator color={COLORS.danger} size="small" />
+                    : <X size={15} color={COLORS.danger} strokeWidth={2.4} />}
+                  <Text style={styles.appointmentConfirmationCancelText}>Cancelar</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
           {selectedCommentReplyTarget ? (
             <View style={styles.commentReplyPreviewBar}>
               <View style={styles.commentReplyPreviewMarker} />
@@ -27465,6 +27613,13 @@ function formatSchedulePreviewLabel(value?: string | null, timezone?: string | n
   const day = formatConversationDayLabel(value, timezone);
   const time = formatCalendarEventTime(value, timezone);
   return day && time ? `${day} · ${time}` : 'Revisa la fecha y hora.';
+}
+
+function formatAppointmentConfirmationDate(value?: string | null, timezone?: string | null) {
+  if (!value) return '';
+  const day = formatConversationDayLabel(value, timezone);
+  const time = formatCalendarEventTime(value, timezone);
+  return [day, time].filter(Boolean).join(' · ');
 }
 
 function getNativeMessageReferencePayload(message: ChatMessage) {
@@ -33327,6 +33482,81 @@ function createAppStyles() {
   conversationComposerDock: {
     backgroundColor: composerShellBackground,
     overflow: 'hidden',
+  },
+  appointmentConfirmationBar: {
+    minHeight: 78,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  appointmentConfirmationIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  appointmentConfirmationCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  appointmentConfirmationEyebrow: {
+    color: COLORS.accent,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '900',
+    letterSpacing: 0.25,
+    textTransform: 'uppercase',
+  },
+  appointmentConfirmationTitle: {
+    color: COLORS.text,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '900',
+  },
+  appointmentConfirmationMeta: {
+    color: COLORS.muted,
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '700',
+  },
+  appointmentConfirmationActions: {
+    gap: 5,
+  },
+  appointmentConfirmationButton: {
+    minWidth: 90,
+    minHeight: 31,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+  },
+  appointmentConfirmationConfirm: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.panelSoft,
+  },
+  appointmentConfirmationCancel: {
+    borderColor: COLORS.danger,
+    backgroundColor: COLORS.panelSoft,
+  },
+  appointmentConfirmationConfirmText: {
+    color: COLORS.accent,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  appointmentConfirmationCancelText: {
+    color: COLORS.danger,
+    fontSize: 11,
+    fontWeight: '900',
   },
   conversationMessageScroller: {
     flex: 1,

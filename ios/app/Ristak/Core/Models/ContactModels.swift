@@ -275,6 +275,47 @@ struct ContactEmbeddedAppointment: Decodable, Identifiable, Sendable, Equatable 
     }
 }
 
+/// Espera automática activa de confirmación para una cita del contacto.
+/// Su presencia —no un estado inferido por el cliente— gobierna el control.
+struct ActiveAppointmentConfirmation: Decodable, Sendable, Equatable {
+    let id: String
+    let title: String
+    let status: String
+    let appointmentStatus: String
+    let startTime: String
+    let reminderSendId: String?
+    let sourceType: String?
+    let sentAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, status, reminderSendId, sourceType, sentAt
+        case appointmentStatus = "appointment_status"
+        case startTime = "start_time"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = container.flexibleString(forKey: .id) ?? ""
+        title = container.flexibleString(forKey: .title) ?? "Cita"
+        status = container.flexibleString(forKey: .status) ?? ""
+        appointmentStatus = container.flexibleString(forKey: .appointmentStatus) ?? status
+        startTime = container.flexibleString(forKey: .startTime) ?? ""
+        reminderSendId = container.flexibleString(forKey: .reminderSendId)
+        sourceType = container.flexibleString(forKey: .sourceType)
+        sentAt = container.flexibleString(forKey: .sentAt)
+    }
+
+    var currentStatus: String {
+        let value = appointmentStatus.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (value.isEmpty ? status : value).lowercased()
+    }
+}
+
+enum AppointmentConfirmationAction: String, Sendable {
+    case confirm
+    case cancel
+}
+
 /// Atribución Meta resuelta (doc 06 §1.1 `metaAttribution`).
 struct ContactMetaAttribution: Decodable, Sendable, Equatable {
     let source: String?
@@ -421,6 +462,7 @@ struct ContactDetail: Decodable, Identifiable, Sendable {
     let notes: String
     let payments: [ContactEmbeddedPayment]
     let appointments: [ContactEmbeddedAppointment]
+    let activeAppointmentConfirmation: ActiveAppointmentConfirmation?
     let firstAppointmentDate: String?
     let nextAppointmentDate: String?
     let hasAppointments: Bool
@@ -446,7 +488,7 @@ struct ContactDetail: Decodable, Identifiable, Sendable {
         case adsetName = "adset_name"
         case preferredWhatsAppPhoneNumberId
         case profilePhotoUrl, phones, phoneNumbers, customFields, tags, notes
-        case payments, appointments
+        case payments, appointments, activeAppointmentConfirmation
         case firstAppointmentDate, nextAppointmentDate
         case hasAppointments, hasShowedAppointment, hasAttendedAppointment
         case hasUpcomingConfirmedAppointmentBadge
@@ -487,6 +529,10 @@ struct ContactDetail: Decodable, Identifiable, Sendable {
         notes = container.flexibleString(forKey: .notes) ?? ""
         payments = (try? container.decodeIfPresent([ContactEmbeddedPayment].self, forKey: .payments)) ?? []
         appointments = (try? container.decodeIfPresent([ContactEmbeddedAppointment].self, forKey: .appointments)) ?? []
+        activeAppointmentConfirmation = try? container.decodeIfPresent(
+            ActiveAppointmentConfirmation.self,
+            forKey: .activeAppointmentConfirmation
+        )
         firstAppointmentDate = container.flexibleString(forKey: .firstAppointmentDate)
         nextAppointmentDate = container.flexibleString(forKey: .nextAppointmentDate)
         hasAppointments = container.flexibleBool(forKey: .hasAppointments) ?? false

@@ -5543,6 +5543,7 @@ export const PhoneChat: React.FC = () => {
   const [contactInfoContact, setContactInfoContact] = useState<Contact | null>(null)
   const [contactInfoLoading, setContactInfoLoading] = useState(false)
   const [contactInfoError, setContactInfoError] = useState('')
+  const [appointmentConfirmationAction, setAppointmentConfirmationAction] = useState<'confirm' | 'cancel' | null>(null)
   const [contactAutomationOpen, setContactAutomationOpen] = useState(false)
   const [contactAutomations, setContactAutomations] = useState<AutomationSummary[]>([])
   const [contactAutomationsLoading, setContactAutomationsLoading] = useState(false)
@@ -5595,6 +5596,12 @@ export const PhoneChat: React.FC = () => {
   const contactJourneyRef = useRef<JourneyEvent[]>([])
   const messagesPaneNearBottomRef = useRef(true)
   const activeContactIdRef = useRef<string | null>(null)
+  const activeContactDetailsRequestRef = useRef<{
+    contactId: string
+    generation: number
+    request: Promise<Contact | null>
+  } | null>(null)
+  const activeContactDetailsGenerationRef = useRef(0)
   const conversationOpenRef = useRef(false)
   const conversationLoadGenerationRef = useRef(0)
   const conversationActivityLoadedAtRef = useRef(0)
@@ -6270,6 +6277,12 @@ export const PhoneChat: React.FC = () => {
     return [lastMessage.id, lastMessage.date, lastMessage.direction].join('\u001f')
   }, [messages])
   const contactInfoData = contactInfoContact || activeContact
+  const activeAppointmentConfirmation = contactInfoData?.activeAppointmentConfirmation || null
+  const activeAppointmentConfirmationStatus = activeAppointmentConfirmation
+    ? String(
+        activeAppointmentConfirmation.appointment_status || activeAppointmentConfirmation.status || ''
+      ).trim().toLowerCase()
+    : ''
   const chatActionContact = useMemo(
     () => chats.find((contact) => contact.id === chatActionContactId) || activeContact || null,
     [activeContact, chatActionContactId, chats]
@@ -8691,6 +8704,40 @@ export const PhoneChat: React.FC = () => {
     }
   }, [finishConversationBottomLock, locationId, persistChatsRead, timezone]) // (MOB-007)
 
+  const refreshActiveContactDetails = useCallback(async (
+    contactId: string,
+    options: { force?: boolean } = {}
+  ) => {
+    const currentRequest = activeContactDetailsRequestRef.current
+    if (!options.force && currentRequest?.contactId === contactId) {
+      return currentRequest.request
+    }
+
+    const generation = activeContactDetailsGenerationRef.current + 1
+    activeContactDetailsGenerationRef.current = generation
+    const request = contactsService.getContactDetails(contactId).then((details) => {
+      if (
+        activeContactIdRef.current !== contactId ||
+        activeContactDetailsGenerationRef.current !== generation
+      ) return null
+      setContactInfoContact(details)
+      setChats((current) => current.map((item) => (
+        item.id === contactId ? { ...item, ...details } : item
+      )))
+      const cacheKey = getPhoneDailyCacheKey('phone-chat', 'contact-info', locationId || 'default', contactId)
+      writePhoneDailyCache(cacheKey, details, { maxEntryChars: 220_000 }, timezone)
+      return details
+    })
+    activeContactDetailsRequestRef.current = { contactId, generation, request }
+    try {
+      return await request
+    } finally {
+      if (activeContactDetailsRequestRef.current?.generation === generation) {
+        activeContactDetailsRequestRef.current = null
+      }
+    }
+  }, [locationId, timezone])
+
   const applyRealtimePreviewToChatList = useCallback((contactId: string, message: ChatMessage) => {
     if (!contactId) return
     setChats((currentChats) => {
@@ -9740,6 +9787,9 @@ export const PhoneChat: React.FC = () => {
       refreshChatInboxNow({
         contactId
       }).catch(() => undefined)
+      if (activeContactIdRef.current === contactId) {
+        refreshActiveContactDetails(contactId).catch(() => undefined)
+      }
     }
 
     const handleNativeNotification = (event: Event) => {
@@ -9759,7 +9809,7 @@ export const PhoneChat: React.FC = () => {
       window.removeEventListener(MOBILE_APP_NOTIFICATION_EVENT, handleNativeNotification)
       navigator.serviceWorker?.removeEventListener('message', handleServiceWorkerMessage)
     }
-  }, [accessState, applyRealtimePreviewMessage, refreshChatInboxNow])
+  }, [accessState, applyRealtimePreviewMessage, refreshActiveContactDetails, refreshChatInboxNow])
 
   useEffect(() => {
     if (accessState !== 'allowed') return
@@ -9767,15 +9817,21 @@ export const PhoneChat: React.FC = () => {
     return subscribeToChatLiveEvents({
       onMessage: (event) => {
         refreshChatInboxNow({ contactId: event.contactId }).catch(() => undefined)
+        if (activeContactIdRef.current === event.contactId) {
+          refreshActiveContactDetails(event.contactId).catch(() => undefined)
+        }
       },
       onDataChanged: (event) => {
         refreshChatInboxNow({ contactId: event.contactId }).catch(() => undefined)
+        if (activeContactIdRef.current === event.contactId) {
+          refreshActiveContactDetails(event.contactId).catch(() => undefined)
+        }
       },
       onStatusChange: (status) => {
         chatLiveConnectedRef.current = status === 'connected'
       }
     })
-  }, [accessState, refreshChatInboxNow])
+  }, [accessState, refreshActiveContactDetails, refreshChatInboxNow])
 
   // (Presencia) Reportamos al backend qué contacto tengo abierto y si la app está
   // al frente, para no recibir push del chat que estoy viendo (solo yo; los demás
@@ -9905,6 +9961,7 @@ export const PhoneChat: React.FC = () => {
       ) return
       chatLastThreadReconcileAtRef.current = now
       void loadConversation(openId, { silent: true, useCache: false })
+      void refreshActiveContactDetails(openId).catch(() => undefined)
     }
     const reconcileOnReturn = () => reconcileOpenThread(true)
     const interval = window.setInterval(() => reconcileOpenThread(false), CHAT_FALLBACK_REFRESH_INTERVAL_MS)
@@ -9915,7 +9972,7 @@ export const PhoneChat: React.FC = () => {
       window.removeEventListener('focus', reconcileOnReturn)
       document.removeEventListener('visibilitychange', reconcileOnReturn)
     }
-  }, [accessState, activeContact?.id, conversationVisible, loadConversation])
+  }, [accessState, activeContact?.id, conversationVisible, loadConversation, refreshActiveContactDetails])
 
   useEffect(() => {
     if (!activeContact?.id || accessState !== 'allowed' || !conversationVisible || !scheduledRefreshIntervalMs) return
@@ -9961,6 +10018,13 @@ export const PhoneChat: React.FC = () => {
     setContactInfoDetailPanel(null)
     setContactInfoRecordDetail(null)
   }, [activeContactId])
+
+  useEffect(() => {
+    if (!activeContact?.id || accessState !== 'allowed' || !conversationOpen) return
+
+    const contactId = activeContact.id
+    void refreshActiveContactDetails(contactId).catch(() => undefined)
+  }, [accessState, activeContact?.id, conversationOpen, refreshActiveContactDetails])
 
   useEffect(() => () => {
     const gesture = messageActionPressRef.current
@@ -10564,6 +10628,67 @@ export const PhoneChat: React.FC = () => {
       setContactInfoLoading(false)
     }
   }
+
+  const handleManualAppointmentConfirmation = useCallback((action: 'confirm' | 'cancel') => {
+    if (!activeAppointmentConfirmation?.id || appointmentConfirmationAction) return
+
+    const appointmentTitle = String(activeAppointmentConfirmation.title || 'Cita').trim() || 'Cita'
+    const appointmentDate = formatLocalDateTime(activeAppointmentConfirmation.start_time)
+    const isConfirming = action === 'confirm'
+    showConfirm(
+      isConfirming ? 'Confirmar cita' : 'Cancelar cita',
+      isConfirming
+        ? `Vas a confirmar “${appointmentTitle}”${appointmentDate ? ` para ${appointmentDate}` : ''} y cerrar su espera automática.`
+        : `Vas a cancelar “${appointmentTitle}”${appointmentDate ? ` de ${appointmentDate}` : ''} y cerrar su espera automática.`,
+      async () => {
+        setAppointmentConfirmationAction(action)
+        try {
+          const currentStatus = String(
+            activeAppointmentConfirmation.appointment_status || activeAppointmentConfirmation.status || ''
+          ).trim().toLowerCase()
+          await calendarsService.updateAppointment(activeAppointmentConfirmation.id, {
+            appointmentStatus: isConfirming ? 'confirmed' : 'cancelled',
+            ...(currentStatus ? { expectedAppointmentStatus: currentStatus } : {}),
+            ...(isConfirming ? {} : { strictLifecycleMutation: 'cancel' as const })
+          }, accessToken || undefined)
+
+          if (activeContactId) {
+            await Promise.allSettled([
+              refreshActiveContactDetails(activeContactId, { force: true }),
+              loadConversation(activeContactId, { silent: true, useCache: false }),
+              loadChats({ silent: true })
+            ])
+          }
+          return true
+        } catch (error: any) {
+          showToast(
+            'error',
+            isConfirming ? 'No se pudo confirmar la cita' : 'No se pudo cancelar la cita',
+            error?.message || 'La cita pudo cambiar mientras realizabas la acción. Recarga el chat e intenta otra vez.'
+          )
+          if (activeContactId) {
+            void refreshActiveContactDetails(activeContactId, { force: true }).catch(() => undefined)
+          }
+          return false
+        } finally {
+          setAppointmentConfirmationAction(null)
+        }
+      },
+      isConfirming ? 'Confirmar' : 'Cancelar',
+      'Volver'
+    )
+  }, [
+    accessToken,
+    activeAppointmentConfirmation,
+    activeContactId,
+    appointmentConfirmationAction,
+    formatLocalDateTime,
+    loadChats,
+    loadConversation,
+    refreshActiveContactDetails,
+    showConfirm,
+    showToast
+  ])
 
   // Actualiza el contacto en el panel de info, la lista de chats y el caché diario
   const applyContactInfoPatch = (patch: Partial<Contact>) => {
@@ -23148,6 +23273,51 @@ export const PhoneChat: React.FC = () => {
             {activeContact && !actionFormSheetOpen && (
               <div className={styles.composerShell} data-phone-chat-composer="true">
                   <>
+                    {activeAppointmentConfirmation && !composerTemplateOnlyMode ? (
+                      <section
+                        className={styles.appointmentConfirmationBar}
+                        aria-label="Control de confirmación de cita"
+                      >
+                        <span className={styles.appointmentConfirmationIcon} aria-hidden="true">
+                          <CalendarDays size={17} />
+                        </span>
+                        <span className={styles.appointmentConfirmationCopy}>
+                          <span className={styles.appointmentConfirmationEyebrow}>
+                            {activeAppointmentConfirmationStatus === 'confirmed'
+                              ? 'Reconfirmación pendiente'
+                              : 'Confirmación pendiente'}
+                          </span>
+                          <strong>{activeAppointmentConfirmation.title || 'Cita'}</strong>
+                          <span>
+                            {formatLocalDateTime(activeAppointmentConfirmation.start_time)}
+                            {' · '}
+                            {activeAppointmentConfirmation.sourceType === 'automation'
+                              ? 'Automatización'
+                              : 'Recordatorio del calendario'}
+                          </span>
+                        </span>
+                        <span className={styles.appointmentConfirmationActions}>
+                          <button
+                            type="button"
+                            className={styles.appointmentConfirmationConfirm}
+                            disabled={Boolean(appointmentConfirmationAction)}
+                            onClick={() => handleManualAppointmentConfirmation('confirm')}
+                          >
+                            <CheckCheck size={15} aria-hidden="true" />
+                            Confirmar
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.appointmentConfirmationCancel}
+                            disabled={Boolean(appointmentConfirmationAction)}
+                            onClick={() => handleManualAppointmentConfirmation('cancel')}
+                          >
+                            <X size={15} aria-hidden="true" />
+                            Cancelar
+                          </button>
+                        </span>
+                      </section>
+                    ) : null}
                     {!composerTemplateOnlyMode && renderReplyPreviewBar()}
                     {!composerTemplateOnlyMode && renderDraftAttachments()}
                     {!composerTemplateOnlyMode && renderCommentReplyBanner()}

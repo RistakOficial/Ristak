@@ -5329,17 +5329,20 @@ reacciona varias veces al mismo envío. Si una reprogramación genera un envío
 nuevo, la misma fila puede iniciar un ciclo limpio sin arrastrar los mensajes ni
 el resultado de la confirmación anterior.
 
-Desktop Chat consulta en el detalle local del contacto la confirmación activa más
-próxima. Mientras exista, muestra una barra plana inmediatamente arriba del
-composer con el título, horario en la zona del negocio y origen (recordatorio de
-Calendario o Automatización), además de **Confirmar** y **Cancelar**. Ambas
-acciones usan el modal global de confirmación. Al aceptarlas actualizan la cita
-canónica mediante `/api/calendars/appointments/:id`, cierran ventanas y plazos
-pendientes de esa cita y recargan el estado canónico; los mensajes siguientes
-regresan al chat normal. La cancelación mantiene el flujo estándar de
+Desktop Chat, `/movil`, Android React Native e iOS SwiftUI consultan en el detalle
+local del contacto la confirmación activa más próxima. Mientras exista, muestran
+una barra plana inmediatamente arriba del composer con el título, horario en la
+zona del negocio y origen (recordatorio de Calendario o Automatización), además
+de **Confirmar** y **Cancelar**. Ambas acciones piden confirmación explícita. Al
+aceptarlas actualizan la cita canónica mediante
+`/api/calendars/appointments/:id`, cierran ventanas y plazos pendientes de esa
+cita y recargan el detalle canónico; los mensajes siguientes regresan al chat
+normal. Los clientes móviles también releen ese detalle ante SSE/push o la
+reconciliación del hilo, para retirar el panel si la IA u otro dispositivo ya
+resolvieron la espera. La cancelación mantiene el flujo estándar de
 sincronización con Google/HighLevel, notificaciones y evento de cambio de estado.
-Una resolución manual se registra como tal y nunca fabrica una tarjeta que diga
-"confirmada por IA".
+Una resolución manual se registra como tal, no muestra un popup de éxito móvil y
+nunca fabrica una tarjeta que diga "confirmada por IA".
 
 Una regla con IA puede guardar `confirmation_reply_text`, un cierre opcional de
 hasta 4096 caracteres. Después de clasificar `confirmed`, Ristak lo renderiza con

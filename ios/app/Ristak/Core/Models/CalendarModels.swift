@@ -427,6 +427,13 @@ struct AppointmentDraftRequest: Codable, Sendable, Equatable {
     }
 }
 
+/// Mutación acotada del ciclo de confirmación desde el chat.
+struct AppointmentConfirmationUpdateRequest: Encodable, Sendable, Equatable {
+    let appointmentStatus: String
+    let expectedAppointmentStatus: String?
+    let strictLifecycleMutation: String?
+}
+
 // MARK: - 409 slot_unavailable (doc 07 §5.1)
 
 extension RistakAPIError {

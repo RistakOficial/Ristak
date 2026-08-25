@@ -67,6 +67,22 @@ enum CalendarsService {
         try await APIClient.shared.put("/api/calendars/appointments/\(id)", body: draft)
     }
 
+    /// Confirma/cancela desde el chat y cierra la espera automática asociada.
+    static func resolveAppointmentConfirmation(
+        id: String,
+        action: AppointmentConfirmationAction,
+        expectedStatus: String?
+    ) async throws -> CalendarAppointment {
+        try await APIClient.shared.put(
+            "/api/calendars/appointments/\(id)",
+            body: AppointmentConfirmationUpdateRequest(
+                appointmentStatus: action == .confirm ? "confirmed" : "cancelled",
+                expectedAppointmentStatus: expectedStatus,
+                strictLifecycleMutation: action == .cancel ? "cancel" : nil
+            )
+        )
+    }
+
     /// `DELETE /api/calendars/events/:id` → `{ success, message }` (sin data).
     static func deleteEvent(id: String) async throws {
         let _: APIAcknowledgment = try await APIClient.shared.delete("/api/calendars/events/\(id)")

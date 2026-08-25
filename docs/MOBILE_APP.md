@@ -351,6 +351,24 @@ sheet, actualizacion de lista, estado inline o nuevo contenido renderizado. Solo
 se permiten avisos intrusivos para errores, permisos del sistema, validaciones
 que bloquean continuar y confirmaciones destructivas.
 
+El chat móvil de `/movil`, Android React Native e iOS SwiftUI consume
+`activeAppointmentConfirmation` desde `GET /api/contacts/:id`. Mientras el
+backend conserve una espera activa, aparece una barra plana inmediatamente sobre
+el composer con el título de la cita, fecha/hora formateada en la zona del
+negocio, origen y las acciones **Confirmar**/**Cancelar**. Cada acción pide una
+confirmación explícita antes del `PUT /api/calendars/appointments/:id`; manda el
+estado actual como `expectedAppointmentStatus` y la cancelación añade
+`strictLifecycleMutation='cancel'`. Un doble toque queda bloqueado mientras la
+mutación está en vuelo.
+
+Después de resolver, el cliente relee el detalle canónico del contacto y la barra
+desaparece; no muestra toast ni alerta de éxito. Los errores sí se presentan y
+también fuerzan una relectura para no dejar un control obsoleto. Los eventos
+SSE/push y la reconciliación silenciosa del hilo refrescan el detalle: si la IA u
+otro dispositivo ya cerraron la espera, el panel se retira sin exigir que el
+usuario abandone y vuelva a abrir el chat. Una acción manual no crea una tarjeta
+falsa de “confirmada por IA”.
+
 El sheet nativo `Mas acciones` debe mantenerse como espejo operativo del sheet
 de `PhoneChat`: agendar cita, registrar pagos, programar mensaje, agregar
 etiqueta, silenciar/quitar silencio y controles del agente. Si una accion aun
