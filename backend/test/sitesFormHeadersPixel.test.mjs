@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import vm from 'node:vm'
 import JSZip from 'jszip'
 
 import { db } from '../src/config/database.js'
@@ -573,6 +574,99 @@ test('imported HTML asset response resolves variable fields only in its managed 
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
     await deleteVariableFields(fields)
+  }
+})
+
+test('imported HTML personalizes a captured first name safely with an anonymous fallback', async () => {
+  let siteId = ''
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'contact-first-name.html',
+      name: `Contact first name ${randomUUID()}`,
+      siteType: 'landing_page',
+      fileBase64: Buffer.from(`
+        <!doctype html>
+        <html>
+          <head><title>Personalización segura</title></head>
+          <body>
+            <h1 data-rstk-contact-when="known" hidden>
+              <span data-rstk-contact-first-name data-clarity-mask="true"></span>, tu cita quedó confirmada.
+            </h1>
+            <h1 data-rstk-contact-when="unknown">Tu cita quedó confirmada.</h1>
+          </body>
+        </html>
+      `, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    const site = await getSite(siteId, { includeBlocks: true })
+    const trackedHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+    const noTrackHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: false
+    })
+    const runtimeMatch = trackedHtml.match(/<script data-rstk-contact-personalization-runtime>([\s\S]*?)<\/script>/)
+
+    assert.ok(runtimeMatch, 'la publicación debe incluir el runtime declarativo')
+    assert.match(noTrackHtml, /data-rstk-contact-personalization-runtime/)
+    assert.doesNotMatch(runtimeMatch[1], /innerHTML|outerHTML|insertAdjacentHTML/)
+
+    const makeElement = (attributes = {}) => {
+      const values = new Map(Object.entries(attributes))
+      return {
+        hidden: values.has('hidden'),
+        textContent: '',
+        getAttribute: key => values.get(key) || '',
+        setAttribute: (key, value) => values.set(key, String(value)),
+        removeAttribute: key => values.delete(key)
+      }
+    }
+    const firstName = makeElement({ 'data-rstk-contact-first-name': '', 'data-clarity-mask': 'true' })
+    const known = makeElement({ 'data-rstk-contact-when': 'known', hidden: '' })
+    const unknown = makeElement({ 'data-rstk-contact-when': 'unknown' })
+    const listeners = new Map()
+    const storage = { getItem: () => null }
+    const window = {
+      location: { search: '?full_name=Ra%C3%BAl%20G%C3%B3mez' },
+      localStorage: storage,
+      sessionStorage: storage,
+      addEventListener: (type, listener) => listeners.set(type, listener)
+    }
+    const document = {
+      querySelectorAll: selector => (
+        selector === '[data-rstk-contact-first-name]'
+          ? [firstName]
+          : selector === '[data-rstk-contact-when]'
+            ? [known, unknown]
+            : []
+      )
+    }
+
+    vm.runInNewContext(runtimeMatch[1], { window, document, URLSearchParams, Promise })
+
+    assert.equal(firstName.textContent, 'Raúl')
+    assert.equal(firstName.hidden, false)
+    assert.equal(firstName.getAttribute('data-clarity-mask'), 'true')
+    assert.equal(firstName.getAttribute('data-rstk-contact-resolved'), 'true')
+    assert.equal(known.hidden, false)
+    assert.equal(unknown.hidden, true)
+    assert.equal(typeof listeners.get('pageshow'), 'function')
+
+    window.ristakApplyImportedContactPersonalization({ fullName: '  María   Fernanda López  ' })
+    assert.equal(firstName.textContent, 'María')
+
+    window.ristakApplyImportedContactPersonalization({})
+    assert.equal(firstName.textContent, '')
+    assert.equal(firstName.hidden, true)
+    assert.equal(known.hidden, true)
+    assert.equal(unknown.hidden, false)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
   }
 })
 

@@ -285,6 +285,7 @@ import {
   buildImportedHtmlDeviceVisibilityStyle,
   buildImportedHtmlCustomCalendarRulesText,
   buildImportedHtmlCustomVideoRulesText,
+  buildImportedHtmlContactPersonalizationRulesText,
   buildImportedHtmlFaviconRulesText,
   buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlMobileRulesText,
@@ -2747,6 +2748,7 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - El HTML es una superficie cerrada: no agregues data-rstk-editable ni contratos de edición visual por texto, imagen, botón o campo.
 - Devuelve siempre el documento o los documentos HTML completos. Los cambios posteriores se hacen reemplazando el código completo, manualmente o con IA.
 ${buildImportedHtmlFaviconRulesText()}
+${buildImportedHtmlContactPersonalizationRulesText()}
 - REQUISITO OBLIGATORIO DE ENTREGA: si el HTML contiene cualquier <form> propio, no lo entregues hasta comprobar que cada <form> tenga data-rstk-form-id y que cada input, textarea o select guardable tenga data-rstk-field-id. La única excepción es el <form data-rstk-calendar-book-form> dentro de un calendario custom: pertenece al calendario y no debe llevar IDs de formulario/campos ni conversión propia.
 - name, id, data-rstk-field y los atributos data-rstk-calendar-* NO sustituyen data-rstk-form-id ni data-rstk-field-id: ayudan a interpretar o ejecutar el campo, pero no conservan su asociación cuando otra IA reescribe el código.
 - Acciones de botón: usa data-rstk-button-action="url|next_page|specific_page|submit|disqualify|open_popup|close_popup" y data-rstk-button-actions='[{"id":"action-1","action":"url","buttonUrl":"https://..."}]'.

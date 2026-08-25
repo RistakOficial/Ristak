@@ -1392,6 +1392,33 @@ payload usa exclusivamente la opcion que permanezca seleccionada. Si el primer
 intento ya fue enviado como `disqualified`, queda como evidencia historica y la
 correccion genera una submission nueva; no se reescribe el intento anterior.
 
+### Primer nombre en HTML importado
+
+El HTML crudo no resuelve `{{contact.*}}`, porque sustituir cadenas después de la
+sanitización reabriría una frontera XSS. Cuando una página importada necesita
+saludar con el nombre capturado en un formulario anterior, usa el contrato
+declarativo administrado por Ristak:
+
+```html
+<h1 data-rstk-contact-when="known" hidden>
+  <span data-rstk-contact-first-name data-clarity-mask="true"></span>, tu cita quedó confirmada.
+</h1>
+<h1 data-rstk-contact-when="unknown">Tu cita quedó confirmada.</h1>
+```
+
+El runtime toma la identidad ya guardada por el formulario, la URL interna o el
+storage first-party del mismo navegador. Siempre reduce el nombre a su primera
+palabra no vacía (`Raúl Gómez` → `Raúl`) y escribe mediante `textContent`; nunca
+interpreta el valor como HTML. El marcador se enmascara para Clarity. Si no hay
+nombre válido, oculta la variante `known` y conserva la variante `unknown`, sin
+comas sueltas ni copy incompleto.
+
+Este comportamiento también existe con `no_track=1`: personalizar el texto no
+envía PageView, Pixel/CAPI ni eventos de video. `pageshow` vuelve a aplicar el
+estado cuando Safari u otro navegador restaura la página desde su caché. La
+persistencia sigue limitada al mismo perfil de navegador; incógnito, otro
+dispositivo o storage borrado usan el fallback anónimo.
+
 ### Elementos Nativos Ristak En HTML Importado
 
 Cuando el HTML externo quiere usar la misma configuracion nativa del editor de

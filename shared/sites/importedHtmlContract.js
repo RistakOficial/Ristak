@@ -170,6 +170,17 @@ export function buildImportedHtmlMobileRulesText(heading = 'Versión móvil obli
   return [heading, ...IMPORTED_HTML_MOBILE_RULES.map(rule => `- ${rule}`)].join('\n')
 }
 
+export const IMPORTED_HTML_CONTACT_PERSONALIZATION_RULES = Object.freeze([
+  'Para mostrar el primer nombre ya capturado por un formulario anterior, no uses {{contact.*}} dentro del HTML crudo ni escribas JavaScript propio. Coloca un span vacío con data-rstk-contact-first-name y data-clarity-mask="true"; Ristak obtiene el nombre guardado y escribe únicamente texto seguro.',
+  'Si la redacción cambia cuando sí existe nombre, crea dos variantes hermanas: la personalizada con data-rstk-contact-when="known" y hidden, y el fallback neutro con data-rstk-contact-when="unknown". Ristak muestra exactamente una, evitando comas sueltas, texto incompleto o parpadeos.',
+  'El primer nombre siempre es la primera palabra no vacía del nombre capturado. Ejemplo: "Raúl Gómez" se muestra como "Raúl". Si no existe nombre válido, la variante unknown permanece visible.',
+  'No pongas correo, teléfono, IDs ni otros datos personales en estos marcadores. La personalización declarativa admite únicamente el primer nombre y Ristak lo enmascara para grabaciones de sesión.'
+])
+
+export function buildImportedHtmlContactPersonalizationRulesText(heading = 'Personalización segura con el primer nombre:') {
+  return [heading, ...IMPORTED_HTML_CONTACT_PERSONALIZATION_RULES.map(rule => `- ${rule}`)].join('\n')
+}
+
 export const IMPORTED_HTML_AUTOMATIC_COLOR_MODE_RULES = Object.freeze([
   'Cuando el usuario pida modo claro/oscuro automático por horario, declara en <html> data-rstk-auto-color-mode="time", data-rstk-day-start="7", data-rstk-night-start="19" y data-rstk-color-mode="light". Ese valor light es el fallback previo al runtime y evita iniciar con una pantalla oscura durante el día. Opcionalmente declara data-rstk-theme-color-light y data-rstk-theme-color-dark para que Ristak también sincronice el meta theme-color del navegador.',
   'Diseña ambos temas exclusivamente con CSS usando html[data-rstk-color-mode="light"] y html[data-rstk-color-mode="dark"]. El modo claro debe ser realmente claro —fondos blancos o muy luminosos, texto oscuro y contraste suficiente— y el oscuro debe conservar fondos oscuros y texto claro. Revisa también formularios, video, overlays, divisores, notas y estados.',

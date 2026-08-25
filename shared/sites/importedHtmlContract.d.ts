@@ -5,6 +5,7 @@ export const DEFAULT_IMPORTED_HTML_VIEWPORT_TAG: string
 export const DEFAULT_IMPORTED_HTML_FAVICON_TAG: string
 export const IMPORTED_HTML_FAVICON_RULES: readonly string[]
 export const IMPORTED_HTML_MOBILE_RULES: readonly string[]
+export const IMPORTED_HTML_CONTACT_PERSONALIZATION_RULES: readonly string[]
 export const IMPORTED_HTML_AUTOMATIC_COLOR_MODE_RULES: readonly string[]
 export const IMPORTED_HTML_TRAFFIC_PLATFORM_RULES: readonly string[]
 export const IMPORTED_HTML_CUSTOM_CALENDAR_RULES: readonly string[]
@@ -24,6 +25,7 @@ export function importedHtmlHasFavicon(html?: string): boolean
 export function ensureImportedHtmlFavicon(html?: string): string
 export function ensureImportedHtmlViewport(html?: string): string
 export function buildImportedHtmlMobileRulesText(heading?: string): string
+export function buildImportedHtmlContactPersonalizationRulesText(heading?: string): string
 export function buildImportedHtmlAutomaticColorModeRulesText(heading?: string): string
 export function buildImportedHtmlTrafficPlatformRulesText(heading?: string): string
 export function buildImportedHtmlDeviceVisibilityStyle(previewDevice?: 'desktop' | 'mobile' | ''): string

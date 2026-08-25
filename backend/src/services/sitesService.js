@@ -97,6 +97,7 @@ import {
   buildImportedHtmlTrafficPlatformRulesText,
   buildImportedHtmlCustomCalendarRulesText,
   buildImportedHtmlCustomVideoRulesText,
+  buildImportedHtmlContactPersonalizationRulesText,
   buildImportedHtmlFaviconRulesText,
   buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlDeviceVisibilityStyle,
@@ -8224,6 +8225,8 @@ ${buildImportedHtmlMobileRulesText()}
 ${buildImportedHtmlAutomaticColorModeRulesText()}
 
 ${buildImportedHtmlTrafficPlatformRulesText()}
+
+${buildImportedHtmlContactPersonalizationRulesText()}
 
 Estructuras de landing (el mensaje del usuario te dice cual eligio; respetala):
 - EMBUDO: una sola mision de conversion. SIN menu de navegacion ni enlaces que saquen del flujo. CTA repetido hacia la misma acción. Si el flujo tiene pasos (ej. registro → gracias), cada paso es una página de page.pages enlazada con data-rstk-button-page-id.
@@ -32437,6 +32440,119 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
   </script>`
 }
 
+function buildImportedContactPersonalizationRuntimeScript(html = '') {
+  const source = String(html || '')
+  if (!/\bdata-rstk-contact-(?:first-name|when)\b/i.test(source)) return ''
+
+  return `<script data-rstk-contact-personalization-runtime>
+    (() => {
+      const FIRST_NAME_SELECTOR = '[data-rstk-contact-first-name]';
+      const VISIBILITY_SELECTOR = '[data-rstk-contact-when]';
+
+      const readJson = (storage, key) => {
+        try {
+          const value = JSON.parse(storage.getItem(key) || '{}');
+          return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+        } catch (_) {
+          return {};
+        }
+      };
+
+      const cleanName = (value) => String(value || '')
+        .replace(/[\\u0000-\\u001f\\u007f]/g, ' ')
+        .replace(/\\s+/g, ' ')
+        .trim()
+        .slice(0, 120);
+
+      const firstWord = (value) => {
+        const normalized = cleanName(value);
+        return normalized ? normalized.split(' ')[0] : '';
+      };
+
+      const readUrlContact = () => {
+        let params;
+        try {
+          params = new URLSearchParams(window.location.search || '');
+        } catch (_) {
+          return {};
+        }
+        const pick = (keys) => {
+          for (const key of keys) {
+            const value = cleanName(params.get(key));
+            if (value) return value;
+          }
+          return '';
+        };
+        return {
+          firstName: pick(['rstk_first_name', 'contact_first_name', 'first_name', 'firstName', 'first-name', 'given-name', 'given_name']),
+          fullName: pick(['full_name', 'fullName', 'full-name', 'fullname', 'name', 'nombre', 'nombre_completo', 'contact_name', 'contactName', 'rstk_name', 'rstk_full_name'])
+        };
+      };
+
+      const normalizeStoredContact = (value = {}) => ({
+        firstName: cleanName(value.firstName || value.first_name || value.contact_first_name || value.contactFirstName),
+        fullName: cleanName(value.fullName || value.full_name || value.name || value.contact_name || value.contactName)
+      });
+
+      const hasName = (contact) => Boolean(contact && (contact.firstName || contact.fullName));
+
+      const readContact = () => {
+        try {
+          if (typeof window.ristakNativeSavedContact === 'function') {
+            const nativeContact = normalizeStoredContact(window.ristakNativeSavedContact());
+            if (hasName(nativeContact)) return nativeContact;
+          }
+        } catch (_) {}
+
+        const urlContact = readUrlContact();
+        if (hasName(urlContact)) return urlContact;
+        const sessionContact = normalizeStoredContact(readJson(window.sessionStorage, 'ristak'));
+        if (hasName(sessionContact)) return sessionContact;
+        return normalizeStoredContact(readJson(window.localStorage, 'ristak'));
+      };
+
+      const resolveFirstName = (contact) => firstWord(contact && (contact.firstName || contact.fullName));
+
+      const setVisible = (element, visible) => {
+        element.hidden = !visible;
+        if (visible) element.removeAttribute('aria-hidden');
+        else element.setAttribute('aria-hidden', 'true');
+      };
+
+      const apply = (contact = readContact()) => {
+        const firstName = resolveFirstName(contact);
+        document.querySelectorAll(FIRST_NAME_SELECTOR).forEach((element) => {
+          element.textContent = firstName;
+          element.setAttribute('data-clarity-mask', 'true');
+          element.setAttribute('data-rstk-contact-resolved', firstName ? 'true' : 'false');
+          setVisible(element, Boolean(firstName));
+        });
+        document.querySelectorAll(VISIBILITY_SELECTOR).forEach((element) => {
+          const mode = String(element.getAttribute('data-rstk-contact-when') || '').trim().toLowerCase();
+          if (mode === 'known' || mode === 'named') setVisible(element, Boolean(firstName));
+          if (mode === 'unknown' || mode === 'anonymous') setVisible(element, !firstName);
+        });
+        return firstName;
+      };
+
+      const resolve = () => {
+        apply();
+        if (typeof window.ristakNativeLoadContactPrefill === 'function') {
+          Promise.resolve(window.ristakNativeLoadContactPrefill())
+            .then(contact => apply(contact))
+            .catch(() => {});
+        }
+      };
+
+      resolve();
+      window.addEventListener('pageshow', resolve);
+      window.addEventListener('ristak:native-ready', resolve);
+      window.addEventListener('ristak:contact-updated', resolve);
+      window.ristakApplyImportedContactPersonalization = apply;
+    })();
+  </script>`
+}
+
 async function buildImportedHtmlRuntimeInjection(site, imported, {
   trackingEnabled = true,
   pageId = DEFAULT_FUNNEL_PAGE_ID,
@@ -36566,6 +36682,7 @@ async function renderImportedPublicSiteHtml(site, {
   })
   const importedTimeColorModeRuntime = buildImportedTimeColorModeRuntimeScript(html)
   const importedTrafficPlatformRuntime = buildImportedTrafficPlatformRuntimeScript(html)
+  const importedContactPersonalizationRuntime = buildImportedContactPersonalizationRuntimeScript(html)
   const importedVideoEnginePreload = /\bdata-rstk-video-src\s*=\s*(?:"[^"]*\.m3u8(?:[?"][^"]*)?"|'[^']*\.m3u8(?:[?'][^']*)?')/i.test(html)
     ? `<link rel="preload" as="script" href="${RSTK_HLS_PLAYER_SCRIPT_PATH}">`
     : ''
@@ -36583,7 +36700,7 @@ async function renderImportedPublicSiteHtml(site, {
     html,
     `${importedVideoEnginePreload}${importedTimeColorModeRuntime}${importedTrafficPlatformRuntime}${buildHeaderTrackingCode(site, activePage, { trackingEnabled, preview })}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}${importedViewportContainmentStyle}`
   )
-  return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`)
+  return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedContactPersonalizationRuntime}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`)
 }
 
 export async function getImportedSiteAssetResponse(siteId, assetPath, {
@@ -36674,6 +36791,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, {
     })
     const importedTimeColorModeRuntime = buildImportedTimeColorModeRuntimeScript(html)
     const importedTrafficPlatformRuntime = buildImportedTrafficPlatformRuntimeScript(html)
+    const importedContactPersonalizationRuntime = buildImportedContactPersonalizationRuntimeScript(html)
     const pageFlowRevision = buildSitePageFlowDefinition(site)?.flowRevision || ''
     const pageTrackingContext = trackingEnabled
       ? await createNativePageTrackingContext({
@@ -36702,7 +36820,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, {
       site,
       assetPath: asset.assetPath,
       contentType: 'text/html; charset=utf-8',
-      body: Buffer.from(injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`), 'utf8'),
+      body: Buffer.from(injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedContactPersonalizationRuntime}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`), 'utf8'),
       // El HTML puede contener valores de campos variables que cambian sin
       // volver a publicar el ZIP. No cachearlo evita servir codigo anterior.
       cacheControl: 'no-store'

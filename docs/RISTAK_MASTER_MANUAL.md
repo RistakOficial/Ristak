@@ -2411,6 +2411,15 @@ esta referenciado por un header de Sites, cambiar su valor o archivarlo exige
 tambien permiso de escritura en Sites; administrar campos no concede por si solo
 la facultad de cambiar JavaScript publicado.
 
+La excepción segura para texto visible es el primer nombre declarativo en HTML
+importado. Un elemento `data-rstk-contact-first-name` recibe únicamente la
+primera palabra del nombre conservado por el formulario y se escribe con
+`textContent`, nunca como markup. Dos contenedores hermanos
+`data-rstk-contact-when="known|unknown"` permiten conservar un copy anónimo
+completo cuando no existe identidad. El marcador se enmascara para Clarity, se
+reaplica al restaurar la página y funciona también en `no_track` sin emitir
+analítica. No admite correo, teléfono, IDs ni otros datos personales.
+
 - La sección de automatizaciones en la ficha de contacto, el modal del chat y
   las acciones masivas solo aparece con `automations`; el backend rechaza también
   las inscripciones o filtros avanzados de automatizaciones sin esa feature.
