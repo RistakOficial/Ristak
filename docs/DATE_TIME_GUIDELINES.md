@@ -213,6 +213,18 @@ vienen de la base usa `parseStoredUtcDateTime()`.
   El pull horario corre antes del push: acepta únicamente la hora remota más
   fresca y después el push conserva título, notas, ubicación, participantes y
   demás campos canónicos de Ristak.
+- Una eliminación/cancelación explícita del evento vigente en Google cancela la
+  misma cita Ristak: conserva ID, horas UTC, notas, participantes e historial,
+  libera disponibilidad y cierra esperas de confirmación. No rota el ID remoto
+  ni recrea el evento. Una atención ya completada conserva su estado y queda
+  `history_only`, sin volver a publicarse. Sólo el calendario local, proveedor e
+  ID remoto actuales tienen autoridad; tombstones de espejos anteriores no
+  cancelan una cita distinta. Google sólo garantiza el ID en eventos eliminados:
+  `updated` y metadata pueden faltar; si trae `updated`, no puede ser anterior a
+  `date_updated`. Un 404/410 aislado o la ausencia en un rango NO equivalen a una
+  cancelación. Antes de PATCH se relee el evento y se usa `If-Match` para no
+  revivir una eliminación concurrente. Una respuesta atrasada tampoco puede
+  sobrescribir un estado local cancelado aunque coincida el segundo del timestamp.
 - Las colas offline de citas guardan `startTime`/`endTime` como instantes UTC y
   conservan explícitamente `timeZone=account_timezone` para agrupar y validar al
   reintentar. Nunca reconstruyen el instante desde la zona del dispositivo ni

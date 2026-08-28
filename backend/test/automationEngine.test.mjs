@@ -1,4 +1,5 @@
-import test from 'node:test'
+import test, { beforeEach, afterEach } from 'node:test'
+import { mockRoutableEmailDns, resetEmailRecipientDns } from './helpers/emailRecipientDns.mjs'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import http from 'node:http'
@@ -43,6 +44,8 @@ import { updateSingleContactStats } from '../src/utils/updateContactsStats.js'
 const EMAIL_CONFIG_KEY = 'email_smtp_config'
 const EMAIL_PASSWORD_KEY = 'email_smtp_password'
 const EMAIL_SIGNATURE_CONFIG_KEY = 'email_signature_config'
+beforeEach(mockRoutableEmailDns)
+afterEach(resetEmailRecipientDns)
 
 const ctx = {
   contact: {

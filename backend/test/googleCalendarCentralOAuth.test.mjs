@@ -1,8 +1,11 @@
-import test from 'node:test'
+import test, { before, beforeEach, afterEach } from 'node:test'
+import { mockRoutableEmailDns, resetEmailRecipientDns } from './helpers/emailRecipientDns.mjs'
+import { setEmailRecipientResolverFactoryForTest } from '../src/services/emailRecipientService.js'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { initializeMasterKey } from '../src/utils/encryption.js'
+import { readFile } from 'node:fs/promises'
 
 const ENV_KEYS = [
   'LICENSE_SERVER_URL',
@@ -14,6 +17,12 @@ const ENV_KEYS = [
   'OWNER_EMAIL'
 ]
 const GOOGLE_CALENDAR_CONFIG_KEY = 'google_calendar_service_account_config'
+beforeEach(mockRoutableEmailDns)
+afterEach(resetEmailRecipientDns)
+before(async () => {
+  const { db } = await import('../src/config/database.js')
+  await db.exec(await readFile(new URL('../migrations/versioned/004_audit_log.sql', import.meta.url), 'utf8'))
+})
 
 function snapshotEnv() {
   return Object.fromEntries(ENV_KEYS.map(key => [key, process.env[key]]))
@@ -75,7 +84,7 @@ function createGoogleApiFetchMock(requests, {
     const body = bodyText ? JSON.parse(bodyText) : null
 
     assert.equal(headers.Authorization, 'Bearer google-local-access')
-    requests.push({ method, path: `${parsed.pathname}${parsed.search}`, body })
+    requests.push({ method, path: `${parsed.pathname}${parsed.search}`, body, ifMatch: headers['If-Match'] })
 
     if (parsed.pathname === '/calendar/v3/users/me/calendarList') {
       return googleJson({
@@ -139,7 +148,7 @@ function createGoogleApiFetchMock(requests, {
 
       if (method === 'PATCH') {
         const eventId = decodeURIComponent(parsed.pathname.split('/').at(-1))
-        const event = { ...body, id: eventId }
+        const event = { ...createdEvents.get(eventId), ...body, id: eventId }
         createdEvents.set(eventId, event)
         return googleJson(event)
       }
@@ -173,7 +182,7 @@ function createGoogleRelinkFetchMock(requests, { failOldDeleteOnce = false } = {
     const bodyText = options.body ? String(options.body) : ''
     const body = bodyText ? JSON.parse(bodyText) : null
     assert.equal(headers.Authorization, 'Bearer google-local-access')
-    requests.push({ method, path: `${parsed.pathname}${parsed.search}`, body })
+    requests.push({ method, path: `${parsed.pathname}${parsed.search}`, body, ifMatch: headers['If-Match'] })
 
     if (parsed.pathname === '/calendar/v3/users/me/calendarList') {
       return googleJson({
@@ -203,13 +212,18 @@ function createGoogleRelinkFetchMock(requests, { failOldDeleteOnce = false } = {
       return googleJson({ items: [...events.values()] })
     }
     if (method === 'POST') {
+      if (events.has(body?.id)) return googleJson({ error: { message: 'already_exists' } }, 409)
       const event = { ...body, id: body?.id || `event-${randomUUID()}` }
       events.set(event.id, event)
       return googleJson(event)
     }
     if (method === 'PATCH') {
       if (!events.has(eventId)) return googleJson({ error: { message: 'not_found' } }, 404)
-      const event = { ...body, id: eventId }
+      const existing = events.get(eventId)
+      if (headers['If-Match'] && headers['If-Match'] !== existing.etag) {
+        return googleJson({ error: { message: 'precondition_failed' } }, 412)
+      }
+      const event = { ...existing, ...body, id: eventId, etag: `"${randomUUID()}"` }
       events.set(eventId, event)
       return googleJson(event)
     }
@@ -618,15 +632,15 @@ test('OAuth Google reclama handoff y sincroniza eventos con credenciales locales
     assert.equal(requests[0].body.provider, 'google_calendar')
     assert.equal(requests[1].path, '/api/license/google-calendar/refresh-token')
 
-    assert.deepEqual(googleRequests.map(request => request.method), ['POST', 'GET', 'PATCH', 'DELETE', 'DELETE', 'GET'])
+    assert.deepEqual(googleRequests.map(request => request.method), ['POST', 'GET', 'GET', 'PATCH', 'GET', 'DELETE', 'GET', 'DELETE', 'GET'])
     assert.match(googleRequests[0].path, /\/calendar\/v3\/calendars\/ventas%40test\.com\/events\?sendUpdates=all$/)
     assert.equal(googleRequests[0].body.start.dateTime, '2026-06-15T18:00:00.000Z')
     assert.match(googleRequests[1].path, new RegExp(`/calendar/v3/calendars/ventas%40test\\.com/events/${deterministicGoogleEventId}$`))
-    assert.match(googleRequests[2].path, new RegExp(`/calendar/v3/calendars/ventas%40test\\.com/events/${deterministicGoogleEventId}\\?sendUpdates=all$`))
-    assert.equal(googleRequests[2].body.start.dateTime, '2026-06-16T20:00:00.000Z')
     assert.match(googleRequests[3].path, new RegExp(`/calendar/v3/calendars/ventas%40test\\.com/events/${deterministicGoogleEventId}\\?sendUpdates=all$`))
-    assert.match(googleRequests[4].path, new RegExp(`/calendar/v3/calendars/ventas%40test\\.com/events/${deterministicGoogleEventId}\\?sendUpdates=all$`))
-    assert.match(googleRequests[5].path, /showDeleted=true/)
+    assert.equal(googleRequests[3].body.start.dateTime, '2026-06-16T20:00:00.000Z')
+    assert.match(googleRequests[5].path, new RegExp(`/calendar/v3/calendars/ventas%40test\\.com/events/${deterministicGoogleEventId}\\?sendUpdates=all$`))
+    assert.match(googleRequests[7].path, new RegExp(`/calendar/v3/calendars/ventas%40test\\.com/events/${deterministicGoogleEventId}\\?sendUpdates=all$`))
+    assert.match(googleRequests[8].path, /showDeleted=true/)
 
     const finalAppointment = await localCalendarService.getLocalAppointment(appointmentId)
     assert.equal(finalAppointment.googleEventId, null)
@@ -1316,7 +1330,7 @@ test('dos calendarios Ristak publican citas distintas en el mismo Google Calenda
   }
 })
 
-test('OAuth Google conserva la cita local si alguien cancela sólo su espejo en Google', async () => {
+test('borrar en Google cancela la cita Ristak sin borrar su historial ni recrear el evento', async () => {
   await initializeMasterKey()
   const previousEnv = snapshotEnv()
   const requests = []
@@ -1359,7 +1373,7 @@ test('OAuth Google conserva la cita local si alguien cancela sólo su espejo en 
       googleCalendarTimeZone: 'America/Mexico_City'
     }, { allowGoogleSyncMetadata: true })
 
-    await localCalendarService.createLocalAppointment({
+    const outgoingSnapshot = await localCalendarService.createLocalAppointment({
       id: appointmentId,
       calendarId,
       googleEventId: 'evt_google_cancelled',
@@ -1378,38 +1392,39 @@ test('OAuth Google conserva la cita local si alguien cancela sólo su espejo en 
     })
 
     assert.equal(result.saved, 1)
-    assert.equal(result.deleted, 0)
+    assert.equal(result.deleted, 1)
     assert.equal(result.linkedCalendars, 1)
 
     const preservedAppointment = await localCalendarService.getLocalAppointment(appointmentId)
-    assert.equal(preservedAppointment.status, 'confirmed')
-    assert.equal(preservedAppointment.appointmentStatus, 'confirmed')
-    assert.equal(preservedAppointment.googleEventId, null)
+    assert.equal(preservedAppointment.status, 'cancelled')
+    assert.equal(preservedAppointment.appointmentStatus, 'cancelled')
+    assert.equal(preservedAppointment.googleEventId, 'evt_google_cancelled')
     assert.equal(preservedAppointment.googleProviderCalendarId, 'ventas@test.com')
-    assert.equal(preservedAppointment.googleMirrorGeneration, 1)
-    assert.equal(preservedAppointment.googleSyncStatus, 'pending')
-    assert.match(preservedAppointment.googleSyncError || '', /copia de Google/i)
+    assert.equal(preservedAppointment.googleMirrorGeneration, 0)
+    assert.equal(preservedAppointment.googleSyncStatus, 'synced')
+    assert.equal(preservedAppointment.googleSyncError, null)
+    assert.equal(preservedAppointment.title, 'Cita borrada en Google')
+    assert.equal(preservedAppointment.startTime, outgoingSnapshot.startTime)
 
     const repaired = await googleCalendarService.syncLocalAppointmentsToGoogle({ calendarId })
-    assert.equal(repaired.synced, 1)
+    assert.equal(repaired.synced, 0)
     const repairedAppointment = await localCalendarService.getLocalAppointment(appointmentId)
-    assert.equal(
-      repairedAppointment.googleEventId,
-      googleCalendarService.googleAppointmentEventIdForLocalAppointment(appointmentId, 1)
-    )
-    assert.notEqual(repairedAppointment.googleEventId, 'evt_google_cancelled')
+    assert.equal(repairedAppointment.googleEventId, 'evt_google_cancelled')
     assert.equal(repairedAppointment.googleSyncStatus, 'synced')
-    assert.equal(repairedAppointment.status, 'confirmed')
+    assert.equal(repairedAppointment.status, 'cancelled')
+    const replay = await googleCalendarService.syncGoogleEventsToLocal({ calendarId })
+    assert.equal(replay.deleted, 0)
+    // Un trabajo encolado con el objeto anterior tampoco puede resucitarla.
+    await googleCalendarService.syncAppointmentToGoogle(outgoingSnapshot)
 
     assert.equal(requests.length, 2)
     assert.equal(requests[0].path, '/api/license/oauth-handoff/claim')
     assert.equal(requests[1].path, '/api/license/google-calendar/refresh-token')
-    assert.equal(googleRequests.length, 3)
+    assert.equal(googleRequests.length, 2)
     assert.equal(googleRequests[0].method, 'GET')
     assert.match(googleRequests[0].path, /showDeleted=true/)
-    assert.equal(googleRequests[1].method, 'POST')
-    assert.equal(googleRequests[2].method, 'GET')
-    assert.match(googleRequests[2].path, new RegExp(`/events/${repairedAppointment.googleEventId}$`))
+    assert.equal(googleRequests.every(request => request.method === 'GET'), true)
+    assert.equal((await db.get("SELECT COUNT(*) AS total FROM audit_log WHERE entity_id = ? AND action = 'google_cancelled'", [appointmentId])).total, 1)
   } finally {
     if (db) {
       await db.run('DELETE FROM appointments WHERE google_event_id IN (?, ?)', ['evt_google_imported', 'evt_google_cancelled']).catch(() => undefined)
@@ -1422,6 +1437,220 @@ test('OAuth Google conserva la cita local si alguien cancela sólo su espejo en 
     server.close()
     restoreEnv(previousEnv)
   }
+})
+
+// Misma frontera OAuth/API que las pruebas anteriores; sin cuentas de Google ni
+// envíos reales. La base de datos y los servicios locales sí se ejecutan completos.
+async function withGoogleSafetyFixture(callback) {
+  await initializeMasterKey()
+  const previousEnv = snapshotEnv()
+  const previousFetch = global.fetch
+  const { server, baseUrl } = await startLicenseServer([])
+  const googleRequests = []
+  const googleFetch = createGoogleRelinkFetchMock(googleRequests)
+  const { db } = await import('../src/config/database.js')
+  const local = await import('../src/services/localCalendarService.js')
+  const google = await import('../src/services/googleCalendarService.js')
+  const calendarId = `rstk_cal_safety_${randomUUID()}`
+  try {
+    Object.assign(process.env, {
+      LICENSE_SERVER_URL: baseUrl, CLIENT_ID: 'cli_google_oauth', LICENSE_KEY: 'RSTK-GOOGLE-TEST',
+      INSTALLATION_ID: 'inst_google_oauth', APP_URL: 'https://demo.onrender.com',
+      APP_VERSION: '1.0.0', OWNER_EMAIL: 'dueno@example.test'
+    })
+    global.fetch = (url, options) => String(url).startsWith(baseUrl) ? previousFetch(url, options) : googleFetch(url, options)
+    await google.claimGoogleCalendarOAuthHandoff('google_handoff_test')
+    await local.createLocalCalendar({ id: calendarId, name: 'Agenda segura', googleCalendarId: googleFetch.calendarA }, { allowGoogleSyncMetadata: true })
+    const create = changes => local.createLocalAppointment({
+      id: `rstk_appt_safety_${randomUUID()}`, calendarId, title: 'Cita segura',
+      startTime: '2030-09-01T17:00:00.000Z', endTime: '2030-09-01T18:00:00.000Z',
+      ...changes
+    })
+    await callback({ db, local, google, create, calendarId, googleRequests, googleFetch,
+      providerId: googleFetch.calendarA, events: googleFetch.eventsByCalendar.get(googleFetch.calendarA) })
+  } finally {
+    const rows = await db.all('SELECT id FROM appointments WHERE calendar_id = ?', [calendarId])
+    for (const row of rows) {
+      await db.run('DELETE FROM audit_log WHERE entity_id = ?', [row.id])
+      await local.deleteLocalAppointment(row.id)
+    }
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId])
+    await google.deleteGoogleCalendarConfig()
+    global.fetch = previousFetch
+    server.closeAllConnections?.()
+    server.close()
+    restoreEnv(previousEnv)
+  }
+}
+
+function mockMixedRecipientDns() {
+  setEmailRecipientResolverFactoryForTest(() => ({
+    resolveMx: async domain => [{ exchange: domain === 'bien.com' ? '0.0.0.0.' : 'mail.example.test' }],
+    resolve4: async () => ['192.0.2.25'], resolve6: async () => []
+  }))
+}
+const mixedParticipants = [
+  { role: 'requester', name: 'Correo inválido', email: 'bien@bien.com' },
+  { role: 'primary_attendee', name: 'Correo válido', email: 'bueno@example.test' }
+]
+
+test('Google crea la cita sin invitar al correo imposible y sí invita al bueno una sola vez', async () => {
+  mockMixedRecipientDns()
+  await withGoogleSafetyFixture(async ({ google, local, create, calendarId, googleRequests }) => {
+    const appointment = await create({ participants: mixedParticipants })
+    const result = await google.syncAppointmentToGoogle(appointment)
+    assert.deepEqual(result.event.attendees.map(item => item.email), ['bueno@example.test'])
+    assert.equal(result.excludedRecipients[0].email, 'bien@bien.com')
+    assert.equal((await local.getLocalAppointment(appointment.id)).participants.some(item => item.email === 'bien@bien.com'), true)
+    assert.equal((await google.syncLocalAppointmentsToGoogle({ calendarId })).total, 0)
+    await google.syncAppointmentToGoogle(appointment)
+    assert.deepEqual(googleRequests.map(request => request.method), ['POST', 'GET'])
+    assert.match(googleRequests[0].path, /sendUpdates=all$/)
+  })
+})
+
+test('antes de editar o borrar un evento legado retira el correo malo sin notificarle y avisa al resto', async () => {
+  mockMixedRecipientDns()
+  await withGoogleSafetyFixture(async ({ google, local, create, providerId, events, googleRequests }) => {
+    const appointment = await create({ participants: mixedParticipants, googleEventId: 'legacy-event', googleProviderCalendarId: providerId })
+    const legacy = { id: 'legacy-event', ...google.buildGoogleEventPayload(appointment), summary: 'Título anterior', etag: '"legacy-v1"' }
+    events.set(legacy.id, legacy)
+    await google.syncAppointmentToGoogle(appointment)
+    assert.deepEqual(googleRequests.map(request => request.method), ['GET', 'PATCH', 'PATCH'])
+    assert.match(googleRequests[1].path, /sendUpdates=none$/)
+    assert.equal(googleRequests[1].ifMatch, '"legacy-v1"')
+    assert.deepEqual(googleRequests[1].body.attendees.map(item => item.email), ['bueno@example.test'])
+    assert.match(googleRequests[2].path, /sendUpdates=all$/)
+    assert.deepEqual(googleRequests[2].body.attendees.map(item => item.email), ['bueno@example.test'])
+
+    events.set(legacy.id, legacy)
+    googleRequests.length = 0
+    const cancelled = await local.updateLocalAppointment(appointment.id, { status: 'cancelled', appointmentStatus: 'cancelled' })
+    await google.deleteGoogleEventForAppointment(cancelled)
+    assert.deepEqual(googleRequests.map(request => request.method), ['GET', 'PATCH', 'DELETE'])
+    assert.match(googleRequests[1].path, /sendUpdates=none$/)
+    assert.match(googleRequests[2].path, /sendUpdates=all$/)
+    assert.equal(events.has(legacy.id), false)
+  })
+})
+
+test('una caída DNS deja pendiente la invitación y no pierde participantes ni publica a medias', async () => {
+  setEmailRecipientResolverFactoryForTest(() => ({ resolveMx: async () => { throw Object.assign(new Error('timeout'), { code: 'ETIMEOUT' }) } }))
+  await withGoogleSafetyFixture(async ({ google, local, create, googleRequests }) => {
+    const appointment = await create({ participants: mixedParticipants })
+    await assert.rejects(google.syncAppointmentToGoogle(appointment), error => error.code === 'email_recipient_dns_unavailable')
+    assert.equal(googleRequests.length, 0)
+    const stored = await local.getLocalAppointment(appointment.id)
+    assert.equal(stored.googleSyncStatus, 'error')
+    assert.equal(stored.participants.length, 2)
+    assert.equal(stored.appointmentStatus, 'confirmed')
+  })
+})
+
+test('el push detecta el evento cancelado antes de PATCH y no lo resucita', async () => {
+  await withGoogleSafetyFixture(async ({ google, create, providerId, events, googleRequests }) => {
+    const appointment = await create({ googleEventId: 'cancelled-event', googleProviderCalendarId: providerId })
+    events.set('cancelled-event', {
+      id: 'cancelled-event', status: 'cancelled',
+      extendedProperties: { private: { ristakCalendarId: 'previous-local-calendar' } }
+    })
+    const result = await google.syncAppointmentToGoogle(appointment)
+    assert.equal(result.appointment.appointmentStatus, 'cancelled')
+    await google.syncAppointmentToGoogle(appointment)
+    assert.deepEqual(googleRequests.map(request => request.method), ['GET'])
+  })
+})
+
+test('un 404 no autoriza cancelar la cita local ni crear otra copia en Google', async () => {
+  await withGoogleSafetyFixture(async ({ google, local, create, providerId, googleRequests }) => {
+    const appointment = await create({ googleEventId: 'unavailable-event', googleProviderCalendarId: providerId })
+    await assert.rejects(google.syncAppointmentToGoogle(appointment), error => error.status === 404)
+    const stored = await local.getLocalAppointment(appointment.id)
+    assert.equal(stored.appointmentStatus, 'confirmed')
+    assert.equal(stored.googleEventId, 'unavailable-event')
+    assert.equal(stored.googleMirrorGeneration, 0)
+    assert.deepEqual(googleRequests.map(request => request.method), ['GET'])
+  })
+})
+
+test('If-Match protege una cancelación ocurrida entre la lectura y el PATCH', async () => {
+  await withGoogleSafetyFixture(async ({ google, create, providerId, calendarId, events, googleRequests }) => {
+    const appointment = await create({ googleEventId: 'race-event', googleProviderCalendarId: providerId })
+    events.set('race-event', { id: 'race-event', ...google.buildGoogleEventPayload(appointment), summary: 'Título anterior', etag: '"before"' })
+    const originalFetch = global.fetch
+    let raced = false
+    global.fetch = async (url, options = {}) => {
+      const result = await originalFetch(url, options)
+      if (!raced && String(url).endsWith('/events/race-event') && (!options.method || options.method === 'GET')) {
+        raced = true
+        events.set('race-event', { id: 'race-event', status: 'cancelled', etag: '"after"' })
+      }
+      return result
+    }
+    await assert.rejects(google.syncAppointmentToGoogle(appointment), error => error.status === 412)
+    assert.equal(events.get('race-event').status, 'cancelled')
+    const pulled = await google.syncGoogleEventsToLocal({ calendarId })
+    assert.equal(pulled.deleted, 1)
+    assert.equal(googleRequests.some(request => request.method === 'POST'), false)
+  })
+})
+
+test('un POST ambiguo que reconcilia un evento ya cancelado no cambia de generación para invitar de nuevo', async () => {
+  await withGoogleSafetyFixture(async ({ google, create, events, calendarId, googleRequests }) => {
+    const appointment = await create({})
+    const eventId = google.googleAppointmentEventIdForLocalAppointment(appointment.id)
+    events.set(eventId, { id: eventId, status: 'cancelled' })
+    const result = await google.syncAppointmentToGoogle(appointment)
+    assert.equal(result.appointment.appointmentStatus, 'cancelled')
+    assert.equal(result.appointment.googleMirrorGeneration, 0)
+    assert.equal((await google.syncLocalAppointmentsToGoogle({ calendarId })).total, 0)
+    assert.deepEqual(googleRequests.map(request => request.method), ['POST', 'GET'])
+  })
+})
+
+test('un PATCH aplicado con respuesta perdida se reconcilia sin volver a notificar', async () => {
+  await withGoogleSafetyFixture(async ({ google, create, providerId, events, googleRequests }) => {
+    const appointment = await create({ googleEventId: 'lost-response', googleProviderCalendarId: providerId })
+    events.set('lost-response', { id: 'lost-response', ...google.buildGoogleEventPayload(appointment), summary: 'Título anterior', etag: '"old"' })
+    const originalFetch = global.fetch
+    let lost = false
+    global.fetch = async (url, options = {}) => {
+      const result = await originalFetch(url, options)
+      if (!lost && options.method === 'PATCH') {
+        lost = true
+        return googleJson({ error: { message: 'response_lost_after_commit' } }, 503)
+      }
+      return result
+    }
+    await assert.rejects(google.syncAppointmentToGoogle(appointment), error => error.status === 503)
+    const recovered = await google.syncAppointmentToGoogle(appointment)
+    assert.equal(recovered.appointment.googleSyncStatus, 'synced')
+    assert.deepEqual(googleRequests.map(request => request.method), ['GET', 'PATCH', 'GET'])
+  })
+})
+
+test('una respuesta vieja no marca pendiente una cancelación aunque comparta timestamp local', async () => {
+  await withGoogleSafetyFixture(async ({ db, google, local, create, providerId, events, googleRequests }) => {
+    const appointment = await create({ googleEventId: 'same-timestamp', googleProviderCalendarId: providerId })
+    events.set('same-timestamp', { id: 'same-timestamp', ...google.buildGoogleEventPayload(appointment), etag: '"before"' })
+    const originalFetch = global.fetch
+    let raced = false
+    global.fetch = async (url, options = {}) => {
+      const result = await originalFetch(url, options)
+      if (!raced && String(url).endsWith('/events/same-timestamp')) {
+        raced = true
+        await db.run("UPDATE appointments SET status = 'cancelled', appointment_status = 'cancelled', google_sync_status = 'synced' WHERE id = ?", [appointment.id])
+        events.set('same-timestamp', { id: 'same-timestamp', status: 'cancelled', etag: '"after"' })
+      }
+      return result
+    }
+    await assert.rejects(google.syncAppointmentToGoogle(appointment), error => error.code === 'appointment_provider_response_stale')
+    const current = await local.getLocalAppointment(appointment.id)
+    assert.equal(current.dateUpdated, appointment.dateUpdated)
+    assert.equal(current.appointmentStatus, 'cancelled')
+    assert.equal(current.googleSyncStatus, 'synced')
+    assert.deepEqual(googleRequests.map(request => request.method), ['GET'])
+  })
 })
 
 test('OAuth Google bloquea horarios sin crear contactos cuando el calendario lo desactiva', async () => {

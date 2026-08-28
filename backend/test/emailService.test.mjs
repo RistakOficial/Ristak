@@ -1,4 +1,6 @@
-import test from 'node:test'
+import test, { beforeEach, afterEach } from 'node:test'
+import { mockRoutableEmailDns, resetEmailRecipientDns } from './helpers/emailRecipientDns.mjs'
+import { setEmailRecipientResolverFactoryForTest } from '../src/services/emailRecipientService.js'
 import assert from 'node:assert/strict'
 import { db, getAppConfig } from '../src/config/database.js'
 import { decrypt, initializeMasterKey } from '../src/utils/encryption.js'
@@ -20,6 +22,36 @@ import { sendEmailView } from '../src/controllers/emailController.js'
 const EMAIL_CONFIG_KEY = 'email_smtp_config'
 const EMAIL_PASSWORD_KEY = 'email_smtp_password'
 const EMAIL_SIGNATURE_CONFIG_KEY = 'email_signature_config'
+beforeEach(mockRoutableEmailDns)
+afterEach(resetEmailRecipientDns)
+
+test('un destinatario sin ruta no llega al SMTP ni marca como rota la cuenta remitente', async () => {
+  await initializeMasterKey()
+  await snapshotAppConfig([EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY], async () => {
+    const messages = []
+    setEmailMxResolverForTest(async () => [{ exchange: 'aspmx.l.google.com.', priority: 1 }])
+    setEmailTransportFactoryForTest(() => ({
+      verify: async () => true,
+      sendMail: async message => { messages.push(message); return { messageId: 'test-connect', accepted: [message.to], rejected: [] } }
+    }))
+    try {
+      await connectEmail({ fromEmail: 'ventas@example.test', fromName: 'Cuenta de prueba', password: 'unit-test-only', inbound: { enabled: false } })
+      const previous = await getAppConfig(EMAIL_CONFIG_KEY)
+      const initialCount = messages.length
+      setEmailRecipientResolverFactoryForTest(() => ({ resolveMx: async () => [{ exchange: '0.0.0.0.', priority: 1000 }] }))
+      await assert.rejects(sendEmail({ to: 'bien@bien.com', subject: 'Cita', text: 'Prueba' }), error => error.code === 'email_recipient_unroutable')
+      assert.equal(messages.length, initialCount)
+      assert.deepEqual(await getAppConfig(EMAIL_CONFIG_KEY), previous)
+      setEmailRecipientResolverFactoryForTest(() => ({ resolveMx: async () => { throw Object.assign(new Error('temporary'), { code: 'ESERVFAIL' }) } }))
+      await assert.rejects(sendEmail({ to: 'bueno@example.test', subject: 'Cita', text: 'Prueba' }), error => error.code === 'email_recipient_dns_unavailable')
+      assert.equal(messages.length, initialCount)
+      assert.deepEqual(await getAppConfig(EMAIL_CONFIG_KEY), previous)
+    } finally {
+      setEmailTransportFactoryForTest(null)
+      setEmailMxResolverForTest(null)
+    }
+  })
+})
 
 function setHappyPathImapClientFactory(optionsLog = []) {
   setEmailImapClientFactoryForTest((options) => {

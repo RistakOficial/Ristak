@@ -1,4 +1,5 @@
-import test from 'node:test'
+import test, { beforeEach, afterEach } from 'node:test'
+import { mockRoutableEmailDns, resetEmailRecipientDns } from './helpers/emailRecipientDns.mjs'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { db, setAppConfig } from '../src/config/database.js'
@@ -40,6 +41,8 @@ const PAYMENT_SETTINGS_CONFIG_KEY = 'payments_settings'
 const EMAIL_CONFIG_KEY = 'email_smtp_config'
 const EMAIL_PASSWORD_KEY = 'email_smtp_password'
 const EMAIL_SIGNATURE_CONFIG_KEY = 'email_signature_config'
+beforeEach(mockRoutableEmailDns)
+afterEach(resetEmailRecipientDns)
 const PUBLIC_BASE_URL = 'https://pagos.example.test'
 
 function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {

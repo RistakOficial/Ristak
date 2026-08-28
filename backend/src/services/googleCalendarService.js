@@ -3,6 +3,9 @@ import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { getAccountTimezone, normalizeToUtcIso } from '../utils/dateUtils.js'
 import { logger } from '../utils/logger.js'
+import { recordAudit } from '../utils/auditLog.js'
+import { publishChatDataChangedEvent } from './chatLiveEventsService.js'
+import { filterRoutableEmailAttendees } from './emailRecipientService.js'
 import * as localCalendarService from './localCalendarService.js'
 import { clearGoogleCalendarIntegrationCredentials } from './integrationCredentialsCleanupService.js'
 import {
@@ -315,8 +318,39 @@ function eventPath(calendarId, eventId = '') {
   return eventId ? `${base}/${encodeURIComponent(eventId)}` : base
 }
 
-function eventWritePath(calendarId, eventId = '') {
-  return `${eventPath(calendarId, eventId)}?sendUpdates=all`
+function eventWritePath(calendarId, eventId = '', sendUpdates = 'all') {
+  return `${eventPath(calendarId, eventId)}?sendUpdates=${sendUpdates}`
+}
+
+function googleEventVersionHeaders(event) {
+  return event?.etag ? { 'If-Match': event.etag } : {}
+}
+
+async function removeUnroutableGoogleAttendees(config, calendarId, event) {
+  if (!event?.attendees?.length || mapGoogleEventStatus(event) === 'cancelled') return event
+  // Salas/recursos y la identidad propia del calendario se resuelven dentro de
+  // Google; no son buzones SMTP públicos y no deben eliminarse por su DNS.
+  const internalAttendee = attendee => attendee.resource || attendee.organizer || attendee.self
+  const checked = await filterRoutableEmailAttendees(event.attendees.filter(attendee => !internalAttendee(attendee)))
+  if (!checked.excluded.length) return event
+  const excludedEmails = new Set(checked.excluded.map(result => result.email))
+  // Quitar un invitado con sendUpdates=all también le manda un correo. Primero
+  // retiramos sólo destinos imposibles sin notificación y luego avisamos al resto.
+  return googleRequest(config, eventWritePath(calendarId, event.id, 'none'), {
+    method: 'PATCH',
+    headers: googleEventVersionHeaders(event),
+    body: JSON.stringify({ attendees: event.attendees.filter(attendee => internalAttendee(attendee) || !excludedEmails.has(cleanString(attendee.email).toLowerCase())) })
+  })
+}
+
+async function deleteGoogleEventWithSafeNotifications(config, calendarId, eventId) {
+  let event = await getGoogleEvent(eventId, { config, calendarId })
+  if (mapGoogleEventStatus(event) === 'cancelled') return
+  event = await removeUnroutableGoogleAttendees(config, calendarId, event)
+  await googleRequest(config, eventWritePath(calendarId, eventId), {
+    method: 'DELETE',
+    headers: googleEventVersionHeaders(event)
+  })
 }
 
 function calendarListPath(pageToken = '') {
@@ -654,6 +688,13 @@ function googleMirrorMatchesCanonicalAppointment(event = {}, appointment = {}) {
   )
 }
 
+function googleAttendeesMatchPayload(event, payload) {
+  const keys = attendees => (attendees || []).map(attendee => JSON.stringify([
+    cleanString(attendee.email).toLowerCase(), cleanString(attendee.displayName)
+  ])).sort()
+  return JSON.stringify(keys(event.attendees)) === JSON.stringify(keys(payload.attendees))
+}
+
 async function deleteLocalAppointmentForCancelledGoogleEvent(event = {}, {
   calendarId = '',
   providerCalendarId = ''
@@ -674,28 +715,33 @@ async function deleteLocalAppointmentForCancelledGoogleEvent(event = {}, {
     const existing = await localCalendarService.getLocalAppointment(candidateId).catch(() => null)
     if (existing?.id && (!targetCalendarId || cleanString(existing.calendarId) === targetCalendarId)) {
       if (isRistakCanonicalAppointment(existing)) {
-        // Google sólo borró su copia. La cita local sigue viva y queda pendiente
-        // para reparar el espejo; jamás propagamos esa cancelación hacia Ristak.
-        // Un tombstone viejo puede reaparecer después de religar B→A→B. La
-        // rotación de abajo queda condicionada también en SQL: sólo el provider
-        // que actualmente posee el espejo (o una fila legacy sin provider) puede
-        // invalidar esa generación.
-        if (cleanString(existing.googleEventId) === cleanString(event.id)) {
-          await rotateGoogleMirrorGeneration({
-            appointmentId: existing.id,
-            expectedGeneration: existing.googleMirrorGeneration,
-            expectedEventId: existing.googleEventId,
-            providerCalendarId,
-            message: 'La copia de Google fue cancelada o eliminada; Ristak conservó la cita y publicará un espejo nuevo.'
+        // La metadata puede seguir apuntando al calendario anterior tras una
+        // religa. El vínculo persistido (calendario + provider + ID) manda.
+        if (cleanString(existing.googleEventId) !== cleanString(event.id)) continue
+        const cancellation = await localCalendarService.applyGoogleCancellationToCanonicalAppointment({
+          appointmentId: existing.id,
+          calendarId: targetCalendarId,
+          googleEventId: event.id,
+          googleProviderCalendarId: providerCalendarId,
+          remoteUpdatedAt: event.updated
+        })
+        if (cancellation.applied) {
+          await recordAudit({
+            entityType: 'appointment', entityId: existing.id,
+            action: cancellation.cancelled ? 'google_cancelled' : 'google_history_preserved',
+            details: { googleEventId: event.id, providerCalendarId, previousStatus: cancellation.previousStatus }
           })
         }
-        return { handled: true, deleted: false, preservedLocal: true }
+        if (cancellation.cancelled) await dispatchGoogleCancellation(cancellation)
+        return { ...cancellation, handled: true, deleted: Boolean(cancellation.cancelled), preservedLocal: true }
       }
 
       // Un evento nacido fuera de Ristak sí es sólo ocupación importada y puede
       // retirarse localmente cuando Google lo cancela.
+      const previousStatus = cleanString(existing.appointmentStatus || existing.status).toLowerCase()
+      if (['cancelled', 'canceled'].includes(previousStatus)) return { handled: true, deleted: false }
       await localCalendarService.cancelLocalAppointment(existing.id)
-      return {
+      const cancellation = {
         handled: true,
         deleted: true,
         preservedLocal: false,
@@ -704,12 +750,28 @@ async function deleteLocalAppointmentForCancelledGoogleEvent(event = {}, {
           status: 'cancelled',
           appointmentStatus: 'cancelled'
         },
-        previousStatus: cleanString(existing.appointmentStatus || existing.status).toLowerCase()
+        previousStatus
       }
+      const { resolveAppointmentConfirmationFlow } = await import('./appointmentConfirmationService.js')
+      await resolveAppointmentConfirmationFlow({ appointmentId: existing.id, result: 'cancel', resultDetail: 'Evento cancelado desde Google Calendar.' })
+      await dispatchGoogleCancellation(cancellation)
+      return cancellation
     }
   }
 
   return { handled: false, deleted: false, preservedLocal: false }
+}
+
+async function dispatchGoogleCancellation(cancellation) {
+  const appointment = cancellation.appointment
+  if (!appointment?.contactId || cleanString(appointment.source).toLowerCase() === 'google_shadow') return
+  publishChatDataChangedEvent({ contactId: appointment.contactId, domains: ['appointments'], entityId: appointment.id })
+  await dispatchAppointmentAutomationEvent('appointment-status', appointment, {
+    previousStatus: cancellation.previousStatus || null,
+    previousAppointmentId: appointment.id,
+    appointmentChange: 'cancelled',
+    source: 'google_calendar_cancellation'
+  })
 }
 
 function googleCalendarIdFromLocalCalendar(calendar = {}) {
@@ -851,20 +913,6 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
           })
           if (cancellation.deleted) {
             deleted += 1
-            if (
-              cancellation.appointment?.contactId &&
-              cleanString(cancellation.appointment?.source).toLowerCase() !== 'google_shadow'
-            ) {
-              await dispatchAppointmentAutomationEvent(
-                'appointment-status',
-                cancellation.appointment,
-                {
-                  previousStatus: cancellation.previousStatus || null,
-                  previousAppointmentId: cancellation.appointment.id,
-                  appointmentChange: 'cancelled'
-                }
-              )
-            }
           }
           continue
         }
@@ -1384,6 +1432,7 @@ function googleMirrorFence(expectedAppointment = null) {
       AND COALESCE(google_event_id, '') = ?
       AND COALESCE(google_provider_calendar_id, '') = ?
       AND COALESCE(google_mirror_generation, 0) = ?
+      AND LOWER(COALESCE(appointment_status, status, '')) = ?
     `,
     params: [
       dateUpdated,
@@ -1391,7 +1440,8 @@ function googleMirrorFence(expectedAppointment = null) {
       cleanString(expectedAppointment.googleProviderCalendarId || expectedAppointment.google_provider_calendar_id),
       Math.max(0, Math.trunc(Number(
         expectedAppointment.googleMirrorGeneration ?? expectedAppointment.google_mirror_generation ?? 0
-      ) || 0))
+      ) || 0)),
+      cleanString(expectedAppointment.appointmentStatus || expectedAppointment.appointment_status || expectedAppointment.status).toLowerCase()
     ]
   }
 }
@@ -1402,6 +1452,11 @@ async function preserveGoogleMirrorPendingAfterStale(appointmentId) {
     UPDATE appointments
     SET google_sync_status = 'pending'
     WHERE id = ?
+      AND COALESCE(google_sync_status, '') != 'history_only'
+      AND NOT (
+        LOWER(COALESCE(appointment_status, status, '')) IN ('cancelled', 'canceled')
+        AND google_sync_status = 'synced'
+      )
   `, [appointmentId])
   return localCalendarService.getLocalAppointment(appointmentId)
 }
@@ -1481,39 +1536,6 @@ async function markGoogleMirrorPending(
   return localCalendarService.getLocalAppointment(appointmentId)
 }
 
-async function rotateGoogleMirrorGeneration({
-  appointmentId,
-  expectedGeneration = 0,
-  expectedEventId = '',
-  providerCalendarId = '',
-  message = ''
-} = {}) {
-  const normalizedProviderCalendarId = cleanString(providerCalendarId)
-  await db.run(`
-    UPDATE appointments
-    SET google_event_id = NULL,
-        google_provider_calendar_id = COALESCE(?, google_provider_calendar_id),
-        google_mirror_generation = COALESCE(google_mirror_generation, 0) + 1,
-        google_sync_status = 'pending',
-        google_sync_error = ?
-    WHERE id = ?
-      AND COALESCE(google_mirror_generation, 0) = ?
-      AND COALESCE(google_event_id, '') = ?
-      AND (
-        COALESCE(google_provider_calendar_id, '') = ''
-        OR LOWER(google_provider_calendar_id) = LOWER(?)
-      )
-  `, [
-    normalizedProviderCalendarId || null,
-    cleanString(message).slice(0, 1000) || 'La copia anterior de Google quedó inválida; se publicará una generación nueva.',
-    appointmentId,
-    Math.max(0, Math.trunc(Number(expectedGeneration) || 0)),
-    cleanString(expectedEventId),
-    normalizedProviderCalendarId
-  ])
-  return localCalendarService.getLocalAppointment(appointmentId)
-}
-
 async function resolveAppointment(appointmentOrId) {
   if (typeof appointmentOrId === 'string') {
     return localCalendarService.getLocalAppointment(appointmentOrId)
@@ -1548,7 +1570,9 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
     return { enabled: false, appointment: appointmentOrId }
   }
 
-  const appointment = await resolveAppointment(appointmentOrId)
+  // Una llamada encolada puede traer un objeto anterior a la cancelación. Para
+  // escribir se usa siempre la versión persistida, no ese snapshot atrasado.
+  const appointment = await resolveAppointment(typeof appointmentOrId === 'object' ? appointmentOrId?.id : appointmentOrId)
   let mirrorFenceAppointment = appointment
 
   if (!appointment?.id) {
@@ -1576,6 +1600,7 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
 
     const status = cleanString(appointment.appointmentStatus || appointment.status).toLowerCase()
     if (status === 'cancelled' || status === 'canceled') {
+      if (appointment.googleSyncStatus === 'synced') return { enabled: true, appointment }
       await deleteGoogleEventForAppointment(appointment)
       return {
         enabled: true,
@@ -1585,6 +1610,11 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
 
     const timezone = await getAccountTimezone()
     const payload = buildGoogleEventPayload(appointment, timezone)
+    const checkedRecipients = await filterRoutableEmailAttendees(payload.attendees)
+    payload.attendees = checkedRecipients.attendees
+    if (checkedRecipients.excluded.length) {
+      logger.warn(`[Google Calendar] Cita ${appointment.id}: se omitieron ${checkedRecipients.excluded.length} invitado(s) sin ruta de correo válida.`)
+    }
     let storedEventId = cleanString(appointment.googleEventId)
     const storedProviderCalendarId = cleanString(appointment.googleProviderCalendarId)
 
@@ -1597,9 +1627,7 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
       storedProviderCalendarId.toLowerCase() !== targetGoogleCalendarId.toLowerCase()
     ) {
       try {
-        await googleRequest(config, eventWritePath(storedProviderCalendarId, storedEventId), {
-          method: 'DELETE'
-        })
+        await deleteGoogleEventWithSafeNotifications(config, storedProviderCalendarId, storedEventId)
       } catch (error) {
         if (error.status !== 404 && error.status !== 410) throw error
       }
@@ -1615,6 +1643,25 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
     )
     let remote
     let testReceipt = null
+
+    const acceptRemoteCancellation = async cancelledEvent => {
+      if (appointment.isTest) throw new Error('El evento de prueba fue cancelado en Google; no se recreará automáticamente.')
+      // Un POST ambiguo puede haber creado el ID determinista antes de que se
+      // cancelara. Lo vinculamos sólo si la versión local sigue siendo la misma.
+      if (!cleanString(mirrorFenceAppointment.googleEventId)) {
+        mirrorFenceAppointment = await markGoogleSyncSuccess(appointment.id, cancelledEvent.id, targetGoogleCalendarId, {
+          expectedAppointment: mirrorFenceAppointment
+        })
+      }
+      const cancellation = await deleteLocalAppointmentForCancelledGoogleEvent(cancelledEvent, {
+        calendarId: appointment.calendarId, providerCalendarId: targetGoogleCalendarId
+      })
+      const current = cancellation.appointment || await localCalendarService.getLocalAppointment(appointment.id)
+      if (!['cancelled', 'canceled'].includes(cleanString(current?.appointmentStatus || current?.status).toLowerCase()) && current?.googleSyncStatus !== 'history_only') {
+        throw new Error('Google devolvió una cancelación antigua o de otro espejo. No se recreará el evento automáticamente; revisa la cita.')
+      }
+      return { enabled: true, appointment: current, event: cancelledEvent, cancelled: true }
+    }
 
     if (appointment.isTest) {
       eventId = googleTestEventIdForEffect(appointment.testEffectId)
@@ -1664,17 +1711,22 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
     }
 
     if (storedEventId && !appointment.isTest) {
-      try {
+      // PATCH puede resucitar un tombstone. Leemos primero y usamos If-Match
+      // para que una cancelación concurrente tampoco sea pisada por la escritura.
+      // Un 404/410 por sí solo NO prueba cancelación ni autoriza otro POST.
+      let currentRemote = await getGoogleEvent(eventId, { config, calendarId: targetGoogleCalendarId })
+      if (mapGoogleEventStatus(currentRemote) === 'cancelled') return await acceptRemoteCancellation(currentRemote)
+      currentRemote = await removeUnroutableGoogleAttendees(config, targetGoogleCalendarId, currentRemote)
+      if (googleMirrorMatchesCanonicalAppointment(currentRemote, appointment) && googleAttendeesMatchPayload(currentRemote, payload)) {
+        // Incluye la recuperación de un PATCH aplicado cuya respuesta se perdió:
+        // sincronizar lo que ya coincide no debe volver a notificar invitados.
+        remote = currentRemote
+      } else {
         remote = await googleRequest(config, eventWritePath(targetGoogleCalendarId, eventId), {
           method: 'PATCH',
+          headers: googleEventVersionHeaders(currentRemote),
           body: JSON.stringify(payload)
         })
-      } catch (error) {
-        if (error.status !== 404 && error.status !== 410) throw error
-        eventId = googleAppointmentEventIdForLocalAppointment(
-          appointment.id,
-          appointment.googleMirrorGeneration
-        )
       }
     }
 
@@ -1717,23 +1769,18 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
           throw writeError
         }
         if (mapGoogleEventStatus(remote) === 'cancelled') {
-          await rotateGoogleMirrorGeneration({
-            appointmentId: appointment.id,
-            expectedGeneration: appointment.googleMirrorGeneration,
-            expectedEventId: requestedEventId,
-            providerCalendarId: targetGoogleCalendarId,
-            message: `Google devolvió un tombstone cancelado para ${requestedEventId}; se rotará el ID del espejo.`
-          })
-          throw new Error('Google reconcilió un evento cancelado; Ristak conservará la cita y usará un ID de espejo nuevo.')
+          return await acceptRemoteCancellation(remote)
         }
         eventId = remote.id || requestedEventId
         // El ID determinista también puede pertenecer a un intento anterior cuya
         // respuesta llegó después de una edición local. Encontrarlo evita el
         // duplicado, pero no demuestra que contenga la versión vigente: si
         // difiere, imponemos la cita canónica con PATCH antes de marcar synced.
-        if (!googleMirrorMatchesCanonicalAppointment(remote, appointment)) {
+        if (!googleMirrorMatchesCanonicalAppointment(remote, appointment) || !googleAttendeesMatchPayload(remote, payload)) {
+          remote = await removeUnroutableGoogleAttendees(config, targetGoogleCalendarId, remote)
           remote = await googleRequest(config, eventWritePath(targetGoogleCalendarId, eventId), {
             method: 'PATCH',
+            headers: googleEventVersionHeaders(remote),
             body: JSON.stringify(payload)
           })
         }
@@ -1744,14 +1791,7 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
       throw new Error('Google Calendar no devolvio ID de evento')
     }
     if (mapGoogleEventStatus(remote) === 'cancelled') {
-      await rotateGoogleMirrorGeneration({
-        appointmentId: appointment.id,
-        expectedGeneration: appointment.googleMirrorGeneration,
-        expectedEventId: eventId,
-        providerCalendarId: targetGoogleCalendarId,
-        message: `Google devolvió cancelado el espejo ${eventId}; se rotará su ID.`
-      })
-      throw new Error('Google devolvió un espejo cancelado; la cita local se conserva para reintentar con otro ID.')
+      return await acceptRemoteCancellation(remote)
     }
 
     if (appointment.isTest) {
@@ -1766,7 +1806,7 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
     const updated = await markGoogleSyncSuccess(appointment.id, eventId, targetGoogleCalendarId, {
       expectedAppointment: mirrorFenceAppointment
     })
-    return { enabled: true, appointment: updated || appointment, event: remote }
+    return { enabled: true, appointment: updated || appointment, event: remote, excludedRecipients: checkedRecipients.excluded }
   } catch (error) {
     if (error?.code === 'appointment_provider_response_stale') {
       await preserveGoogleMirrorPendingAfterStale(appointment.id)
@@ -2065,9 +2105,7 @@ export async function deleteGoogleEventForAppointment(appointmentOrId) {
       return { enabled: false, deleted: false, reason: 'calendar_not_linked' }
     }
 
-    await googleRequest(config, eventWritePath(targetGoogleCalendarId, appointment.googleEventId), {
-      method: 'DELETE'
-    })
+    await deleteGoogleEventWithSafeNotifications(config, targetGoogleCalendarId, appointment.googleEventId)
   } catch (error) {
     if (error.status !== 404 && error.status !== 410) {
       await markGoogleSyncError(appointment.id, error.message, { expectedAppointment: appointment })

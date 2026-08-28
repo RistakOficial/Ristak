@@ -14,6 +14,7 @@ import { createRistakId } from '../utils/idGenerator.js'
 import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js'
 import { withConversationalInboundCommitLock } from './conversationalInboundCommitLockService.js'
 import { createTemplateVariableRenderer } from './templateVariablesService.js'
+import { assertEmailRecipientCanReceive } from './emailRecipientService.js'
 import {
   handleInboundForConfirmation,
   maybeConfirmAppointmentFromReply
@@ -1732,6 +1733,9 @@ export async function sendEmail({
   if (!cleanString(subject)) throw httpError(400, 'El correo necesita un asunto')
   if (!cleanString(text) && !cleanString(html)) throw httpError(400, 'El correo necesita contenido')
 
+  // Un destinatario imposible no es una avería de la cuenta SMTP. Se rechaza
+  // antes de entregarlo al proveedor y sin contaminar lastError del remitente.
+  await assertEmailRecipientCanReceive(recipient)
   const transporter = await getTransporter(config, password)
   let signature = includeSignature === false ? null : await readStoredSignatureConfig()
   if (signature) {

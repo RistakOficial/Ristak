@@ -135,7 +135,7 @@ Google o HighLevel dentro del GET. El contrato para volumen alto es:
 - `events/summary` calcula los KPIs mensuales en SQL y se resuelve aparte del
   camino crítico que pinta la agenda.
 
-## Reagenda Bidireccional Desde Google
+## Cambios Bidireccionales Desde Google
 
 `syncGoogleIntegrationNow` importa cambios antes de publicar pendientes. Sólo
 adopta una hora remota cuando `event.updated` es posterior a `date_updated` y
@@ -157,6 +157,48 @@ La cita histórica atendida libera `google_event_id` y queda
 conserva contacto y participantes, y repara la metadata privada de Google con su
 nuevo ID. Los replays son idempotentes: no crean otro seguimiento ni vuelven a
 publicar la cita histórica.
+
+### Eliminar O Cancelar En Google
+
+Un evento explícitamente `cancelled` del espejo vigente también cancela la cita
+Ristak. `applyGoogleCancellationToCanonicalAppointment` bloquea la fila y valida
+calendario local, ID remoto y proveedor antes de cambiar el estado. Conserva
+fila, contacto, participantes, notas y horas UTC; cierra confirmaciones activas
+en la misma transacción y actualiza la próxima cita de los contactos afectados.
+El estado cancelado la excluye de disponibilidad y recordatorios. Sólo la primera
+transición dispara la automatización de cancelación; los replays son no-ops.
+
+El espejo queda `synced` con su ID como referencia, sin rotar generación ni
+emitir POST/DELETE de respuesta a Google. Una atención ya completada conserva
+asistencia y pasa a `history_only`. Las cancelaciones de otra generación o
+proveedor no afectan a la cita actual. Si el tombstone incluye `updated`, se
+descarta cuando sea anterior a `date_updated`; no se exige fecha ni metadata
+porque Google sólo garantiza el ID en eventos eliminados. Un resultado 404/410
+o no ver un evento dentro de un rango no demuestra cancelación.
+
+El push relee la cita local, consulta el evento antes de editar y usa el ETag en
+`If-Match`. Así no revive un evento eliminado entre lectura y escritura ni toma
+un snapshot viejo como autoridad. Si remoto y local ya coinciden, no repite el
+PATCH/notificación. Los cambios entrantes se recogen por la sincronización
+existente (manual o cron horario); no se añade un webhook ni se promete reflejo
+instantáneo.
+
+### Invitados Con Ruta De Correo Imposible
+
+`buildGoogleEventPayload` sigue siendo un constructor puro. Antes de enviar,
+`emailRecipientService` valida DNS MX/A/AAAA y filtra sólo destinos imposibles
+(Null MX, dominio inexistente, servidores como `0.0.0.0`). No cambia el correo
+guardado en el contacto ni sus snapshots y no verifica la existencia del buzón.
+Un fallo temporal de DNS conserva todos los invitados y deja el espejo pendiente
+de reintento. Al actualizar o eliminar un evento legado, primero se retiran los
+destinos imposibles con `sendUpdates=none`; después los invitados válidos reciben
+los avisos normales. Recursos/organizador propios de Google quedan fuera de esa
+comprobación SMTP. Esto no cancela colas de correo que Gmail ya aceptó.
+
+Cobertura: `googleCalendarCentralOAuth.test.mjs`,
+`googleCalendarCancellation.test.mjs`, `googleCalendarOwnershipSafety.test.mjs`,
+`emailRecipientService.test.mjs` y `emailService.test.mjs`.
+
 - `upcoming` pagina próximas citas por el mismo orden estable, con límite 20 por
   default y 100 máximo.
 

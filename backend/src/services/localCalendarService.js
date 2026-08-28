@@ -7513,6 +7513,92 @@ export async function applyFreshGoogleTimeChangeToCanonicalAppointment({
   }
 }
 
+// Un tombstone sólo tiene autoridad sobre el espejo vigente. No exige metadata
+// ni updated (Google sólo garantiza id en eventos eliminados), pero sí conserva
+// ownership, historial y una transición atómica para tolerar entregas repetidas.
+export async function applyGoogleCancellationToCanonicalAppointment({
+  appointmentId,
+  calendarId,
+  googleEventId,
+  googleProviderCalendarId,
+  remoteUpdatedAt
+} = {}) {
+  const eventId = cleanString(googleEventId)
+  const providerId = cleanString(googleProviderCalendarId)
+  if (!cleanString(appointmentId) || !eventId || !providerId || !cleanString(calendarId)) {
+    return { applied: false, reason: 'invalid_google_cancellation' }
+  }
+
+  // Import dinámico: confirmaciones también sincroniza Google y usa este servicio.
+  const { resolveAppointmentConfirmationFlow } = await import('./appointmentConfirmationService.js')
+  const result = await db.transaction(async transaction => {
+    const row = await transaction.get(`
+      SELECT * FROM appointments WHERE id = ?
+      ${isPostgresDatabase ? 'FOR UPDATE' : ''}
+    `, [appointmentId])
+    if (!row || row.deleted_at || Number(row.is_test || 0) === 1) {
+      return { applied: false, reason: 'appointment_not_active' }
+    }
+    if (cleanString(row.calendar_id) !== cleanString(calendarId) || cleanString(row.google_event_id) !== eventId) {
+      return { applied: false, reason: 'google_event_owner_changed' }
+    }
+    const storedProvider = cleanString(row.google_provider_calendar_id)
+    if (storedProvider && storedProvider.toLowerCase() !== providerId.toLowerCase()) {
+      return { applied: false, reason: 'google_calendar_owner_changed' }
+    }
+    const previousStatus = cleanString(row.appointment_status || row.status).toLowerCase()
+    if (row.google_sync_status === GOOGLE_HISTORY_ONLY_SYNC_STATUS) {
+      return { applied: false, reason: 'appointment_history_only', previousStatus }
+    }
+    if (['cancelled', 'canceled'].includes(previousStatus) && row.google_sync_status === 'synced') {
+      return { applied: false, reason: 'already_cancelled', previousStatus }
+    }
+    const remoteMs = storedUtcMillis(remoteUpdatedAt)
+    const localMs = storedUtcMillis(row.date_updated)
+    if (Number.isFinite(remoteMs) && Number.isFinite(localMs) && remoteMs < localMs) {
+      return { applied: false, reason: 'stale_google_cancellation' }
+    }
+
+    // Borrar la copia de una atención ya completada no deshace la asistencia.
+    const preserveAttendance = GOOGLE_EXTERNAL_MOVE_ATTENDED_STATUSES.has(previousStatus)
+    await transaction.run(`
+      UPDATE appointments
+      SET status = ?, appointment_status = ?,
+          google_sync_status = ?, google_sync_error = NULL,
+          google_provider_calendar_id = ?, google_synced_at = CURRENT_TIMESTAMP,
+          date_updated = CURRENT_TIMESTAMP,
+          sync_status = CASE
+            WHEN COALESCE(ghl_appointment_id, '') != '' AND ? = 0 THEN 'pending'
+            ELSE sync_status
+          END
+      WHERE id = ?
+    `, [
+      preserveAttendance ? row.status : 'cancelled',
+      preserveAttendance ? row.appointment_status : 'cancelled',
+      preserveAttendance ? GOOGLE_HISTORY_ONLY_SYNC_STATUS : 'synced',
+      providerId, preserveAttendance ? 1 : 0, row.id
+    ])
+    await resolveAppointmentConfirmationFlow({
+      appointmentId: row.id,
+      result: preserveAttendance ? 'attended' : 'cancel',
+      resultDetail: 'Evento eliminado o cancelado desde Google Calendar.'
+    })
+    const participants = await transaction.all(
+      'SELECT contact_id FROM appointment_participants WHERE appointment_id = ?', [row.id]
+    )
+    return {
+      applied: true,
+      cancelled: !preserveAttendance && !['cancelled', 'canceled'].includes(previousStatus),
+      previousStatus,
+      affectedContactIds: [row.contact_id, ...participants.map(participant => participant.contact_id)].filter(Boolean)
+    }
+  })
+  if (result.applied) {
+    for (const contactId of new Set(result.affectedContactIds)) await updateContactAppointmentDate(contactId)
+  }
+  return { ...result, appointment: await getLocalAppointment(appointmentId) }
+}
+
 export async function deleteLocalAppointment(appointmentId, { markPendingDelete = false } = {}) {
   const existing = await getLocalAppointment(appointmentId)
   if (!existing) return false

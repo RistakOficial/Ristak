@@ -3417,6 +3417,28 @@ conectada. La pantalla permite probar recepcion, buscar correos manualmente con
 `/api/email/inbound/test` y `/api/email/inbound/sync`, y guardar el ajuste de
 contactos nuevos con `/api/email/inbound/settings`.
 
+Antes de entregar un mensaje saliente al SMTP, `emailRecipientService` comprueba
+la ruta DNS del dominio. Rechaza dominios inexistentes, Null MX y servidores
+imposibles como `0.0.0.0`, sin abrir conexiones al destinatario ni verificar el
+buzón con terceros. La ausencia de MX no basta para rechazar: se permite el
+fallback SMTP a A/AAAA. Un fallo temporal de DNS responde como reintentable; no
+marca al contacto como inválido ni a la cuenta remitente como desconectada.
+La consulta tiene un máximo de cuatro segundos y caché acotada por dominio
+(cinco minutos para resultados definitivos, diez segundos para temporales).
+No requiere secrets, variables ni configuración manual nueva. Esta comprobación
+evita rutas imposibles, pero no demuestra que exista un buzón particular.
+
+Google Calendar comparte esta validación para invitados: conserva la cita y
+los snapshots originales, omite sólo direcciones demostrablemente imposibles y
+sigue notificando a invitados válidos. Un DNS temporalmente caído aplaza la
+publicación; no descarta invitados silenciosamente. Si el evento remoto ya
+incluye un destinatario imposible, lo retira con `sendUpdates=none` antes de
+enviar actualizaciones/cancelaciones al resto. Recursos y organizador propios
+de Google no se consideran buzones SMTP públicos. Una sincronización sin cambios
+no vuelve a mandar la misma actualización. Los reintentos de entrega de un
+mensaje que Gmail ya aceptó pertenecen a Gmail: no son los dos intentos de cada
+recordatorio de Ristak y esta validación no retira mensajes ya encolados allí.
+
 El job `email-inbound-sync` esta registrado como cron de integracion externa y
 solo arranca cuando el detector local confirma correo conectado, app password
 guardado e IMAP activo. El sync lee `INBOX` por UID, mantiene cursor incremental,
@@ -10178,9 +10200,18 @@ nunca un booleano escrito por el modelo.
   Si la agenda cambia de Google A a Google B, el retry retira primero la copia de
   A y sólo después crea la de B; un error de DELETE impide el segundo write para
   no dejar dos espejos. La ocupacion importada del vínculo anterior se limpia al
-  religar o desvincular. Si alguien cancela en Google una copia creada por Ristak,
-  la cita local permanece activa y rota a una nueva generación determinista de ID
-  remoto, incluso cuando el POST termina en timeout y necesita reconciliación.
+  religar o desvincular. Si alguien elimina o cancela en Google el evento vigente
+  de una cita Ristak, esa misma cita queda cancelada, conserva su historial y
+  libera el horario. Se cierran sus esperas de confirmación y deja de ser
+  candidata a recordatorios. El ID remoto se conserva como referencia resuelta:
+  no se aumenta `google_mirror_generation` ni se crea otra invitación, tampoco
+  al reconciliar un POST ambiguo. Si la cita ya fue atendida, mantiene su estado
+  histórico y queda `history_only`. La transición es atómica e idempotente;
+  `audit_log` registra su origen Google. Una cancelación con `updated` anterior
+  a la edición local se ignora; sin `updated` se exige el ownership vigente.
+  Antes de editar un evento remoto se lee su estado y se envía `If-Match`, para
+  no resucitar una eliminación concurrente. Un 404/410 aislado no autoriza
+  cancelar localmente ni crear una copia nueva.
   Varios calendarios locales pueden reflejar sus citas en el mismo Google
   Calendar: el destino remoto no es dueño exclusivo de una agenda Ristak. Cada
   cita conserva un ID remoto determinista distinto y el calendario proveedor
@@ -10194,8 +10225,8 @@ nunca un booleano escrito por el modelo.
   redundante. Un evento creado por Ristak conserva como canónica la agenda indicada
   en su metadata y sólo bloquea disponibilidad mediante sombras en las otras
   agendas que comparten destino.
-  Un tombstone viejo de otro calendario proveedor tampoco puede rotar ni perder
-  la referencia del espejo vigente.
+  Un tombstone viejo de otro calendario proveedor o de una generación anterior
+  no puede cancelar ni perder la referencia del espejo vigente.
   La opción persistida del calendario `allow_overlaps` se aplica igual en
   consulta, oferta, validación previa al cobro, confirmación automática y
   solicitud humana; apagada exige slot libre y encendida permite el empalme sin
