@@ -4,6 +4,7 @@ import type {
 } from '@/types'
 
 type ContactCustomFieldLike = Record<string, any>
+type ContactCustomFieldOption = { value: string; label: string }
 
 const cleanString = (value: unknown) => String(value || '').trim()
 
@@ -230,6 +231,59 @@ export function mergeContactCustomFields(baseFields: ContactCustomField[] = [], 
 
 export function getContactCustomFieldDisplayLabel(field?: ContactCustomFieldLike | null, index = 0) {
   return cleanString(field?.label || field?.name || field?.fieldKey || field?.key || field?.id) || `Dato ${index + 1}`
+}
+
+const choiceString = (value: unknown) => (
+  typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+    ? String(value).trim()
+    : ''
+)
+
+export function normalizeContactCustomFieldOptions(options: unknown = []): ContactCustomFieldOption[] {
+  if (!Array.isArray(options)) return []
+
+  const byValue = new Map<string, ContactCustomFieldOption>()
+  options.forEach((option) => {
+    const item = option && typeof option === 'object' && !Array.isArray(option)
+      ? option as Record<string, unknown>
+      : null
+    const value = item
+      ? choiceString(item.value) || choiceString(item.label) || choiceString(item.name)
+      : choiceString(option)
+    const label = item
+      ? choiceString(item.label) || choiceString(item.name) || value
+      : value
+    if (value && !byValue.has(value)) byValue.set(value, { value, label })
+  })
+  return [...byValue.values()]
+}
+
+export function getContactCustomFieldChoiceValues(value: ContactCustomFieldValue | undefined) {
+  return normalizeContactCustomFieldOptions(Array.isArray(value) ? value : [value])
+    .map(option => option.value)
+}
+
+export function resolveContactCustomFieldOptions(
+  definitionOptions: unknown,
+  valueField?: Partial<ContactCustomField> | null
+): ContactCustomFieldOption[] {
+  const currentOptions = normalizeContactCustomFieldOptions(definitionOptions)
+  const savedOptions = normalizeContactCustomFieldOptions(valueField?.options)
+  const byValue = new Map(
+    (Array.isArray(definitionOptions) ? currentOptions : savedOptions).map(option => [option.value, option])
+  )
+  const savedByValue = new Map(savedOptions.map(option => [option.value, option]))
+  const answers = normalizeContactCustomFieldOptions(
+    Array.isArray(valueField?.value) ? valueField.value : [valueField?.value]
+  )
+
+  // El catálogo puede cambiar después del envío. Conservamos la opción y el
+  // texto contestados, sin revivir alternativas retiradas que nadie eligió ni
+  // convertir una respuesta histórica en otra opción parecida del catálogo.
+  answers.forEach((answer) => {
+    byValue.set(answer.value, savedByValue.get(answer.value) || byValue.get(answer.value) || answer)
+  })
+  return [...byValue.values()]
 }
 
 export function resolveContactCustomFieldGroup(

@@ -8,17 +8,19 @@ import {
   customFieldsService,
   isSystemCustomFieldDefinition,
   type CustomFieldDefinition,
-  type CustomFieldFolder,
-  type CustomFieldOption
+  type CustomFieldFolder
 } from '@/services/customFieldsService'
 import type { ContactCustomField, ContactCustomFieldDefinition, ContactCustomFieldValue } from '@/types'
 import {
   findMatchingContactCustomField,
   formatContactCustomFieldDisplayValue,
+  getContactCustomFieldChoiceValues as toChoiceArray,
   getContactCustomFieldDisplayLabel,
   getContactCustomFieldIdentity,
   isReservedContactCustomField,
+  normalizeContactCustomFieldOptions as normalizeOptions,
   resolveContactCustomFieldGroup,
+  resolveContactCustomFieldOptions,
   selectContactCustomFieldDefinitionsForContact
 } from '@/utils/contactCustomFields'
 import { formatDateToISO } from '@/utils/format'
@@ -102,22 +104,6 @@ const stableStringify = (value: unknown) => {
   }
 }
 
-const normalizeOptions = (options: unknown[] = []): CustomFieldOption[] => (
-  options
-    .map((option) => {
-      if (option && typeof option === 'object') {
-        const item = option as Record<string, unknown>
-        const value = cleanString(item.value || item.label || item.name)
-        const label = cleanString(item.label || item.name || item.value)
-        return value || label ? { value: value || label, label: label || value } : null
-      }
-
-      const value = cleanString(option)
-      return value ? { value, label: value } : null
-    })
-    .filter((option): option is CustomFieldOption => Boolean(option))
-)
-
 const fieldIdentity = (field: Partial<ContactCustomField>, index = 0) =>
   getContactCustomFieldIdentity(field) ||
   cleanString(field.definitionId) ||
@@ -137,21 +123,6 @@ const isHiddenDefinition = (definition: CatalogDefinition) =>
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
-const optionValueFromItem = (value: unknown) => {
-  if (value && typeof value === 'object') {
-    const item = value as Record<string, unknown>
-    return cleanString(item.value || item.label || item.name)
-  }
-
-  return cleanString(value)
-}
-
-const toChoiceArray = (value: ContactCustomFieldValue | undefined) => {
-  if (Array.isArray(value)) return value.map(optionValueFromItem).filter(Boolean)
-  const single = optionValueFromItem(value)
-  return single ? [single] : []
-}
-
 const formatDateDraft = (value: ContactCustomFieldValue | undefined, timezone: string) => {
   const raw = cleanString(value)
   if (!raw) return ''
@@ -167,6 +138,7 @@ const formatDraftValue = (field: EditableCustomField, timezone: string): DraftVa
   const type = normalizeType(field.dataType)
 
   if (multiChoiceTypes.has(type)) return toChoiceArray(field.value)
+  if (choiceTypes.has(type)) return toChoiceArray(field.value)[0] ?? ''
   if (booleanTypes.has(type)) {
     if (typeof field.value === 'boolean') return field.value
     const normalized = cleanString(field.value).toLowerCase()
@@ -196,12 +168,14 @@ const parseDraftForSave = (draft: DraftValue, field: EditableCustomField): Conta
   const type = normalizeType(field.dataType)
 
   if (multiChoiceTypes.has(type)) {
-    if (Array.isArray(draft)) return draft.map(optionValueFromItem).filter(Boolean)
+    if (Array.isArray(draft)) return toChoiceArray(draft)
     const value = cleanString(draft)
     if (!value) return []
     if (value.startsWith('[')) return parseJsonDraft(value) as ContactCustomFieldValue
     return value.split(',').map(item => item.trim()).filter(Boolean)
   }
+
+  if (choiceTypes.has(type)) return toChoiceArray(draft)[0] ?? ''
 
   if (booleanTypes.has(type)) {
     if (typeof draft === 'boolean') return draft
@@ -242,9 +216,11 @@ const fieldTypeLabel = (field: EditableCustomField) =>
   FIELD_TYPE_LABELS[normalizeType(field.dataType)] || field.dataType || 'Texto'
 
 const buildFieldFromDefinition = (definition: CatalogDefinition, valueField: ContactCustomField | null, index: number): EditableCustomField => {
-  const options = normalizeOptions(
-    (definition.options?.length ? definition.options : valueField?.options || []) as unknown[]
-  )
+  const dataType = definition.dataType || valueField?.dataType || 'text'
+  const type = normalizeType(dataType)
+  const options = choiceTypes.has(type) || multiChoiceTypes.has(type)
+    ? resolveContactCustomFieldOptions(definition.options, valueField)
+    : normalizeOptions(definition.options?.length ? definition.options : valueField?.options)
   const fieldKey = cleanString(definition.fieldKey || definition.key || valueField?.fieldKey || valueField?.key)
   const definitionId = cleanString(definition.definitionId || valueField?.definitionId)
 
@@ -256,7 +232,7 @@ const buildFieldFromDefinition = (definition: CatalogDefinition, valueField: Con
     fieldKey: valueField?.fieldKey || definition.fieldKey || fieldKey || null,
     label: definition.label || valueField?.label || valueField?.name || fieldKey || `Campo ${index + 1}`,
     name: definition.name || definition.label || valueField?.name || valueField?.label || fieldKey || `Campo ${index + 1}`,
-    dataType: definition.dataType || valueField?.dataType || 'text',
+    dataType,
     options,
     folderId: definition.folderId || valueField?.folderId || null,
     folderName: definition.folderName || valueField?.folderName || null,

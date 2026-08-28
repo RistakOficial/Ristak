@@ -2256,6 +2256,16 @@ Capacidades:
   `multiselect` muestra un dropdown con casillas y guarda todas las selecciones
   como un solo arreglo dentro del mismo campo. El panel de contacto usa el
   control visual correspondiente y no convierte `multiselect` en checkboxes.
+  En chat desktop, ficha de contacto y chat móvil, las opciones del catálogo no
+  ocultan respuestas anteriores: cada selección conserva su valor y el texto
+  guardado al contestar, aunque después se cambien o retiren las opciones del
+  formulario. El panel mantiene las alternativas actuales para editar y añade
+  únicamente las opciones históricas seleccionadas que falten; no vuelve a
+  ofrecer todas las alternativas retiradas. Si falta el texto histórico, muestra
+  el valor recibido sin sustituirlo por una respuesta supuestamente equivalente.
+  Consultar o editar otro campo no reescribe esa selección. Radio y dropdown
+  también aceptan respuestas legacy encapsuladas en un objeto o arreglo de un
+  elemento, y los valores `0`/`false` no se interpretan como ausencia de respuesta.
 - Etiquetas, campos personalizados y campos variables son parte del CRM base,
   incluido el plan Basic. El plan no debe ocultarlos ni rechazar sus endpoints;
   los permisos de usuario siguen aplicando.
