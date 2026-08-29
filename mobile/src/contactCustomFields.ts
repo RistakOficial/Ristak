@@ -11,6 +11,7 @@ export type ContactCustomFieldValueLike = {
   field_key?: string;
   name?: string;
   label?: string;
+  dataType?: string;
   value?: unknown;
   options?: Array<{ label?: string; value?: string; name?: string } | string>;
   sourceType?: string;
@@ -36,6 +37,22 @@ type CustomFieldIdentityLike = {
 };
 
 type ContactCustomFieldOptionLike = NonNullable<ContactCustomFieldValueLike['options']>[number];
+
+export type ContactCustomFieldOption = {
+  label: string;
+  value: string;
+};
+
+export type UserContactCustomFieldRow = {
+  id: string;
+  definition: ContactCustomFieldDefinition;
+  label: string;
+  dataType: string;
+  options: ContactCustomFieldOption[];
+  selectedValues: string[];
+  value: string;
+  displayValue: string;
+};
 
 const HIDDEN_ACCOUNT_FIELD_TOKENS = new Set([
   'businessname',
@@ -205,12 +222,57 @@ function optionLabel(option: ContactCustomFieldOptionLike) {
   return String(option || '').trim();
 }
 
+export function normalizeContactCustomFieldOptions(options: unknown): ContactCustomFieldOption[] {
+  if (!Array.isArray(options)) return [];
+
+  const byValue = new Map<string, ContactCustomFieldOption>();
+  options.forEach((option) => {
+    const value = optionValue(option as ContactCustomFieldOptionLike);
+    const label = optionLabel(option as ContactCustomFieldOptionLike);
+    if (value && !byValue.has(value)) byValue.set(value, { value, label: label || value });
+  });
+  return [...byValue.values()];
+}
+
 function selectedValue(value: unknown) {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const item = value as Record<string, unknown>;
     return String(item.value || item.label || item.name || '').trim();
   }
   return String(value ?? '').trim();
+}
+
+export function getContactCustomFieldSelectedValues(rawValue: unknown) {
+  return (Array.isArray(rawValue) ? rawValue : [rawValue])
+    .map(selectedValue)
+    .filter(Boolean);
+}
+
+export function resolveContactCustomFieldOptions(
+  definitionOptions: unknown,
+  valueField?: ContactCustomFieldValueLike,
+) {
+  const currentOptions = normalizeContactCustomFieldOptions(definitionOptions);
+  const savedOptions = normalizeContactCustomFieldOptions(valueField?.options);
+  const byValue = new Map(
+    (currentOptions.length ? currentOptions : savedOptions)
+      .map((option) => [option.value, option]),
+  );
+  const savedByValue = new Map(savedOptions.map((option) => [option.value, option]));
+
+  // El catálogo puede cambiar después de que la persona respondió. Conserva
+  // únicamente la opción histórica elegida y su etiqueta original; no revive
+  // todas las alternativas retiradas del formulario.
+  normalizeContactCustomFieldOptions(
+    Array.isArray(valueField?.value) ? valueField.value : [valueField?.value],
+  ).forEach((answer) => {
+    byValue.set(
+      answer.value,
+      savedByValue.get(answer.value) || byValue.get(answer.value) || answer,
+    );
+  });
+
+  return [...byValue.values()];
 }
 
 function displayValue(rawValue: unknown, options: ContactCustomFieldValueLike['options'] = []) {
@@ -252,17 +314,40 @@ function editableValue(rawValue: unknown) {
 export function buildUserCustomFieldRows(
   definitions: ContactCustomFieldDefinition[],
   values: ContactCustomFieldValueLike[],
-) {
+): UserContactCustomFieldRow[] {
   return selectUserCustomFieldDefinitions(definitions, values).map((definition, index) => {
     const field = findContactCustomFieldValue(definition, values);
     const rawValue = field?.value;
-    const options = definition.options?.length ? definition.options : field?.options || [];
+    const dataType = String(definition.dataType || field?.dataType || 'text').trim().toLowerCase();
+    const isChoice = ['radio', 'dropdown', 'select', 'checkboxes', 'multiselect'].includes(dataType);
+    const options = isChoice
+      ? resolveContactCustomFieldOptions(definition.options, field)
+      : normalizeContactCustomFieldOptions(definition.options?.length ? definition.options : field?.options);
+    const selectedValues = getContactCustomFieldSelectedValues(rawValue);
     return {
       id: definition.definitionId || definition.fieldKey || definition.key || `field-${index}`,
       definition,
       label: definition.label || definition.name || `Campo ${index + 1}`,
-      value: editableValue(rawValue),
+      dataType,
+      options,
+      selectedValues,
+      value: isChoice ? (selectedValues[0] || '') : editableValue(rawValue),
       displayValue: displayValue(rawValue, options),
     };
   });
+}
+
+export function buildContactCustomFieldUpdate(
+  row: UserContactCustomFieldRow,
+  value: unknown,
+): ContactCustomFieldValueLike {
+  return {
+    definitionId: row.definition.definitionId,
+    key: row.definition.key,
+    fieldKey: row.definition.fieldKey,
+    label: row.label,
+    dataType: row.dataType,
+    options: row.options,
+    value,
+  };
 }

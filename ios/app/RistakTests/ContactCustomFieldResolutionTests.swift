@@ -104,6 +104,73 @@ final class ContactCustomFieldResolutionTests: XCTestCase {
         XCTAssertEqual(resolved.map { $0.value?.value }, [.string("A"), .string("B")])
     }
 
+    func testReconcilesCurrentRadioCatalogWithSelectedHistoricalOption() throws {
+        let definition = try XCTUnwrap(decodeDefinitions(#"""
+        [
+          {
+            "definitionId":"field-budget",
+            "key":"budget",
+            "fieldKey":"budget",
+            "label":"¿Tienes el monto para invertir?",
+            "dataType":"radio",
+            "options":[{"value":"new_option","label":"Opción vigente"}]
+          }
+        ]
+        """#).first)
+        let value = try XCTUnwrap(decodeValues(#"""
+        [
+          {
+            "definitionId":"field-budget",
+            "key":"budget",
+            "fieldKey":"budget",
+            "dataType":"radio",
+            "value":"historical_yes",
+            "options":[
+              {"value":"historical_yes","label":"Sí, cuento con el monto."},
+              {"value":"historical_no","label":"No cuento con el monto."}
+            ]
+          }
+        ]
+        """#).first)
+
+        let options = ContactInfoCustomFieldValueFormat.reconciledOptions(
+            definitionOptions: definition.options,
+            valueField: value
+        )
+
+        XCTAssertEqual(ContactInfoCustomFieldValueFormat.selectedValues(value.value), ["historical_yes"])
+        XCTAssertEqual(options, [
+            ContactFieldOption(label: "Opción vigente", value: "new_option"),
+            ContactFieldOption(label: "Sí, cuento con el monto.", value: "historical_yes"),
+        ])
+        XCTAssertEqual(
+            ContactInfoCustomFieldValueFormat.optionLabel(for: "historical_yes", options: options),
+            "Sí, cuento con el monto."
+        )
+
+        let snapshotOnlyOptions = ContactInfoCustomFieldValueFormat.reconciledOptions(
+            definitionOptions: [],
+            valueField: value
+        )
+        XCTAssertEqual(snapshotOnlyOptions, [
+            ContactFieldOption(label: "Sí, cuento con el monto.", value: "historical_yes"),
+            ContactFieldOption(label: "No cuento con el monto.", value: "historical_no"),
+        ])
+    }
+
+    func testReadsRadioSelectionFromObjectPayload() throws {
+        let value = try XCTUnwrap(decodeValues(#"""
+        [
+          {
+            "definitionId":"field-budget",
+            "value":{"value":"yes","label":"Sí"}
+          }
+        ]
+        """#).first)
+
+        XCTAssertEqual(ContactInfoCustomFieldValueFormat.selectedValues(value.value), ["yes"])
+    }
+
     private func decodeDefinitions(_ json: String) throws -> [ContactCustomFieldDefinition] {
         try JSONDecoder().decode([ContactCustomFieldDefinition].self, from: Data(json.utf8))
     }

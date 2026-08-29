@@ -416,6 +416,43 @@ enum ContactInfoCustomFieldResolution {
 }
 
 enum ContactInfoCustomFieldValueFormat {
+    /// Reconcilia el catálogo vigente con el snapshot guardado en el contacto.
+    /// Si una opción contestada fue retirada después, conserva esa única opción
+    /// y su etiqueta histórica para que el radio siga apareciendo marcado.
+    static func reconciledOptions(
+        definitionOptions: [ContactFieldOption],
+        valueField: ContactCustomFieldValue?
+    ) -> [ContactFieldOption] {
+        func normalized(_ options: [ContactFieldOption]) -> [ContactFieldOption] {
+            var seenValues = Set<String>()
+            return options.compactMap { option in
+                let value = option.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !value.isEmpty, seenValues.insert(value).inserted else { return nil }
+                let label = option.label.trimmingCharacters(in: .whitespacesAndNewlines)
+                return ContactFieldOption(label: label.isEmpty ? value : label, value: value)
+            }
+        }
+
+        let currentOptions = normalized(definitionOptions)
+        let savedOptions = normalized(valueField?.options ?? [])
+        var result = currentOptions.isEmpty ? savedOptions : currentOptions
+        let savedByValue = Dictionary(
+            savedOptions.map { ($0.value, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for selectedValue in selectedValues(valueField?.value) {
+            let selectedOption = savedByValue[selectedValue]
+                ?? result.first(where: { $0.value == selectedValue })
+                ?? ContactFieldOption(label: selectedValue, value: selectedValue)
+            if let index = result.firstIndex(where: { $0.value == selectedValue }) {
+                result[index] = selectedOption
+            } else {
+                result.append(selectedOption)
+            }
+        }
+        return result
+    }
+
     /// Texto para mostrar un valor de campo personalizado (vacío = "Sin dato"
     /// lo pone la fila).
     static func displayString(
@@ -478,13 +515,29 @@ enum ContactInfoCustomFieldValueFormat {
     static func selectedValues(_ value: RistakJSONValue?) -> [String] {
         switch value {
         case .array(let items):
-            return items.compactMap { $0.configStringValue }.filter { !$0.isEmpty }
+            return items.compactMap(choiceValue).filter { !$0.isEmpty }
         case .string(let raw):
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? [] : [trimmed]
+        case .object(let object):
+            return choiceValue(.object(object)).map { [$0] } ?? []
         default:
             return []
         }
+    }
+
+    private static func choiceValue(_ value: RistakJSONValue) -> String? {
+        if case .object(let object) = value {
+            for key in ["value", "label", "name"] {
+                let candidate = object[key]?.configStringValue?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !candidate.isEmpty { return candidate }
+            }
+            return nil
+        }
+        let candidate = value.configStringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return candidate.isEmpty ? nil : candidate
     }
 }
 

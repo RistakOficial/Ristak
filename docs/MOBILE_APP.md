@@ -1258,7 +1258,14 @@ formulario cambió de destino, se muestra la versión que sí contiene la respue
 del contacto; cuando ninguna tiene respuesta se conserva únicamente la
 definición más reciente. Radios, dropdowns y selecciones múltiples muestran la
 etiqueta contestada por la persona, no el valor técnico de la opción ni un
-placeholder vacío. La sección `Etiquetas`
+placeholder vacío. En los campos `radio`, `/movil`, Android e iOS muestran el
+grupo completo de botones dentro de `Info del contacto`, con la respuesta
+guardada visiblemente marcada; no reducen el campo a una fila de texto. Si el
+catálogo cambió después del envío, combinan las opciones vigentes con únicamente
+la opción histórica seleccionada y conservan la etiqueta que vio la persona,
+sin revivir todas las alternativas retiradas. Cambiar la selección exige guardar
+y conserva la identidad canónica del campo para que la respuesta se fusione con
+la existente en vez de crear otro dato. La sección `Etiquetas`
 permite buscar o crear una etiqueta y coloca inmediatamente debajo la acción
 `Meter a una automatización`, limitada a automatizaciones publicadas. En Ajustes
 móviles, `Campos personalizados` y `Etiquetas` permiten crear y eliminar sus

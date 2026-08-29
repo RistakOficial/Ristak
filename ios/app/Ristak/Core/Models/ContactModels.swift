@@ -38,6 +38,11 @@ struct ContactFieldOption: Decodable, Sendable, Equatable {
     let label: String
     let value: String
 
+    init(label: String, value: String) {
+        self.label = label
+        self.value = value
+    }
+
     enum CodingKeys: String, CodingKey {
         case label, value
     }

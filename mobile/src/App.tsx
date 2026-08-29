@@ -351,7 +351,12 @@ import type {
   WhatsAppMessagePresentation,
   WhatsAppNumberOriginDatum,
 } from './types';
-import { buildUserCustomFieldRows, isUserCustomFieldDefinition } from './contactCustomFields';
+import {
+  buildContactCustomFieldUpdate,
+  buildUserCustomFieldRows,
+  isUserCustomFieldDefinition,
+  type UserContactCustomFieldRow,
+} from './contactCustomFields';
 import {
   getChatMessageBubbleBackground,
   getChatMessageBubblePalette,
@@ -20497,7 +20502,7 @@ function NativeContactDetailScreen({
   onEnrollAutomation: (automation: ContactAutomationSummary) => Promise<void>;
   onPayment: () => void;
   onSearchChat: () => void;
-  onSave: (patch: Partial<ChatContact>) => Promise<void>;
+  onSave: (patch: Partial<ChatContact>) => Promise<boolean>;
 }) {
   const [nameDraft, setNameDraft] = useState(getContactName(contact));
   const [phoneDraft, setPhoneDraft] = useState(contact.phone || '');
@@ -20514,6 +20519,8 @@ function NativeContactDetailScreen({
   const [editingCustomField, setEditingCustomField] = useState<ReturnType<typeof buildUserCustomFieldRows>[number] | null>(null);
   const [customFieldDraft, setCustomFieldDraft] = useState('');
   const [customFieldSaving, setCustomFieldSaving] = useState(false);
+  const [customFieldRadioDrafts, setCustomFieldRadioDrafts] = useState<Record<string, string>>({});
+  const [customFieldRadioSavingId, setCustomFieldRadioSavingId] = useState<string | null>(null);
   const customerLabel = customLabels.customer || DEFAULT_CUSTOM_LABELS.customer;
   const leadLabel = customLabels.lead || DEFAULT_CUSTOM_LABELS.lead;
   const customerJourneyLabel = formatMobileCrmLabelWithDefiniteArticle(customerLabel, DEFAULT_CUSTOM_LABELS.customer);
@@ -20525,6 +20532,7 @@ function NativeContactDetailScreen({
     setPhoneEditing(false);
     setPanel('main');
     setRecordDetail(null);
+    setCustomFieldRadioDrafts({});
   }, [contact]);
 
   const payments = useMemo(() => getContactInfoPayments(contact, journeyEvents), [contact, journeyEvents]);
@@ -20678,6 +20686,83 @@ function NativeContactDetailScreen({
       onPress={onPress}
     />
   );
+
+  const renderRadioField = (field: UserContactCustomFieldRow) => {
+    const savedValue = field.selectedValues[0] || '';
+    const hasDraft = Object.prototype.hasOwnProperty.call(customFieldRadioDrafts, field.id);
+    const selectedValue = hasDraft ? customFieldRadioDrafts[field.id] : savedValue;
+    const hasChanges = selectedValue !== savedValue;
+    const fieldSaving = customFieldRadioSavingId === field.id;
+    const disabled = Boolean(saving || customFieldRadioSavingId);
+
+    const saveSelection = async () => {
+      if (!hasChanges || disabled) return;
+      setCustomFieldRadioSavingId(field.id);
+      const saved = await onSave({
+        customFields: [buildContactCustomFieldUpdate(field, selectedValue)],
+      });
+      if (saved) {
+        setCustomFieldRadioDrafts((current) => {
+          const next = { ...current };
+          delete next[field.id];
+          return next;
+        });
+      }
+      setCustomFieldRadioSavingId(null);
+    };
+
+    return (
+      <View key={field.id} style={styles.contactInfoRadioField}>
+        <ContactInfoText style={styles.contactInfoRadioLabel}>{field.label}</ContactInfoText>
+        <ContactInfoText style={styles.contactInfoRadioType}>Radio buttons</ContactInfoText>
+        <View style={styles.contactInfoRadioOptions}>
+          {field.options.map((option) => {
+            const selected = selectedValue === option.value;
+            return (
+              <Pressable
+                key={option.value}
+                accessibilityRole="radio"
+                accessibilityLabel={option.label}
+                accessibilityState={{ selected, disabled }}
+                disabled={disabled}
+                onPress={() => {
+                  setCustomFieldRadioDrafts((current) => ({ ...current, [field.id]: option.value }));
+                }}
+                style={({ pressed }) => [styles.contactInfoRadioOption, pressed && styles.pressed]}
+              >
+                <View style={[styles.contactInfoRadioCircle, selected && styles.contactInfoRadioCircleSelected]}>
+                  {selected ? <View style={styles.contactInfoRadioDot} /> : null}
+                </View>
+                <ContactInfoText style={styles.contactInfoRadioOptionText}>{option.label}</ContactInfoText>
+              </Pressable>
+            );
+          })}
+        </View>
+        {hasChanges ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Guardar ${field.label}`}
+            disabled={disabled}
+            onPress={() => void saveSelection()}
+            style={({ pressed }) => [
+              styles.contactInfoRadioSave,
+              disabled && styles.disabledButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            {fieldSaving ? (
+              <ActivityIndicator color={COLORS.white} />
+            ) : (
+              <>
+                <Check size={phoneCompact(16)} color={COLORS.white} strokeWidth={2.8} />
+                <ContactInfoText style={styles.contactInfoRadioSaveText}>Guardar</ContactInfoText>
+              </>
+            )}
+          </Pressable>
+        ) : null}
+      </View>
+    );
+  };
 
   const renderPaymentDetail = () => {
     const selected = recordDetail?.type === 'payment'
@@ -21062,10 +21147,14 @@ function NativeContactDetailScreen({
 
         <View style={styles.contactInfoLightSection}>
           <ContactInfoText style={styles.contactInfoSectionHeadingLight}>CAMPOS PERSONALIZADOS</ContactInfoText>
-          {customFields.length ? customFields.map((field) => renderRow(field.id, FileText, field.label, field.displayValue || 'Sin dato', null, () => {
-            setEditingCustomField(field);
-            setCustomFieldDraft(field.value);
-          })) : <ContactInfoText style={styles.contactInfoLightEmpty}>No hay campos personalizados creados en Ajustes.</ContactInfoText>}
+          {customFields.length ? customFields.map((field) => (
+            field.dataType === 'radio' && field.options.length
+              ? renderRadioField(field)
+              : renderRow(field.id, FileText, field.label, field.displayValue || 'Sin dato', null, () => {
+                setEditingCustomField(field);
+                setCustomFieldDraft(field.value);
+              })
+          )) : <ContactInfoText style={styles.contactInfoLightEmpty}>No hay campos personalizados creados en Ajustes.</ContactInfoText>}
         </View>
 
         <View style={styles.contactInfoLightSection}>
@@ -21128,15 +21217,10 @@ function NativeContactDetailScreen({
               if (!field) return;
               setCustomFieldSaving(true);
               void onSave({
-                customFields: [{
-                  definitionId: field.definition.definitionId,
-                  key: field.definition.key,
-                  fieldKey: field.definition.fieldKey,
-                  label: field.label,
-                  dataType: field.definition.dataType,
-                  value: customFieldDraft,
-                }],
-              }).then(() => setEditingCustomField(null)).finally(() => setCustomFieldSaving(false));
+                customFields: [buildContactCustomFieldUpdate(field, customFieldDraft)],
+              }).then((saved) => {
+                if (saved) setEditingCustomField(null);
+              }).finally(() => setCustomFieldSaving(false));
             }} style={styles.sheetPrimaryButton}>
               {customFieldSaving ? <ActivityIndicator color={COLORS.white} /> : <Text style={styles.sheetPrimaryButtonText}>Guardar dato</Text>}
             </Pressable>
@@ -24026,7 +24110,7 @@ function NativeConversationScreen({
   };
 
   const saveContactInfoPatch = async (patch: Partial<ChatContact>) => {
-    if (contactInfoSaving) return;
+    if (contactInfoSaving) return false;
     const target = contactInfo || contact;
     setContactInfoSaving(true);
     try {
@@ -24034,8 +24118,10 @@ function NativeConversationScreen({
       const next = { ...target, ...updated };
       setContactInfo(next);
       onContactPatch(target.id, updated);
+      return true;
     } catch (err) {
       Alert.alert('Contacto', err instanceof Error ? err.message : 'No se pudo guardar el contacto.');
+      return false;
     } finally {
       setContactInfoSaving(false);
     }
@@ -36491,6 +36577,79 @@ function createAppStyles() {
     lineHeight: phoneCompact(29),
     fontWeight: '900',
     textAlign: 'center',
+  },
+  contactInfoRadioField: {
+    paddingVertical: phoneCompact(13),
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: CONTACT_INFO_THEME.border,
+  },
+  contactInfoRadioLabel: {
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(18),
+    lineHeight: phoneCompact(24),
+    fontWeight: '800',
+  },
+  contactInfoRadioType: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(14),
+    lineHeight: phoneCompact(19),
+    marginTop: phoneCompact(2),
+    fontWeight: '600',
+  },
+  contactInfoRadioOptions: {
+    marginTop: phoneCompact(9),
+    gap: phoneCompact(3),
+  },
+  contactInfoRadioOption: {
+    minHeight: phoneCompact(42),
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: phoneCompact(10),
+    paddingVertical: phoneCompact(6),
+  },
+  contactInfoRadioCircle: {
+    width: phoneCompact(22),
+    height: phoneCompact(22),
+    borderRadius: phoneCompact(11),
+    borderWidth: 1.5,
+    borderColor: CONTACT_INFO_THEME.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: CONTACT_INFO_THEME.surface,
+  },
+  contactInfoRadioCircleSelected: {
+    borderColor: CONTACT_INFO_THEME.accent,
+  },
+  contactInfoRadioDot: {
+    width: phoneCompact(12),
+    height: phoneCompact(12),
+    borderRadius: phoneCompact(6),
+    backgroundColor: CONTACT_INFO_THEME.accent,
+  },
+  contactInfoRadioOptionText: {
+    flex: 1,
+    minWidth: 0,
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(17),
+    lineHeight: phoneCompact(23),
+    fontWeight: '500',
+  },
+  contactInfoRadioSave: {
+    minHeight: phoneCompact(38),
+    alignSelf: 'flex-end',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: phoneCompact(6),
+    marginTop: phoneCompact(8),
+    paddingHorizontal: phoneCompact(15),
+    borderRadius: phoneCompact(19),
+    backgroundColor: CONTACT_INFO_THEME.accent,
+  },
+  contactInfoRadioSaveText: {
+    color: COLORS.white,
+    fontSize: phoneCompact(15),
+    fontWeight: '800',
   },
   contactInfoLightRoundAction: {
     width: phoneCompact(46),

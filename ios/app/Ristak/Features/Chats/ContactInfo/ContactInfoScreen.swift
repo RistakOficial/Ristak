@@ -31,6 +31,8 @@ struct ContactInfoScreen: View {
     @State private var showArchivePanel = false
     @State private var showAutomationsSheet = false
     @State private var editingCustomField: ContactInfoViewModel.CustomFieldRow?
+    @State private var customFieldRadioDrafts: [String: String] = [:]
+    @State private var customFieldRadioErrors: [String: String] = [:]
     @State private var tagPendingRemoval: ContactTag?
 
     /// Aviso sutil tras inscribir en una automatización (auto-oculta).
@@ -717,7 +719,9 @@ struct ContactInfoScreen: View {
             formatters: appConfig.formatters
         )
 
-        if row.isEditable && canEditContact {
+        if row.dataType == "radio", !row.options.isEmpty {
+            customFieldRadioRow(row)
+        } else if row.isEditable && canEditContact {
             Button {
                 editingCustomField = row
             } label: {
@@ -750,6 +754,93 @@ struct ContactInfoScreen: View {
         } else {
             ContactInfoRow(label: row.label, value: display)
         }
+    }
+
+    private func customFieldRadioRow(_ row: ContactInfoViewModel.CustomFieldRow) -> some View {
+        let savedValue = ContactInfoCustomFieldValueFormat.selectedValues(row.value?.value).first ?? ""
+        let selectedValue = customFieldRadioDrafts[row.id] ?? savedValue
+        let hasChanges = selectedValue != savedValue
+        let isSaving = viewModel.savingFieldID == row.id
+        let controlsDisabled = !canEditContact || viewModel.savingFieldID != nil
+
+        return VStack(alignment: .leading, spacing: RistakTheme.Spacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: RistakTheme.Spacing.xs) {
+                Text(row.label)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(RistakTheme.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Radio buttons")
+                    .font(.caption)
+                    .foregroundStyle(RistakTheme.textMute)
+            }
+
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(row.options.enumerated()), id: \.offset) { _, option in
+                    let selected = selectedValue == option.value
+                    Button {
+                        customFieldRadioDrafts[row.id] = option.value
+                        customFieldRadioErrors[row.id] = nil
+                    } label: {
+                        HStack(spacing: RistakTheme.Spacing.sm) {
+                            Image(systemName: selected ? "circle.inset.filled" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(selected ? RistakTheme.accent : RistakTheme.textMute)
+
+                            Text(option.label.isEmpty ? option.value : option.label)
+                                .font(.subheadline)
+                                .foregroundStyle(RistakTheme.textPrimary)
+                                .multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(.vertical, RistakTheme.Spacing.xs)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(controlsDisabled)
+                    .accessibilityLabel(option.label.isEmpty ? option.value : option.label)
+                    .accessibilityValue(selected ? "Seleccionado" : "No seleccionado")
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                }
+            }
+
+            if canEditContact, hasChanges {
+                HStack {
+                    Spacer()
+                    Button {
+                        Task {
+                            customFieldRadioErrors[row.id] = nil
+                            let error = await viewModel.saveCustomField(
+                                row: row,
+                                newValue: .string(selectedValue)
+                            )
+                            if let error {
+                                customFieldRadioErrors[row.id] = error
+                            } else {
+                                customFieldRadioDrafts[row.id] = nil
+                            }
+                        }
+                    } label: {
+                        if isSaving {
+                            ProgressView()
+                        } else {
+                            Label("Guardar", systemImage: "checkmark")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .tint(RistakTheme.accent)
+                    .disabled(viewModel.savingFieldID != nil)
+                }
+            }
+
+            if let error = customFieldRadioErrors[row.id] {
+                Text(error)
+                    .font(.footnote)
+                    .foregroundStyle(RistakTheme.neg)
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     // MARK: Origen y conversión (doc 06 §4.1.7)

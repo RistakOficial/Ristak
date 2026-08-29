@@ -524,7 +524,10 @@ final class ContactInfoViewModel {
                     id: definition.id,
                     label: definition.label.isEmpty ? definition.key : definition.label,
                     dataType: definition.dataType,
-                    options: definition.options.isEmpty ? (value?.options ?? []) : definition.options,
+                    options: ContactInfoCustomFieldValueFormat.reconciledOptions(
+                        definitionOptions: definition.options,
+                        valueField: value
+                    ),
                     definition: definition,
                     value: value,
                     isEditable: true

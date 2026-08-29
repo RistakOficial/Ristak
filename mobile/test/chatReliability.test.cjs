@@ -29,7 +29,10 @@ const {
   parseSortableDateValue,
   resolveChatMessageReactions,
 } = require('../src/format.ts');
-const { buildUserCustomFieldRows } = require('../src/contactCustomFields.ts');
+const {
+  buildContactCustomFieldUpdate,
+  buildUserCustomFieldRows,
+} = require('../src/contactCustomFields.ts');
 const {
   normalizeChatSelectionIds,
   toggleVisibleChatSelectionIds,
@@ -221,6 +224,84 @@ test('info de contacto enlaza respuestas legacy y oculta placeholders histórico
   ]);
   assert.deepEqual(currentRows.map((row) => row.id), ['field-servicio-actual']);
   assert.equal(currentRows[0].displayValue, 'Mezcla y masterización');
+});
+
+test('info de contacto mantiene marcada la respuesta histórica de un radio aunque cambie el catálogo', () => {
+  const [row] = buildUserCustomFieldRows([
+    {
+      definitionId: 'field-budget',
+      key: 'budget',
+      fieldKey: 'budget',
+      label: '¿Tienes el monto para invertir?',
+      dataType: 'radio',
+      options: [
+        { value: 'new_option', label: 'Opción vigente' },
+      ],
+    },
+  ], [
+    {
+      definitionId: 'field-budget',
+      key: 'budget',
+      fieldKey: 'budget',
+      dataType: 'radio',
+      value: 'historical_yes',
+      options: [
+        { value: 'historical_yes', label: 'Sí, cuento con el monto.' },
+        { value: 'historical_no', label: 'No cuento con el monto.' },
+      ],
+    },
+  ]);
+
+  assert.equal(row.dataType, 'radio');
+  assert.deepEqual(row.selectedValues, ['historical_yes']);
+  assert.deepEqual(row.options, [
+    { value: 'new_option', label: 'Opción vigente' },
+    { value: 'historical_yes', label: 'Sí, cuento con el monto.' },
+  ]);
+  assert.equal(row.displayValue, 'Sí, cuento con el monto.');
+  assert.deepEqual(buildContactCustomFieldUpdate(row, 'new_option'), {
+    definitionId: 'field-budget',
+    key: 'budget',
+    fieldKey: 'budget',
+    label: '¿Tienes el monto para invertir?',
+    dataType: 'radio',
+    options: row.options,
+    value: 'new_option',
+  });
+
+  const [snapshotOnlyRow] = buildUserCustomFieldRows([
+    {
+      definitionId: 'field-budget',
+      key: 'budget',
+      fieldKey: 'budget',
+      label: '¿Tienes el monto para invertir?',
+      dataType: 'radio',
+      options: [],
+    },
+  ], [
+    {
+      definitionId: 'field-budget',
+      key: 'budget',
+      fieldKey: 'budget',
+      dataType: 'radio',
+      value: 'historical_yes',
+      options: [
+        { value: 'historical_yes', label: 'Sí, cuento con el monto.' },
+        { value: 'historical_no', label: 'No cuento con el monto.' },
+      ],
+    },
+  ]);
+  assert.deepEqual(snapshotOnlyRow.options, [
+    { value: 'historical_yes', label: 'Sí, cuento con el monto.' },
+    { value: 'historical_no', label: 'No cuento con el monto.' },
+  ]);
+
+  const appSource = fs.readFileSync(require.resolve('../src/App.tsx'), 'utf8');
+  const radioRenderer = appSource.match(/const renderRadioField =[\s\S]*?const renderPaymentDetail =/)?.[0] || '';
+  assert.match(radioRenderer, /accessibilityRole="radio"/);
+  assert.match(radioRenderer, /selected && styles\.contactInfoRadioCircleSelected/);
+  assert.match(radioRenderer, /buildContactCustomFieldUpdate\(field, selectedValue\)/);
+  assert.match(appSource, /field\.dataType === 'radio' && field\.options\.length\s+\? renderRadioField\(field\)/);
 });
 
 test('info de contacto recupera una respuesta identificada solo por su etiqueta sin mezclar preguntas modernas', () => {
