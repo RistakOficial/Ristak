@@ -10,6 +10,7 @@ import {
   normalizeNotificationPayload,
   renderNotificationInitialsAvatarPng,
   saveMobilePushDevice,
+  sendAppointmentConfirmationNotification,
   sendCalendarAppointmentNotification,
   sendChatMessageNotification,
   sendConversationalAgentPriorityNotification,
@@ -238,6 +239,43 @@ test('push de cita nueva usa el evento como titulo y la hora del negocio en el c
     assert.equal(sentPayloads[0].contactAvatarUrl, undefined)
     assert.equal(sentPayloads[0].senderAvatarUrl, undefined)
     assert.doesNotMatch(sentPayloads[0].body, /Asesoría para médicos/)
+  } finally {
+    setAppNotificationPayloadSenderForTest(null)
+  }
+})
+
+test('push de cita confirmada muestra solo el nombre y conserva detalle en alertas especiales', async () => {
+  const sentPayloads = []
+  setAppNotificationPayloadSenderForTest(async (payload) => {
+    sentPayloads.push(payload)
+    return { sent: 1, skipped: false }
+  })
+
+  try {
+    const appointment = {
+      id: 'appointment_confirmation_copy_test',
+      contactName: 'Alejandro',
+      startTime: '2026-05-28T17:00:00.000Z',
+      title: 'Asesoría para médicos'
+    }
+    await sendAppointmentConfirmationNotification(appointment, {
+      calendarId: 'calendar_confirmation_copy_test',
+      timezone: 'America/Ciudad_Juarez',
+      resultDetail: 'Confirmó la asistencia diciendo “Sí, ahí estaré”.'
+    })
+    await sendAppointmentConfirmationNotification(appointment, {
+      calendarId: 'calendar_confirmation_copy_test',
+      notificationTitle: 'Confirmación pendiente de revisión: Alejandro',
+      notificationBody: 'Ristak no pudo resolver la respuesta con seguridad.',
+      notificationTag: 'confirmation-review-copy-test'
+    })
+
+    assert.equal(sentPayloads.length, 2)
+    assert.equal(sentPayloads[0].title, '✅ Cita confirmada')
+    assert.equal(sentPayloads[0].body, 'Alejandro')
+    assert.doesNotMatch(sentPayloads[0].body, /Asesoría|28 Mayo|Sí, ahí estaré/)
+    assert.equal(sentPayloads[1].title, 'Confirmación pendiente de revisión: Alejandro')
+    assert.equal(sentPayloads[1].body, 'Ristak no pudo resolver la respuesta con seguridad.')
   } finally {
     setAppNotificationPayloadSenderForTest(null)
   }

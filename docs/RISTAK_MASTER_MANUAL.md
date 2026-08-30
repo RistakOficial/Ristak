@@ -5471,7 +5471,12 @@ usan `sendAppointmentConfirmationNotification`, por lo que respetan
 `appointment_confirmation_push_notifications_enabled` y la matriz por
 destinatario del evento `appointment_confirmed`. La UI presenta ese evento como
 **Confirmaciones de cita** en Configuracion → Notificaciones; esa pagina es la
-compuerta canonica para desactivar el canal push por destinatario. Los valores legacy
+compuerta canonica para desactivar el canal push por destinatario. Una
+confirmación exitosa usa el título semántico **Cita confirmada** y deja en el
+cuerpo únicamente el nombre guardado del contacto; no incluye hora, título de la
+cita, respuesta textual ni explicación del clasificador. Los avisos de respuesta
+ambigua, cancelación, plazo vencido o revisión humana conservan su explicación
+porque requieren una acción distinta. Los valores legacy
 `notify_push` siguen siendo legibles: en `no_confirm_action` equivalen a
 `no_action`, y dentro de `confirmation_success_action` ya no gobiernan el aviso.
 

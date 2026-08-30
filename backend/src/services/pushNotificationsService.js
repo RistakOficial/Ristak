@@ -2676,7 +2676,6 @@ export async function sendAppointmentConfirmationNotification(appointment = {}, 
   }
 
   const contactName = await getAppointmentContactName(appointment, options)
-  const timezone = await resolveAppointmentNotificationTimezone(appointment, options)
   const notificationTitle = cleanNotificationText(options.notificationTitle)
   const notificationBody = cleanNotificationText(options.notificationBody)
   const notificationTag = cleanNotificationText(options.notificationTag)
@@ -2684,11 +2683,8 @@ export async function sendAppointmentConfirmationNotification(appointment = {}, 
     title: notificationTitle || getAppointmentNotificationTitle('confirmed'),
     body: (
       notificationBody ||
-      getAppointmentNotificationBody(appointment, options, {
-        contactName,
-        detail: options.resultDetail || '',
-        timezone
-      })
+      contactName ||
+      'Cliente'
     ).slice(0, 220),
     tag: notificationTag || `appointment-confirmed-${appointmentId}`,
     threadId: calendarId ? `calendar-${calendarId}` : `appointment-${appointmentId}`,
