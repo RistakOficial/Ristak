@@ -7231,6 +7231,7 @@ async function loadContact(contactId, fallback = {}) {
     adId: row?.attribution_ad_id || '',
     attributionUrl: row?.attribution_url || '',
     attributionMedium: row?.attribution_medium || '',
+    deletedAt: row?.deleted_at || null,
     createdAt: row?.created_at || '',
     updatedAt: row?.updated_at || '',
     ...metrics,
@@ -7458,7 +7459,10 @@ export async function enrollContactManually({
   const cleanContactId = cleanString(contactId)
   if (!cleanContactId) throw engineError(400, 'Selecciona un contacto')
 
-  const contactExists = await db.get('SELECT id FROM contacts WHERE id = ?', [cleanContactId])
+  const contactExists = await db.get(
+    'SELECT id FROM contacts WHERE id = ? AND deleted_at IS NULL',
+    [cleanContactId]
+  )
   if (!contactExists) throw engineError(404, 'Contacto no encontrado')
 
   const automation = useSavedDraftFlow
@@ -7527,6 +7531,54 @@ export async function enrollContactManually({
     enteredAt: row?.entered_at || null,
     updatedAt: row?.updated_at || null
   })
+}
+
+/**
+ * Detiene cualquier ejecución o inscripción futura de un contacto archivado.
+ * Se conserva la bitácora para que el historial explique por qué salió.
+ */
+export async function exitContactAutomationEnrollments(contactId, {
+  detail = 'El contacto fue enviado a la papelera'
+} = {}) {
+  const cleanContactId = cleanString(contactId)
+  if (!cleanContactId) return { exited: 0, cancelledJobs: 0 }
+
+  const rows = await db.all(
+    `SELECT * FROM automation_enrollments
+     WHERE contact_id = ? AND status IN (${ACTIVE_ENROLLMENT_STATUS_SQL})
+     ORDER BY entered_at ASC, id ASC`,
+    [cleanContactId]
+  )
+
+  for (const row of rows) {
+    const enrollment = mapEnrollmentRow(row)
+    enrollment.status = 'exited'
+    enrollment.resumeAt = null
+    enrollment.waitKind = null
+    enrollment.context = clearManualControlContext(enrollment.context)
+    addLog(enrollment, {
+      nodeId: enrollment.currentNodeId || 'flow',
+      label: 'Flujo',
+      status: 'exited',
+      detail
+    })
+    await saveEnrollment(enrollment)
+  }
+
+  const cancelledJobs = await db.run(
+    `UPDATE automation_contact_enrollment_jobs
+     SET status = 'cancelled',
+         error = NULL,
+         updated_at = CURRENT_TIMESTAMP,
+         executed_at = COALESCE(executed_at, CURRENT_TIMESTAMP)
+     WHERE contact_id = ? AND status IN ('scheduled', 'processing')`,
+    [cleanContactId]
+  )
+
+  return {
+    exited: rows.length,
+    cancelledJobs: Number(cancelledJobs?.changes || cancelledJobs?.rowCount || 0)
+  }
 }
 
 export async function controlAutomationEnrollment({
@@ -8278,6 +8330,7 @@ export async function handleIncomingMessage({
   try {
     if (!(await canRunBackgroundJob('automations'))) return
     const contact = await loadContact(contactId, { phone, name: contactName })
+    if (contact.deletedAt) return
     const baseCtx = {
       ...eventContext,
       contact,
@@ -8362,6 +8415,7 @@ async function enrollMatching(
 ) {
   const contact = baseCtx.contact || {}
   const enrolledAutomationIds = new Set()
+  if (contact.deletedAt) return enrolledAutomationIds
   for (const automation of automations) {
     if (skipAutomationIds.has(automation.id)) continue
     const flow = automation.flow
@@ -8953,6 +9007,7 @@ export async function handleAutomationEvent(eventType, data = {}) {
       )
       if (row) contact = await loadContact(row.id)
     }
+    if (contact.deletedAt) return
     const lifecycleStageChanged = eventData.canonicalContactStatsReconciled === true
       ? eventData.lifecycleStageChanged === true
       : eventData.canonicalLifecycleStageChange === true ||
@@ -9317,6 +9372,19 @@ export async function processDueResumes() {
         continue
       }
       const contact = await loadContact(row.contact_id)
+      if (contact.deletedAt) {
+        enrollment.status = 'exited'
+        enrollment.resumeAt = null
+        enrollment.waitKind = null
+        addLog(enrollment, {
+          nodeId: row.current_node_id,
+          label: 'Flujo',
+          status: 'exited',
+          detail: 'El contacto está en la papelera; la ejecución no continuará'
+        })
+        await saveEnrollment(enrollment)
+        continue
+      }
       const ctx = {
         ...enrollment.context,
         contact,

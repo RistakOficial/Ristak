@@ -1534,6 +1534,37 @@ test('antes de editar o borrar un evento legado retira el correo malo sin notifi
   })
 })
 
+test('al archivar un contacto Google lo retira en silencio antes de cancelar la cita', async () => {
+  setEmailRecipientResolverFactoryForTest(() => ({
+    resolveMx: async () => [{ exchange: 'mail.example.test' }],
+    resolve4: async () => ['192.0.2.25'],
+    resolve6: async () => []
+  }))
+  await withGoogleSafetyFixture(async ({ google, local, create, providerId, events, googleRequests }) => {
+    const appointment = await create({
+      participants: mixedParticipants,
+      googleEventId: 'archive-contact-event',
+      googleProviderCalendarId: providerId
+    })
+    const remote = {
+      id: 'archive-contact-event',
+      ...google.buildGoogleEventPayload(appointment),
+      etag: '"archive-contact-v1"'
+    }
+    events.set(remote.id, remote)
+
+    await google.deleteGoogleEventForAppointment(appointment, {
+      suppressNotificationEmails: ['bien@bien.com']
+    })
+
+    assert.deepEqual(googleRequests.map(request => request.method), ['GET', 'PATCH', 'DELETE'])
+    assert.match(googleRequests[1].path, /sendUpdates=none$/)
+    assert.deepEqual(googleRequests[1].body.attendees.map(item => item.email), ['bueno@example.test'])
+    assert.match(googleRequests[2].path, /sendUpdates=all$/)
+    assert.equal(events.has(remote.id), false)
+  })
+})
+
 test('una caída DNS deja pendiente la invitación y no pierde participantes ni publica a medias', async () => {
   setEmailRecipientResolverFactoryForTest(() => ({ resolveMx: async () => { throw Object.assign(new Error('timeout'), { code: 'ETIMEOUT' }) } }))
   await withGoogleSafetyFixture(async ({ google, local, create, googleRequests }) => {

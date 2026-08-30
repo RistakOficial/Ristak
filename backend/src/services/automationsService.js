@@ -959,7 +959,9 @@ async function getContactForAutomation(contactId) {
   const id = typeof contactId === 'string' ? contactId.trim() : ''
   if (!id) throw badRequest('Selecciona un contacto')
   const contact = await db.get(
-    'SELECT id, full_name, first_name, phone, email FROM contacts WHERE id = ?',
+    `SELECT id, full_name, first_name, phone, email
+     FROM contacts
+     WHERE id = ? AND deleted_at IS NULL`,
     [id]
   )
   if (!contact) throw notFound('Contacto no encontrado')

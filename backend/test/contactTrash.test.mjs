@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 
 import { db } from '../src/config/database.js'
 import {
+  deleteContact,
   emptyContactTrash,
   getTrashedContacts
 } from '../src/controllers/contactsController.js'
@@ -111,6 +112,154 @@ test('la papelera busca en toda la base sin sensibilidad a mayúsculas, acentos 
       `DELETE FROM contacts WHERE id IN (${ids.map(() => '?').join(', ')})`,
       ids
     ).catch(() => undefined)
+  }
+})
+
+test('archivar un contacto detiene citas activas, automatizaciones y colas sin borrar su historial terminado', async () => {
+  const suffix = randomUUID().replace(/-/g, '')
+  const contactId = `rstk_contact_trash_cascade_${suffix}`
+  const otherContactId = `rstk_contact_trash_other_${suffix}`
+  const activeAppointmentId = `trash_cascade_active_${suffix}`
+  const completedAppointmentId = `trash_cascade_completed_${suffix}`
+  const guestAppointmentId = `trash_cascade_guest_${suffix}`
+  const enrollmentId = `trash_cascade_enrollment_${suffix}`
+  const automationId = `trash_cascade_automation_${suffix}`
+  const enrollmentJobId = `trash_cascade_job_${suffix}`
+  const scheduledMessageId = `trash_cascade_message_${suffix}`
+  const bulkActionId = `trash_cascade_bulk_${suffix}`
+  const bulkItemId = `trash_cascade_bulk_item_${suffix}`
+
+  try {
+    await insertContact({
+      id: contactId,
+      fullName: 'Contacto con salidas pendientes',
+      email: `${suffix}@cascade.invalid`,
+      phone: '+525544440001'
+    })
+    await insertContact({
+      id: otherContactId,
+      fullName: 'Titular de otra cita',
+      email: `${suffix}.other@cascade.invalid`,
+      phone: '+525544440002'
+    })
+
+    for (const [appointmentId, ownerId, status] of [
+      [activeAppointmentId, contactId, 'confirmed'],
+      [completedAppointmentId, contactId, 'completed'],
+      [guestAppointmentId, otherContactId, 'confirmed']
+    ]) {
+      await db.run(
+        `INSERT INTO appointments (
+          id, calendar_id, contact_id, title, status, appointment_status,
+          start_time, end_time, date_added, date_updated
+        ) VALUES (?, 'trash_cascade_calendar', ?, 'Cita de prueba', ?, ?,
+          '2099-09-01T16:00:00.000Z', '2099-09-01T17:00:00.000Z',
+          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [appointmentId, ownerId, status, status]
+      )
+    }
+
+    for (const [participantId, appointmentId, role, participantContactId, position] of [
+      [`participant_requester_${suffix}`, guestAppointmentId, 'requester', otherContactId, 0],
+      [`participant_guest_${suffix}`, guestAppointmentId, 'guest', contactId, 0]
+    ]) {
+      await db.run(
+        `INSERT INTO appointment_participants (
+          id, appointment_id, role, position, contact_id, name_snapshot, email_snapshot
+        ) VALUES (?, ?, ?, ?, ?, 'Participante', 'participant@cascade.invalid')`,
+        [participantId, appointmentId, role, position, participantContactId]
+      )
+    }
+
+    await db.run(
+      `INSERT INTO automation_enrollments (
+        id, automation_id, contact_id, dedupe_contact_id, contact_name,
+        status, current_node_id, log, context, resume_at, wait_kind
+      ) VALUES (?, ?, ?, ?, 'Contacto pendiente', 'waiting', 'wait-email', '[]', '{}',
+        '2099-09-01T15:00:00.000Z', 'appointment')`,
+      [enrollmentId, automationId, contactId, contactId]
+    )
+    await db.run(
+      `INSERT INTO automation_contact_enrollment_jobs (
+        id, automation_id, contact_id, contact_name, scheduled_at, status
+      ) VALUES (?, ?, ?, 'Contacto pendiente', '2099-09-01T15:00:00.000Z', 'scheduled')`,
+      [enrollmentJobId, automationId, contactId]
+    )
+    await db.run(
+      `INSERT INTO scheduled_chat_messages (
+        id, contact_id, provider, message_type, message_text, scheduled_at, status
+      ) VALUES (?, ?, 'whatsapp_api', 'text', 'Mensaje pendiente',
+        '2099-09-01T15:00:00.000Z', 'scheduled')`,
+      [scheduledMessageId, contactId]
+    )
+    await db.run(
+      `INSERT INTO contact_bulk_actions (
+        id, action_type, title, status, total_count, scheduled_at
+      ) VALUES (?, 'whatsapp_template', 'Lote pendiente', 'scheduled', 1,
+        '2099-09-01T15:00:00.000Z')`,
+      [bulkActionId]
+    )
+    await db.run(
+      `INSERT INTO contact_bulk_action_items (
+        id, bulk_action_id, contact_id, contact_name, scheduled_at, status
+      ) VALUES (?, ?, ?, 'Contacto pendiente', '2099-09-01T15:00:00.000Z', 'scheduled')`,
+      [bulkItemId, bulkActionId, contactId]
+    )
+
+    const result = await callController(deleteContact, { params: { id: contactId } })
+    assert.match(result.message, /salidas pendientes/i)
+
+    const archived = await db.get('SELECT deleted_at FROM contacts WHERE id = ?', [contactId])
+    assert.ok(archived?.deleted_at)
+    assert.equal(Boolean(await db.get('SELECT id FROM appointments WHERE id = ?', [activeAppointmentId])), false)
+    assert.ok(await db.get('SELECT id FROM appointments WHERE id = ?', [completedAppointmentId]))
+    assert.ok(await db.get('SELECT id FROM appointments WHERE id = ?', [guestAppointmentId]))
+    assert.equal(
+      Boolean(await db.get(
+        'SELECT id FROM appointment_participants WHERE appointment_id = ? AND contact_id = ?',
+        [guestAppointmentId, contactId]
+      )),
+      false
+    )
+
+    const enrollment = await db.get(
+      'SELECT status, resume_at, wait_kind, execution_outcome, log FROM automation_enrollments WHERE id = ?',
+      [enrollmentId]
+    )
+    assert.equal(enrollment.status, 'exited')
+    assert.equal(enrollment.resume_at, null)
+    assert.equal(enrollment.wait_kind, null)
+    assert.equal(enrollment.execution_outcome, 'stopped')
+    assert.match(String(enrollment.log), /papelera/i)
+
+    assert.equal(
+      (await db.get('SELECT status FROM automation_contact_enrollment_jobs WHERE id = ?', [enrollmentJobId])).status,
+      'cancelled'
+    )
+    assert.equal(
+      (await db.get('SELECT status FROM scheduled_chat_messages WHERE id = ?', [scheduledMessageId])).status,
+      'cancelled'
+    )
+    assert.equal(
+      (await db.get('SELECT status FROM contact_bulk_action_items WHERE id = ?', [bulkItemId])).status,
+      'cancelled'
+    )
+  } finally {
+    await db.run('DELETE FROM audit_log WHERE entity_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contact_bulk_action_items WHERE id = ?', [bulkItemId]).catch(() => undefined)
+    await db.run('DELETE FROM contact_bulk_actions WHERE id = ?', [bulkActionId]).catch(() => undefined)
+    await db.run('DELETE FROM scheduled_chat_messages WHERE id = ?', [scheduledMessageId]).catch(() => undefined)
+    await db.run('DELETE FROM automation_contact_enrollment_jobs WHERE id = ?', [enrollmentJobId]).catch(() => undefined)
+    await db.run('DELETE FROM automation_enrollments WHERE id = ?', [enrollmentId]).catch(() => undefined)
+    await db.run(
+      'DELETE FROM appointment_participants WHERE appointment_id IN (?, ?, ?)',
+      [activeAppointmentId, completedAppointmentId, guestAppointmentId]
+    ).catch(() => undefined)
+    await db.run(
+      'DELETE FROM appointments WHERE id IN (?, ?, ?)',
+      [activeAppointmentId, completedAppointmentId, guestAppointmentId]
+    ).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id IN (?, ?)', [contactId, otherContactId]).catch(() => undefined)
   }
 })
 

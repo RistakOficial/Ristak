@@ -54,6 +54,7 @@ import {
   dispatchAppointmentAutomationEvent,
   dispatchAppointmentCreatedAutomations
 } from '../services/appointmentAutomationService.js';
+import { deleteAppointmentEverywhere } from '../services/appointmentDeletionService.js';
 import { resolveAppointmentConfirmationFlow } from '../services/appointmentConfirmationService.js';
 import { INTERNAL_CONTROLLER_CONTEXT } from '../agents/invokeController.js';
 import {
@@ -3827,37 +3828,7 @@ export async function deleteEvent(req, res) {
   try {
     const { id } = req.params;
     const { accessToken } = await getHighLevelContext(req);
-    const existing = await localCalendarService.getLocalAppointment(id);
-
-    if (existing?.googleEventId) {
-      await googleCalendarService.deleteGoogleEventForAppointment(existing);
-    }
-
-    if (accessToken && existing?.ghlAppointmentId) {
-      try {
-        await calendarService.deleteEvent(existing.ghlAppointmentId, accessToken);
-        await localCalendarService.deleteLocalAppointment(existing.id);
-      } catch (error) {
-        logger.warn(`[Calendars Controller] Delete GHL falló, marcando pendiente: ${error.message}`);
-        await localCalendarService.deleteLocalAppointment(existing.id, { markPendingDelete: true });
-      }
-    } else if (existing?.ghlAppointmentId) {
-      await localCalendarService.deleteLocalAppointment(existing.id, { markPendingDelete: true });
-    } else {
-      await localCalendarService.deleteLocalAppointment(id);
-    }
-
-    if (existing?.id) {
-      await dispatchAppointmentAutomationEvent('appointment-status', {
-        ...existing,
-        status: 'cancelled',
-        appointmentStatus: 'cancelled'
-      }, {
-        previousStatus: existing.appointmentStatus || existing.status || null,
-        previousAppointmentId: existing.id,
-        appointmentChange: 'cancelled'
-      });
-    }
+    await deleteAppointmentEverywhere(id, { accessToken });
 
     res.json({
       success: true,

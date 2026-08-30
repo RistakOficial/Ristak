@@ -343,9 +343,30 @@ async function removeUnroutableGoogleAttendees(config, calendarId, event) {
   })
 }
 
-async function deleteGoogleEventWithSafeNotifications(config, calendarId, eventId) {
+async function deleteGoogleEventWithSafeNotifications(config, calendarId, eventId, {
+  suppressNotificationEmails = []
+} = {}) {
   let event = await getGoogleEvent(eventId, { config, calendarId })
   if (mapGoogleEventStatus(event) === 'cancelled') return
+
+  const suppressed = new Set(
+    (Array.isArray(suppressNotificationEmails) ? suppressNotificationEmails : [])
+      .map(email => cleanString(email).toLowerCase())
+      .filter(Boolean)
+  )
+  if (suppressed.size > 0 && Array.isArray(event.attendees)) {
+    const attendees = event.attendees.filter(attendee => !suppressed.has(cleanString(attendee?.email).toLowerCase()))
+    if (attendees.length !== event.attendees.length) {
+      // El contacto archivado no debe recibir una última cancelación que vuelva
+      // a generar un rebote. Se retira en silencio y luego se notifica sólo a
+      // los demás invitados al borrar el evento.
+      event = await googleRequest(config, eventWritePath(calendarId, event.id, 'none'), {
+        method: 'PATCH',
+        headers: googleEventVersionHeaders(event),
+        body: JSON.stringify({ attendees })
+      })
+    }
+  }
   event = await removeUnroutableGoogleAttendees(config, calendarId, event)
   await googleRequest(config, eventWritePath(calendarId, eventId), {
     method: 'DELETE',
@@ -1564,7 +1585,8 @@ async function findGoogleEventAfterAmbiguousWrite({ config, calendarId, eventId 
   }
 }
 
-export async function syncAppointmentToGoogle(appointmentOrId) {
+export async function syncAppointmentToGoogle(appointmentOrId, { sendUpdates = 'all' } = {}) {
+  const notificationMode = sendUpdates === 'none' ? 'none' : 'all'
   const config = await getGoogleCalendarConfig({ includeCredentials: true })
   if (!config) {
     return { enabled: false, appointment: appointmentOrId }
@@ -1722,7 +1744,7 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
         // sincronizar lo que ya coincide no debe volver a notificar invitados.
         remote = currentRemote
       } else {
-        remote = await googleRequest(config, eventWritePath(targetGoogleCalendarId, eventId), {
+        remote = await googleRequest(config, eventWritePath(targetGoogleCalendarId, eventId, notificationMode), {
           method: 'PATCH',
           headers: googleEventVersionHeaders(currentRemote),
           body: JSON.stringify(payload)
@@ -1733,7 +1755,7 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
     if (!remote) {
       const requestedEventId = eventId
       try {
-        remote = await googleRequest(config, eventWritePath(targetGoogleCalendarId), {
+        remote = await googleRequest(config, eventWritePath(targetGoogleCalendarId, '', notificationMode), {
           method: 'POST',
           body: JSON.stringify({ id: requestedEventId, ...payload })
         })
@@ -1778,7 +1800,7 @@ export async function syncAppointmentToGoogle(appointmentOrId) {
         // difiere, imponemos la cita canónica con PATCH antes de marcar synced.
         if (!googleMirrorMatchesCanonicalAppointment(remote, appointment) || !googleAttendeesMatchPayload(remote, payload)) {
           remote = await removeUnroutableGoogleAttendees(config, targetGoogleCalendarId, remote)
-          remote = await googleRequest(config, eventWritePath(targetGoogleCalendarId, eventId), {
+          remote = await googleRequest(config, eventWritePath(targetGoogleCalendarId, eventId, notificationMode), {
             method: 'PATCH',
             headers: googleEventVersionHeaders(remote),
             body: JSON.stringify(payload)
@@ -2086,7 +2108,9 @@ export async function deleteConversationalTestGoogleEventFromReceipt({
   }
 }
 
-export async function deleteGoogleEventForAppointment(appointmentOrId) {
+export async function deleteGoogleEventForAppointment(appointmentOrId, {
+  suppressNotificationEmails = []
+} = {}) {
   const config = await getGoogleCalendarConfig({ includeCredentials: true })
   if (!config) return { enabled: false }
 
@@ -2105,7 +2129,9 @@ export async function deleteGoogleEventForAppointment(appointmentOrId) {
       return { enabled: false, deleted: false, reason: 'calendar_not_linked' }
     }
 
-    await deleteGoogleEventWithSafeNotifications(config, targetGoogleCalendarId, appointment.googleEventId)
+    await deleteGoogleEventWithSafeNotifications(config, targetGoogleCalendarId, appointment.googleEventId, {
+      suppressNotificationEmails
+    })
   } catch (error) {
     if (error.status !== 404 && error.status !== 410) {
       await markGoogleSyncError(appointment.id, error.message, { expectedAppointment: appointment })

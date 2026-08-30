@@ -196,7 +196,7 @@ const contactTools = [
   }),
   controllerSpec({
     name: 'contacts_archive',
-    description: 'Mueve un contacto a la papelera conservando pagos e historial.',
+    description: 'Mueve un contacto a la papelera, cancela sus citas y salidas pendientes, y conserva pagos e historial terminado.',
     module: 'contacts', access: 'write', scope: 'ristak.destructive', risk: 'high',
     handler: contactsController.deleteContact, method: 'DELETE',
     confirmRequired: false, idempotencyRequired: true,

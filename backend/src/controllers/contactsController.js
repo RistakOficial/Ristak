@@ -117,6 +117,7 @@ import {
 import { resolveTagIds, tagNamesForIds, listContactTags } from '../services/contactTagsService.js'
 import { getEmailStatus } from '../services/emailService.js'
 import { hasFeature } from '../services/licenseService.js'
+import { cleanupContactBeforeArchive } from '../services/contactArchiveCleanupService.js'
 import {
   getRequestedReferrerId,
   validateContactReferrer
@@ -6277,12 +6278,37 @@ export const deleteContact = async (req, res) => {
     const { id } = req.params
 
     // Verificar que el contacto existe
-    const existing = await db.get('SELECT id, full_name FROM contacts WHERE id = ?', [id])
+    const existing = await db.get(
+      'SELECT id, full_name FROM contacts WHERE id = ? AND deleted_at IS NULL',
+      [id]
+    )
     if (!existing) {
       return res.status(404).json({
         success: false,
         error: 'Contacto no encontrado'
       })
+    }
+
+    // Primero cerramos la compuerta local. Así ningún worker puede crear una
+    // inscripción o reclamar un mensaje nuevo mientras limpiamos proveedores.
+    await db.run(
+      'UPDATE contacts SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL',
+      [id]
+    )
+
+    let cleanup
+    try {
+      cleanup = await cleanupContactBeforeArchive(id)
+    } catch (error) {
+      // Si Google u otro proveedor no pudo limpiarse con certeza, el contacto
+      // vuelve a quedar activo para que la UI no finja una eliminación completa.
+      await db.run(
+        'UPDATE contacts SET deleted_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [id]
+      ).catch(restoreError => {
+        logger.error(`No se pudo restaurar el contacto ${id} tras fallar su limpieza: ${restoreError.message}`)
+      })
+      throw error
     }
 
     // Eliminar en HighLevel usando el ID ligado en ghl_contact_id
@@ -6299,28 +6325,35 @@ export const deleteContact = async (req, res) => {
       // Continuar con la eliminación local aunque falle en GHL
     }
 
-    // (CNT-007 / DB-003) Soft-delete: marcar deleted_at en vez de borrar físicamente.
-    // Así NO se dispara el ON DELETE CASCADE y se conservan pagos e historial; el
-    // contacto queda en la papelera y es recuperable. Se limpia ghl_contact_id para que
-    // la sincronización de HighLevel no lo "resucite" emparejándolo por ese id.
+    // (CNT-007 / DB-003) El soft-delete ya se marcó como compuerta antes de la
+    // limpieza. Sólo quitamos el vínculo GHL para que una sincronización no lo
+    // "resucite" emparejándolo por ese ID.
     await db.run(
-      `UPDATE contacts SET deleted_at = CURRENT_TIMESTAMP, ghl_contact_id = NULL WHERE id = ?`,
+      `UPDATE contacts SET ghl_contact_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [id]
     )
 
     logger.info(`Contacto enviado a la papelera (soft-delete): ${id} (${existing.full_name})`)
-    await recordAudit({ entityType: 'contact', entityId: id, action: 'soft_delete', actor: req.user, details: { full_name: existing.full_name } })
+    await recordAudit({
+      entityType: 'contact',
+      entityId: id,
+      action: 'soft_delete',
+      actor: req.user,
+      details: { full_name: existing.full_name, cleanup }
+    })
 
     res.json({
       success: true,
-      message: 'Contacto movido a la papelera. Sus pagos e historial se conservan; puedes restaurarlo.'
+      message: 'Contacto movido a la papelera. Se cancelaron sus salidas pendientes; sus pagos e historial se conservan.'
     })
 
   } catch (error) {
     logger.error(`Error eliminando contacto ${req.params.id}: ${error.message}`)
-    res.status(500).json({
+    const status = Number(error.status || error.statusCode || 500)
+    res.status(status).json({
       success: false,
-      error: 'Error eliminando contacto'
+      ...(error.code ? { code: error.code } : {}),
+      error: status === 500 ? 'Error eliminando contacto' : error.message
     })
   }
 }

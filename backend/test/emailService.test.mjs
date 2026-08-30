@@ -505,6 +505,52 @@ test('sendEmailToContact envía correo y guarda el mensaje en el historial del c
   })
 })
 
+test('sendEmailToContact bloquea contactos archivados antes de llegar al SMTP', async () => {
+  await initializeMasterKey()
+
+  await snapshotAppConfig([EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY, EMAIL_SIGNATURE_CONFIG_KEY], async () => {
+    const suffix = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
+    const contactId = `rstk_contact_email_archived_${suffix}`
+    const sentMessages = []
+
+    setEmailMxResolverForTest(async () => [{ exchange: 'aspmx.l.google.com.', priority: 1 }])
+    setEmailTransportFactoryForTest(() => ({
+      verify: async () => true,
+      sendMail: async message => {
+        sentMessages.push(message)
+        return { messageId: `smtp-${sentMessages.length}`, accepted: [message.to], rejected: [] }
+      }
+    }))
+    setHappyPathImapClientFactory()
+
+    try {
+      await db.run(
+        `INSERT INTO contacts (id, email, full_name, deleted_at)
+         VALUES (?, ?, 'Contacto archivado', CURRENT_TIMESTAMP)`,
+        [contactId, `archivado-${suffix}@example.com`]
+      )
+      await connectEmail({
+        fromEmail: 'ventas@clinicademo.com',
+        fromName: 'Clínica Demo',
+        password: 'app-password-demo'
+      })
+      const connectionTestCount = sentMessages.length
+
+      await assert.rejects(
+        sendEmailToContact({ contactId, subject: 'No enviar', text: 'Este correo debe bloquearse.' }),
+        error => error.status === 404
+      )
+      assert.equal(sentMessages.length, connectionTestCount)
+    } finally {
+      setEmailTransportFactoryForTest(null)
+      setEmailMxResolverForTest(null)
+      setEmailImapClientFactoryForTest(null)
+      await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    }
+  })
+})
+
 test('sendEmailToContact resuelve variables en asunto, texto y HTML sin permitir inyectar markup', async () => {
   await initializeMasterKey()
 

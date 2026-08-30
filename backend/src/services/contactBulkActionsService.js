@@ -116,7 +116,7 @@ async function getContactsByIds(contactIds) {
   const rows = await db.all(
     `SELECT id, full_name, first_name, phone, email
      FROM contacts
-     WHERE id IN (${placeholders})`,
+     WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
     contactIds
   )
   const byId = new Map(rows.map((row) => [row.id, row]))
@@ -468,7 +468,7 @@ async function markStaleProcessingItems(referenceDate = new Date()) {
 async function processWhatsAppTemplateItem({ action, item }) {
   const config = action.config || {}
   const contact = await db.get(
-    'SELECT id, phone FROM contacts WHERE id = ?',
+    'SELECT id, phone FROM contacts WHERE id = ? AND deleted_at IS NULL',
     [item.contactId]
   )
   if (!contact) throw serviceError('Contacto no encontrado.', 404)
@@ -634,6 +634,36 @@ export async function pauseContactBulkAction(bulkActionId) {
   )
   if (Number(result?.changes || 0) === 0) throw serviceError('No se pudo detener esta acción.', 404)
   return getContactBulkAction(id)
+}
+
+export async function cancelPendingBulkActionsForContact(contactId) {
+  const id = cleanString(contactId)
+  if (!id) return { cancelled: 0, actionIds: [] }
+
+  const rows = await db.all(
+    `SELECT DISTINCT bulk_action_id
+     FROM contact_bulk_action_items
+     WHERE contact_id = ? AND status IN ('scheduled', 'error')`,
+    [id]
+  )
+  const actionIds = rows.map(row => cleanString(row.bulk_action_id)).filter(Boolean)
+  const result = await db.run(
+    `UPDATE contact_bulk_action_items
+     SET status = 'cancelled', error = NULL, updated_at = CURRENT_TIMESTAMP
+     WHERE contact_id = ? AND status IN ('scheduled', 'error')`,
+    [id]
+  )
+
+  for (const actionId of actionIds) {
+    await refreshBulkActionCounters(actionId).catch(error => {
+      logger.warn(`[Acciones masivas] No se pudieron recalcular contadores de ${actionId}: ${error.message}`)
+    })
+  }
+
+  return {
+    cancelled: Number(result?.changes || result?.rowCount || 0),
+    actionIds
+  }
 }
 
 export async function resumeContactBulkAction(bulkActionId) {

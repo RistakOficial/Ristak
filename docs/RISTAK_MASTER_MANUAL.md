@@ -2574,6 +2574,17 @@ analítica. No admite correo, teléfono, IDs ni otros datos personales.
   backfill con fecha anterior nunca deshace una eliminacion intencional. El
   mantenimiento versionado `contact_reengagement_repair_version` corrige el
   historico que ya hubiera quedado como `conversation=200` y `contact=404`.
+- Archivar un contacto cierra primero la entrada a nuevos trabajos y limpia
+  todos sus productores de salida: cancela citas activas propias también en sus
+  proveedores, retira su participación de citas ajenas, saca ejecuciones de
+  Automatizaciones, cancela inscripciones futuras, mensajes programados e items
+  pendientes de acciones masivas. Las citas atendidas/completadas y los pagos se
+  conservan como historial. Los workers vuelven a comprobar que el contacto siga
+  activo justo antes de enviar o inscribir. Si Google conserva un evento o un
+  invitado y la integración no permite limpiarlo con certeza, el archivado falla
+  cerrado y restaura el contacto activo en vez de dejar una cita fantasma. El
+  correo archivado se retira primero del evento sin notificación; al cancelar,
+  Google sólo avisa a los demás invitados y no genera un rebote final al contacto.
 - `GET /api/contacts/trash` busca del lado servidor por nombre, correo o telefono
   antes de aplicar el limite. La comparacion ignora mayusculas/minusculas,
   acentos y separadores telefonicos, por lo que puede localizar cualquier fila

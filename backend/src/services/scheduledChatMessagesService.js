@@ -158,7 +158,7 @@ async function getContact(contactId) {
   const contact = await db.get(
     `SELECT id, phone
      FROM contacts
-     WHERE id = ?
+     WHERE id = ? AND deleted_at IS NULL
      LIMIT 1`,
     [id]
   )
@@ -336,6 +336,29 @@ export async function cancelScheduledChatMessage({ id, contactId } = {}) {
   return scheduledMessage
 }
 
+export async function cancelScheduledChatMessagesForContact(contactId) {
+  const cleanContactId = cleanString(contactId)
+  if (!cleanContactId) return { cancelled: 0 }
+
+  const result = await db.run(`
+    UPDATE scheduled_chat_messages
+    SET status = 'cancelled',
+        error_message = NULL,
+        updated_at = ?
+    WHERE contact_id = ?
+      AND status IN ('scheduled', 'error')
+  `, [nowIso(), cleanContactId])
+
+  const cancelled = Number(result?.changes || result?.rowCount || 0)
+  if (cancelled > 0) {
+    publishScheduledMessagesChanged({
+      id: `contact:${cleanContactId}`,
+      contact_id: cleanContactId
+    })
+  }
+  return { cancelled }
+}
+
 async function markScheduledMessageStatus(id, patch = {}) {
   const updatedAt = nowIso()
   await db.run(`
@@ -438,6 +461,15 @@ async function dispatchScheduledRow(row) {
   if (!claimed) return { id: row.id, skipped: true }
 
   try {
+    const activeContact = await db.get(
+      'SELECT id FROM contacts WHERE id = ? AND deleted_at IS NULL',
+      [row.contact_id]
+    )
+    if (!activeContact) {
+      await markScheduledMessageStatus(row.id, { status: 'cancelled' })
+      return { id: row.id, cancelled: true, reason: 'contact_archived' }
+    }
+
     const result = await sendScheduledChatMessage(row)
     await markScheduledMessageStatus(row.id, {
       status: 'sent',

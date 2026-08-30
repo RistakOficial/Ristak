@@ -782,7 +782,12 @@ async function getContactEmailRecipient(contactId, fallbackTo) {
   const fallbackRecipient = cleanString(fallbackTo).toLowerCase()
   if (!cleanContactId) return { contact: null, recipient: fallbackRecipient }
 
-  const contact = await db.get('SELECT id, email, full_name, first_name, last_name FROM contacts WHERE id = ?', [cleanContactId])
+  const contact = await db.get(
+    `SELECT id, email, full_name, first_name, last_name
+     FROM contacts
+     WHERE id = ? AND deleted_at IS NULL`,
+    [cleanContactId]
+  )
   if (!contact) throw httpError(404, 'Contacto no encontrado')
 
   return {

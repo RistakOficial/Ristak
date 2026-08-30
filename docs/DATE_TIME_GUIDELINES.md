@@ -155,6 +155,17 @@ Usa estos formatos de forma intencional:
   temporizador ligado a esa ejecución, el scheduler relee la cita canónica; si
   cambió la hora, reprograma la espera, y si fue cancelada o eliminada, nunca
   continúa por la hora histórica.
+- Archivar un contacto es una barrera de salida: antes de confirmar la papelera,
+  retira de Google/HighLevel sus citas activas como solicitante, elimina su
+  participación como invitado cuando la cita pertenece a otra persona, cancela
+  mensajes y lotes programados y saca todas sus ejecuciones activas. Las citas
+  terminadas se conservan como historial. Si un espejo vigente de Google no se
+  puede retirar o actualizar con certeza, la operación falla y el contacto
+  vuelve a quedar activo; nunca debe mostrarse una eliminación exitosa dejando
+  un evento remoto capaz de seguir enviando invitaciones. Antes de borrar el
+  evento, el correo del contacto archivado se retira con `sendUpdates=none`; la
+  cancelación posterior sólo avisa a los invitados restantes y no provoca un
+  último rebote al buzón que precisamente se está desactivando.
 
 ## Frontend: Prohibido
 
