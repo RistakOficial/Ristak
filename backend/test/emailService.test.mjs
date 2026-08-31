@@ -505,6 +505,82 @@ test('sendEmailToContact envía correo y guarda el mensaje en el historial del c
   })
 })
 
+test('sendEmailToContact adjunta PDF y XML sin guardar los binarios en el historial', async () => {
+  await initializeMasterKey()
+
+  await snapshotAppConfig([EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY, EMAIL_SIGNATURE_CONFIG_KEY], async () => {
+    const suffix = Date.now().toString(36)
+    const contactId = `rstk_contact_email_fiscal_${suffix}`
+    const externalId = `email_fiscal_${suffix}`
+    const sentMessages = []
+    const pdf = Buffer.from('%PDF-1.4 factura fiscal')
+    const xml = Buffer.from('<?xml version="1.0"?><cfdi/>')
+
+    setEmailMxResolverForTest(async () => [
+      { exchange: 'aspmx.l.google.com.', priority: 1 }
+    ])
+    setEmailTransportFactoryForTest(() => ({
+      verify: async () => true,
+      sendMail: async (message) => {
+        sentMessages.push(message)
+        return {
+          messageId: `smtp-fiscal-${sentMessages.length}`,
+          accepted: [message.to],
+          rejected: []
+        }
+      }
+    }))
+    setHappyPathImapClientFactory()
+
+    try {
+      await db.run(
+        `INSERT INTO contacts (id, email, full_name, first_name)
+         VALUES (?, ?, 'Cliente Fiscal', 'Cliente')`,
+        [contactId, `fiscal-${suffix}@example.com`]
+      )
+      await connectEmail({
+        fromEmail: 'ventas@clinicademo.com',
+        fromName: 'Clínica Demo',
+        password: 'app-password-demo'
+      })
+
+      await sendEmailToContact({
+        contactId,
+        subject: 'Factura fiscal',
+        text: 'Adjuntamos PDF y XML.',
+        externalId,
+        attachments: [
+          { filename: 'factura.pdf', content: pdf, contentType: 'application/pdf' },
+          { filename: 'factura.xml', content: xml, contentType: 'application/xml' }
+        ]
+      })
+
+      assert.equal(sentMessages.length, 2)
+      const outgoing = sentMessages[1]
+      assert.equal(outgoing.attachments.length, 2)
+      assert.equal(outgoing.attachments[0].content.toString(), pdf.toString())
+      assert.equal(outgoing.attachments[1].content.toString(), xml.toString())
+
+      const stored = await db.get(
+        'SELECT raw_payload_json FROM email_messages WHERE id = ?',
+        [externalId]
+      )
+      const raw = JSON.parse(stored.raw_payload_json)
+      assert.deepEqual(raw.attachments, [
+        { filename: 'factura.pdf', contentType: 'application/pdf', sizeBytes: pdf.length },
+        { filename: 'factura.xml', contentType: 'application/xml', sizeBytes: xml.length }
+      ])
+      assert.doesNotMatch(stored.raw_payload_json, /factura fiscal|<cfdi\/>/)
+    } finally {
+      setEmailTransportFactoryForTest(null)
+      setEmailMxResolverForTest(null)
+      setEmailImapClientFactoryForTest(null)
+      await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    }
+  })
+})
+
 test('sendEmailToContact bloquea contactos archivados antes de llegar al SMTP', async () => {
   await initializeMasterKey()
 

@@ -129,6 +129,7 @@ const DEFAULT_PAYMENT_SETTINGS = {
     gigstackAutomateInvoiceOnComplete: true,
     gigstackAutomationType: 'pue_invoice',
     gigstackClientMatchMode: 'email',
+    gigstackSendWhatsapp: true,
     gigstackSendEmail: true,
     gigstackPortalUrl: '',
     gigstackTestApiTokenEncrypted: '',
@@ -632,6 +633,10 @@ export function normalizePaymentSettings(input = {}, options = {}) {
         taxes.gigstackClientMatchMode,
         GIGSTACK_CLIENT_MATCH_MODES,
         DEFAULT_PAYMENT_SETTINGS.taxes.gigstackClientMatchMode
+      ),
+      gigstackSendWhatsapp: cleanBoolean(
+        taxes.gigstackSendWhatsapp,
+        DEFAULT_PAYMENT_SETTINGS.taxes.gigstackSendWhatsapp
       ),
       gigstackSendEmail: cleanBoolean(taxes.gigstackSendEmail, DEFAULT_PAYMENT_SETTINGS.taxes.gigstackSendEmail),
       gigstackPortalUrl: cleanUrl(taxes.gigstackPortalUrl || taxes.customerPortalUrl || taxes.portalUrl),

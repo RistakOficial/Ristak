@@ -2609,6 +2609,105 @@ function buildYCloudMultipartUpload({ buffer, filename, mimeType } = {}) {
   }
 }
 
+function buildMetaDirectMultipartUpload({ buffer, filename, mimeType } = {}) {
+  const boundary = `----RistakMeta${crypto.randomBytes(18).toString('hex')}`
+  const safeFilename = multipartSafeFilename(filename)
+  const safeMimeType = cleanString(mimeType).replace(/[\r\n]/g, '') || 'application/octet-stream'
+  const productField = Buffer.from(
+    `--${boundary}\r\n` +
+    'Content-Disposition: form-data; name="messaging_product"\r\n\r\n' +
+    'whatsapp\r\n',
+    'utf8'
+  )
+  const fileOpening = Buffer.from(
+    `--${boundary}\r\n` +
+    `Content-Disposition: form-data; name="file"; filename="${safeFilename}"\r\n` +
+    `Content-Type: ${safeMimeType}\r\n\r\n`,
+    'utf8'
+  )
+  const closing = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8')
+  return {
+    body: Buffer.concat([productField, fileOpening, buffer, closing]),
+    contentType: `multipart/form-data; boundary=${boundary}`
+  }
+}
+
+async function uploadPreparedMediaToMetaDirect({ media, type } = {}) {
+  const config = await loadMetaDirectConfig({ includeSecrets: true })
+  if (!config.connected || !config.phoneNumberId || !config.systemUserToken) {
+    throw new Error('Meta directo no está conectado')
+  }
+  if (!Buffer.isBuffer(media?.buffer) || media.buffer.length === 0) {
+    throw new Error('El archivo para WhatsApp está vacío')
+  }
+
+  const filename = cleanString(media.filename) || `whatsapp-${type || 'media'}-${Date.now()}`
+  const mimeType = cleanString(media.mimeType) || 'application/octet-stream'
+  const upload = buildMetaDirectMultipartUpload({
+    buffer: media.buffer,
+    filename,
+    mimeType
+  })
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), META_DIRECT_GRAPH_TIMEOUT_MS)
+  let response
+  let data = {}
+  try {
+    response = await metaDirectFetch(
+      `https://graph.facebook.com/${getMetaApiVersion()}/${encodeURIComponent(config.phoneNumberId)}/media`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${config.systemUserToken}`,
+          'Content-Type': upload.contentType,
+          'Content-Length': String(upload.body.length)
+        },
+        body: upload.body,
+        signal: controller.signal
+      }
+    )
+    const text = await response.text()
+    try {
+      data = text ? JSON.parse(text) : {}
+    } catch {
+      data = {}
+    }
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const timeoutError = new Error('Meta tardó demasiado en recibir el archivo de WhatsApp')
+      timeoutError.code = 'META_GRAPH_TIMEOUT'
+      throw timeoutError
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
+
+  const mediaId = cleanString(data?.id || data?.mediaId || data?.media_id)
+  if (!response?.ok || data?.error || !mediaId) {
+    const graphError = data?.error || {}
+    const error = new Error(cleanString(graphError.message) || `Meta no pudo recibir el archivo (${response?.status || 502})`)
+    error.statusCode = Number(response?.status) || 502
+    error.graphCode = graphError.code
+    error.graphSubcode = graphError.error_subcode
+    throw error
+  }
+
+  return {
+    id: mediaId,
+    provider: META_DIRECT_PROVIDER_NAME,
+    providerMediaId: mediaId,
+    mimeType,
+    filename,
+    size: media.buffer.length,
+    storage: 'provider',
+    storageProvider: META_DIRECT_PROVIDER_NAME,
+    uploadType: type || '',
+    metadata: media.metadata || {},
+    rawUpload: data
+  }
+}
+
 function describeYCloudMediaUpload({ buffer, mimeType, upload } = {}) {
   const bytes = Buffer.isBuffer(buffer) ? buffer.length : 0
   const fingerprint = Buffer.isBuffer(buffer) && buffer.length
@@ -6992,6 +7091,23 @@ function extractMessageMedia(message = {}) {
   }
 }
 
+function hasRistakPrivateMediaMarker(message = {}) {
+  if (!isPlainObject(message)) return false
+  if (message.ristakPrivateMedia === true) return true
+  return [
+    message.image,
+    message.audio,
+    message.video,
+    message.document,
+    message.sticker,
+    message.media,
+    message.file
+  ].some((media) => isPlainObject(media) && (
+    media.ristakPrivateMedia === true ||
+    media.metadata?.ristakPrivateMedia === true
+  ))
+}
+
 function getMessageMediaObject(message = {}) {
   const messageType = cleanString(message.type).toLowerCase()
   const candidates = [
@@ -9370,6 +9486,9 @@ async function upsertMessage({
   const incomingAgentMarker = extractConversationalAgentMessageMetadata(normalizedMessage)
   const existingAgentMarker = extractConversationalAgentMessageMetadata(existingMessage?.raw_payload_json)
   const existingRawPayload = parseJsonValue(existingMessage?.raw_payload_json, {}) || {}
+  const ristakPrivateMedia = hasRistakPrivateMediaMarker(normalizedMessage) ||
+    hasRistakPrivateMediaMarker(existingRawPayload)
+  const preservedPrivateMedia = ristakPrivateMedia ? { ristakPrivateMedia: true } : {}
   const preservedDeliveryReceipt = isPlainObject(existingRawPayload.deliveryReceipt)
     ? { deliveryReceipt: existingRawPayload.deliveryReceipt }
     : {}
@@ -9415,7 +9534,7 @@ async function upsertMessage({
   })
   const buttonReply = extractButtonReply(normalizedMessage)
   let media = extractMessageMedia(normalizedMessage)
-  if (!deferMetaInboundEnrichment) {
+  if (!deferMetaInboundEnrichment && !ristakPrivateMedia) {
     media = await hydrateInboundMessageMedia(
       normalizedMessage,
       media,
@@ -9574,6 +9693,7 @@ async function upsertMessage({
     messageTimestamp,
     existingQrFallbackApplied ? null : safeJson({
       ...normalizedMessage,
+      ...preservedPrivateMedia,
       ...preservedQrFallbackPolicy,
       ...preservedAgentMetadata,
       ...preservedDeliveryReceipt
@@ -12815,17 +12935,18 @@ async function sendMediaViaMetaDirect({ to, type, media, from, externalId } = {}
   await refreshMetaDirectWebhookSubscriptionIfStale(config)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const mediaType = cleanString(type).toLowerCase()
+  const mediaId = cleanString(media?.id || media?.mediaId || media?.providerMediaId)
   const link = cleanString(media?.link)
   if (!toPhone) throw new Error('Falta el número destino')
   if (!['image', 'document', 'video'].includes(mediaType)) {
     throw new Error('Tipo de archivo no compatible con Meta directo')
   }
-  if (!/^https:\/\//i.test(link)) {
-    throw new Error(`Meta directo necesita un enlace HTTPS público para enviar ${mediaType === 'image' ? 'la foto' : mediaType === 'video' ? 'el video' : 'el documento'}`)
+  if (!mediaId && !/^https:\/\//i.test(link)) {
+    throw new Error(`Meta directo necesita un media id o enlace HTTPS para enviar ${mediaType === 'image' ? 'la foto' : mediaType === 'video' ? 'el video' : 'el documento'}`)
   }
 
   const requestMedia = {
-    link,
+    ...(mediaId ? { id: mediaId } : { link }),
     ...(media?.caption ? { caption: cleanString(media.caption).slice(0, 1024) } : {}),
     ...(mediaType === 'document' && media?.filename ? { filename: cleanString(media.filename) } : {})
   }
@@ -15981,6 +16102,7 @@ export async function sendWhatsAppApiDocumentMessage({
   phoneNumberId,
   preferOfficialApiWhenReplyWindowOpen = false,
   skipQrSendProtection = false,
+  sensitive = false,
   variablesResolved = false
 } = {}) {
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
@@ -16021,6 +16143,7 @@ export async function sendWhatsAppApiDocumentMessage({
   let providerDocument = null
   let providerDocumentPreview = null
   const fallbackFilename = sanitizeDocumentFilename(filename, cleanString(mimeType).toLowerCase())
+  const privateDocumentMarker = sensitive === true ? { ristakPrivateMedia: true } : {}
 
   if (cleanTransport === 'qr') {
     return sendDocumentViaQrFallback({
@@ -16029,6 +16152,7 @@ export async function sendWhatsAppApiDocumentMessage({
       toPhone,
       requestDocument: {
         ...(link ? { link } : {}),
+        ...privateDocumentMarker,
         filename: fallbackFilename,
         ...(cleanString(mimeType) ? { mimeType: cleanString(mimeType).toLowerCase() } : {}),
         ...(cleanCaption ? { caption: cleanCaption } : {})
@@ -16056,6 +16180,7 @@ export async function sendWhatsAppApiDocumentMessage({
       toPhone,
       requestDocument: {
         ...(link ? { link } : {}),
+        ...privateDocumentMarker,
         filename: fallbackFilename,
         ...(cleanString(mimeType) ? { mimeType: cleanString(mimeType).toLowerCase() } : {}),
         ...(cleanCaption ? { caption: cleanCaption } : {})
@@ -16082,11 +16207,19 @@ export async function sendWhatsAppApiDocumentMessage({
   if (!link) {
     const preparedDocument = await prepareWhatsAppDocumentForProviderUpload(documentDataUrl, filename, mimeType)
     if (config.provider === META_DIRECT_PROVIDER_NAME) {
-      providerDocumentPreview = await savePreparedMediaForChatPreview(preparedDocument, {
-        type: 'document',
-        mediaLabel: 'documento de WhatsApp API'
+      // Los documentos fiscales y otros adjuntos sensibles se suben directo a
+      // Meta como binario. No se publican en nuestro CDN sólo para que Meta los
+      // pueda descargar por URL.
+      providerDocument = await uploadPreparedMediaToMetaDirect({
+        media: preparedDocument,
+        type: 'document'
       })
-      link = requirePublicMediaUrl(providerDocumentPreview, publicBaseUrl, 'documentos')
+      if (!sensitive) {
+        providerDocumentPreview = await savePreparedMediaForChatPreview(preparedDocument, {
+          type: 'document',
+          mediaLabel: 'documento de WhatsApp API'
+        })
+      }
     } else {
       providerDocument = await uploadPreparedMediaToYCloud({
         config,
@@ -16097,7 +16230,7 @@ export async function sendWhatsAppApiDocumentMessage({
     }
   }
 
-  if (cleanTransport !== 'qr' && link && !/^https:\/\//i.test(link)) {
+  if (cleanTransport !== 'qr' && !providerDocument && link && !/^https:\/\//i.test(link)) {
     throw new Error('El documento necesita un enlace público HTTPS para poder enviarse por WhatsApp.')
   }
 
@@ -16108,6 +16241,7 @@ export async function sendWhatsAppApiDocumentMessage({
   }
   const storedDocument = {
     ...requestDocument,
+    ...privateDocumentMarker,
     ...(providerDocument ? {
       mediaId: providerDocument.id,
       providerMediaId: providerDocument.providerMediaId,

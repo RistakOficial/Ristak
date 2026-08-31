@@ -92,6 +92,7 @@ export interface PaymentTaxSettings {
   gigstackAutomateInvoiceOnComplete: boolean
   gigstackAutomationType: 'pue_invoice' | 'none'
   gigstackClientMatchMode: 'email' | 'client_id_or_email'
+  gigstackSendWhatsapp: boolean
   gigstackSendEmail: boolean
   gigstackPortalUrl?: string
   gigstackTestApiToken?: string
@@ -217,6 +218,7 @@ export const defaultPaymentSettings: PaymentSettings = {
     gigstackAutomateInvoiceOnComplete: true,
     gigstackAutomationType: 'pue_invoice',
     gigstackClientMatchMode: 'email',
+    gigstackSendWhatsapp: true,
     gigstackSendEmail: true,
     gigstackPortalUrl: '',
     gigstackTestApiToken: '',

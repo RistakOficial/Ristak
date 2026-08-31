@@ -556,7 +556,7 @@ function routeMatchesPaymentPhoneRow(route = {}, phoneRow = {}) {
   ].some((value) => normalizePhoneForStorage(value) === routePhone)
 }
 
-async function resolvePaymentWhatsAppRoute(contact = {}, { qrOnly = false } = {}) {
+export async function resolvePaymentWhatsAppRoute(contact = {}, { qrOnly = false } = {}) {
   const contactRouteIds = []
   const preferredPhoneNumberId = cleanString(contact.preferredWhatsAppPhoneNumberId, 200)
   if (preferredPhoneNumberId) contactRouteIds.push(preferredPhoneNumberId)
@@ -623,7 +623,7 @@ async function resolvePaymentWhatsAppRoute(contact = {}, { qrOnly = false } = {}
   })
 }
 
-function paymentWhatsAppRouteArgs(route = {}, allowQrFallback = false) {
+export function paymentWhatsAppRouteArgs(route = {}, allowQrFallback = false) {
   if (route.transport === 'qr') {
     return {
       from: route.fromPhone || undefined,

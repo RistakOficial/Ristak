@@ -230,6 +230,28 @@ describe('payment settings tax calculation', () => {
     assert.equal(settings.taxes.gigstackAutomateInvoiceOnComplete, true)
     assert.equal(settings.taxes.gigstackAutomationType, 'pue_invoice')
     assert.equal(settings.taxes.gigstackClientMatchMode, 'email')
+    assert.equal(settings.taxes.gigstackSendWhatsapp, true)
+    assert.equal(settings.taxes.gigstackSendEmail, true)
+  })
+
+  it('keeps Gigstack PDF/XML delivery switches independent', () => {
+    const whatsappOnly = normalizePaymentSettings({
+      taxes: {
+        gigstackSendWhatsapp: true,
+        gigstackSendEmail: false
+      }
+    })
+    const emailOnly = normalizePaymentSettings({
+      taxes: {
+        gigstackSendWhatsapp: false,
+        gigstackSendEmail: true
+      }
+    })
+
+    assert.equal(whatsappOnly.taxes.gigstackSendWhatsapp, true)
+    assert.equal(whatsappOnly.taxes.gigstackSendEmail, false)
+    assert.equal(emailOnly.taxes.gigstackSendWhatsapp, false)
+    assert.equal(emailOnly.taxes.gigstackSendEmail, true)
   })
 
   it('uses the Gigstack tax rate instead of the manual country rate while connected', () => {

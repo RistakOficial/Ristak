@@ -1866,6 +1866,81 @@ test('la migracion 126 agrega la cola fiscal Gigstack a instalaciones existentes
   }
 })
 
+test('la migracion 166 agrega la entrega durable PDF/XML sin duplicar documentos', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-gigstack-invoice-delivery-migration-'))
+  const database = openMemoryDatabase()
+  const migration = new URL(
+    '../migrations/versioned/166_gigstack_invoice_delivery_jobs.sqlite.sql',
+    import.meta.url
+  )
+
+  try {
+    await database.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE app_config (
+        config_key TEXT PRIMARY KEY,
+        config_value TEXT
+      );
+      CREATE TABLE payments (
+        id TEXT PRIMARY KEY
+      );
+      INSERT INTO app_config (config_key, config_value)
+      VALUES ('core_schema_bootstrap_version', '2026-07-12-v1');
+      INSERT INTO payments (id) VALUES ('payment-delivery-preview');
+    `)
+    await copyFile(migration, join(directory, '166_gigstack_invoice_delivery_jobs.sqlite.sql'))
+
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 1, skipped: 0 }
+    )
+
+    const table = await database.all(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table' AND name = 'gigstack_invoice_delivery_jobs'
+    `)
+    assert.deepEqual(table.map(row => row.name), ['gigstack_invoice_delivery_jobs'])
+
+    const indexes = await database.all(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'index' AND name = 'idx_gigstack_invoice_delivery_jobs_due'
+    `)
+    assert.deepEqual(indexes.map(row => row.name), ['idx_gigstack_invoice_delivery_jobs_due'])
+
+    await database.run(`
+      INSERT INTO gigstack_invoice_delivery_jobs (
+        id, payment_id, payment_mode, invoice_id, channel, document_format
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `, ['delivery-one', 'payment-delivery-preview', 'test', 'invoice-one', 'whatsapp', 'pdf'])
+    await assert.rejects(
+      database.run(`
+        INSERT INTO gigstack_invoice_delivery_jobs (
+          id, payment_id, payment_mode, invoice_id, channel, document_format
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `, ['delivery-two', 'payment-delivery-preview', 'test', 'invoice-one', 'whatsapp', 'pdf']),
+      /UNIQUE constraint failed/
+    )
+    await assert.rejects(
+      database.run(`
+        INSERT INTO gigstack_invoice_delivery_jobs (
+          id, payment_id, payment_mode, invoice_id, channel, document_format
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `, ['delivery-orphan', 'missing-payment', 'live', 'invoice-two', 'email', 'bundle']),
+      /FOREIGN KEY constraint failed/
+    )
+
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 0, skipped: 0 }
+    )
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('la migracion 128 agrega carpetas multimedia vacías a instalaciones existentes', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'ristak-media-folders-migration-'))
   const database = openMemoryDatabase()

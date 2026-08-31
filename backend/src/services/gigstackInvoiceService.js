@@ -8,6 +8,19 @@ import {
   decodeGigstackTokenMetadata,
   getPaymentSettings
 } from './paymentSettingsService.js'
+import { sendEmailToContact } from './emailService.js'
+import {
+  paymentWhatsAppRouteArgs,
+  resolvePaymentWhatsAppRoute
+} from './paymentAutomationsService.js'
+import {
+  sendWhatsAppApiDocumentMessage,
+  sendWhatsAppApiTextMessage
+} from './whatsappApiService.js'
+import {
+  signPublicContextClaims,
+  verifyPublicContextToken
+} from './publicContextTokenService.js'
 
 const GIGSTACK_API_BASE_URL = (process.env.GIGSTACK_API_BASE_URL || 'https://api.gigstack.io/v2').replace(/\/+$/, '')
 const GIGSTACK_REQUEST_TIMEOUT_MS = 15_000
@@ -27,6 +40,7 @@ const GIGSTACK_UNIT_NAMES = {
 const GIGSTACK_JOB_LEASE_MS = 2 * 60 * 1000
 const GIGSTACK_JOB_BATCH_SIZE = 10
 const GIGSTACK_MAX_ATTEMPTS = 12
+const GIGSTACK_DELIVERY_JOB_BATCH_SIZE = 20
 const GIGSTACK_RETRY_DELAYS_MS = [
   60_000,
   5 * 60_000,
@@ -36,9 +50,36 @@ const GIGSTACK_RETRY_DELAYS_MS = [
 ]
 const PAID_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success'])
 const REGISTERED_GIGSTACK_STATUSES = new Set(['registered', 'stamped', 'succeeded'])
+const GIGSTACK_DELIVERY_FORMATS = new Set(['pdf', 'xml', 'bundle'])
+const GIGSTACK_DELIVERY_CHANNELS = new Set(['whatsapp', 'email'])
+
+const defaultGigstackDeliveryDependencies = Object.freeze({
+  sendEmailToContact,
+  resolvePaymentWhatsAppRoute,
+  paymentWhatsAppRouteArgs,
+  sendWhatsAppApiDocumentMessage,
+  sendWhatsAppApiTextMessage,
+  signPublicContextClaims
+})
+let gigstackDeliveryDependencies = { ...defaultGigstackDeliveryDependencies }
+
+export function setGigstackInvoiceDeliveryDependenciesForTest(overrides = null) {
+  gigstackDeliveryDependencies = overrides && typeof overrides === 'object'
+    ? { ...defaultGigstackDeliveryDependencies, ...overrides }
+    : { ...defaultGigstackDeliveryDependencies }
+}
 
 function cleanString(value, maxLength = 500) {
   return String(value || '').trim().slice(0, maxLength)
+}
+
+function escapeHtml(value) {
+  return cleanString(value, 1000)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 function parseJson(value, fallback = {}) {
@@ -374,7 +415,9 @@ async function buildGigstackPayload(row, settings, tax, mode) {
       ristak_payment_mode: mode
     },
     idempotency_key: `ristak-payment-${cleanString(row.id, 160)}`,
-    send_email: taxes.gigstackSendEmail !== false
+    // Ristak entrega y audita PDF + XML por sus propios canales. Dejar este
+    // flag activo haría que Gigstack mandara un segundo correo sin trazabilidad.
+    send_email: false
   }
 }
 
@@ -749,13 +792,533 @@ async function getPaymentRow(paymentId) {
     `SELECT
       p.*,
       c.full_name AS contact_name,
+      c.first_name AS contact_first_name,
+      c.last_name AS contact_last_name,
       c.email AS contact_email,
-      c.phone AS contact_phone
+      c.phone AS contact_phone,
+      c.preferred_whatsapp_phone_number_id AS contact_preferred_whatsapp_phone_number_id
     FROM payments p
     LEFT JOIN contacts c ON c.id = p.contact_id
     WHERE p.id = ?`,
     [paymentId]
   )
+}
+
+function gigstackDeliveryJobId({ paymentId, invoiceId, channel, documentFormat }) {
+  const digest = crypto.createHash('sha256')
+    .update([paymentId, invoiceId, channel, documentFormat].join('|'))
+    .digest('hex')
+    .slice(0, 32)
+  return `gigstack_delivery_${digest}`
+}
+
+function normalizeGigstackDeliveryInvoices(invoices = []) {
+  return (Array.isArray(invoices) ? invoices : [])
+    .map((invoice) => ({
+      id: cleanString(typeof invoice === 'object' ? invoice?.id || invoice?.uuid : invoice, 180),
+      uuid: cleanString(typeof invoice === 'object' ? invoice?.uuid || invoice?.id : invoice, 180),
+      status: cleanString(typeof invoice === 'object' ? invoice?.status : 'stamped', 80).toLowerCase()
+    }))
+    .filter((invoice) => invoice.id && ['stamped', 'valid'].includes(invoice.status || 'stamped'))
+}
+
+export async function enqueueGigstackInvoiceDeliveryJobs(paymentId, {
+  mode,
+  invoices = [],
+  taxes = {}
+} = {}) {
+  const cleanPaymentId = cleanString(paymentId, 160)
+  const paymentMode = normalizeGigstackPaymentMode(mode)
+  const stampedInvoices = normalizeGigstackDeliveryInvoices(invoices)
+  if (!cleanPaymentId || !paymentMode || !stampedInvoices.length) {
+    return { queued: 0, reason: 'missing_stamped_invoice' }
+  }
+
+  const specs = []
+  if (taxes.gigstackSendWhatsapp !== false) {
+    specs.push(
+      { channel: 'whatsapp', documentFormat: 'pdf' },
+      { channel: 'whatsapp', documentFormat: 'xml' }
+    )
+  }
+  if (taxes.gigstackSendEmail !== false) {
+    specs.push({ channel: 'email', documentFormat: 'bundle' })
+  }
+  if (!specs.length) return { queued: 0, reason: 'delivery_disabled' }
+
+  let queued = 0
+  for (const invoice of stampedInvoices) {
+    for (const spec of specs) {
+      const id = gigstackDeliveryJobId({
+        paymentId: cleanPaymentId,
+        invoiceId: invoice.id,
+        channel: spec.channel,
+        documentFormat: spec.documentFormat
+      })
+      const result = await db.run(
+        `INSERT INTO gigstack_invoice_delivery_jobs (
+           id, payment_id, payment_mode, invoice_id, invoice_uuid, channel,
+           document_format, status, attempt_count, next_attempt_at_ms,
+           claim_token, lease_until_at_ms, last_error, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, 0, NULL, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT(payment_id, invoice_id, channel, document_format) DO NOTHING`,
+        [
+          id,
+          cleanPaymentId,
+          paymentMode,
+          invoice.id,
+          invoice.uuid || invoice.id,
+          spec.channel,
+          spec.documentFormat
+        ]
+      )
+      if (Number(result?.changes) > 0 || Number(result?.rowCount) > 0) queued += 1
+    }
+  }
+
+  return { queued, paymentId: cleanPaymentId, invoices: stampedInvoices.length }
+}
+
+function deliveryContactFromPayment(payment = {}) {
+  const fullName = cleanString(payment.contact_name, 180)
+  return {
+    id: cleanString(payment.contact_id, 180),
+    firstName: cleanString(payment.contact_first_name, 120) || fullName.split(/\s+/).filter(Boolean)[0] || '',
+    lastName: cleanString(payment.contact_last_name, 120),
+    fullName,
+    email: cleanString(payment.contact_email, 180).toLowerCase(),
+    phone: cleanString(payment.contact_phone, 80),
+    preferredWhatsAppPhoneNumberId: cleanString(payment.contact_preferred_whatsapp_phone_number_id, 200)
+  }
+}
+
+function deliveryFileDescriptor(job, format) {
+  const safeBase = safeInvoiceFileBase(job.invoice_uuid || job.invoice_id)
+  return {
+    filename: `factura-${safeBase}.${format}`,
+    mimeType: format === 'pdf' ? 'application/pdf' : 'application/xml'
+  }
+}
+
+function safeDeliveryResult(result = {}) {
+  return {
+    id: cleanString(result?.id || result?.messageId || result?.smtpMessageId, 240),
+    localMessageId: cleanString(result?.localMessageId, 240),
+    status: cleanString(result?.status, 80),
+    transport: cleanString(result?.transport, 40),
+    to: cleanString(result?.to, 180)
+  }
+}
+
+function deliveryProviderMessageId(result = {}) {
+  return cleanString(
+    result?.id || result?.messageId || result?.smtpMessageId || result?.localMessageId,
+    240
+  )
+}
+
+async function updateGigstackDeliveryMetadata(paymentId, job, patch = {}) {
+  const row = await db.get('SELECT metadata_json FROM payments WHERE id = ?', [paymentId])
+  if (!row) return
+  const metadata = parseJson(row.metadata_json)
+  const gigstack = metadata.gigstack && typeof metadata.gigstack === 'object'
+    ? metadata.gigstack
+    : {}
+  const delivery = gigstack.delivery && typeof gigstack.delivery === 'object'
+    ? gigstack.delivery
+    : {}
+  const jobs = delivery.jobs && typeof delivery.jobs === 'object' ? delivery.jobs : {}
+  const now = new Date().toISOString()
+  jobs[job.id] = {
+    ...(jobs[job.id] || {}),
+    channel: job.channel,
+    documentFormat: job.document_format,
+    invoiceId: job.invoice_id,
+    invoiceUuid: job.invoice_uuid || '',
+    ...patch,
+    updatedAt: now
+  }
+  metadata.gigstack = {
+    ...gigstack,
+    delivery: { ...delivery, jobs, updatedAt: now },
+    updatedAt: now
+  }
+  await db.run(
+    'UPDATE payments SET metadata_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [JSON.stringify(metadata), paymentId]
+  )
+}
+
+async function claimGigstackInvoiceDeliveryJob(jobId) {
+  const now = Date.now()
+  const claimToken = crypto.randomUUID()
+  await db.run(
+    `UPDATE gigstack_invoice_delivery_jobs
+     SET status = 'processing', claim_token = ?, lease_until_at_ms = ?,
+         attempt_count = attempt_count + 1, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+       AND next_attempt_at_ms <= ?
+       AND (
+         status IN ('pending', 'retry')
+         OR (status = 'processing' AND COALESCE(lease_until_at_ms, 0) <= ?)
+       )`,
+    [claimToken, now + GIGSTACK_JOB_LEASE_MS, jobId, now, now]
+  )
+  const row = await db.get('SELECT * FROM gigstack_invoice_delivery_jobs WHERE id = ?', [jobId])
+  return row?.claim_token === claimToken ? { row, claimToken } : null
+}
+
+async function finishGigstackInvoiceDeliveryJob(jobId, claimToken, patch = {}) {
+  await db.run(
+    `UPDATE gigstack_invoice_delivery_jobs
+     SET status = ?, next_attempt_at_ms = ?, claim_token = NULL,
+         lease_until_at_ms = NULL, last_error = ?, provider_message_id = ?,
+         result_json = ?, sent_at = CASE WHEN ? = 'sent' THEN CURRENT_TIMESTAMP ELSE sent_at END,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND claim_token = ?`,
+    [
+      patch.status,
+      Number(patch.nextAttemptAtMs) || 0,
+      cleanString(patch.lastError, 1000) || null,
+      cleanString(patch.providerMessageId, 240) || null,
+      patch.result ? JSON.stringify(patch.result) : null,
+      patch.status,
+      jobId,
+      claimToken
+    ]
+  )
+}
+
+function shouldRetryGigstackDelivery(error, attemptCount) {
+  if (Number(attemptCount) >= GIGSTACK_MAX_ATTEMPTS) return false
+  if (error?.retryable === true) return true
+  const status = Number(error?.status || error?.statusCode || 0)
+  if (status === 408 || status === 409 || status === 429 || status >= 500) return true
+  const message = cleanString(error?.message || error, 1200).toLowerCase()
+  return [
+    'timeout',
+    'tiempo',
+    'network',
+    'conexión',
+    'conexion',
+    'no está conectado',
+    'no esta conectado',
+    'ventana de 24',
+    'temporal'
+  ].some((fragment) => message.includes(fragment))
+}
+
+async function deliverGigstackInvoiceEmail(job, payment, token) {
+  const contact = deliveryContactFromPayment(payment)
+  if (!contact.id || !contact.email) {
+    throw createGigstackError('El contacto no tiene un correo válido para recibir la factura.', {
+      status: 400,
+      code: 'missing_invoice_delivery_email'
+    })
+  }
+  const [pdf, xml] = await Promise.all([
+    loadGigstackInvoiceFile(job.invoice_id, 'pdf', token),
+    loadGigstackInvoiceFile(job.invoice_id, 'xml', token)
+  ])
+  const pdfFile = deliveryFileDescriptor(job, 'pdf')
+  const xmlFile = deliveryFileDescriptor(job, 'xml')
+  const invoiceReference = safeInvoiceFileBase(job.invoice_uuid || job.invoice_id)
+  const greeting = contact.firstName ? `Hola ${contact.firstName},` : 'Hola,'
+  const greetingHtml = escapeHtml(greeting)
+
+  return gigstackDeliveryDependencies.sendEmailToContact({
+    contactId: contact.id,
+    to: contact.email,
+    subject: `Factura ${invoiceReference} · PDF y XML`,
+    text: `${greeting}\n\nTe compartimos los archivos fiscales de tu factura ${invoiceReference}. Encontrarás adjuntos el PDF y el XML.\n\nEste correo fue enviado automáticamente por Ristak.`,
+    html: `<p>${greetingHtml}</p><p>Te compartimos los archivos fiscales de tu factura <strong>${invoiceReference}</strong>. Encontrarás adjuntos el PDF y el XML.</p><p>Este correo fue enviado automáticamente por Ristak.</p>`,
+    attachments: [
+      { filename: pdfFile.filename, content: pdf, contentType: pdfFile.mimeType },
+      { filename: xmlFile.filename, content: xml, contentType: xmlFile.mimeType }
+    ],
+    externalId: `gigstack-invoice:${job.payment_id}:${job.invoice_id}:email`,
+    variablesResolved: true
+  })
+}
+
+function gigstackDeliveryPublicBaseUrl(payment = {}) {
+  const configuredCandidates = [
+    process.env.RENDER_EXTERNAL_URL,
+    process.env.PUBLIC_URL,
+    process.env.PUBLIC_APP_URL,
+    process.env.APP_PUBLIC_URL,
+    process.env.APP_URL,
+    process.env.FRONTEND_URL
+  ]
+  for (const candidate of configuredCandidates) {
+    try {
+      const url = new URL(cleanString(candidate, 2000))
+      if (url.protocol === 'https:') return url.origin
+    } catch {
+      // Se intenta la siguiente fuente configurada.
+    }
+  }
+
+  // payment_url sólo es una fuente segura cuando apunta al checkout público de
+  // Ristak. Un link legacy del proveedor (Stripe, Mercado Pago, etc.) no debe
+  // convertirse accidentalmente en el host de nuestra ruta fiscal.
+  try {
+    const paymentUrl = new URL(cleanString(payment.payment_url, 2000))
+    if (paymentUrl.protocol === 'https:' && paymentUrl.pathname.startsWith('/pay/')) {
+      return paymentUrl.origin
+    }
+  } catch {
+    // Sin URL pública verificable, la entrega queda reintentable y auditable.
+  }
+  return ''
+}
+
+async function createGigstackXmlDeliveryUrl(job, payment) {
+  const baseUrl = gigstackDeliveryPublicBaseUrl(payment)
+  if (!baseUrl) {
+    throw createGigstackError('Ristak no tiene una URL pública HTTPS para compartir el XML de forma temporal.', {
+      code: 'invoice_delivery_public_base_url_missing',
+      retryable: true
+    })
+  }
+  const token = await gigstackDeliveryDependencies.signPublicContextClaims({
+    purpose: 'gigstack.invoice.delivery',
+    claims: {
+      jobId: job.id,
+      paymentId: job.payment_id,
+      invoiceId: job.invoice_id,
+      format: 'xml'
+    },
+    ttlSeconds: 24 * 60 * 60
+  })
+  return `${baseUrl}/api/settings/payments/gigstack-invoice-file/${encodeURIComponent(token)}`
+}
+
+async function deliverGigstackInvoiceWhatsapp(job, payment, token) {
+  const contact = deliveryContactFromPayment(payment)
+  if (!contact.id || !contact.phone) {
+    throw createGigstackError('El contacto no tiene un número válido para recibir la factura.', {
+      status: 400,
+      code: 'missing_invoice_delivery_phone'
+    })
+  }
+  const route = await gigstackDeliveryDependencies.resolvePaymentWhatsAppRoute(contact)
+  if (!route?.available) {
+    throw createGigstackError('La conversación del contacto no tiene un canal de WhatsApp disponible.', {
+      status: 409,
+      code: 'invoice_delivery_whatsapp_unavailable',
+      retryable: true
+    })
+  }
+  const format = cleanString(job.document_format, 12).toLowerCase()
+  const routeArgs = gigstackDeliveryDependencies.paymentWhatsAppRouteArgs(route, true)
+  const invoiceReference = safeInvoiceFileBase(job.invoice_uuid || job.invoice_id)
+
+  // Meta y YCloud no aceptan XML como documento. En ese caso compartimos una
+  // capacidad firmada que expira en 24 h y descarga el XML directamente desde
+  // Gigstack; el archivo fiscal nunca queda alojado en una URL pública fija.
+  if (format === 'xml' && route.transport !== 'qr') {
+    const downloadUrl = await createGigstackXmlDeliveryUrl(job, payment)
+    return gigstackDeliveryDependencies.sendWhatsAppApiTextMessage({
+      to: contact.phone,
+      ...routeArgs,
+      text: `Te compartimos el XML fiscal de tu factura ${invoiceReference}. El enlace privado vence en 24 horas: ${downloadUrl}`,
+      contactId: contact.id,
+      externalId: `gigstack-invoice:${job.payment_id}:${job.invoice_id}:xml`,
+      variablesResolved: true
+    })
+  }
+
+  const buffer = await loadGigstackInvoiceFile(job.invoice_id, format, token)
+  const file = deliveryFileDescriptor(job, format)
+  return gigstackDeliveryDependencies.sendWhatsAppApiDocumentMessage({
+    to: contact.phone,
+    ...routeArgs,
+    documentDataUrl: `data:${file.mimeType.split(';')[0]};base64,${buffer.toString('base64')}`,
+    filename: file.filename,
+    mimeType: file.mimeType,
+    caption: `Factura ${invoiceReference} · ${format.toUpperCase()}`,
+    contactId: contact.id,
+    externalId: `gigstack-invoice:${job.payment_id}:${job.invoice_id}:${format}`,
+    sensitive: true,
+    variablesResolved: true
+  })
+}
+
+export async function processGigstackInvoiceDeliveryJob(jobId) {
+  const claim = await claimGigstackInvoiceDeliveryJob(cleanString(jobId, 180))
+  if (!claim) return { skipped: true, reason: 'not_claimed' }
+
+  const { row: job, claimToken } = claim
+  try {
+    const validDeliveryCombination =
+      (job.channel === 'email' && job.document_format === 'bundle') ||
+      (job.channel === 'whatsapp' && ['pdf', 'xml'].includes(job.document_format))
+    if (
+      !GIGSTACK_DELIVERY_CHANNELS.has(job.channel) ||
+      !GIGSTACK_DELIVERY_FORMATS.has(job.document_format) ||
+      !validDeliveryCombination
+    ) {
+      throw createGigstackError('El trabajo de entrega fiscal no tiene un canal o formato válido.', {
+        status: 400,
+        code: 'invalid_invoice_delivery_job'
+      })
+    }
+    const payment = await getPaymentRow(job.payment_id)
+    if (!payment) {
+      throw createGigstackError('No encontramos el pago relacionado con esta factura.', {
+        status: 404,
+        code: 'invoice_delivery_payment_not_found'
+      })
+    }
+    const currentMode = normalizeGigstackPaymentMode(payment.payment_mode)
+    if (!currentMode || currentMode !== normalizeGigstackPaymentMode(job.payment_mode)) {
+      throw createGigstackError('El ambiente del pago cambió después del timbrado; se bloqueó la entrega.', {
+        status: 400,
+        code: 'invoice_delivery_payment_mode_changed'
+      })
+    }
+
+    const settings = await getPaymentSettings({ includeSecrets: true, resolveBusinessProfile: false })
+    const taxes = settings.taxes || {}
+    const channelEnabled = job.channel === 'whatsapp'
+      ? taxes.gigstackSendWhatsapp !== false
+      : taxes.gigstackSendEmail !== false
+    if (!channelEnabled) {
+      await finishGigstackInvoiceDeliveryJob(job.id, claimToken, {
+        status: 'skipped',
+        lastError: 'delivery_disabled'
+      })
+      await updateGigstackDeliveryMetadata(job.payment_id, job, {
+        status: 'skipped',
+        reason: 'delivery_disabled'
+      })
+      return { skipped: true, reason: 'delivery_disabled', jobId: job.id }
+    }
+
+    const token = getGigstackTokenForMode(taxes, currentMode)
+    assertGigstackTokenMode(token, currentMode)
+    const response = job.channel === 'email'
+      ? await deliverGigstackInvoiceEmail(job, payment, token)
+      : await deliverGigstackInvoiceWhatsapp(job, payment, token)
+    const result = safeDeliveryResult(response)
+    const providerMessageId = deliveryProviderMessageId(response)
+    await finishGigstackInvoiceDeliveryJob(job.id, claimToken, {
+      status: 'sent',
+      providerMessageId,
+      result
+    })
+    await updateGigstackDeliveryMetadata(job.payment_id, job, {
+      status: 'sent',
+      providerMessageId,
+      sentAt: new Date().toISOString(),
+      result
+    })
+    return {
+      sent: true,
+      jobId: job.id,
+      paymentId: job.payment_id,
+      channel: job.channel,
+      documentFormat: job.document_format
+    }
+  } catch (error) {
+    const retryable = shouldRetryGigstackDelivery(error, Number(job.attempt_count))
+    const status = retryable ? 'retry' : 'blocked'
+    const lastError = `${error?.code || 'invoice_delivery_error'}: ${cleanString(error?.message, 900)}`
+    await finishGigstackInvoiceDeliveryJob(job.id, claimToken, {
+      status,
+      nextAttemptAtMs: retryable ? nextRetryAtMs(Number(job.attempt_count)) : 0,
+      lastError
+    })
+    await updateGigstackDeliveryMetadata(job.payment_id, job, {
+      status,
+      retryable,
+      errorCode: error?.code || 'invoice_delivery_error',
+      error: cleanString(error?.message, 900)
+    })
+    return {
+      error: true,
+      retryable,
+      jobId: job.id,
+      paymentId: job.payment_id,
+      code: error?.code || 'invoice_delivery_error'
+    }
+  }
+}
+
+export async function processDueGigstackInvoiceDeliveryJobs({
+  limit = GIGSTACK_DELIVERY_JOB_BATCH_SIZE
+} = {}) {
+  const now = Date.now()
+  const rows = await db.all(
+    `SELECT id
+     FROM gigstack_invoice_delivery_jobs
+     WHERE next_attempt_at_ms <= ?
+       AND (
+         status IN ('pending', 'retry')
+         OR (status = 'processing' AND COALESCE(lease_until_at_ms, 0) <= ?)
+       )
+     ORDER BY next_attempt_at_ms ASC, created_at ASC
+     LIMIT ?`,
+    [now, now, Math.max(1, Math.min(Number(limit) || GIGSTACK_DELIVERY_JOB_BATCH_SIZE, 100))]
+  )
+  const results = []
+  for (const row of rows || []) {
+    results.push(await processGigstackInvoiceDeliveryJob(row.id))
+  }
+  return results
+}
+
+export async function getGigstackInvoiceDeliveryPublicFile(token) {
+  const verified = await verifyPublicContextToken(token, {
+    purpose: 'gigstack.invoice.delivery'
+  })
+  const claims = verified.claims || {}
+  const job = await db.get(
+    `SELECT * FROM gigstack_invoice_delivery_jobs
+     WHERE id = ? AND payment_id = ? AND invoice_id = ?
+       AND channel = 'whatsapp' AND document_format = 'xml'
+     LIMIT 1`,
+    [
+      cleanString(claims.jobId, 180),
+      cleanString(claims.paymentId, 160),
+      cleanString(claims.invoiceId, 180)
+    ]
+  )
+  if (!job || cleanString(claims.format, 12).toLowerCase() !== 'xml') {
+    throw createGigstackError('El enlace del XML no corresponde a una factura disponible.', {
+      status: 404,
+      code: 'invoice_delivery_link_not_found'
+    })
+  }
+  if (['blocked', 'skipped'].includes(cleanString(job.status, 40).toLowerCase())) {
+    throw createGigstackError('El enlace del XML ya no está disponible.', {
+      status: 410,
+      code: 'invoice_delivery_link_inactive'
+    })
+  }
+
+  const payment = await db.get(
+    'SELECT payment_mode FROM payments WHERE id = ? LIMIT 1',
+    [job.payment_id]
+  )
+  const mode = normalizeGigstackPaymentMode(payment?.payment_mode)
+  if (!mode || mode !== normalizeGigstackPaymentMode(job.payment_mode)) {
+    throw createGigstackError('El ambiente fiscal del enlace no es válido.', {
+      status: 409,
+      code: 'invoice_delivery_payment_mode_changed'
+    })
+  }
+  const settings = await getPaymentSettings({ includeSecrets: true, resolveBusinessProfile: false })
+  const gigstackToken = getGigstackTokenForMode(settings.taxes, mode)
+  assertGigstackTokenMode(gigstackToken, mode)
+  const file = deliveryFileDescriptor(job, 'xml')
+  return {
+    buffer: await loadGigstackInvoiceFile(job.invoice_id, 'xml', gigstackToken),
+    contentType: file.mimeType,
+    fileName: file.filename,
+    expiresAt: verified.expiresAt
+  }
 }
 
 export async function testGigstackConnection({ mode, token } = {}) {
@@ -832,7 +1395,13 @@ export async function registerGigstackPaymentForTransaction(paymentId, { expecte
     REGISTERED_GIGSTACK_STATUSES.has(cleanString(existingMetadata.gigstack?.status).toLowerCase()) ||
     cleanString(existingMetadata.gigstack?.id)
   ) {
-    return { skipped: true, reason: 'already_registered' }
+    const existingSettings = await getPaymentSettings({ resolveBusinessProfile: false })
+    const delivery = await enqueueGigstackInvoiceDeliveryJobs(cleanPaymentId, {
+      mode,
+      invoices: existingMetadata.gigstack?.invoices || [],
+      taxes: existingSettings.taxes || {}
+    })
+    return { skipped: true, reason: 'already_registered', delivery }
   }
 
   const settings = await getPaymentSettings({ includeSecrets: true, resolveBusinessProfile: false })
@@ -945,8 +1514,26 @@ export async function registerGigstackPaymentForTransaction(paymentId, { expecte
     errorCode: ''
   })
 
+  let delivery
+  try {
+    delivery = await enqueueGigstackInvoiceDeliveryJobs(cleanPaymentId, {
+      mode,
+      invoices: verifiedInvoices,
+      taxes
+    })
+  } catch (error) {
+    await updateGigstackMetadata(cleanPaymentId, {
+      deliveryEnqueueStatus: 'error',
+      deliveryEnqueueError: cleanString(error?.message, 900)
+    })
+    throw createGigstackError('La factura quedó timbrada, pero no se pudo preparar la entrega de PDF y XML.', {
+      code: 'gigstack_delivery_enqueue_error',
+      retryable: true
+    })
+  }
+
   logger.info(`[Gigstack] Pago ${cleanPaymentId} registrado en ${gigstackModeTitle(mode)}.`)
-  return { registered: true, mode, remotePaymentId, data }
+  return { registered: true, mode, remotePaymentId, data, delivery }
 }
 
 function nextRetryAtMs(attemptCount) {
@@ -1082,13 +1669,32 @@ export async function processDueGigstackInvoiceJobs({ limit = GIGSTACK_JOB_BATCH
   return results
 }
 
-export async function requeueBlockedGigstackInvoiceJobs() {
-  await db.run(
+export async function requeueBlockedGigstackInvoiceJobs({ errorCodes = [] } = {}) {
+  const codes = [...new Set((Array.isArray(errorCodes) ? errorCodes : [])
+    .map((code) => cleanString(code, 120).replace(/[^a-z0-9_]/gi, ''))
+    .filter(Boolean))]
+  if (!codes.length) return { invoiceJobs: 0, deliveryJobs: 0 }
+
+  const whereErrors = codes.map(() => 'last_error LIKE ?').join(' OR ')
+  const patterns = codes.map((code) => `${code}:%`)
+  const invoiceResult = await db.run(
     `UPDATE gigstack_invoice_jobs
      SET status = 'pending', next_attempt_at_ms = 0, claim_token = NULL,
          lease_until_at_ms = NULL, last_error = NULL, updated_at = CURRENT_TIMESTAMP
-     WHERE status = 'blocked'`
+     WHERE status = 'blocked' AND (${whereErrors})`,
+    patterns
   )
+  const deliveryResult = await db.run(
+    `UPDATE gigstack_invoice_delivery_jobs
+     SET status = 'pending', next_attempt_at_ms = 0, claim_token = NULL,
+         lease_until_at_ms = NULL, last_error = NULL, updated_at = CURRENT_TIMESTAMP
+     WHERE status = 'blocked' AND (${whereErrors})`,
+    patterns
+  )
+  return {
+    invoiceJobs: Number(invoiceResult?.changes || invoiceResult?.rowCount || 0),
+    deliveryJobs: Number(deliveryResult?.changes || deliveryResult?.rowCount || 0)
+  }
 }
 
 export function registerGigstackPaymentForTransactionInBackground(paymentId) {

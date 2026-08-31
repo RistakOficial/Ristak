@@ -4892,7 +4892,10 @@ La separación de ambientes es estricta:
 
 El registro usa `POST /v2/payments/register` con el contrato v2 vigente:
 `client`, `automation_type`, `currency`, `payment_form`, `items[].unit_price`,
-`metadata`, `idempotency_key` y `send_email`. El correo del contacto busca o
+`metadata`, `idempotency_key` y `send_email`. Ristak manda `send_email=false`
+porque la entrega de documentos se controla y audita localmente; dejar que
+Gigstack enviara otro correo duplicaría el mensaje y no permitiría confirmar
+qué archivos salieron. El correo del contacto busca o
 crea al cliente; opcionalmente puede preferirse un `gigstackClientId` ya ligado
 al pago. Si faltan ambos, no se inventa un receptor. La moneda sale siempre del
 pago, que a su vez usa `account_currency`; la forma SAT sólo se detecta cuando el
@@ -4916,6 +4919,24 @@ localmente junto con ambiente, ID remoto e IDs de factura. Cuando se eligió
 marca el resultado como `stamped` si Gigstack confirma `stamped`/`valid` en el
 mismo ambiente; registrar el pago remoto no se confunde con haber timbrado.
 
+La sección Gigstack ofrece dos switches independientes, activos por defecto:
+**Enviar PDF y XML por WhatsApp** y **Enviar PDF y XML por correo**. Se aplican
+únicamente a nuevas facturas PUE confirmadas como `stamped`/`valid`; guardar la
+configuración no barre facturas históricas. El correo adjunta juntos ambos
+archivos y conserva en el historial sólo nombre, MIME y tamaño, nunca el binario.
+WhatsApp respeta primero el número preferido del contacto, después el número de
+su conversación reciente y por último el emisor default. Con QR, PDF y XML se
+mandan como documentos. Con API oficial, el PDF se sube como binario directo al
+proveedor —sin publicarlo en el CDN— y el XML se comparte mediante una capacidad
+firmada de descarga que vence en 24 horas, porque Meta/YCloud no admiten XML como
+documento. Esa descarga vuelve a pedir el XML a Gigstack, valida pago, factura,
+ambiente y firma, fuerza `attachment` y `Cache-Control: private, no-store`.
+
+La entrega no forma parte de la transacción de timbrado: si correo o WhatsApp
+están caídos, el CFDI permanece timbrado y el canal afectado reintenta por
+separado. Apagar un switch antes de que salga su trabajo lo marca como omitido;
+no afecta el otro canal ni revierte la factura.
+
 La lista de transacciones expone únicamente un resumen seguro de
 `metadata_json.gigstack`. Cuando el estado es `stamped`/`valid` y hay un ID de
 factura, el menú de tres puntos ofrece ZIP, PDF y XML. La descarga autenticada
@@ -4932,6 +4953,16 @@ la llamada externa, reclama un lease por pago y reintenta sólo red, timeout,
 cliente faltantes quedan bloqueados para corregir configuración; nunca se
 reenvían a ciegas. Activar Gigstack no factura pagos históricos: sólo se encolan
 pagos nuevos cuando la integración ya estaba encendida.
+
+`gigstack_invoice_delivery_jobs` es el outbox durable posterior al timbrado. Usa
+una identidad única por pago, factura, canal y formato: WhatsApp tiene trabajos
+separados para PDF/XML y correo uno `bundle`, de modo que un fallo del XML no
+duplica el PDF ya enviado. Cada trabajo conserva lease, intentos, siguiente
+reintento, error y mensaje del proveedor; el resumen queda también en
+`payments.metadata_json.gigstack.delivery`. El mismo cron registrado para
+Gigstack procesa primero timbrados y luego entregas, y sólo corre mientras la
+integración está conectada localmente. Al corregir configuración fiscal sólo se
+reactivan códigos de credencial/perfil conocidos; nunca todos los bloqueados.
 
 ### Webhooks Stripe por instalación
 

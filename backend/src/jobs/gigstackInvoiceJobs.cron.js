@@ -1,4 +1,7 @@
-import { processDueGigstackInvoiceJobs } from '../services/gigstackInvoiceService.js'
+import {
+  processDueGigstackInvoiceDeliveryJobs,
+  processDueGigstackInvoiceJobs
+} from '../services/gigstackInvoiceService.js'
 import { canRunBackgroundJob } from '../services/licenseService.js'
 import { logger } from '../utils/logger.js'
 import { withCronLock } from '../utils/cronLock.js'
@@ -18,18 +21,30 @@ export async function runGigstackInvoiceJobs(source = 'interval') {
       const lock = await withCronLock(
         'gigstack-invoice-jobs',
         LOCK_TTL_MS,
-        () => processDueGigstackInvoiceJobs(),
+        async () => ({
+          invoiceResults: await processDueGigstackInvoiceJobs(),
+          deliveryResults: await processDueGigstackInvoiceDeliveryJobs()
+        }),
         { failOpen: false, leaseTtlMs: LOCK_TTL_MS }
       )
       if (!lock.ran) return { skipped: true, reason: 'locked' }
-      const results = lock.result || []
-      const registered = results.filter((result) => result.registered).length
-      const retrying = results.filter((result) => result.error && result.retryable).length
-      const blocked = results.filter((result) => result.error && !result.retryable).length
-      if (registered || retrying || blocked) {
-        logger.info(`[Gigstack] ${source}: ${registered} registrados, ${retrying} en reintento, ${blocked} bloqueados.`)
+      const invoiceResults = lock.result?.invoiceResults || []
+      const deliveryResults = lock.result?.deliveryResults || []
+      const registered = invoiceResults.filter((result) => result.registered).length
+      const invoiceRetrying = invoiceResults.filter((result) => result.error && result.retryable).length
+      const invoiceBlocked = invoiceResults.filter((result) => result.error && !result.retryable).length
+      const delivered = deliveryResults.filter((result) => result.sent).length
+      const deliveryRetrying = deliveryResults.filter((result) => result.error && result.retryable).length
+      const deliveryBlocked = deliveryResults.filter((result) => result.error && !result.retryable).length
+      if (registered || invoiceRetrying || invoiceBlocked || delivered || deliveryRetrying || deliveryBlocked) {
+        logger.info(`[Gigstack] ${source}: ${registered} registrados, ${delivered} documentos enviados, ${invoiceRetrying + deliveryRetrying} en reintento, ${invoiceBlocked + deliveryBlocked} bloqueados.`)
       }
-      return { registered, retrying, blocked }
+      return {
+        registered,
+        delivered,
+        retrying: invoiceRetrying + deliveryRetrying,
+        blocked: invoiceBlocked + deliveryBlocked
+      }
     }, source)
   } finally {
     running = false

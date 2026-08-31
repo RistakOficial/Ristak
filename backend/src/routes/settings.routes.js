@@ -57,6 +57,7 @@ import {
 } from '../controllers/messageTemplatesController.js';
 import {
   createPaymentReceiptPreviewSessionView,
+  downloadGigstackInvoiceDeliveryFileView,
   getPaymentSettingsView,
   previewPaymentReceiptSessionView,
   savePaymentSettingsView,
@@ -71,6 +72,7 @@ const requireWhatsAppAccess = requireModuleAccess('settings_whatsapp');
 const requirePaymentsAccess = requireModuleAccess('settings_payments');
 
 router.get('/payments/receipt-preview-session/:token', previewPaymentReceiptSessionView);
+router.get('/payments/gigstack-invoice-file/:token', downloadGigstackInvoiceDeliveryFileView);
 
 router.use(requireAuth);
 

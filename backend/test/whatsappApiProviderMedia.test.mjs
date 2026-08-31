@@ -480,6 +480,7 @@ async function withMetaDirectAudioCapture(callback) {
     keys.metaLastError
   ]
   const captures = []
+  const uploads = []
 
   return snapshotAppConfig(configKeys, async () => {
     await setAppConfig(keys.provider, 'meta_direct')
@@ -493,6 +494,13 @@ async function withMetaDirectAudioCapture(callback) {
     setMetaDirectFetchForTest(async (url, options = {}) => {
       const parsed = new URL(String(url))
       const method = String(options.method || 'GET').toUpperCase()
+      if (parsed.pathname.endsWith(`/${phoneNumberId}/media`) && method === 'POST') {
+        uploads.push({
+          headers: options.headers,
+          body: Buffer.from(options.body || '')
+        })
+        return ycloudJsonResponse({ id: `meta_provider_media_${uploads.length}` })
+      }
       if (parsed.pathname.endsWith(`/${phoneNumberId}/messages`) && method === 'POST') {
         const body = JSON.parse(options.body || '{}')
         captures.push(body)
@@ -506,7 +514,7 @@ async function withMetaDirectAudioCapture(callback) {
     })
 
     try {
-      return await callback({ captures, businessPhone, phoneNumberId })
+      return await callback({ captures, uploads, businessPhone, phoneNumberId })
     } finally {
       setMetaDirectFetchForTest(null)
     }
@@ -1230,6 +1238,72 @@ test('Meta Direct envía foto, documento, video y ubicación sin pasar por YClou
       assert.equal(rows.every(row => row.provider === 'meta_direct'), true)
       assert.equal(rows.every(row => row.source_adapter === 'meta_direct'), true)
       assert.equal(rows.every(row => row.ycloud_message_id === null), true)
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR id = ? OR phone = ? OR to_phone = ?', [contactId, inboundId, to, to]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, to]).catch(() => undefined)
+    }
+  })
+})
+
+test('Meta Direct sube documentos binarios al proveedor sin crear una URL pública', async () => {
+  await withMetaDirectAudioCapture(async ({ captures, uploads, businessPhone, phoneNumberId }) => {
+    const suffix = randomUUID()
+    const to = `+52158${Date.now().toString().slice(-8)}`
+    const contactId = `meta_binary_document_contact_${suffix}`
+    const inboundId = `meta_binary_document_inbound_${suffix}`
+
+    try {
+      await db.run(`
+        INSERT INTO contacts (id, phone, full_name, first_name, source, created_at, updated_at)
+        VALUES (?, ?, 'Cliente Meta Binario', 'Cliente', 'WhatsApp_API', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [contactId, to])
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, meta_message_id, contact_id, phone, from_phone, to_phone,
+          business_phone, business_phone_number_id, transport, direction, message_type,
+          message_text, status, message_timestamp, created_at, updated_at
+        ) VALUES (?, 'meta_direct', ?, ?, ?, ?, ?, ?, ?, 'api', 'inbound', 'text',
+          'Ventana abierta', 'received', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [inboundId, inboundId, contactId, to, to, businessPhone, businessPhone, phoneNumberId])
+
+      const response = await sendWhatsAppApiDocumentMessage({
+        to,
+        from: businessPhone,
+        contactId,
+        phoneNumberId,
+        documentDataUrl: PDF_DATA_URL,
+        filename: 'factura.pdf',
+        mimeType: 'application/pdf',
+        externalId: `meta-binary-document-${suffix}`,
+        sensitive: true,
+        allowQrFallback: false
+      })
+
+      assert.equal(uploads.length, 1)
+      assert.match(String(uploads[0].headers['Content-Type']), /^multipart\/form-data; boundary=/)
+      assert.equal(uploads[0].body.includes(Buffer.from('name="messaging_product"')), true)
+      assert.equal(uploads[0].body.includes(Buffer.from('filename="factura.pdf"')), true)
+      assert.equal(uploads[0].body.includes(Buffer.from('%PDF')), true)
+      assert.equal(captures.length, 1)
+      assert.deepEqual(captures[0].document, {
+        id: 'meta_provider_media_1',
+        filename: 'factura.pdf'
+      })
+      assert.equal(response.document.providerMediaId, 'meta_provider_media_1')
+      assert.equal(response.document.ristakPrivateMedia, true)
+
+      const row = await db.get(
+        `SELECT media_url, media_mime_type, media_filename, raw_payload_json
+         FROM whatsapp_api_messages
+         WHERE contact_id = ? AND direction = 'outbound' AND message_type = 'document'`,
+        [contactId]
+      )
+      assert.ok(row)
+      assert.equal(row.media_url, null)
+      assert.equal(row.media_mime_type, 'application/pdf')
+      assert.equal(row.media_filename, 'factura.pdf')
+      assert.equal(JSON.parse(row.raw_payload_json).ristakPrivateMedia, true)
     } finally {
       await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR id = ? OR phone = ? OR to_phone = ?', [contactId, inboundId, to, to]).catch(() => undefined)
       await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to]).catch(() => undefined)

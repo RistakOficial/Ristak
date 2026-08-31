@@ -5075,8 +5075,14 @@ export const PaymentsConfiguration: React.FC = () => {
 
           <div className={styles.switchStack}>
             {renderSwitchRow(
-              'Enviar factura por correo desde Gigstack',
-              `Usa el correo guardado en ${customerLowerLabel}. Si falta correo, Ristak bloquea el envío fiscal en vez de inventar datos.`,
+              'Enviar PDF y XML por WhatsApp',
+              `Ristak usa el número y la conversación actual de ${customerLowerLabel}. Por QR manda ambos archivos; la API oficial entrega el PDF y comparte el XML con un enlace porque Meta no acepta XML como adjunto.`,
+              taxes.gigstackSendWhatsapp !== false,
+              (next) => setTaxValue('gigstackSendWhatsapp', next)
+            )}
+            {renderSwitchRow(
+              'Enviar PDF y XML por correo',
+              `Ristak adjunta ambos documentos al correo guardado en ${customerLowerLabel}. Si falta correo o la integración no está conectada, la factura sigue timbrada y el envío queda bloqueado para revisión.`,
               taxes.gigstackSendEmail !== false,
               (next) => setTaxValue('gigstackSendEmail', next)
             )}

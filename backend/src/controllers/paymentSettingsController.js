@@ -12,12 +12,22 @@ import { renderPaymentReceiptPreviewHtml } from '../services/paymentReceiptPrevi
 import { logger } from '../utils/logger.js'
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 import {
+  getGigstackInvoiceDeliveryPublicFile,
   getGigstackFiscalProfile,
   requeueBlockedGigstackInvoiceJobs,
   testGigstackConnection
 } from '../services/gigstackInvoiceService.js'
 
 const PAYMENT_RECEIPT_PREVIEW_TTL_MS = 60 * 60 * 1000
+const REQUEUEABLE_GIGSTACK_CONFIGURATION_ERRORS = [
+  'missing_test_token',
+  'missing_live_token',
+  'invalid_test_token',
+  'invalid_live_token',
+  'gigstack_token_mode_mismatch',
+  'gigstack_sat_not_connected',
+  'gigstack_fiscal_profile_incomplete'
+]
 const paymentReceiptPreviewSessions = new Map()
 
 function sendPaymentSettingsError(res, error, fallback = 'No se pudo guardar la configuración de pagos') {
@@ -112,7 +122,9 @@ export async function savePaymentSettingsView(req, res) {
     await syncRegisteredIntegrationCronsForProvider('conekta', { reason: 'payment-mode-changed' })
     await syncRegisteredIntegrationCronsForProvider('mercadopago', { reason: 'payment-mode-changed' })
     await syncRegisteredIntegrationCronsForProvider('rebill', { reason: 'payment-mode-changed' })
-    await requeueBlockedGigstackInvoiceJobs()
+    await requeueBlockedGigstackInvoiceJobs({
+      errorCodes: REQUEUEABLE_GIGSTACK_CONFIGURATION_ERRORS
+    })
     await syncRegisteredIntegrationCronsForProvider('gigstack', { reason: 'gigstack-settings-changed' })
     res.json({ success: true, data: settings })
   } catch (error) {
@@ -186,7 +198,9 @@ export async function syncGigstackFiscalProfileView(req, res) {
       taxes: mergeGigstackFiscalProfileTaxes(draftTaxes, profile)
     }, { allowGigstackFiscalOverride: true })
 
-    await requeueBlockedGigstackInvoiceJobs()
+    await requeueBlockedGigstackInvoiceJobs({
+      errorCodes: REQUEUEABLE_GIGSTACK_CONFIGURATION_ERRORS
+    })
     await syncRegisteredIntegrationCronsForProvider('gigstack', { reason: 'gigstack-fiscal-profile-synced' })
     res.json({ success: true, data: settings })
   } catch (error) {
@@ -249,5 +263,22 @@ export async function previewPaymentReceiptSessionView(req, res) {
   } catch (error) {
     logger.error(`Error previsualizando sesión temporal de comprobante: ${error.message}`)
     return res.status(500).type('html').send('Error previsualizando comprobante')
+  }
+}
+
+export async function downloadGigstackInvoiceDeliveryFileView(req, res) {
+  try {
+    const result = await getGigstackInvoiceDeliveryPublicFile(req.params.token)
+    res.set('Cache-Control', 'private, no-store, max-age=0')
+    res.set('Content-Type', result.contentType)
+    res.set('X-Content-Type-Options', 'nosniff')
+    res.attachment(result.fileName)
+    res.send(result.buffer)
+  } catch (error) {
+    logger.warn(`Descarga fiscal temporal rechazada: ${error.message}`)
+    res.status(error.status || 400).json({
+      success: false,
+      error: error.message || 'El enlace fiscal no es válido o ya expiró'
+    })
   }
 }

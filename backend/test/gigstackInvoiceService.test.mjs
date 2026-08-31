@@ -4,14 +4,20 @@ import JSZip from 'jszip'
 
 import { db, setAppConfig } from '../src/config/database.js'
 import {
+  enqueueGigstackInvoiceDeliveryJobs,
   getGigstackFiscalProfile,
+  getGigstackInvoiceDeliveryPublicFile,
   getGigstackInvoiceFileDownload,
+  processDueGigstackInvoiceDeliveryJobs,
+  processGigstackInvoiceDeliveryJob,
   processGigstackInvoiceJob,
   registerGigstackPaymentForTransaction,
   registerGigstackPaymentForTransactionInBackground,
+  setGigstackInvoiceDeliveryDependenciesForTest,
   testGigstackConnection
 } from '../src/services/gigstackInvoiceService.js'
 import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
+import { signPublicContextClaims } from '../src/services/publicContextTokenService.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 
 const originalFetch = globalThis.fetch
@@ -28,6 +34,7 @@ function fakeGigstackToken(livemode) {
 
 afterEach(async () => {
   globalThis.fetch = originalFetch
+  setGigstackInvoiceDeliveryDependenciesForTest(null)
   await setAppConfig('payments_settings', null)
 })
 
@@ -272,13 +279,25 @@ describe('Gigstack payment registration', () => {
           ristak_payment_mode: 'test'
         },
         idempotency_key: `ristak-payment-${paymentId}`,
-        send_email: true
+        send_email: false
       })
       const storedPayment = await db.get('SELECT metadata_json FROM payments WHERE id = ?', [paymentId])
       const storedMetadata = JSON.parse(storedPayment.metadata_json)
       assert.equal(storedMetadata.gigstack.status, 'stamped')
       assert.equal(storedMetadata.gigstack.livemode, false)
       assert.equal(storedMetadata.gigstack.invoices[0].status, 'stamped')
+      const deliveryJobs = await db.all(
+        `SELECT channel, document_format, status
+         FROM gigstack_invoice_delivery_jobs
+         WHERE payment_id = ?
+         ORDER BY channel, document_format`,
+        [paymentId]
+      )
+      assert.deepEqual(deliveryJobs, [
+        { channel: 'email', document_format: 'bundle', status: 'pending' },
+        { channel: 'whatsapp', document_format: 'pdf', status: 'pending' },
+        { channel: 'whatsapp', document_format: 'xml', status: 'pending' }
+      ])
     } finally {
       await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
       await db.run('DELETE FROM products WHERE id = ?', [productId])
@@ -521,6 +540,306 @@ describe('Gigstack payment registration', () => {
       assert.equal(await archive.file('factura-UUID-FILES-1.xml').async('string'), xml.toString())
     } finally {
       await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
+    }
+  })
+
+  it('delivers PDF and XML through the current QR conversation and attaches both by email', async () => {
+    const suffix = Date.now().toString(36)
+    const contactId = `contact_gigstack_delivery_${suffix}`
+    const paymentId = `payment_gigstack_delivery_${suffix}`
+    const invoiceId = `invoice_delivery_${suffix}`
+    const testToken = fakeGigstackToken(false)
+    const whatsappDocuments = []
+    const emails = []
+    const pdf = Buffer.from('%PDF-1.4 fiscal delivery')
+    const xml = Buffer.from('<?xml version="1.0"?><cfdi/>')
+
+    await initializeMasterKey()
+    await savePaymentSettings({
+      taxes: {
+        enabled: true,
+        gigstackEnabled: true,
+        gigstackSatConnected: true,
+        gigstackTestApiToken: testToken,
+        gigstackSendWhatsapp: true,
+        gigstackSendEmail: true
+      }
+    }, { allowGigstackFiscalOverride: true })
+    await db.run(
+      `INSERT INTO contacts (
+         id, email, full_name, first_name, phone,
+         preferred_whatsapp_phone_number_id, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        contactId,
+        `delivery-${suffix}@example.com`,
+        'Cliente Fiscal',
+        'Cliente',
+        '+5215512345678',
+        'phone_qr_delivery'
+      ]
+    )
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_mode, payment_provider,
+         metadata_json, date, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, 'paid', 'test', 'stripe', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId, 1160, 'MXN', '{}']
+    )
+
+    globalThis.fetch = async (url) => {
+      assert.match(String(url), new RegExp(`/invoices/${invoiceId}/files`))
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            pdf: `data:application/pdf;base64,${pdf.toString('base64')}`,
+            xml: xml.toString('utf8')
+          }
+        })
+      }
+    }
+    setGigstackInvoiceDeliveryDependenciesForTest({
+      resolvePaymentWhatsAppRoute: async (contact) => {
+        assert.equal(contact.preferredWhatsAppPhoneNumberId, 'phone_qr_delivery')
+        return {
+          available: true,
+          transport: 'qr',
+          fromPhone: '+526561111111',
+          phoneNumberId: 'phone_qr_delivery'
+        }
+      },
+      paymentWhatsAppRouteArgs: (route) => ({
+        from: route.fromPhone,
+        phoneNumberId: route.phoneNumberId,
+        transport: 'qr',
+        allowQrFallback: false
+      }),
+      sendWhatsAppApiDocumentMessage: async (payload) => {
+        whatsappDocuments.push(payload)
+        return {
+          id: `qr-doc-${whatsappDocuments.length}`,
+          status: 'delivered',
+          transport: 'qr',
+          to: payload.to
+        }
+      },
+      sendWhatsAppApiTextMessage: async () => {
+        throw new Error('QR debe enviar el XML como documento, no como enlace')
+      },
+      sendEmailToContact: async (payload) => {
+        emails.push(payload)
+        return { messageId: 'smtp-fiscal-1', status: 'sent', to: payload.to }
+      }
+    })
+
+    try {
+      const queued = await enqueueGigstackInvoiceDeliveryJobs(paymentId, {
+        mode: 'test',
+        invoices: [{ id: invoiceId, uuid: 'UUID-DELIVERY', status: 'stamped' }],
+        taxes: { gigstackSendWhatsapp: true, gigstackSendEmail: true }
+      })
+      assert.equal(queued.queued, 3)
+
+      const results = await processDueGigstackInvoiceDeliveryJobs()
+      assert.equal(results.filter(result => result.sent).length, 3)
+      assert.deepEqual(
+        whatsappDocuments.map(message => message.filename).sort(),
+        ['factura-UUID-DELIVERY.pdf', 'factura-UUID-DELIVERY.xml']
+      )
+      assert.equal(whatsappDocuments.every(message => message.sensitive === true), true)
+      const sentPdf = whatsappDocuments.find(message => message.filename.endsWith('.pdf'))
+      const sentXml = whatsappDocuments.find(message => message.filename.endsWith('.xml'))
+      assert.equal(
+        Buffer.from(sentPdf.documentDataUrl.split(',')[1], 'base64').toString(),
+        pdf.toString()
+      )
+      assert.equal(
+        Buffer.from(sentXml.documentDataUrl.split(',')[1], 'base64').toString(),
+        xml.toString()
+      )
+      assert.equal(emails.length, 1)
+      assert.deepEqual(emails[0].attachments.map(attachment => attachment.filename), [
+        'factura-UUID-DELIVERY.pdf',
+        'factura-UUID-DELIVERY.xml'
+      ])
+      assert.equal(emails[0].attachments[0].content.toString(), pdf.toString())
+      assert.equal(emails[0].attachments[1].content.toString(), xml.toString())
+
+      const jobs = await db.all(
+        `SELECT channel, document_format, status
+         FROM gigstack_invoice_delivery_jobs
+         WHERE payment_id = ?
+         ORDER BY channel, document_format`,
+        [paymentId]
+      )
+      assert.deepEqual(jobs, [
+        { channel: 'email', document_format: 'bundle', status: 'sent' },
+        { channel: 'whatsapp', document_format: 'pdf', status: 'sent' },
+        { channel: 'whatsapp', document_format: 'xml', status: 'sent' }
+      ])
+    } finally {
+      await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    }
+  })
+
+  it('uses an expiring private link for XML on the official WhatsApp API', async () => {
+    const suffix = Date.now().toString(36)
+    const contactId = `contact_gigstack_api_xml_${suffix}`
+    const paymentId = `payment_gigstack_api_xml_${suffix}`
+    const invoiceId = `invoice_api_xml_${suffix}`
+    const sentTexts = []
+
+    await initializeMasterKey()
+    await savePaymentSettings({
+      taxes: {
+        enabled: true,
+        gigstackEnabled: true,
+        gigstackSatConnected: true,
+        gigstackTestApiToken: fakeGigstackToken(false),
+        gigstackSendWhatsapp: true,
+        gigstackSendEmail: false
+      }
+    }, { allowGigstackFiscalOverride: true })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, first_name, phone, created_at, updated_at)
+       VALUES (?, 'Cliente API', 'Cliente', '+5215512345679', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_mode, payment_provider,
+         payment_url, metadata_json, date, created_at, updated_at
+       ) VALUES (?, ?, 1160, 'MXN', 'paid', 'test', 'stripe', ?, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId, `https://pagos.example.test/pay/${paymentId}`]
+    )
+    setGigstackInvoiceDeliveryDependenciesForTest({
+      resolvePaymentWhatsAppRoute: async () => ({
+        available: true,
+        transport: 'api',
+        fromPhone: '+526561111111',
+        phoneNumberId: 'phone_api_delivery'
+      }),
+      paymentWhatsAppRouteArgs: () => ({
+        from: '+526561111111',
+        phoneNumberId: 'phone_api_delivery',
+        allowQrFallback: true
+      }),
+      signPublicContextClaims: async ({ purpose, claims, ttlSeconds }) => {
+        assert.equal(purpose, 'gigstack.invoice.delivery')
+        assert.equal(claims.invoiceId, invoiceId)
+        assert.equal(claims.format, 'xml')
+        assert.equal(ttlSeconds, 24 * 60 * 60)
+        return 'signed-xml-token'
+      },
+      sendWhatsAppApiTextMessage: async (payload) => {
+        sentTexts.push(payload)
+        return { id: 'wamid-xml-link', status: 'sent', transport: 'api', to: payload.to }
+      },
+      sendWhatsAppApiDocumentMessage: async () => {
+        throw new Error('La API oficial no debe intentar adjuntar XML')
+      }
+    })
+
+    try {
+      await enqueueGigstackInvoiceDeliveryJobs(paymentId, {
+        mode: 'test',
+        invoices: [{ id: invoiceId, uuid: 'UUID-API-XML', status: 'stamped' }],
+        taxes: { gigstackSendWhatsapp: true, gigstackSendEmail: false }
+      })
+      const xmlJob = await db.get(
+        `SELECT id FROM gigstack_invoice_delivery_jobs
+         WHERE payment_id = ? AND channel = 'whatsapp' AND document_format = 'xml'`,
+        [paymentId]
+      )
+      const result = await processGigstackInvoiceDeliveryJob(xmlJob.id)
+      assert.equal(result.sent, true)
+      assert.equal(sentTexts.length, 1)
+      assert.match(sentTexts[0].text, /enlace privado vence en 24 horas/i)
+      assert.match(
+        sentTexts[0].text,
+        /https:\/\/pagos\.example\.test\/api\/settings\/payments\/gigstack-invoice-file\/signed-xml-token/
+      )
+    } finally {
+      await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    }
+  })
+
+  it('serves the XML only through a valid signed delivery capability', async () => {
+    const suffix = Date.now().toString(36)
+    const contactId = `contact_gigstack_private_xml_${suffix}`
+    const paymentId = `payment_gigstack_private_xml_${suffix}`
+    const invoiceId = `invoice_private_xml_${suffix}`
+    const xml = Buffer.from('<?xml version="1.0"?><cfdi:Comprobante/>')
+
+    await initializeMasterKey()
+    await savePaymentSettings({
+      taxes: {
+        enabled: true,
+        gigstackEnabled: true,
+        gigstackSatConnected: true,
+        gigstackTestApiToken: fakeGigstackToken(false),
+        gigstackSendWhatsapp: true,
+        gigstackSendEmail: false
+      }
+    }, { allowGigstackFiscalOverride: true })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, phone, created_at, updated_at)
+       VALUES (?, 'Cliente XML privado', '+5215512345680', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_mode, payment_provider,
+         metadata_json, date, created_at, updated_at
+       ) VALUES (?, ?, 1160, 'MXN', 'paid', 'test', 'stripe', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    globalThis.fetch = async (url) => {
+      assert.match(String(url), new RegExp(`/invoices/${invoiceId}/files`))
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: { xml: xml.toString('utf8') } })
+      }
+    }
+
+    try {
+      await enqueueGigstackInvoiceDeliveryJobs(paymentId, {
+        mode: 'test',
+        invoices: [{ id: invoiceId, uuid: 'UUID-PRIVATE-XML', status: 'stamped' }],
+        taxes: { gigstackSendWhatsapp: true, gigstackSendEmail: false }
+      })
+      const xmlJob = await db.get(
+        `SELECT id FROM gigstack_invoice_delivery_jobs
+         WHERE payment_id = ? AND channel = 'whatsapp' AND document_format = 'xml'`,
+        [paymentId]
+      )
+      const capability = await signPublicContextClaims({
+        purpose: 'gigstack.invoice.delivery',
+        claims: {
+          jobId: xmlJob.id,
+          paymentId,
+          invoiceId,
+          format: 'xml'
+        },
+        ttlSeconds: 24 * 60 * 60
+      })
+
+      const result = await getGigstackInvoiceDeliveryPublicFile(capability)
+      assert.equal(result.contentType, 'application/xml')
+      assert.equal(result.fileName, 'factura-UUID-PRIVATE-XML.xml')
+      assert.equal(result.buffer.toString(), xml.toString())
+      await assert.rejects(
+        () => getGigstackInvoiceDeliveryPublicFile(`${capability}alterado`),
+        /Firma pública inválida/
+      )
+    } finally {
+      await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
     }
   })
 })

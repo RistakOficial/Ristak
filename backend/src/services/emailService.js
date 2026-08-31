@@ -39,6 +39,9 @@ const SIGNATURE_IMAGE_LIMIT = 2 * 1024 * 1024
 const EMAIL_SUBJECT_LIMIT = 998
 const EMAIL_TEXT_LIMIT = 120000
 const EMAIL_HTML_LIMIT = 240000
+const EMAIL_ATTACHMENT_MAX_COUNT = 10
+const EMAIL_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024
+const EMAIL_ATTACHMENTS_TOTAL_MAX_BYTES = 40 * 1024 * 1024
 const EMAIL_INBOUND_DEFAULT_MAILBOX = 'INBOX'
 const EMAIL_INBOUND_CREATE_CONTACTS_DEFAULT = false
 const EMAIL_INBOUND_FIRST_SYNC_LOOKBACK = 50
@@ -218,6 +221,53 @@ function cleanString(value) {
 function limitString(value, maxLength) {
   const normalized = cleanString(value)
   return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized
+}
+
+function normalizeEmailAttachments(value) {
+  if (value === undefined || value === null) return []
+  if (!Array.isArray(value)) throw httpError(400, 'Los archivos adjuntos del correo no son válidos')
+  if (value.length > EMAIL_ATTACHMENT_MAX_COUNT) {
+    throw httpError(400, `El correo admite máximo ${EMAIL_ATTACHMENT_MAX_COUNT} archivos adjuntos`)
+  }
+
+  let totalBytes = 0
+  return value.map((attachment, index) => {
+    const content = Buffer.isBuffer(attachment?.content)
+      ? attachment.content
+      : attachment?.content instanceof Uint8Array
+        ? Buffer.from(attachment.content)
+        : null
+    if (!content?.length) throw httpError(400, `El archivo adjunto ${index + 1} está vacío o no es válido`)
+    if (content.length > EMAIL_ATTACHMENT_MAX_BYTES) {
+      throw httpError(413, `El archivo adjunto ${index + 1} excede 25 MB`)
+    }
+    totalBytes += content.length
+    if (totalBytes > EMAIL_ATTACHMENTS_TOTAL_MAX_BYTES) {
+      throw httpError(413, 'Los archivos adjuntos del correo exceden 40 MB en total')
+    }
+
+    const filename = limitString(
+      cleanString(attachment.filename || attachment.name || `archivo-${index + 1}`)
+        .replace(/[\\/\0]/g, '_'),
+      240
+    )
+    const contentType = limitString(attachment.contentType || attachment.mimeType, 160)
+      .replace(/[\r\n]/g, '')
+
+    return {
+      filename: filename || `archivo-${index + 1}`,
+      content,
+      ...(contentType ? { contentType } : {})
+    }
+  })
+}
+
+function emailAttachmentMetadata(attachments = []) {
+  return attachments.map((attachment) => ({
+    filename: attachment.filename,
+    contentType: attachment.contentType || 'application/octet-stream',
+    sizeBytes: attachment.content.length
+  }))
 }
 
 function escapeHtml(value) {
@@ -767,7 +817,8 @@ async function sendMailWithTransporter(transporter, config, message) {
     subject: cleanString(message.subject),
     text: cleanString(message.text) || undefined,
     html: cleanString(message.html) || undefined,
-    replyTo: cleanString(message.replyTo) || config.replyTo || undefined
+    replyTo: cleanString(message.replyTo) || config.replyTo || undefined,
+    attachments: message.attachments?.length ? message.attachments : undefined
   })
 
   return {
@@ -1723,6 +1774,7 @@ export async function sendEmail({
   text,
   html,
   replyTo,
+  attachments,
   includeSignature = true,
   renderSignature
 } = {}) {
@@ -1734,6 +1786,7 @@ export async function sendEmail({
   }
 
   const recipient = cleanString(to).toLowerCase()
+  const normalizedAttachments = normalizeEmailAttachments(attachments)
   if (!EMAIL_PATTERN.test(recipient)) throw httpError(400, 'El correo del destinatario no es válido')
   if (!cleanString(subject)) throw httpError(400, 'El correo necesita un asunto')
   if (!cleanString(text) && !cleanString(html)) throw httpError(400, 'El correo necesita contenido')
@@ -1753,7 +1806,8 @@ export async function sendEmail({
     subject,
     text,
     html,
-    replyTo
+    replyTo,
+    attachments: normalizedAttachments
   }, signature)
 
   try {
@@ -1774,6 +1828,7 @@ export async function sendEmailToContact({
   text,
   html,
   replyTo,
+  attachments,
   externalId,
   agentId,
   userId,
@@ -1812,6 +1867,7 @@ export async function sendEmailToContact({
   const cleanText = limitString(renderedText, EMAIL_TEXT_LIMIT)
   const cleanHtml = limitString(renderedHtml || textToEmailHtml(cleanText), EMAIL_HTML_LIMIT)
   const cleanReplyTo = cleanString(replyTo).toLowerCase()
+  const normalizedAttachments = normalizeEmailAttachments(attachments)
   if (!cleanSubject) throw httpError(400, 'El correo necesita un asunto')
   if (!cleanText && !cleanHtml) throw httpError(400, 'El correo necesita contenido')
   if (cleanReplyTo && !EMAIL_PATTERN.test(cleanReplyTo)) throw httpError(400, 'El correo de respuestas no es válido')
@@ -1824,6 +1880,7 @@ export async function sendEmailToContact({
     connectedProvider: config.providerId || config.provider || 'smtp',
     senderName: config.fromName || '',
     includeSignature: includeSignature !== false,
+    attachments: emailAttachmentMetadata(normalizedAttachments),
     ...(externalId ? { externalId: cleanString(externalId) } : {}),
     ...buildConversationalAgentMessageMetadata(agentId)
   }
@@ -1858,6 +1915,7 @@ export async function sendEmailToContact({
       text: cleanText,
       html: cleanHtml,
       replyTo: cleanReplyTo || undefined,
+      attachments: normalizedAttachments,
       includeSignature,
       renderSignature: renderStoredSignature
     })
