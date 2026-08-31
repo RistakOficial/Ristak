@@ -83,9 +83,10 @@ function nextResponseWindow(cursor, timezone, startParts, endParts) {
  *
  * `elapsed` cuenta tiempo corrido. `response_window` sólo consume tiempo dentro
  * del horario diario configurado en la zona del negocio; fuera de ese horario
- * el contador se pausa. El horario puede cruzar medianoche (por ejemplo 21:00–
- * 09:00). `latestAt` permite fallar cerrado cuando la cita empieza antes de que
- * se alcance el plazo completo.
+ * el contador se pausa. `appointment_cutoff` fija el vencimiento exactamente X
+ * tiempo antes de `latestAt`, sin depender de cuándo terminó el envío. El
+ * horario puede cruzar medianoche (por ejemplo 21:00–09:00). `latestAt` permite
+ * fallar cerrado cuando la cita empieza antes de que se alcance el plazo.
  */
 export function computeConfirmationDeadline({
   sentAt,
@@ -104,6 +105,12 @@ export function computeConfirmationDeadline({
 
   const cutoff = latestAt ? parseStoredUtcDateTime(latestAt) : null
   if (latestAt && !cutoff) return null
+
+  if (cleanString(timeoutMode) === 'appointment_cutoff') {
+    if (!cutoff) return null
+    const deadline = cutoff.minus({ milliseconds: value * unitMs })
+    return deadline.toMillis() > sent.toMillis() ? deadline : null
+  }
 
   if (cleanString(timeoutMode) !== 'response_window') {
     const deadline = sent.plus({ milliseconds: value * unitMs })
@@ -150,6 +157,39 @@ export function computeConfirmationDeadline({
   }
 
   return null
+}
+
+/**
+ * Máximo tiempo que una ventana diaria puede aportar dentro de cualquier
+ * intervalo de la duración indicada. Sirve para rechazar configuraciones que
+ * no podrían completarse ni siquiera en la mejor alineación posible.
+ */
+export function computeMaximumResponseWindowDuration({
+  intervalMs,
+  responseStart,
+  responseEnd
+} = {}) {
+  const durationMs = Number(intervalMs)
+  const startParts = parseHHMM(responseStart, null)
+  const endParts = parseHHMM(responseEnd, null)
+  if (!Number.isFinite(durationMs) || durationMs <= 0 || !startParts || !endParts) {
+    return null
+  }
+
+  const dayMinutes = 24 * 60
+  const startMinutes = startParts.hour * 60 + startParts.minute
+  const endMinutes = endParts.hour * 60 + endParts.minute
+  if (startMinutes === endMinutes) return null
+
+  const windowMinutes = endMinutes > startMinutes
+    ? endMinutes - startMinutes
+    : dayMinutes - startMinutes + endMinutes
+  const dayMs = OFFSET_UNIT_MS.days
+  const windowMs = windowMinutes * OFFSET_UNIT_MS.minutes
+  const fullDays = Math.floor(durationMs / dayMs)
+  const remainderMs = durationMs % dayMs
+
+  return fullDays * windowMs + Math.min(remainderMs, windowMs)
 }
 
 export function formatOffsetLabel(offsetValue, offsetUnit, timingAnchor = 'before_appointment') {

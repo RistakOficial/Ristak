@@ -996,6 +996,49 @@ test('el envío congela un deadline que sólo cuenta dentro del horario de respu
   })
 })
 
+test('el envío congela la fecha límite exactamente antes del inicio de la cita', async () => {
+  await snapshotAppConfig(['account_timezone'], async () => {
+    await setAppConfig('account_timezone', 'America/Mexico_City')
+    invalidateTimezoneCache()
+    try {
+      await withYCloudMessageCapture(async () => {
+        await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder, appointmentId }) => {
+          await db.run(`
+            UPDATE appointment_reminders
+            SET message_type = 'confirmation',
+                ai_enabled = 1,
+                no_confirm_action = 'cancel_appointment',
+                confirmation_timeout_value = 30,
+                confirmation_timeout_unit = 'minutes',
+                confirmation_timeout_mode = 'appointment_cutoff'
+            WHERE id = ?
+          `, [reminder.id])
+
+          const result = await processDueAppointmentReminders({ batchSize: 1 })
+          assert.equal(result.sent, 1)
+
+          const send = await db.get(`
+            SELECT confirmation_deadline_at, confirmation_timeout_status
+            FROM appointment_reminder_sends
+            WHERE reminder_id = ? AND appointment_id = ?
+          `, [reminder.id, appointmentId])
+          const appointment = await db.get(
+            'SELECT start_time FROM appointments WHERE id = ?',
+            [appointmentId]
+          )
+          const deadline = DateTime.fromISO(send.confirmation_deadline_at, { zone: 'utc' })
+          const appointmentStart = DateTime.fromISO(appointment.start_time, { zone: 'utc' })
+
+          assert.equal(send.confirmation_timeout_status, 'pending')
+          assert.equal(appointmentStart.diff(deadline, 'minutes').minutes, 30)
+        })
+      })
+    } finally {
+      invalidateTimezoneCache()
+    }
+  })
+})
+
 test('el envío corrige una plantilla default cruzada y usa cita_programada al agendar', async (t) => {
   await withYCloudMessageCapture(async (captures) => {
     await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder, appointmentId }) => {
@@ -1766,6 +1809,43 @@ test('toda confirmación recibe un plazo protegido por defecto y valida límites
     confirmationTimeoutUnit: 'days',
     confirmationTimeoutMode: 'elapsed'
   }), /debe terminar antes/)
+
+  await assert.rejects(() => createAppointmentReminder({
+    ...baseInput,
+    confirmationTimeoutValue: 12,
+    confirmationTimeoutUnit: 'hours',
+    confirmationTimeoutMode: 'response_window',
+    confirmationResponseStart: '11:00',
+    confirmationResponseEnd: '22:00'
+  }), /como máximo 11 horas disponibles/)
+
+  let cutoffReminderId = ''
+  try {
+    const cutoffReminder = await createAppointmentReminder({
+      ...baseInput,
+      name: `Confirmación con corte fijo ${randomUUID()}`,
+      noConfirmAction: 'cancel_appointment',
+      confirmationTimeoutValue: 5,
+      confirmationTimeoutUnit: 'hours',
+      confirmationTimeoutMode: 'appointment_cutoff'
+    })
+    cutoffReminderId = cutoffReminder.id
+    assert.equal(cutoffReminder.confirmationTimeoutValue, 5)
+    assert.equal(cutoffReminder.confirmationTimeoutUnit, 'hours')
+    assert.equal(cutoffReminder.confirmationTimeoutMode, 'appointment_cutoff')
+  } finally {
+    if (cutoffReminderId) await deleteAppointmentReminder(cutoffReminderId)
+  }
+
+  await assert.rejects(() => createAppointmentReminder({
+    ...baseInput,
+    timingAnchor: 'after_booking',
+    offsetValue: 0,
+    offsetUnit: 'minutes',
+    confirmationTimeoutValue: 5,
+    confirmationTimeoutUnit: 'hours',
+    confirmationTimeoutMode: 'appointment_cutoff'
+  }), /sólo está disponible para mensajes enviados antes de la cita/)
 })
 
 test('el horario de respuesta se guarda separado del horario de envío y conserva compatibilidad al editar', async () => {

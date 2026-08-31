@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { DateTime } from 'luxon'
 import {
   computeConfirmationDeadline,
+  computeMaximumResponseWindowDuration,
   computeReminderSendAt,
   DEFAULT_APPOINTMENT_NOTICE_TEXT,
   renderMessageText,
@@ -88,6 +89,51 @@ test('el plazo corrido conserva la suma absoluta anterior', () => {
   })
 
   assert.equal(deadline?.toISO(), '2026-06-16T08:00:00.000Z')
+})
+
+test('la fecha límite fija vence exactamente antes de la cita y no depende del envío', () => {
+  const deadline = computeConfirmationDeadline({
+    sentAt: '2026-06-15T18:00:00.000Z',
+    timeoutValue: 5,
+    timeoutUnit: 'hours',
+    timeoutMode: 'appointment_cutoff',
+    timezone: TZ,
+    latestAt: '2026-06-16T18:00:00.000Z'
+  })
+
+  assert.equal(deadline?.toISO(), '2026-06-16T13:00:00.000Z')
+})
+
+test('la fecha límite fija falla cerrado si el mensaje llega después del corte', () => {
+  const deadline = computeConfirmationDeadline({
+    sentAt: '2026-06-16T14:00:00.000Z',
+    timeoutValue: 5,
+    timeoutUnit: 'hours',
+    timeoutMode: 'appointment_cutoff',
+    timezone: TZ,
+    latestAt: '2026-06-16T18:00:00.000Z'
+  })
+
+  assert.equal(deadline, null)
+})
+
+test('detecta cuando un plazo jamás cabe en el horario de respuesta disponible', () => {
+  assert.equal(
+    computeMaximumResponseWindowDuration({
+      intervalMs: 24 * 60 * 60 * 1000,
+      responseStart: '11:00',
+      responseEnd: '22:00'
+    }),
+    11 * 60 * 60 * 1000
+  )
+  assert.equal(
+    computeMaximumResponseWindowDuration({
+      intervalMs: 24 * 60 * 60 * 1000,
+      responseStart: '21:00',
+      responseEnd: '09:00'
+    }),
+    12 * 60 * 60 * 1000
+  )
 })
 
 test('el horario de respuesta pausa el plazo durante la noche', () => {

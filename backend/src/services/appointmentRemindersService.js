@@ -40,6 +40,7 @@ import {
   formatOffsetLabel,
   offsetToMs,
   computeConfirmationDeadline,
+  computeMaximumResponseWindowDuration,
   computeReminderSendAt,
   renderMessageText,
   parseStoredUtcDateTime
@@ -112,7 +113,7 @@ const NO_CONFIRM_ACTIONS = new Set(['no_action', 'cancel_appointment'])
 const LEGACY_NOTIFY_NO_CONFIRM_ACTION = 'notify_push'
 const CONFIRMATION_TIMEOUT_UNITS = new Set(['minutes', 'hours', 'days'])
 const CONFIRMATION_RESPONSE_WINDOW_UNITS = new Set(['minutes', 'hours'])
-const CONFIRMATION_TIMEOUT_MODES = new Set(['elapsed', 'response_window'])
+const CONFIRMATION_TIMEOUT_MODES = new Set(['elapsed', 'response_window', 'appointment_cutoff'])
 const MAX_CONFIRMATION_TIMEOUT_MS = 30 * OFFSET_UNIT_MS.days
 const MAX_CONFIRMATION_REPLY_TEXT_LENGTH = 4096
 const DEFAULT_APPOINTMENT_CONFIRMATION_REPLY_TEXT =
@@ -1249,9 +1250,18 @@ function sanitizeReminderInput(input = {}, base = {}) {
         merged.confirmationResponseEnd
       )
   if (
+    confirmationTimeout.confirmationTimeoutValue !== null &&
+    confirmationTimeout.confirmationTimeoutMode === 'appointment_cutoff' &&
+    timingAnchor !== 'before_appointment'
+  ) {
+    throw createServiceError(
+      'La fecha límite antes de la cita sólo está disponible para mensajes enviados antes de la cita.'
+    )
+  }
+  if (
     timingAnchor === 'before_appointment' &&
     confirmationTimeout.confirmationTimeoutValue !== null &&
-    confirmationTimeout.confirmationTimeoutMode === 'elapsed'
+    ['elapsed', 'appointment_cutoff'].includes(confirmationTimeout.confirmationTimeoutMode)
   ) {
     const timeoutMs = confirmationTimeout.confirmationTimeoutValue *
       OFFSET_UNIT_MS[confirmationTimeout.confirmationTimeoutUnit]
@@ -1259,6 +1269,29 @@ function sanitizeReminderInput(input = {}, base = {}) {
     if (timeoutMs >= reminderLeadMs) {
       throw createServiceError(
         'El plazo para confirmar debe terminar antes de que comience la cita.'
+      )
+    }
+  }
+  if (
+    timingAnchor === 'before_appointment' &&
+    confirmationTimeout.confirmationTimeoutValue !== null &&
+    confirmationTimeout.confirmationTimeoutMode === 'response_window'
+  ) {
+    const timeoutMs = confirmationTimeout.confirmationTimeoutValue *
+      OFFSET_UNIT_MS[confirmationTimeout.confirmationTimeoutUnit]
+    const reminderLeadMs = offsetValue * OFFSET_UNIT_MS[offsetUnit]
+    const maximumAvailableMs = computeMaximumResponseWindowDuration({
+      intervalMs: reminderLeadMs,
+      responseStart: confirmationTimeout.confirmationResponseStart,
+      responseEnd: confirmationTimeout.confirmationResponseEnd
+    })
+    if (maximumAvailableMs !== null && timeoutMs > maximumAvailableMs) {
+      const availableHours = maximumAvailableMs / OFFSET_UNIT_MS.hours
+      const availableLabel = Number.isInteger(availableHours)
+        ? `${availableHours} ${availableHours === 1 ? 'hora' : 'horas'}`
+        : `${Math.round(maximumAvailableMs / OFFSET_UNIT_MS.minutes)} minutos`
+      throw createServiceError(
+        `Ese plazo no cabe antes de la cita: con el horario elegido hay como máximo ${availableLabel} disponibles. Reduce el plazo o envía el mensaje con más anticipación.`
       )
     }
   }

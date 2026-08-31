@@ -104,13 +104,18 @@ Usa estos formatos de forma intencional:
   admiten un reintento automático. El intento inicial y el reintento tienen
   identidades externas distintas; ambos deben conservar la misma ventana útil
   máxima de tres horas para no entregar un aviso fuera de tiempo.
-- Los plazos de confirmacion de citas pueden contar tiempo corrido o solo tiempo
-  dentro de un horario diario de respuesta. Ese horario son horas de pared en la
-  zona del negocio, puede cruzar medianoche y se recorre por calendario local
-  antes de convertir el resultado a UTC. El deadline se calcula y congela cuando
-  el proveedor acepta el mensaje; cambiar despues la zona o el horario no mueve
-  envios ya realizados. Si no cabe el plazo completo antes de iniciar la cita,
-  se omite la accion automatica configurada para el vencimiento.
+- Los plazos de confirmacion de citas pueden contar tiempo corrido, sólo tiempo
+  dentro de un horario diario de respuesta o terminar en un punto fijo antes de
+  la cita. Ese último modo se calcula desde el instante UTC canónico de la cita,
+  no desde el envío. El horario de respuesta usa horas de pared en la zona del
+  negocio, puede cruzar medianoche y se recorre por calendario local antes de
+  convertir el resultado a UTC. Rechaza al guardar cualquier combinación que no
+  pueda caber ni siquiera en la mejor alineación posible dentro de la
+  anticipación configurada. El deadline se calcula y congela cuando el proveedor
+  acepta el mensaje; cambiar después la zona o el horario no mueve envíos ya
+  realizados. Si un caso válido no alcanza a completar el plazo antes de iniciar
+  la cita por su hora real, se omite la acción automática configurada para el
+  vencimiento.
 
 ## Mutaciones y Refresco Canónico
 

@@ -161,6 +161,7 @@ const CONFIRMATION_TIMEOUT_MODE_OPTIONS: {
   value: ReminderConfirmationTimeoutMode
   label: string
 }[] = [
+  { value: 'appointment_cutoff', label: 'Momento fijo antes de la cita' },
   { value: 'response_window', label: 'Sólo dentro del horario de respuesta' },
   { value: 'elapsed', label: 'Tiempo corrido, incluyendo la noche' }
 ]
@@ -173,6 +174,42 @@ const CONFIRMATION_TIMEOUT_UNIT_MS: Record<ReminderConfirmationTimeoutUnit, numb
 
 const MAX_CONFIRMATION_TIMEOUT_MS = 30 * CONFIRMATION_TIMEOUT_UNIT_MS.days
 const MAX_CONFIRMATION_REPLY_TEXT_LENGTH = 4096
+
+const parseTimeToMinutes = (value?: string | null): number | null => {
+  const match = /^(\d{2}):(\d{2})$/.exec(String(value || ''))
+  if (!match) return null
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+  if (hours > 23 || minutes > 59) return null
+  return hours * 60 + minutes
+}
+
+const maximumResponseWindowDuration = (
+  intervalMs: number,
+  responseStart?: string | null,
+  responseEnd?: string | null
+): number | null => {
+  const startMinutes = parseTimeToMinutes(responseStart)
+  const endMinutes = parseTimeToMinutes(responseEnd)
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0 || startMinutes === null || endMinutes === null || startMinutes === endMinutes) {
+    return null
+  }
+  const dayMinutes = 24 * 60
+  const windowMinutes = endMinutes > startMinutes
+    ? endMinutes - startMinutes
+    : dayMinutes - startMinutes + endMinutes
+  const windowMs = windowMinutes * CONFIRMATION_TIMEOUT_UNIT_MS.minutes
+  const fullDays = Math.floor(intervalMs / CONFIRMATION_TIMEOUT_UNIT_MS.days)
+  const remainderMs = intervalMs % CONFIRMATION_TIMEOUT_UNIT_MS.days
+  return fullDays * windowMs + Math.min(remainderMs, windowMs)
+}
+
+const formatAvailableResponseTime = (durationMs: number): string => {
+  const hours = durationMs / CONFIRMATION_TIMEOUT_UNIT_MS.hours
+  if (Number.isInteger(hours)) return `${hours} ${hours === 1 ? 'hora' : 'horas'}`
+  const minutes = Math.round(durationMs / CONFIRMATION_TIMEOUT_UNIT_MS.minutes)
+  return `${minutes} minutos`
+}
 
 const maxConfirmationTimeoutValue = (unit: ReminderConfirmationTimeoutUnit) => (
   Math.floor(MAX_CONFIRMATION_TIMEOUT_MS / CONFIRMATION_TIMEOUT_UNIT_MS[unit])
@@ -467,22 +504,25 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
   const confirmationTimeoutUnitOptions = confirmationTimeoutMode === 'response_window'
     ? CONFIRMATION_TIMEOUT_UNIT_OPTIONS.filter(option => option.value !== 'days')
     : CONFIRMATION_TIMEOUT_UNIT_OPTIONS
+  const confirmationTimeoutModeOptions = isAfterBooking
+    ? CONFIRMATION_TIMEOUT_MODE_OPTIONS.filter(option => option.value !== 'appointment_cutoff')
+    : CONFIRMATION_TIMEOUT_MODE_OPTIONS
   const confirmationTimeoutValue = Number(draft.confirmationTimeoutValue) || 0
   const confirmationTimeoutMs = confirmationTimeoutValue * CONFIRMATION_TIMEOUT_UNIT_MS[confirmationTimeoutUnit]
+  const reminderLeadMs = !isAfterBooking
+    ? (Number(draft.offsetValue) || 1) * CONFIRMATION_TIMEOUT_UNIT_MS[
+        ((draft.offsetUnit as ReminderConfirmationTimeoutUnit) || 'days')
+      ]
+    : 0
   const confirmationWindowEnabled = isConfirmation && draft.aiEnabled !== false
   const confirmationTimeoutMissing = confirmationWindowEnabled &&
     (!confirmationTimeoutValue || !draft.confirmationTimeoutUnit)
   const confirmationTimeoutTooLong = confirmationWindowEnabled &&
     confirmationTimeoutMs > MAX_CONFIRMATION_TIMEOUT_MS
   const confirmationTimeoutExceedsReminderWindow = confirmationWindowEnabled &&
-    confirmationTimeoutMode === 'elapsed' &&
+    ['elapsed', 'appointment_cutoff'].includes(confirmationTimeoutMode) &&
     !isAfterBooking &&
-    confirmationTimeoutMs >= (
-      (Number(draft.offsetValue) || 1) *
-      CONFIRMATION_TIMEOUT_UNIT_MS[
-        ((draft.offsetUnit as ReminderConfirmationTimeoutUnit) || 'days')
-      ]
-    )
+    confirmationTimeoutMs >= reminderLeadMs
   const confirmationResponseWindowInvalid = confirmationWindowEnabled &&
     confirmationTimeoutMode === 'response_window' &&
     (
@@ -490,10 +530,22 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
       !draft.confirmationResponseEnd ||
       draft.confirmationResponseStart === draft.confirmationResponseEnd
     )
+  const maximumAvailableResponseMs = confirmationTimeoutMode === 'response_window' && !isAfterBooking
+    ? maximumResponseWindowDuration(
+        reminderLeadMs,
+        draft.confirmationResponseStart,
+        draft.confirmationResponseEnd
+      )
+    : null
+  const confirmationResponseWindowExceedsAvailableTime = confirmationWindowEnabled &&
+    confirmationTimeoutMode === 'response_window' &&
+    maximumAvailableResponseMs !== null &&
+    confirmationTimeoutMs > maximumAvailableResponseMs
   const confirmationTimeoutInvalid = confirmationTimeoutMissing ||
     confirmationTimeoutTooLong ||
     confirmationTimeoutExceedsReminderWindow ||
-    confirmationResponseWindowInvalid
+    confirmationResponseWindowInvalid ||
+    confirmationResponseWindowExceedsAvailableTime
   const confirmationReplyTooLong = String(draft.confirmationReplyText || '').length >
     MAX_CONFIRMATION_REPLY_TEXT_LENGTH
 
@@ -522,6 +574,9 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
       timingAnchor: nextAnchor,
       offsetValue: nextAnchor === 'after_booking' ? 0 : 1,
       offsetUnit: nextAnchor === 'after_booking' ? 'minutes' : 'days',
+      ...(nextAnchor === 'after_booking' && prev.confirmationTimeoutMode === 'appointment_cutoff'
+        ? { confirmationTimeoutMode: 'response_window' as ReminderConfirmationTimeoutMode }
+        : {}),
       ...(shouldSwitchTemplate && nextTemplate
         ? {
             templateId: nextTemplate.id,
@@ -926,7 +981,11 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                   </span>
                 </div>
                 <div className={styles.field}>
-                    <label className={styles.fieldLabel}>Esperar la confirmación durante</label>
+                    <label className={styles.fieldLabel}>
+                      {confirmationTimeoutMode === 'appointment_cutoff'
+                        ? 'Aplicar la decisión'
+                        : 'Esperar la confirmación durante'}
+                    </label>
                     <div className={styles.offsetRow}>
                       <NumberInput
                         className={styles.offsetInput}
@@ -959,7 +1018,19 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                     )}
                     {confirmationTimeoutExceedsReminderWindow && (
                       <span className={styles.helpText}>
-                        El plazo debe ser menor que el tiempo entre este mensaje y el inicio de la cita ({offsetLabel}).
+                        {confirmationTimeoutMode === 'appointment_cutoff'
+                          ? `El momento fijo debe quedar después del envío y antes de la cita (${offsetLabel}).`
+                          : `El plazo debe ser menor que el tiempo entre este mensaje y el inicio de la cita (${offsetLabel}).`}
+                      </span>
+                    )}
+                    {confirmationResponseWindowExceedsAvailableTime && maximumAvailableResponseMs !== null && (
+                      <span className={styles.helpText}>
+                        Ese plazo no cabe antes de la cita: con el horario elegido hay como máximo {formatAvailableResponseTime(maximumAvailableResponseMs)} disponibles. Reduce el plazo o envía el mensaje con más anticipación.
+                      </span>
+                    )}
+                    {!confirmationTimeoutInvalid && confirmationTimeoutMode === 'appointment_cutoff' && (
+                      <span className={styles.helpText}>
+                        Ristak vencerá el plazo exactamente {confirmationTimeoutValue} {confirmationTimeoutUnit === 'days' ? (confirmationTimeoutValue === 1 ? 'día' : 'días') : confirmationTimeoutUnit === 'hours' ? (confirmationTimeoutValue === 1 ? 'hora' : 'horas') : (confirmationTimeoutValue === 1 ? 'minuto' : 'minutos')} antes de la cita, aunque el mensaje se haya enviado antes.
                       </span>
                     )}
                     {!confirmationTimeoutInvalid && confirmationTimeoutMode === 'elapsed' && (
@@ -976,10 +1047,10 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                       Una falla técnica o un caso que requiere atención humana conserva la cita y te avisa.
                     </span>
                     <div className={styles.field}>
-                      <label className={styles.fieldLabel}>Cómo contar este plazo</label>
+                      <label className={styles.fieldLabel}>Cuándo termina este plazo</label>
                       <CustomSelect
                         value={confirmationTimeoutMode}
-                        options={CONFIRMATION_TIMEOUT_MODE_OPTIONS}
+                        options={confirmationTimeoutModeOptions}
                         onValueChange={(value) => changeConfirmationTimeoutMode(
                           value as ReminderConfirmationTimeoutMode
                         )}
@@ -989,7 +1060,9 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                       <span className={styles.helpText}>
                         {confirmationTimeoutMode === 'response_window'
                           ? 'El contador se pausa fuera del horario elegido para no castigar horas de sueño o momentos en que normalmente nadie responde.'
-                          : 'Cuenta cada minuto desde el envío, aunque sea de noche.'}
+                          : confirmationTimeoutMode === 'appointment_cutoff'
+                            ? 'La hora límite se calcula desde el inicio de la cita y no desde el momento del envío.'
+                            : 'Cuenta cada minuto desde el envío, aunque sea de noche.'}
                       </span>
 
                       {confirmationTimeoutMode === 'response_window' && (

@@ -5435,9 +5435,14 @@ envio, y cada envio congela su propio
 `confirmation_deadline_at`; editar el recordatorio despues no mueve ultimátums
 ya enviados.
 
-El usuario puede contar ese plazo como `elapsed` (tiempo corrido, incluyendo la
-noche) o como `response_window`. En el segundo modo sólo se consumen minutos u
-horas dentro de `confirmation_response_start` y
+El usuario puede terminar ese plazo de tres formas: `elapsed` (tiempo corrido
+desde que el proveedor acepta el mensaje), `response_window` (tiempo disponible
+dentro de un horario diario) o `appointment_cutoff` (momento fijo antes del
+inicio de la cita). En el tercer modo el deadline se calcula como
+`appointment.start_time - confirmation_timeout` y no se desplaza si el mensaje
+termina de enviarse antes de lo previsto; sólo está disponible en recordatorios
+`before_appointment`. En `response_window` sólo se consumen minutos u horas
+dentro de `confirmation_response_start` y
 `confirmation_response_end`, todos los días y en la zona horaria del negocio;
 fuera de ese horario el contador se pausa. El horario de respuesta es
 independiente del horario inteligente de envio, admite jornadas que cruzan
@@ -5448,12 +5453,17 @@ anteriores. Una fila histórica con `cancel_appointment` y sin plazo tampoco
 recibe una cancelacion destructiva retroactiva: el editor propone el default al
 abrirla y sólo lo persiste cuando el usuario guarda esa politica.
 
-En recordatorios `before_appointment`, un plazo corrido debe ser menor que el
-tiempo configurado antes de la cita. Para `response_window` y para avisos
-`after_booking`, el instante final depende del día y la hora reales del envío:
-si no alcanza a completarse antes de que empiece la cita, el envío queda sin
-accion por timeout. El cálculo se hace al aceptar el mensaje y se congela
-en UTC; cambios posteriores de zona, modo u horario no desplazan el deadline.
+En recordatorios `before_appointment`, tanto un plazo corrido como un corte fijo
+deben ser menores que el tiempo configurado antes de la cita. Para
+`response_window`, el servidor calcula además cuánto tiempo podría aportar como
+máximo el horario diario dentro de esa anticipación y rechaza al guardar una
+combinación que nunca podría completarse. Por ejemplo, enviar un día antes,
+permitir respuestas de `11:00` a `22:00` y exigir 12 horas es inválido porque
+sólo existen 11 horas disponibles. Para casos que sí podrían caber pero dependen
+del día y hora reales, y para avisos `after_booking`, se mantiene el cierre
+seguro: si el plazo no alcanza a completarse antes de iniciar la cita, conserva
+la cita y omite la acción automática. El deadline final se congela en UTC;
+cambios posteriores de zona, modo u horario no desplazan envíos ya realizados.
 
 Si vence el plazo sin una confirmacion explicita y la cita sigue abierta, Ristak
 aplica la politica elegida: la conserva con estado `preserved` o la cancela con
