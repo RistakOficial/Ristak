@@ -8,12 +8,15 @@ import {
 } from '../utils/dateUtils.js'
 import { getPaymentSettings } from './paymentSettingsService.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
+import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { canRunBackgroundJob } from './licenseService.js'
 import {
   buildDefaultMessageTemplateFallbackText,
   buildDefaultMessageTemplateSendComponents
 } from './messageTemplatesService.js'
 import {
+  getWhatsAppApiConfigKeys,
+  resolveWhatsAppOutboundRoute,
   sendWhatsAppApiTemplateMessage,
   sendWhatsAppApiTextMessage
 } from './whatsappApiService.js'
@@ -26,6 +29,9 @@ import {
 const HOUR_MS = 60 * 60 * 1000
 const DEFAULT_LANGUAGE = 'es_MX'
 const FAILED_PAYMENT_EXTRA_GRACE_HOURS = 24
+const DEFAULT_OFFLINE_REMINDER_DAYS_BEFORE = 0
+const DEFAULT_OFFLINE_REMINDER_TIME = '12:00'
+const MAX_OFFLINE_REMINDER_DAYS_BEFORE = 365
 
 const CLOSED_PAYMENT_STATUSES = new Set([
   'paid',
@@ -156,7 +162,10 @@ function businessDateOnlyFromValue(value, timezone = DEFAULT_TIMEZONE) {
 }
 
 function parsePaymentMetadata(payment = {}) {
-  const raw = cleanString(payment.metadata_json || payment.metadata, 5000)
+  // Los planes pueden cargar lineItems extensos. Truncar el JSON antes de
+  // parsearlo invalida también los campos pequeños de programación que viven
+  // en el mismo metadata.
+  const raw = cleanString(payment.metadata_json || payment.metadata, 250000)
   if (!raw) return null
 
   try {
@@ -165,6 +174,82 @@ function parsePaymentMetadata(payment = {}) {
   } catch {
     return null
   }
+}
+
+function getOfflineReminderSchedule(payment = {}) {
+  const metadata = parsePaymentMetadata(payment) || {}
+  const parsedDaysBefore = Number(metadata.reminderDaysBefore)
+  const reminderDaysBefore = Number.isInteger(parsedDaysBefore) &&
+    parsedDaysBefore >= 0 &&
+    parsedDaysBefore <= MAX_OFFLINE_REMINDER_DAYS_BEFORE
+    ? parsedDaysBefore
+    : DEFAULT_OFFLINE_REMINDER_DAYS_BEFORE
+  const candidateTime = cleanString(metadata.reminderTime, 5)
+  const reminderTime = /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(candidateTime)
+    ? candidateTime
+    : DEFAULT_OFFLINE_REMINDER_TIME
+
+  return { reminderDaysBefore, reminderTime }
+}
+
+function getOfflineReminderWindow(payment, dueDate, timezone = DEFAULT_TIMEZONE) {
+  if (!dueDate) return null
+  const zone = resolveTimezone(timezone)
+  const { reminderDaysBefore, reminderTime } = getOfflineReminderSchedule(payment)
+  const reminderDate = addDateOnlyDays(dueDate, -reminderDaysBefore, zone)
+  const reminderAt = DateTime.fromISO(`${reminderDate}T${reminderTime}`, { zone })
+  const dueDayEndsAt = DateTime.fromISO(`${dueDate}T23:59:59.999`, { zone })
+
+  if (!reminderAt.isValid || !dueDayEndsAt.isValid) return null
+  return { reminderAt, dueDayEndsAt }
+}
+
+function isOfflineReminderReady(payment, now, dueDate, timezone = DEFAULT_TIMEZONE) {
+  const window = getOfflineReminderWindow(payment, dueDate, timezone)
+  if (!window) return false
+  const zone = resolveTimezone(timezone)
+  const current = now instanceof Date
+    ? DateTime.fromJSDate(now).setZone(zone)
+    : DateTime.fromISO(cleanString(now, 80), { setZone: true }).setZone(zone)
+
+  return current.isValid &&
+    current.toMillis() >= window.reminderAt.toMillis() &&
+    current.toMillis() <= window.dueDayEndsAt.toMillis()
+}
+
+async function findDeliveredOfflineReminderInConversation(payment, timezone = DEFAULT_TIMEZONE) {
+  const contactId = cleanString(payment.contact_id || payment.contactId, 200)
+  const paymentUrl = buildPaymentUrl(payment)
+  const dueDate = businessDateOnlyFromValue(payment.due_date || payment.dueDate, timezone)
+  const window = getOfflineReminderWindow(payment, dueDate, timezone)
+  if (!contactId || !paymentUrl || !window) return null
+
+  const rows = await db.all(`
+    SELECT id, message_text, status, message_timestamp, created_at
+    FROM whatsapp_api_messages
+    WHERE contact_id = ?
+      AND LOWER(COALESCE(direction, '')) = 'outbound'
+      AND LOWER(COALESCE(status, '')) IN ('sent', 'delivered', 'read')
+      AND message_text LIKE ?
+    ORDER BY COALESCE(message_timestamp, created_at) DESC, created_at DESC
+    LIMIT 20
+  `, [contactId, `%${paymentUrl}%`]).catch(() => [])
+
+  const reminderAtMs = window.reminderAt.toUTC().toMillis()
+  for (const row of rows || []) {
+    const deliveredAtMs = parseDateMs(row.message_timestamp || row.created_at)
+    const matches = deliveredAtMs !== null &&
+      deliveredAtMs >= reminderAtMs &&
+      cleanString(row.message_text, 10000).includes(paymentUrl)
+    if (matches) {
+      return {
+        ...row,
+        delivered_at_iso: new Date(deliveredAtMs).toISOString()
+      }
+    }
+  }
+
+  return null
 }
 
 function getPaymentPlanFlowId(payment = {}) {
@@ -305,7 +390,13 @@ function contactFromPaymentRow(payment = {}) {
     lastName,
     fullName,
     phone: cleanString(payment.contact_phone || payment.contactPhone || payment.phone, 120),
-    email: cleanString(payment.contact_email || payment.contactEmail || payment.email, 200)
+    email: cleanString(payment.contact_email || payment.contactEmail || payment.email, 200),
+    preferredWhatsAppPhoneNumberId: cleanString(
+      payment.contact_preferred_whatsapp_phone_number_id ||
+      payment.contactPreferredWhatsAppPhoneNumberId ||
+      payment.preferred_whatsapp_phone_number_id,
+      200
+    )
   }
 }
 
@@ -325,7 +416,8 @@ async function loadPaymentWithContact(paymentInput) {
       c.last_name AS contact_last_name,
       c.full_name AS contact_full_name,
       c.phone AS contact_phone,
-      c.email AS contact_email
+      c.email AS contact_email,
+      c.preferred_whatsapp_phone_number_id AS contact_preferred_whatsapp_phone_number_id
     FROM payments p
     LEFT JOIN contacts c ON c.id = p.contact_id
     WHERE ${whereColumn} = ?
@@ -392,30 +484,123 @@ function getAutomationDefinition(type, settings = {}) {
   }
 }
 
-function paymentQrSenderPhone(row = {}) {
-  return cleanString(row.phone_number) || cleanString(row.display_phone_number)
-}
-
-async function getPaymentQrPrimarySender() {
-  const apiSender = await db.get(`
-    SELECT id
-    FROM whatsapp_api_phone_numbers
-    WHERE api_send_enabled = 1
-    LIMIT 1
-  `).catch(() => null)
-  if (apiSender?.id) return null
-
-  return getPaymentQrSender()
-}
-
-async function getPaymentQrSender() {
+async function getPaymentWhatsAppPhoneRow(phoneNumberId) {
+  const id = cleanString(phoneNumberId, 200)
+  if (!id) return null
   return db.get(`
-    SELECT id, phone_number, display_phone_number
+    SELECT id, phone_number, display_phone_number, qr_connected_phone
     FROM whatsapp_api_phone_numbers
-    WHERE qr_send_enabled = 1 AND LOWER(COALESCE(qr_status, '')) = 'connected'
-    ORDER BY is_default_sender DESC, updated_at DESC
+    WHERE id = ?
     LIMIT 1
-  `).catch(() => null)
+  `, [id]).catch(() => null)
+}
+
+async function isLegacyConfiguredPaymentPhone(phoneNumberId) {
+  const id = cleanString(phoneNumberId, 200)
+  if (!id) return false
+  const configKey = getWhatsAppApiConfigKeys().phoneNumberId
+  const row = await db.get(
+    'SELECT config_value FROM app_config WHERE config_key = ? LIMIT 1',
+    [configKey]
+  ).catch(() => null)
+  return cleanString(row?.config_value, 200) === id
+}
+
+function routeMatchesPaymentPhoneRow(route = {}, phoneRow = {}) {
+  if (!route.available || !phoneRow?.id) return false
+  if (cleanString(route.phoneNumberId, 200) === cleanString(phoneRow.id, 200)) return true
+
+  const routePhone = normalizePhoneForStorage(route.fromPhone)
+  if (!routePhone) return false
+  return [
+    phoneRow.phone_number,
+    phoneRow.display_phone_number,
+    phoneRow.qr_connected_phone
+  ].some((value) => normalizePhoneForStorage(value) === routePhone)
+}
+
+async function resolvePaymentWhatsAppRoute(contact = {}, { qrOnly = false } = {}) {
+  const contactRouteIds = []
+  const preferredPhoneNumberId = cleanString(contact.preferredWhatsAppPhoneNumberId, 200)
+  if (preferredPhoneNumberId) contactRouteIds.push(preferredPhoneNumberId)
+
+  if (contact.id) {
+    const recentConversation = await db.get(`
+      SELECT business_phone_number_id
+      FROM whatsapp_api_messages
+      WHERE contact_id = ?
+        AND TRIM(COALESCE(business_phone_number_id, '')) != ''
+      ORDER BY
+        CASE WHEN LOWER(COALESCE(direction, '')) = 'inbound' THEN 0 ELSE 1 END,
+        COALESCE(message_timestamp, created_at) DESC,
+        created_at DESC
+      LIMIT 1
+    `, [contact.id]).catch(() => null)
+    const conversationPhoneNumberId = cleanString(recentConversation?.business_phone_number_id, 200)
+    if (conversationPhoneNumberId && !contactRouteIds.includes(conversationPhoneNumberId)) {
+      contactRouteIds.push(conversationPhoneNumberId)
+    }
+  }
+
+  let unavailableContactRoute = null
+  for (const phoneNumberId of contactRouteIds) {
+    const phoneRow = await getPaymentWhatsAppPhoneRow(phoneNumberId)
+    const route = await resolveWhatsAppOutboundRoute({ phoneNumberId })
+    const legacyConfiguredRoute = !phoneRow && await isLegacyConfiguredPaymentPhone(phoneNumberId)
+    if (legacyConfiguredRoute && route.available && cleanString(route.phoneNumberId, 200) === phoneNumberId) return route
+    if (phoneRow && routeMatchesPaymentPhoneRow(route, phoneRow)) return route
+    unavailableContactRoute ||= {
+      ...route,
+      available: false,
+      requestedPhoneNumberId: phoneNumberId,
+      reason: 'contact_route_unavailable'
+    }
+  }
+
+  // Si el contacto ya tiene una ruta explícita, no lo brincamos a otro número
+  // global: eso partiría la conversación y puede dejar el mensaje fuera de la
+  // ventana de 24 h aunque exista un QR correcto para ese cliente.
+  if (contactRouteIds.length > 0) {
+    return unavailableContactRoute || {
+      available: false,
+      phoneNumberId: contactRouteIds[0],
+      reason: 'contact_route_unavailable'
+    }
+  }
+
+  let defaultPhoneNumberId = ''
+  if (qrOnly) {
+    const qrSender = await db.get(`
+      SELECT id
+      FROM whatsapp_api_phone_numbers
+      WHERE qr_send_enabled = 1
+        AND LOWER(COALESCE(qr_status, '')) = 'connected'
+      ORDER BY is_default_sender DESC, updated_at DESC
+      LIMIT 1
+    `).catch(() => null)
+    defaultPhoneNumberId = cleanString(qrSender?.id, 200)
+  }
+
+  return resolveWhatsAppOutboundRoute({
+    phoneNumberId: defaultPhoneNumberId || undefined
+  })
+}
+
+function paymentWhatsAppRouteArgs(route = {}, allowQrFallback = false) {
+  if (route.transport === 'qr') {
+    return {
+      from: route.fromPhone || undefined,
+      phoneNumberId: route.phoneNumberId || undefined,
+      transport: 'qr',
+      allowQrFallback: false
+    }
+  }
+
+  return {
+    from: route.fromPhone || undefined,
+    phoneNumberId: route.phoneNumberId || undefined,
+    allowQrFallback: Boolean(allowQrFallback && route.qrFallbackAvailable)
+  }
 }
 
 function getDispatchId(paymentId, automationType, channel = 'whatsapp') {
@@ -575,9 +760,9 @@ function buildPaymentAutomationEmail(type, payment = {}, variables = {}, setting
     reminder: {
       badge: 'Recordatorio de pago',
       subject: `Recordatorio de pago - ${product}`,
-      title: offlineReminder ? 'Tu pago vence hoy' : 'Tienes un pago por vencer',
+      title: offlineReminder ? 'Recordatorio de tu pago' : 'Tienes un pago por vencer',
       lead: offlineReminder
-        ? 'Este es el recordatorio de tu pago offline. Realiza la transferencia o el pago acordado con el negocio; aquí puedes revisar el importe y la referencia.'
+        ? 'Este es el recordatorio de tu pago offline. Revisa la fecha acordada y realiza la transferencia o el pago con el negocio; aquí puedes consultar el importe y la referencia.'
         : 'Te compartimos el enlace para revisar el detalle y completar tu pago antes del vencimiento.',
       cta: offlineReminder ? 'Ver aviso de pago' : 'Abrir enlace de pago',
       url: paymentUrl,
@@ -693,27 +878,22 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
   })
   if (!claim.claimed) return { sent: false, skipped: true, type, channel: dispatchChannel, reason: claim.reason, dispatchId: claim.id }
 
+  let outboundRoute = null
   try {
+    outboundRoute = await resolvePaymentWhatsAppRoute(contact, { qrOnly })
+    if (!outboundRoute.available) {
+      throw new Error(qrOnly
+        ? 'Conecta un número de WhatsApp QR para enviar esta automatización.'
+        : 'Conecta un número de WhatsApp para enviar esta automatización.')
+    }
+
     if (definition.contentMode === 'direct') {
       const text = definition.messageText
       if (!text) throw new Error(`El mensaje directo para ${definition.label} está vacío.`)
 
-      const qrPrimarySender = qrOnly ? await getPaymentQrSender() : await getPaymentQrPrimarySender()
-      if (qrOnly && !qrPrimarySender?.id) {
-        throw new Error('Conecta un número de WhatsApp QR para enviar esta automatización.')
-      }
       const response = await sendWhatsAppApiTextMessage({
         to: contact.phone,
-        ...(qrPrimarySender?.id
-          ? {
-              from: paymentQrSenderPhone(qrPrimarySender) || undefined,
-              phoneNumberId: qrPrimarySender.id,
-              transport: 'qr',
-              allowQrFallback: false
-            }
-          : {
-              allowQrFallback: definition.allowQrFallback
-            }),
+        ...paymentWhatsAppRouteArgs(outboundRoute, definition.allowQrFallback),
         text,
         contactId: contact.id,
         publicBaseUrl,
@@ -728,16 +908,12 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
         channel: dispatchChannel,
         dispatchId: claim.id,
         contentMode: 'direct',
-        fallback: qrPrimarySender?.id ? 'qr_text' : undefined,
+        fallback: outboundRoute.transport === 'qr' ? 'qr_text' : undefined,
         response
       }
     }
 
-    const qrPrimarySender = qrOnly ? await getPaymentQrSender() : await getPaymentQrPrimarySender()
-    if (qrOnly && !qrPrimarySender?.id) {
-      throw new Error('Conecta un número de WhatsApp QR para enviar esta automatización.')
-    }
-    if (qrPrimarySender?.id) {
+    if (outboundRoute.transport === 'qr') {
       const fallbackText = await buildDefaultMessageTemplateFallbackText({
         templateId: definition.templateId,
         templateName: definition.templateName,
@@ -756,15 +932,12 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
 
       const response = await sendWhatsAppApiTextMessage({
         to: contact.phone,
-        from: paymentQrSenderPhone(qrPrimarySender) || undefined,
+        ...paymentWhatsAppRouteArgs(outboundRoute, false),
         text: fallbackText,
         contactId: contact.id,
         publicBaseUrl,
         extraVariables,
         externalId: `payment:${type}:${paymentId}:qr`,
-        phoneNumberId: qrPrimarySender.id,
-        transport: 'qr',
-        allowQrFallback: false,
         variablesResolved: true
       })
 
@@ -800,6 +973,8 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
 
     const response = await sendWhatsAppApiTemplateMessage({
       to: contact.phone,
+      from: outboundRoute.fromPhone || undefined,
+      phoneNumberId: outboundRoute.phoneNumberId || undefined,
       templateId: definition.templateId || undefined,
       templateName: definition.templateName,
       language: definition.language,
@@ -808,7 +983,7 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
       publicBaseUrl,
       extraVariables,
       externalId: `payment:${type}:${paymentId}`,
-      allowQrFallback: definition.allowQrFallback,
+      allowQrFallback: Boolean(definition.allowQrFallback && outboundRoute.qrFallbackAvailable),
       variablesResolved: true
     })
 
@@ -839,12 +1014,14 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
         if (fallbackText) {
           const response = await sendWhatsAppApiTextMessage({
             to: contact.phone,
+            ...(outboundRoute?.available
+              ? paymentWhatsAppRouteArgs(outboundRoute, definition.allowQrFallback)
+              : { allowQrFallback: definition.allowQrFallback }),
             text: fallbackText,
             contactId: contact.id,
             publicBaseUrl,
             extraVariables,
             externalId: `payment:${type}:${paymentId}:text-fallback`,
-            allowQrFallback: definition.allowQrFallback,
             variablesResolved: true
           })
 
@@ -1051,7 +1228,7 @@ async function getReminderCandidates(settings, now, limit, paymentIds = [], time
     // mantienen la idempotencia y evitan reenviar los que ya salieron.
     const offlineReminder = isOfflinePaymentPlanPayment(row)
     if (offlineReminder) {
-      return dueDate === todayDate &&
+      return isOfflineReminderReady(row, now, dueDate, timezone) &&
         cleanString(row.status, 40).toLowerCase() !== 'sent' &&
         cleanString(row.installment_flow_provider, 40).toLowerCase() === 'offline' &&
         cleanString(row.installment_flow_state, 80).toLowerCase() === 'offline_plan_active'
@@ -1096,8 +1273,30 @@ export async function processDuePaymentAutomations({ now = new Date(), limit = 1
   if (reminderDefinition?.enabled && (channelUsesWhatsApp(reminderDefinition.channel) || channelUsesEmail(reminderDefinition.channel))) {
     const reminders = await getReminderCandidates(settings, now, limit, paymentIds, timezone)
     for (const payment of reminders) {
+      const offlineReminder = isOfflinePaymentPlanPayment(payment)
+      const shouldHonorConversationDelivery = offlineReminder &&
+        channelUsesWhatsApp(reminderDefinition.channel) &&
+        !channelUsesEmail(reminderDefinition.channel)
+      const deliveredMessage = shouldHonorConversationDelivery
+        ? await findDeliveredOfflineReminderInConversation(payment, timezone)
+        : null
+
+      if (deliveredMessage) {
+        const deliveredAt = deliveredMessage.delivered_at_iso || now.toISOString()
+        await markOfflinePaymentReminderSent(payment.id, deliveredAt)
+        results.push({
+          sent: false,
+          skipped: true,
+          type: 'reminder',
+          channel: reminderDefinition.channel,
+          reason: 'already_delivered_in_conversation',
+          messageId: deliveredMessage.id
+        })
+        continue
+      }
+
       const result = await sendPaymentAutomationMessage('reminder', payment, { settings, timezone })
-      if (result.sent && isOfflinePaymentPlanPayment(payment)) {
+      if (result.sent && offlineReminder) {
         await markOfflinePaymentReminderSent(payment.id, now.toISOString())
       }
       results.push(result)

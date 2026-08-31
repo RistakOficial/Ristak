@@ -26,6 +26,11 @@ const DATE = {
   pattern: '^\\d{4}-\\d{2}-\\d{2}$',
   description: 'Fecha de calendario YYYY-MM-DD interpretada en la zona horaria del negocio.'
 }
+const TIME = {
+  type: 'string',
+  pattern: '^(?:[01]\\d|2[0-3]):[0-5]\\d$',
+  description: 'Hora local del negocio en formato HH:mm de 24 horas.'
+}
 const BUSINESS_DATE_TIME = {
   type: 'string',
   minLength: 10,
@@ -288,6 +293,18 @@ const PAYMENT_AUTOMATION_UPDATE_SCHEMA = {
 }
 
 function planTool({ name, provider, handler, description }) {
+  const planProperties = provider === 'offline'
+    ? {
+        ...PLAN_PROPERTIES,
+        reminderDaysBefore: {
+          type: 'integer',
+          minimum: 0,
+          maximum: 365,
+          description: 'Días naturales antes del vencimiento; 0 envía el mismo día.'
+        },
+        reminderTime: TIME
+      }
+    : PLAN_PROPERTIES
   return executeTool({
     name,
     title: `Crear plan de pagos ${provider}`,
@@ -296,7 +313,7 @@ function planTool({ name, provider, handler, description }) {
     featureKeys: ['payment_plans'],
     connectionPrerequisites: provider === 'offline' ? [] : [provider],
     handler,
-    inputSchema: schema(PLAN_PROPERTIES, ['contact', 'totalAmount', 'title', 'remainingPayments']),
+    inputSchema: schema(planProperties, ['contact', 'totalAmount', 'title', 'remainingPayments']),
     body: args => ({ ...cleanControls(args), source: args.source || `ristak_mcp_${provider}_plan` })
   })
 }
@@ -418,7 +435,7 @@ const planTools = [
     name: 'payments_create_offline_plan',
     provider: 'offline',
     handler: offlinePaymentsController.createOfflinePaymentPlanView,
-    description: 'Crea un plan offline: registra las cuotas, envía los recordatorios configurados cuando vencen y deja el pago para registro manual.'
+    description: 'Crea un plan offline: registra las cuotas, programa cada recordatorio por días de anticipación y hora local, y deja el pago para registro manual.'
   }),
   planTool({
     name: 'payments_create_stripe_plan',

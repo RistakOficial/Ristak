@@ -183,6 +183,10 @@ test('planes MCP son tipados, respetan licencia y verifican el proveedor exacto'
     offline.inputSchema.properties.remainingPayments.items.properties.dueDate.description,
     'Fecha de calendario o instante que Ristak interpreta con la zona horaria del negocio.'
   )
+  assert.equal(offline.inputSchema.properties.reminderDaysBefore.minimum, 0)
+  assert.equal(offline.inputSchema.properties.reminderDaysBefore.maximum, 365)
+  assert.equal(offline.inputSchema.properties.reminderTime.pattern, '^(?:[01]\\d|2[0-3]):[0-5]\\d$')
+  assert.equal(paymentTool('payments_create_stripe_plan').inputSchema.properties.reminderTime, undefined)
 
   const providers = ['stripe', 'conekta', 'rebill']
   for (const provider of providers) {
@@ -213,6 +217,8 @@ test('crear un plan offline manda fechas, moneda e idempotencia al controlador c
       method: 'bank_transfer'
     },
     remainingFrequency: 'monthly',
+    reminderDaysBefore: 2,
+    reminderTime: '12:00',
     remainingPayments: [
       { sequence: 1, amount: 29583.34, dueDate: '2026-08-31', frequency: 'monthly' },
       { sequence: 2, amount: 29583.33, dueDate: '2026-09-30', frequency: 'monthly' },
@@ -233,6 +239,8 @@ test('crear un plan offline manda fechas, moneda e idempotencia al controlador c
   assert.deepEqual(calls[0].headers, { 'idempotency-key': args.idempotencyKey })
   assert.equal(calls[0].body.idempotencyKey, undefined)
   assert.equal(calls[0].body.source, 'ristak_mcp_offline_plan')
+  assert.equal(calls[0].body.reminderDaysBefore, 2)
+  assert.equal(calls[0].body.reminderTime, '12:00')
   assert.deepEqual(calls[0].body.remainingPayments, args.remainingPayments)
 })
 

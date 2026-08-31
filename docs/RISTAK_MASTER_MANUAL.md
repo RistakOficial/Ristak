@@ -5237,6 +5237,15 @@ Esta sección y todo su despacho en segundo plano requieren
 - `channel='whatsapp_qr'` usa QR como canal principal sólo para un remitente QR
   standalone o con API indisponible. Si el mismo teléfono conserva API activa,
   el backend sustituye la petición QR por API.
+- El remitente de una automatizacion de pago se resuelve por contacto, no por el
+  numero predeterminado global a ciegas. Primero usa
+  `contacts.preferred_whatsapp_phone_number_id`; si falta, toma el numero de la
+  conversacion entrante de WhatsApp mas reciente del contacto. La resolucion
+  conserva la prioridad de API cuando ese mismo telefono tiene API activa y usa
+  su QR standalone cuando corresponde. El remitente predeterminado solo se usa
+  cuando el contacto no tiene preferencia ni historial que identifique un numero;
+  si existe una ruta explicita pero esta desconectada, el envio falla de forma
+  visible en vez de brincar silenciosamente a otro telefono.
 - Los mensajes directos por WhatsApp API no sustituyen a las plantillas fuera de
   la ventana permitida por Meta: sólo salen si existe conversación abierta de
   24 horas. Fuera de esa ventana se usa el QR del mismo número si el despacho
@@ -5248,7 +5257,8 @@ Esta sección y todo su despacho en segundo plano requieren
   agrega env var nueva para arrancar el servicio.
 - Cada canal tiene su propio despacho idempotente por pago, tipo de automatizacion
   y canal. Un envio por WhatsApp no bloquea el envio por correo, y viceversa.
-- `reminderDaysBefore` define el primer dia objetivo: si esta en 3, el
+- El `reminderDaysBefore` global define el primer dia objetivo de pagos que no
+  traen una programacion offline propia: si esta en 3, el
   recordatorio se prepara a tres dias del vencimiento. Si un reinicio o despliegue
   pierde ese tick, el sistema lo recupera solo mientras el pago siga venciendo hoy
   o en el futuro; nunca revive recordatorios de pagos ya vencidos. El despacho
@@ -5258,14 +5268,28 @@ Esta sección y todo su despacho en segundo plano requieren
   estan dentro de la ventana, Ristak solo envia el recordatorio de la siguiente
   parcialidad abierta; los pagos unicos y pagos de otros flujos siguen
   evaluandose de forma independiente.
-- Los planes con `payment_provider='offline'` son la excepcion intencional a
-  `reminderDaysBefore`: cada parcialidad se prepara exactamente en su fecha de
-  vencimiento segun la zona horaria del negocio. Usan el canal configurado en
-  `payments_settings.automations.reminderChannel` y requieren que recordatorios
-  este activo y que el contacto tenga el correo o telefono necesario para ese
-  canal. La parcialidad cambia de `pending` a `sent` solo cuando al menos un canal
-  confirma el despacho; si todos fallan, conserva `pending` para que el siguiente
-  barrido reintente sin inventar una entrega.
+- Cada plan con `payment_provider='offline'` guarda su propia programacion:
+  `reminderDaysBefore` acepta enteros de 0 a 365 (`0` significa el mismo dia y
+  `1`, un dia antes) y `reminderTime` guarda `HH:mm`; los defaults son `0` y
+  `12:00`. Ambos campos viven en metadata del flujo y de cada pago, y se reflejan
+  en el calendario local. La pantalla **Programar plan** los muestra al elegir
+  **Recordatorios de pago offline**, con `NumberInput` sin steppers nativos y el
+  selector de hora comun. El MCP `payments_create_offline_plan` expone los mismos
+  campos.
+- El instante se interpreta en la zona horaria del negocio. El cron de
+  `payment_automations` revisa cada cinco minutos y puede enviar desde ese instante
+  hasta el final local del dia de vencimiento, para recuperar un tick perdido sin
+  revivir cuotas vencidas. Usa el canal configurado en
+  `payments_settings.automations.reminderChannel` y requiere que recordatorios
+  este activo y que el contacto tenga el correo o telefono necesario. La cuota
+  cambia de `pending` a `sent` solo cuando un canal confirma el despacho; si todos
+  fallan, conserva `pending` para reintentar sin inventar una entrega.
+- Si un plan offline usa unicamente WhatsApp y ya existe en la conversacion un
+  mensaje `sent|delivered|read`, posterior a la hora programada y con la liga
+  publica exacta de esa cuota, el barrido lo reconoce como aviso entregado, marca
+  la parcialidad como `sent` y no manda un duplicado. Esto cubre la intervencion
+  manual de un operador sin fabricar un despacho automatico en
+  `payment_automation_dispatches`.
 - La pagina publica de un pago offline funciona como aviso o invoice: muestra el
   concepto, importe, vencimiento y datos publicos de pago configurados, pero deja
   claro que Ristak no cargara una tarjeta. Cuando el negocio confirma la
@@ -5766,8 +5790,10 @@ sistema `payment_automations` que procesa los demas avisos recoge estas filas; n
 es un cron de integracion y no depende de conectar o desconectar un proveedor.
 La misma alta esta disponible por MCP como `payments_create_offline_plan`. La
 herramienta recibe contacto, total, primer pago opcional y cada parcialidad con
-importe y vencimiento; la suma exacta se valida en unidades minimas. En el dia de
-vencimiento el job usa los canales configurados en Automatizaciones de Pagos y
+importe y vencimiento; la suma exacta se valida en unidades minimas. Tambien
+recibe `reminderDaysBefore` (0 a 365) y `reminderTime` (`HH:mm`), con defaults de
+mismo dia a las 12:00. En cada cuota el job calcula ese momento con la zona
+horaria del negocio, usa los canales configurados en Automatizaciones de Pagos y
 la tabla refleja el envio. El dinero no se marca como recibido por entregar el
 recordatorio: cuando el cliente paga, un operador usa el registro manual
 canonico y entonces la transaccion cambia a pagada.

@@ -13,6 +13,8 @@ export interface PublicOfflinePaymentPlan extends Omit<PublicStripePaymentPlan, 
   provider: 'offline'
   reminderChannel?: string
   reminderChannelLabel?: string
+  reminderDaysBefore?: number
+  reminderTime?: string
   installments: OfflinePaymentPlanInstallment[]
 }
 
@@ -41,6 +43,8 @@ export interface OfflinePaymentPlanPayload {
     method?: string
   }
   remainingFrequency: string
+  reminderDaysBefore: number
+  reminderTime: string
   remainingPayments: Array<{
     sequence: number
     amount: number
@@ -60,6 +64,8 @@ export interface OfflinePaymentPlanResult {
   paymentMode: 'test' | 'live'
   reminderChannel: string
   reminderChannelLabel: string
+  reminderDaysBefore: number
+  reminderTime: string
   firstPaymentPaymentId?: string | null
   scheduledPayments: Array<{
     installmentId: string

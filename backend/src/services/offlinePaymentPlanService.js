@@ -15,6 +15,9 @@ import {
 } from './paymentPlanNamingService.js'
 
 const OFFLINE_PROVIDER = 'offline'
+const DEFAULT_REMINDER_DAYS_BEFORE = 0
+const DEFAULT_REMINDER_TIME = '12:00'
+const MAX_REMINDER_DAYS_BEFORE = 365
 const ACTIVE_STATE = 'offline_plan_active'
 const PAUSED_STATE = 'offline_plan_paused'
 const CANCELLED_STATE = 'offline_plan_cancelled'
@@ -112,6 +115,45 @@ function reminderChannelLabel(channel) {
   })[cleanString(channel, 40).toLowerCase()] || 'el canal configurado'
 }
 
+function normalizeReminderDaysBefore(value, fallback = DEFAULT_REMINDER_DAYS_BEFORE) {
+  const candidate = value === undefined || value === null || value === '' ? fallback : Number(value)
+  if (!Number.isInteger(candidate) || candidate < 0 || candidate > MAX_REMINDER_DAYS_BEFORE) {
+    throw createHttpError(`Los días de anticipación deben ser un número entero entre 0 y ${MAX_REMINDER_DAYS_BEFORE}.`)
+  }
+  return candidate
+}
+
+function normalizeReminderTime(value, fallback = DEFAULT_REMINDER_TIME) {
+  const candidate = cleanString(value || fallback, 5)
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(candidate)) {
+    throw createHttpError('La hora del recordatorio debe usar el formato HH:mm de 24 horas.')
+  }
+  return candidate
+}
+
+function readReminderDaysBefore(value) {
+  try {
+    return normalizeReminderDaysBefore(value)
+  } catch {
+    return DEFAULT_REMINDER_DAYS_BEFORE
+  }
+}
+
+function readReminderTime(value) {
+  try {
+    return normalizeReminderTime(value)
+  } catch {
+    return DEFAULT_REMINDER_TIME
+  }
+}
+
+function reminderScheduleLabel(daysBefore, reminderTime) {
+  const timing = daysBefore === 0
+    ? 'el mismo día del vencimiento'
+    : `${daysBefore} ${daysBefore === 1 ? 'día' : 'días'} antes del vencimiento`
+  return `${timing} a las ${reminderTime}`
+}
+
 function validateReminderDelivery(settings, contact) {
   const automations = settings.automations || {}
   if (!automations.remindersEnabled) {
@@ -146,12 +188,25 @@ function paymentTitle(title, sequence, totalPayments) {
   return totalPayments > 1 ? `${title} - Pago ${sequence} de ${totalPayments}` : title
 }
 
-function buildPaymentMetadata({ flowId, installmentId = '', sequence, source, contact, lineItems, tax, reminderChannel }) {
+function buildPaymentMetadata({
+  flowId,
+  installmentId = '',
+  sequence,
+  source,
+  contact,
+  lineItems,
+  tax,
+  reminderChannel,
+  reminderDaysBefore,
+  reminderTime
+}) {
   return {
     source,
     offlineReminder: true,
-    reminderTiming: 'due_date',
+    reminderTiming: 'scheduled',
     reminderChannel,
+    reminderDaysBefore,
+    reminderTime,
     contactName: contact.name,
     contactEmail: contact.email,
     contactPhone: contact.phone,
@@ -208,7 +263,9 @@ export async function persistOfflinePaymentPlanMirror(flowId) {
     remainingFrequency: metadata.remainingFrequency || 'custom',
     reminderChannel: metadata.reminderChannel || '',
     reminderChannelLabel: reminderChannelLabel(metadata.reminderChannel),
-    reminderTiming: 'due_date',
+    reminderTiming: 'scheduled',
+    reminderDaysBefore: readReminderDaysBefore(metadata.reminderDaysBefore),
+    reminderTime: readReminderTime(metadata.reminderTime),
     firstPayment: hasFirstPayment
       ? {
           amount: Number(flow.first_payment_amount || 0),
@@ -315,6 +372,8 @@ export async function createOfflinePaymentPlan(input = {}, { baseUrl = '' } = {}
 
   const settings = await getPaymentSettings()
   const reminderChannel = validateReminderDelivery(settings, contact)
+  const reminderDaysBefore = normalizeReminderDaysBefore(input.reminderDaysBefore)
+  const reminderTime = normalizeReminderTime(input.reminderTime)
   const timezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
   const currency = cleanString(await getAccountCurrency(), 10).toUpperCase()
   const totalAmount = normalizeAmount(input.totalAmount || input.total, 'total del plan')
@@ -366,6 +425,8 @@ export async function createOfflinePaymentPlan(input = {}, { baseUrl = '' } = {}
     paymentMode: settings.paymentMode,
     reminderChannel,
     reminderChannelLabel: reminderChannelLabel(reminderChannel),
+    reminderDaysBefore,
+    reminderTime,
     firstPaymentPaymentId: null,
     scheduledPayments: []
   }
@@ -409,7 +470,9 @@ export async function createOfflinePaymentPlan(input = {}, { baseUrl = '' } = {}
           paymentMode: settings.paymentMode,
           remainingFrequency,
           reminderChannel,
-          reminderTiming: 'due_date',
+          reminderTiming: 'scheduled',
+          reminderDaysBefore,
+          reminderTime,
           lineItems
         })
       ]
@@ -447,7 +510,9 @@ export async function createOfflinePaymentPlan(input = {}, { baseUrl = '' } = {}
             contact,
             lineItems,
             tax,
-            reminderChannel
+            reminderChannel,
+            reminderDaysBefore,
+            reminderTime
           })),
           now,
           firstDate
@@ -492,7 +557,9 @@ export async function createOfflinePaymentPlan(input = {}, { baseUrl = '' } = {}
             contact,
             lineItems,
             tax,
-            reminderChannel
+            reminderChannel,
+            reminderDaysBefore,
+            reminderTime
           })),
           payment.dueDate,
           payment.dueDate
@@ -512,7 +579,7 @@ export async function createOfflinePaymentPlan(input = {}, { baseUrl = '' } = {}
           payment.dueDate,
           payment.frequency,
           paymentId,
-          `Recordatorio el día del vencimiento por ${reminderChannelLabel(reminderChannel)}.`
+          `Recordatorio ${reminderScheduleLabel(reminderDaysBefore, reminderTime)} por ${reminderChannelLabel(reminderChannel)}.`
         ]
       )
       response.scheduledPayments.push({
@@ -544,6 +611,12 @@ export async function updateOfflinePaymentPlanSchedule(flowId, input = {}) {
 
   const timezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
   const metadata = parseJson(flow.metadata)
+  const reminderDaysBefore = input.reminderDaysBefore === undefined
+    ? readReminderDaysBefore(metadata.reminderDaysBefore)
+    : normalizeReminderDaysBefore(input.reminderDaysBefore)
+  const reminderTime = input.reminderTime === undefined
+    ? readReminderTime(metadata.reminderTime)
+    : normalizeReminderTime(input.reminderTime)
   const title = cleanString(input.name || input.title || input.description || flow.concept, 300) || 'Plan de pagos offline'
   const frequency = normalizeFrequency(input.remainingFrequency || metadata.remainingFrequency)
   const submitted = Array.isArray(input.installments) ? input.installments : []
@@ -614,8 +687,10 @@ export async function updateOfflinePaymentPlanSchedule(flowId, input = {}) {
       const paymentMetadata = {
         ...parseJson(item.existing?.metadata_json),
         offlineReminder: true,
-        reminderTiming: 'due_date',
+        reminderTiming: 'scheduled',
         reminderChannel: metadata.reminderChannel,
+        reminderDaysBefore,
+        reminderTime,
         paymentPlan: {
           flowId: id,
           installmentId,
@@ -641,7 +716,7 @@ export async function updateOfflinePaymentPlanSchedule(flowId, input = {}) {
             payment_id = excluded.payment_id,
             notes = excluded.notes,
             updated_at = CURRENT_TIMESTAMP`,
-          [installmentId, id, sequence, item.amount, item.dueDate, frequency, paymentId, `Recordatorio el día del vencimiento por ${reminderChannelLabel(metadata.reminderChannel)}.`]
+          [installmentId, id, sequence, item.amount, item.dueDate, frequency, paymentId, `Recordatorio ${reminderScheduleLabel(reminderDaysBefore, reminderTime)} por ${reminderChannelLabel(metadata.reminderChannel)}.`]
         )
         await tx.run(
           `INSERT INTO payments (
@@ -677,7 +752,13 @@ export async function updateOfflinePaymentPlanSchedule(flowId, input = {}) {
       if (row.payment_id) await tx.run("UPDATE payments SET status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [row.payment_id])
     }
 
-    const nextMetadata = { ...metadata, remainingFrequency: frequency }
+    const nextMetadata = {
+      ...metadata,
+      remainingFrequency: frequency,
+      reminderTiming: 'scheduled',
+      reminderDaysBefore,
+      reminderTime
+    }
     await tx.run(
       `UPDATE payment_flows
        SET concept = ?, total_amount = ?, metadata = ?, updated_at = CURRENT_TIMESTAMP
@@ -860,6 +941,8 @@ export async function getPublicOfflinePayment(publicPaymentId, { baseUrl = '' } 
           recurrenceLabel: mirror.recurrence_label || recurrenceLabel(schedule.remainingFrequency),
           reminderChannel: schedule.reminderChannel || metadata.reminderChannel || '',
           reminderChannelLabel: schedule.reminderChannelLabel || reminderChannelLabel(schedule.reminderChannel || metadata.reminderChannel),
+          reminderDaysBefore: readReminderDaysBefore(schedule.reminderDaysBefore ?? metadata.reminderDaysBefore),
+          reminderTime: readReminderTime(schedule.reminderTime || metadata.reminderTime),
           firstPayment: schedule.firstPayment || null,
           installments: Array.isArray(schedule.installments) ? schedule.installments : []
         }

@@ -4,6 +4,7 @@ import { Button } from '../Button'
 import { TabList } from '../TabList'
 import { CustomSelect } from '../CustomSelect'
 import { NumberInput } from '../NumberInput'
+import { TimePickerSelect } from '../TimePickerSelect'
 import { PhoneDateField } from '@/components/phone/PhoneDateField'
 import { PhoneSelect } from '@/components/phone/PhoneSelect'
 import { PhoneSegmentedTabs } from '@/components/phone/ui'
@@ -82,8 +83,23 @@ import {
 
 const DEFAULT_INVOICE_TITLE = 'Pago'
 const CONTACT_SEARCH_DELAY_MS = 90
+const DEFAULT_OFFLINE_REMINDER_DAYS_BEFORE = 0
+const DEFAULT_OFFLINE_REMINDER_TIME = '12:00'
+const MAX_OFFLINE_REMINDER_DAYS_BEFORE = 365
 
 const formatCurrency = (value: number, currency = 'MXN'): string => formatMxCurrency(value, currency)
+const formatReminderTime = (value: string) => {
+  const [hourText = '12', minute = '00'] = String(value || DEFAULT_OFFLINE_REMINDER_TIME).split(':')
+  const hour = Number(hourText)
+  const displayHour = hour % 12 || 12
+  return `${displayHour}:${minute} ${hour >= 12 ? 'p. m.' : 'a. m.'}`
+}
+const formatOfflineReminderTiming = (daysBefore: number, reminderTime: string) => {
+  const timing = daysBefore === 0
+    ? 'el mismo día del vencimiento'
+    : `${daysBefore} ${daysBefore === 1 ? 'día' : 'días'} antes del vencimiento`
+  return `${timing}, a las ${formatReminderTime(reminderTime)}`
+}
 const ZERO_DECIMAL_CURRENCIES = new Set(['BIF', 'CLP', 'DJF', 'GNF', 'ISK', 'JPY', 'KMF', 'KRW', 'PYG', 'RWF', 'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF'])
 const toCurrencyMinorUnits = (value: number, currency: string) => (
   Math.round(value * (ZERO_DECIMAL_CURRENCIES.has(currency.toUpperCase()) ? 1 : 100))
@@ -787,6 +803,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [singlePaymentAction, setSinglePaymentAction] = useState<SinglePaymentAction>('payment_link')
   const [singlePaymentOptionsStage, setSinglePaymentOptionsStage] = useState<SinglePaymentOptionsStage>('method')
   const [paymentOption, setPaymentOption] = useState<PaymentOption>('send')
+  const [offlineReminderDaysBefore, setOfflineReminderDaysBefore] = useState(DEFAULT_OFFLINE_REMINDER_DAYS_BEFORE)
+  const [offlineReminderTime, setOfflineReminderTime] = useState(DEFAULT_OFFLINE_REMINDER_TIME)
   const [sendMethod, setSendMethod] = useState<SendMethod>(DEFAULT_SEND_METHOD)
   const [installmentChargeMode, setInstallmentChargeMode] = useState<InstallmentChargeMode>('single')
   const [stripeInstallmentChoice, setStripeInstallmentChoice] = useState<StripeInstallmentChoice>('24')
@@ -1445,6 +1463,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setSinglePaymentAction(getDefaultSinglePaymentAction())
     setSinglePaymentOptionsStage('method')
     setPaymentOption(getDefaultPaymentOption())
+    setOfflineReminderDaysBefore(DEFAULT_OFFLINE_REMINDER_DAYS_BEFORE)
+    setOfflineReminderTime(DEFAULT_OFFLINE_REMINDER_TIME)
     setSendMethod(resolvedInitialContact ? getDefaultSendMethod(getSendMethodOptions(resolvedInitialContact)) : DEFAULT_SEND_METHOD)
     setInstallmentChargeMode('single')
     setStripeInstallmentChoice('24')
@@ -2846,6 +2866,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         paymentPlanRequestKeyRef.current ||= createPaymentPlanRequestKey()
         const result = await offlinePaymentsService.createPaymentPlan({
           ...buildGatewayPaymentPlanPayload(invoicePayload, invoiceSummary, 'offline'),
+          reminderDaysBefore: offlineReminderDaysBefore,
+          reminderTime: offlineReminderTime,
           idempotencyKey: paymentPlanRequestKeyRef.current
         })
         const firstPaymentCopy = result.firstPaymentPaymentId
@@ -2854,7 +2876,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         showToast(
           'success',
           'Plan offline creado',
-          `${result.scheduledPayments.length} recordatorios se enviarán el día de cada vencimiento por ${result.reminderChannelLabel}.${firstPaymentCopy}`
+          `${result.scheduledPayments.length} recordatorios se enviarán ${formatOfflineReminderTiming(result.reminderDaysBefore, result.reminderTime)} por ${result.reminderChannelLabel}.${firstPaymentCopy}`
         )
         await onSuccess?.(PAYMENT_PLAN_CHANGED_SUCCESS_CONTEXT)
         onClose()
@@ -4499,9 +4521,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         : savedCardGatewayLabels.length === 1
           ? `Después eliges la tarjeta guardada de ${savedCardGatewayLabels[0]}.`
           : `Este ${customerLowerLabel} todavía no tiene tarjetas guardadas.`
+      const offlineReminderTimingLabel = formatOfflineReminderTiming(offlineReminderDaysBefore, offlineReminderTime)
+      const offlineReminderTimingSentence = offlineReminderTimingLabel.replace(/\.$/, '')
       const authorizationLabel = singlePaymentOptionsStage === 'method'
         ? paymentOption === 'offline'
-          ? `Ristak avisará por ${offlineReminderChannelLabel} el día de cada vencimiento; tú registrarás el pago cuando lo recibas.`
+          ? `Ristak avisará por ${offlineReminderChannelLabel} ${offlineReminderTimingLabel}; tú registrarás el pago cuando lo recibas.`
         : stripePlanCardSource === 'saved_card'
           ? paymentPlanSavedCardActionDescription
           : paymentPlanNewCardActionDescription
@@ -4773,12 +4797,41 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     <div>
                       <p>Recordatorios de pago offline</p>
                       <span>
-                        {offlineReminderUnavailableReason || `Avisará por ${offlineReminderChannelLabel} justo el día del vencimiento. No cobra tarjetas.`}
+                        {offlineReminderUnavailableReason || `Avisará por ${offlineReminderChannelLabel} ${offlineReminderTimingSentence}. No cobra tarjetas.`}
                       </span>
                     </div>
                   </div>
                   {paymentOption === 'offline' && <Check size={18} className={styles.optionCheck} />}
                 </button>
+
+                {paymentOption === 'offline' && (
+                  <div className={styles.fieldGrid}>
+                    <div className={styles.field}>
+                      <label className={styles.label} htmlFor="offline-reminder-days-before">Días antes del pago</label>
+                      <NumberInput
+                        id="offline-reminder-days-before"
+                        className={styles.input}
+                        value={offlineReminderDaysBefore}
+                        min={0}
+                        max={MAX_OFFLINE_REMINDER_DAYS_BEFORE}
+                        step={1}
+                        maxFractionDigits={0}
+                        onValueChange={(value) => setOfflineReminderDaysBefore(Math.trunc(value))}
+                        aria-describedby="offline-reminder-days-hint"
+                      />
+                      <p id="offline-reminder-days-hint" className={styles.hint}>0 es el mismo día; 1 es un día antes.</p>
+                    </div>
+                    <div className={styles.field}>
+                      <label className={styles.label}>Hora del recordatorio</label>
+                      <TimePickerSelect
+                        value={offlineReminderTime}
+                        onValueChange={setOfflineReminderTime}
+                        aria-label="Hora del recordatorio de pago"
+                      />
+                      <p className={styles.hint}>Se interpreta en la zona horaria del negocio.</p>
+                    </div>
+                  </div>
+                )}
               </>
             ) : null}
           </div>

@@ -591,6 +591,92 @@ test('un canal QR configurado no brinca una API activa del mismo número', async
   })
 })
 
+test('recordatorio usa el número preferido de la conversación aunque otro WhatsApp sea el predeterminado', async () => {
+  await withYCloudCapture(async (captures) => {
+    await withOnlyQrPaymentSender(async ({ phoneNumberId, sentMessages }) => {
+      const fixture = await createPaymentFixture({ status: 'pending', suffix: 'preferredqr1' })
+      const wrongDefaultId = `phone_payment_wrong_default_${randomUUID()}`
+
+      try {
+        await db.run('UPDATE whatsapp_api_phone_numbers SET is_default_sender = 0 WHERE id = ?', [phoneNumberId])
+        await db.run(`
+          INSERT INTO whatsapp_api_phone_numbers (
+            id, provider, waba_id, phone_number, display_phone_number, verified_name,
+            is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+          ) VALUES (?, 'ycloud', 'waba_payment_automations_test', '+528110638341', '+528110638341',
+            'WhatsApp predeterminado equivocado', 1, 1, 0, 'disconnected', 'CONNECTED')
+        `, [wrongDefaultId])
+        await db.run(
+          'UPDATE contacts SET preferred_whatsapp_phone_number_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          [phoneNumberId, fixture.contactId]
+        )
+        await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+          automations: {
+            remindersEnabled: true,
+            reminderChannel: 'whatsapp',
+            reminderContentMode: 'direct',
+            reminderMessageText: 'Recordatorio por la conversación correcta: {{payment.url}}'
+          }
+        })
+
+        const result = await sendPaymentAutomationMessage('reminder', fixture.paymentId)
+        assert.equal(result.sent, true)
+        assert.equal(result.fallback, 'qr_text')
+        assert.equal(captures.length, 0)
+        assert.equal(sentMessages.length, 1)
+
+        const storedMessage = await db.get(`
+          SELECT business_phone_number_id, transport
+          FROM whatsapp_api_messages
+          WHERE contact_id = ? AND direction = 'outbound'
+          ORDER BY created_at DESC
+          LIMIT 1
+        `, [fixture.contactId])
+        assert.equal(storedMessage.business_phone_number_id, phoneNumberId)
+        assert.equal(storedMessage.transport, 'qr')
+      } finally {
+        await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [wrongDefaultId])
+        await cleanupFixtures([fixture.paymentId])
+      }
+    })
+  })
+})
+
+test('recordatorio no brinca una ruta explícita desconectada hacia otro número predeterminado', async () => {
+  await withYCloudCapture(async (captures) => {
+    const fixture = await createPaymentFixture({ status: 'pending', suffix: 'preferredmissing1' })
+
+    try {
+      await db.run(
+        'UPDATE contacts SET preferred_whatsapp_phone_number_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        ['phone_payment_route_disconnected', fixture.contactId]
+      )
+      await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+        automations: {
+          remindersEnabled: true,
+          reminderChannel: 'whatsapp',
+          reminderContentMode: 'direct',
+          reminderMessageText: 'Este mensaje no debe salir desde otro número: {{payment.url}}'
+        }
+      })
+
+      const result = await sendPaymentAutomationMessage('reminder', fixture.paymentId)
+      assert.equal(result.sent, false)
+      assert.equal(captures.length, 0)
+      assert.match(result.error, /Conecta un número de WhatsApp/i)
+
+      const dispatch = await db.get(
+        'SELECT status, error_message FROM payment_automation_dispatches WHERE payment_id = ? AND automation_type = ?',
+        [fixture.paymentId, 'reminder']
+      )
+      assert.equal(dispatch.status, 'failed')
+      assert.match(dispatch.error_message, /Conecta un número de WhatsApp/i)
+    } finally {
+      await cleanupFixtures([fixture.paymentId])
+    }
+  })
+})
+
 test('envia recordatorio de pago como mensaje directo por correo', async () => {
   await withEmailCapture(async (captures) => {
     const fixture = await createPaymentFixture({ status: 'pending', suffix: 'directem1' })
@@ -1221,10 +1307,10 @@ test('consulta recordatorios sin aplicar TRIM a due_date timestamp', async () =>
   })
 })
 
-test('plan offline avisa justo al vencimiento, marca enviado y se completa al registrar los pagos', async () => {
+test('plan offline respeta días y hora local, recupera pendientes y se completa al registrar los pagos', async () => {
   await snapshotAppConfig(['account_currency'], async () => {
     await setAppConfig('account_currency', 'USD')
-    await withAccountTimezoneForTest('America/Ciudad_Juarez', async () => {
+    await withAccountTimezoneForTest('UTC', async () => {
       await withEmailCapture(async (captures) => {
         const suffix = randomUUID().slice(0, 10)
         const contactId = `contact_offline_plan_${suffix}`
@@ -1258,7 +1344,7 @@ test('plan offline avisa justo al vencimiento, marca enviado y se completa al re
               firstPayment: {
                 enabled: true,
                 amount: 25,
-                date: businessTodayDateOnly('America/Ciudad_Juarez'),
+                date: businessTodayDateOnly('UTC'),
                 method: 'card'
               },
               remainingPayments: [{ amount: 100, dueDate: '2099-05-10' }]
@@ -1279,6 +1365,7 @@ test('plan offline avisa justo al vencimiento, marca enviado y se completa al re
             description: 'Plan por transferencia',
             firstPayment: { enabled: false, amount: 0, method: 'none' },
             remainingFrequency: 'custom',
+            reminderDaysBefore: 1,
             remainingPayments: [
               { amount: 50, dueDate: '2099-05-10', frequency: 'custom' },
               { amount: 75, dueDate: '2099-05-11', frequency: 'custom' }
@@ -1287,9 +1374,11 @@ test('plan offline avisa justo al vencimiento, marca enviado y se completa al re
           flowId = result.flowId
 
           assert.equal(result.reminderChannel, 'email')
+          assert.equal(result.reminderDaysBefore, 1)
+          assert.equal(result.reminderTime, '12:00')
           assert.equal(result.scheduledPayments.length, 2)
           const payments = await db.all(
-            'SELECT id, amount, currency, status, due_date, payment_provider FROM payments WHERE metadata_json LIKE ? ORDER BY due_date',
+            'SELECT id, amount, currency, status, due_date, payment_provider, metadata_json FROM payments WHERE metadata_json LIKE ? ORDER BY due_date',
             [`%${flowId}%`]
           )
           assert.equal(payments.length, 2)
@@ -1298,8 +1387,16 @@ test('plan offline avisa justo al vencimiento, marca enviado y se completa al re
 
           const dueToday = payments[0]
           const dueTomorrow = payments[1]
+          const beforeScheduledTime = await processDuePaymentAutomations({
+            now: new Date('2099-05-09T11:59:00.000Z'),
+            limit: 10,
+            paymentIds: [dueToday.id, dueTomorrow.id]
+          })
+          assert.equal(beforeScheduledTime.length, 0)
+          assert.equal(captures.length, 0)
+
           const automationResults = await processDuePaymentAutomations({
-            now: new Date('2099-05-10T18:00:00.000Z'),
+            now: new Date('2099-05-09T12:00:00.000Z'),
             limit: 10,
             paymentIds: [dueToday.id, dueTomorrow.id]
           })
@@ -1307,6 +1404,8 @@ test('plan offline avisa justo al vencimiento, marca enviado y se completa al re
           assert.equal(captures.length, 1)
           assert.match(captures[0].subject, /Recordatorio de pago/)
           assert.match(captures[0].html, /no cobra ninguna tarjeta/)
+          assert.equal(JSON.parse(dueToday.metadata_json).reminderDaysBefore, 1)
+          assert.equal(JSON.parse(dueToday.metadata_json).reminderTime, '12:00')
 
           const sentPayment = await db.get('SELECT status, sent_at FROM payments WHERE id = ?', [dueToday.id])
           const futurePayment = await db.get('SELECT status FROM payments WHERE id = ?', [dueTomorrow.id])
@@ -1337,10 +1436,12 @@ test('plan offline avisa justo al vencimiento, marca enviado y se completa al re
           assert.equal(publicPayment.provider, 'offline')
           assert.equal(publicPayment.status, 'sent')
           assert.equal(publicPayment.paymentPlan.reminderChannel, 'email')
+          assert.equal(publicPayment.paymentPlan.reminderDaysBefore, 1)
+          assert.equal(publicPayment.paymentPlan.reminderTime, '12:00')
           assert.equal(publicMirror.updated_at, '2000-01-01 00:00:00')
 
           await processDuePaymentAutomations({
-            now: new Date('2099-05-10T20:00:00.000Z'),
+            now: new Date('2099-05-09T14:00:00.000Z'),
             limit: 10,
             paymentIds: [dueToday.id, dueTomorrow.id]
           })
@@ -1370,5 +1471,106 @@ test('plan offline avisa justo al vencimiento, marca enviado y se completa al re
         }
       })
     })
+  })
+})
+
+test('un aviso manual entregado con la liga evita duplicar el recordatorio offline', async () => {
+  await withAccountTimezoneForTest('UTC', async () => {
+    const suffix = randomUUID().slice(0, 10)
+    const contactId = `contact_offline_manual_${suffix}`
+    const messageId = `wa_offline_manual_${suffix}`
+    let flowId = ''
+    let paymentId = ''
+
+    try {
+      await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+        automations: {
+          remindersEnabled: true,
+          reminderChannel: 'whatsapp',
+          reminderContentMode: 'direct',
+          reminderMessageText: 'Recordatorio: {{payment.url}}',
+          failedPaymentEnabled: false
+        }
+      })
+      await db.run(
+        `INSERT INTO contacts (id, full_name, phone, source, created_at, updated_at)
+         VALUES (?, 'Cliente con aviso manual', '+526561234567', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [contactId]
+      )
+
+      const plan = await createOfflinePaymentPlan({
+        contact: {
+          id: contactId,
+          name: 'Cliente con aviso manual',
+          phone: '+526561234567'
+        },
+        totalAmount: 125,
+        title: 'Plan avisado manualmente',
+        description: 'Plan avisado manualmente',
+        firstPayment: { enabled: false, amount: 0, method: 'none' },
+        remainingFrequency: 'custom',
+        reminderDaysBefore: 0,
+        reminderTime: '12:00',
+        remainingPayments: [
+          { amount: 125, dueDate: '2099-05-10', frequency: 'custom' }
+        ]
+      }, { baseUrl: PUBLIC_BASE_URL })
+      flowId = plan.flowId
+      paymentId = plan.scheduledPayments[0].paymentId
+
+      const payment = await db.get('SELECT payment_url FROM payments WHERE id = ?', [paymentId])
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, origin, contact_id, phone, from_phone, to_phone,
+          transport, direction, message_type, message_text, status,
+          message_timestamp, created_at, updated_at
+        ) VALUES (?, 'baileys', 'manual_payment_notice', ?, '+526561234567', '+526567825555',
+          '+526561234567', 'qr', 'outbound', 'text', ?, 'delivered', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        messageId,
+        contactId,
+        `Hola, aquí está tu aviso de pago: ${payment.payment_url}`,
+        '2099-05-10T12:05:00.000Z'
+      ])
+
+      const results = await processDuePaymentAutomations({
+        now: new Date('2099-05-10T12:10:00.000Z'),
+        limit: 10,
+        paymentIds: [paymentId]
+      })
+
+      assert.equal(results.length, 1)
+      assert.equal(results[0].sent, false)
+      assert.equal(results[0].skipped, true)
+      assert.equal(results[0].reason, 'already_delivered_in_conversation')
+      assert.equal(results[0].messageId, messageId)
+
+      const storedPayment = await db.get('SELECT status, sent_at FROM payments WHERE id = ?', [paymentId])
+      const storedInstallment = await db.get('SELECT status FROM installment_payments WHERE payment_id = ?', [paymentId])
+      const dispatch = await db.get('SELECT id FROM payment_automation_dispatches WHERE payment_id = ?', [paymentId])
+      assert.equal(storedPayment.status, 'sent')
+      assert.equal(storedPayment.sent_at, '2099-05-10T12:05:00.000Z')
+      assert.equal(storedInstallment.status, 'sent')
+      assert.equal(dispatch, null)
+
+      const repeated = await processDuePaymentAutomations({
+        now: new Date('2099-05-10T12:15:00.000Z'),
+        limit: 10,
+        paymentIds: [paymentId]
+      })
+      assert.equal(repeated.length, 0)
+    } finally {
+      if (paymentId) {
+        await db.run('DELETE FROM payment_automation_dispatches WHERE payment_id = ?', [paymentId])
+      }
+      await db.run('DELETE FROM whatsapp_api_messages WHERE id = ?', [messageId])
+      if (flowId) {
+        await db.run('DELETE FROM payment_plans WHERE id = ?', [flowId])
+        await db.run('DELETE FROM installment_payments WHERE flow_id = ?', [flowId])
+        if (paymentId) await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
+        await db.run('DELETE FROM payment_flows WHERE id = ?', [flowId])
+      }
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    }
   })
 })
