@@ -353,6 +353,11 @@ router.get('/.well-known/oauth-authorization-server', (req, res) => {
   res.json(authorizationServerMetadata(req))
 })
 
+router.get('/.well-known/openid-configuration', (_req, res) => {
+  noStore(res)
+  res.status(404).json({ error: 'openid_not_supported' })
+})
+
 router.post('/api/oauth/register', registrationRateLimiter, async (req, res) => {
   try {
     assertSupportedClientMetadata(req.body)
