@@ -148,3 +148,34 @@ export function sortChatContactsByRecency(chats: ChatContact[]) {
     - parseSortableDateValue(left.lastMessageDate || left.createdAt)
   ));
 }
+
+/**
+ * Los chips de filtros cuentan conversaciones, no mensajes. Mantener esta
+ * politica separada del badge global evita que, por ejemplo, dos chats con 41
+ * mensajes pendientes prometan 41 filas al abrir `No leidos`.
+ */
+export function countUnreadChatConversations(
+  chats: ChatContact[],
+  archivedChatIds: Iterable<string>,
+  getUnreadCount: (contact: ChatContact) => number,
+) {
+  const archived = new Set(archivedChatIds);
+  return chats.reduce((total, contact) => (
+    archived.has(contact.id) || getUnreadCount(contact) <= 0 ? total : total + 1
+  ), 0);
+}
+
+/**
+ * El contador de Archivados representa filas reales del inbox cargado. Los ids
+ * locales obsoletos o aun fuera de la paginacion no deben prometer filas que la
+ * vista actual no puede mostrar.
+ */
+export function countLoadedArchivedChatConversations(
+  chats: ChatContact[],
+  archivedChatIds: Iterable<string>,
+) {
+  const archived = new Set(archivedChatIds);
+  return chats.reduce((total, contact) => (
+    archived.has(contact.id) ? total + 1 : total
+  ), 0);
+}

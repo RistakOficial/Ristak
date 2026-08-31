@@ -1547,6 +1547,15 @@ filtros se calculan con los mismos campos que `/movil` recibe de
 superficie final. El badge y filtro de `No leídos` solo deben activarse para
 mensajes entrantes pendientes; si el ultimo mensaje es saliente, aunque el
 backend mande `unreadCount`, la UI nativa no debe mostrarlo como notificacion.
+El numero del dock, el subtitulo de Chats y cualquier badge global conservan la
+suma de **mensajes** pendientes. El numero dentro del chip `No leídos` cuenta
+**conversaciones** que ese filtro puede pintar: dos chats con 41 mensajes
+pendientes muestran `No leídos 2`, no `41`. La fila `Archivados` tambien cuenta
+solo conversaciones presentes en el inbox cargado y renderizables; ids locales
+obsoletos o todavia fuera de la paginacion no pueden prometer filas inexistentes.
+Al llegar otra pagina, ambos contadores de filtro se recalculan contra las mismas
+filas que usa la vista. Esta semantica es obligatoria en `/movil`, `mobile/` e
+`ios/app`.
 El avatar nativo debe mantener iniciales/foto en relleno
 Ristak y reservar el color de red social para aro/badge, igual que
 `PhoneChat.module.css`. La bandeja conserva el robot del encabezado como acceso

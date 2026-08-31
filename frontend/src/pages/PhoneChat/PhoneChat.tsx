@@ -249,6 +249,7 @@ import { formatChatDayLabel, formatChatListTimestamp, formatChatMessageTime, get
 import { mergeContactCustomFields } from '@/utils/contactCustomFields'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { parseSortableDateValue } from '@/utils/dateSort'
+import { countLoadedArchivedChatConversations, countUnreadChatConversations } from '@/utils/chatInboxCounts'
 import { normalizeSearchText } from '@/utils/searchText'
 import { resolveStableRequestIntent, type StableRequestIntent } from '@/utils/requestIntent'
 import { formatCurrency, formatDate, formatUrlParameter } from '@/utils/format'
@@ -7137,7 +7138,7 @@ export const PhoneChat: React.FC = () => {
   const pinnedChatIdSet = useMemo(() => new Set(pinnedChatIds), [pinnedChatIds])
   const manualUnreadChatIdSet = useMemo(() => new Set(manualUnreadChatIds), [manualUnreadChatIds])
   const starredMessageIdSet = useMemo(() => new Set(starredMessageIds), [starredMessageIds])
-  const archivedChatCount = archivedChatIds.length
+  const storedArchivedChatCount = archivedChatIds.length
   const knownAgentIdSet = useMemo(
     () => new Set(agentDefs.map((agent) => agent.id).filter(Boolean)),
     [agentDefs]
@@ -7349,6 +7350,24 @@ export const PhoneChat: React.FC = () => {
     )),
     [chats, manualUnreadChatIdSet]
   )
+  const loadedArchivedChatCount = useMemo(
+    () => countLoadedArchivedChatConversations(
+      displayChats,
+      archivedChatIdSet,
+      (contact) => !isCommentContact(contact)
+    ),
+    [archivedChatIdSet, displayChats]
+  )
+  const unreadConversationCount = useMemo(
+    () => countUnreadChatConversations(
+      displayChats,
+      archivedChatIdSet,
+      (contact) => Math.max(0, Number(contact.unreadCount || 0)),
+      (contact) => !isCommentContact(contact)
+    ),
+    [archivedChatIdSet, displayChats]
+  )
+  const archivedChatCount = loadedArchivedChatCount
   const agentInboxSourceChats = useMemo(() => {
     const rows = new Map<string, ChatContact>()
     displayChats.forEach((contact) => {
@@ -7495,7 +7514,7 @@ export const PhoneChat: React.FC = () => {
   const bulkMuteActionLabel = selectedChatContacts.length > 0 && selectedChatContacts.every((contact) => mutedChatIdSet.has(contact.id))
     ? 'Quitar silencio'
     : 'Silenciar chats'
-  const unreadTotal = useMemo(
+  const unreadMessageTotal = useMemo(
     () => displayChats.reduce((total, contact) => (
       archivedChatIdSet.has(contact.id) ? total : total + Math.max(0, Number(contact.unreadCount || 0))
     ), 0),
@@ -16350,7 +16369,7 @@ export const PhoneChat: React.FC = () => {
       }
     }
 
-    if (chats.length === 0 && archivedChatCount === 0 && chatFilter !== 'agent') {
+    if (chats.length === 0 && storedArchivedChatCount === 0 && chatFilter !== 'agent') {
       return (
         <div className={styles.emptyChats}>
           <span className={styles.emptyChatsIcon}>
@@ -16395,7 +16414,7 @@ export const PhoneChat: React.FC = () => {
             <span>{archivedChatCount}</span>
           </button>
         )}
-        {showArchivedChats && !chatSelectionActive && !archivedViewOpen && !agentPriorityViewOpen && (chats.length > 0 || archivedChatCount > 0) && (
+        {showArchivedChats && !chatSelectionActive && !archivedViewOpen && !agentPriorityViewOpen && (chats.length > 0 || storedArchivedChatCount > 0) && (
           <button
             type="button"
             className={styles.archiveRow}
@@ -22946,7 +22965,7 @@ export const PhoneChat: React.FC = () => {
             <PhoneEcosystemNav
               className={styles.tabletSideRailNav}
               active={activeRailSection}
-              badges={{ chat: unreadTotal }}
+              badges={{ chat: unreadMessageTotal }}
               placement="rail"
               onSelect={handleWideRailSelect}
             />
@@ -23067,7 +23086,9 @@ export const PhoneChat: React.FC = () => {
                       value: preset.id,
                       label: preset.id === 'agent' ? <><Bot size={14} aria-hidden="true" /> Chatbot</> : preset.label,
                       ariaLabel: preset.label,
-                      count: preset.id === 'unread' && unreadTotal > 0 ? (unreadTotal > 99 ? '99+' : unreadTotal) : undefined,
+                      count: preset.id === 'unread' && unreadConversationCount > 0
+                        ? (unreadConversationCount > 99 ? '99+' : unreadConversationCount)
+                        : undefined,
                       tone: preset.kind === 'comments' ? 'comments' as const : undefined,
                       separatorBefore: preset.separatorBefore
                     })),
@@ -23446,7 +23467,7 @@ export const PhoneChat: React.FC = () => {
 
       {renderMessageActionMenu()}
 
-      {!isWideChatDevice && !conversationOpen && !cameraShareMedia && !aiAgentHubOpen && !aiAgentHubClosing && !agentPickerOpen && <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} />}
+      {!isWideChatDevice && !conversationOpen && !cameraShareMedia && !aiAgentHubOpen && !aiAgentHubClosing && !agentPickerOpen && <PhoneEcosystemNav active="chat" badges={{ chat: unreadMessageTotal }} />}
 
       <input
         ref={cameraInputRef}

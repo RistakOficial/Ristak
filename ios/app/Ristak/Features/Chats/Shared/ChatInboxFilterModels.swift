@@ -210,6 +210,57 @@ enum ChatbotInboxVisibility {
     }
 }
 
+// MARK: - Semantica de contadores
+
+/// El badge global cuenta mensajes pendientes; los accesos de filtro cuentan
+/// conversaciones que la lista puede pintar. Son dos metricas distintas y no
+/// deben compartir el mismo numero por comodidad.
+enum ChatInboxCountPolicy {
+    static func unreadMessageTotal(
+        in rows: [ChatContact],
+        archivedIDs: Set<String>,
+        manuallyUnreadIDs: Set<String>
+    ) -> Int {
+        rows.reduce(into: 0) { total, contact in
+            guard !archivedIDs.contains(contact.id), !contact.isCommentOnlyChat else { return }
+            total += effectiveUnreadCount(contact, manuallyUnreadIDs: manuallyUnreadIDs)
+        }
+    }
+
+    static func unreadConversationCount(
+        in rows: [ChatContact],
+        archivedIDs: Set<String>,
+        manuallyUnreadIDs: Set<String>
+    ) -> Int {
+        rows.reduce(into: 0) { total, contact in
+            guard !archivedIDs.contains(contact.id),
+                  !contact.isCommentOnlyChat,
+                  effectiveUnreadCount(contact, manuallyUnreadIDs: manuallyUnreadIDs) > 0 else { return }
+            total += 1
+        }
+    }
+
+    static func loadedArchivedConversationCount(
+        in rows: [ChatContact],
+        archivedIDs: Set<String>
+    ) -> Int {
+        rows.reduce(into: 0) { total, contact in
+            if archivedIDs.contains(contact.id) { total += 1 }
+        }
+    }
+
+    private static func effectiveUnreadCount(
+        _ contact: ChatContact,
+        manuallyUnreadIDs: Set<String>
+    ) -> Int {
+        let manualUnread = manuallyUnreadIDs.contains(contact.id)
+            && !ChatRowSignals.isOutbound(contact.lastMessageDirection)
+            ? 1
+            : 0
+        return max(contact.visibleUnreadCount, manualUnread)
+    }
+}
+
 // MARK: - Sub-filtro de la lente de comentarios
 
 enum ChatCommentsPlatform: String, CaseIterable, Sendable {

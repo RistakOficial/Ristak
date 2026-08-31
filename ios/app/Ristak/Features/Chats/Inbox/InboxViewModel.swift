@@ -1524,7 +1524,10 @@ final class InboxViewModel {
     }
 
     var archivedCount: Int {
-        localState.archivedIDs.count
+        ChatInboxCountPolicy.loadedArchivedConversationCount(
+            in: rows,
+            archivedIDs: localState.archivedIDs
+        )
     }
 
     // MARK: - Filas visibles
@@ -1718,17 +1721,27 @@ final class InboxViewModel {
     var showsArchivedRow: Bool {
         guard appConfig?.showArchivedChats ?? true else { return false }
         guard !isSelecting, !archivedViewActive, activeFilter == .quick(.all), searchText.isEmpty else { return false }
-        return !rows.isEmpty || archivedCount > 0
+        return !rows.isEmpty || !localState.archivedIDs.isEmpty
     }
 
     // MARK: - Badge de no leídos (dock/tab)
 
     /// Suma de no leídos de chats NO archivados (doc 03 §4.6).
     var unreadTotal: Int {
-        rows.reduce(into: 0) { total, contact in
-            guard !localState.isArchived(contact.id), !contact.isCommentOnlyChat else { return }
-            total += max(contact.visibleUnreadCount, localState.isManuallyUnread(contact.id) ? 1 : 0)
-        }
+        ChatInboxCountPolicy.unreadMessageTotal(
+            in: rows,
+            archivedIDs: localState.archivedIDs,
+            manuallyUnreadIDs: localState.manualUnreadIDs
+        )
+    }
+
+    /// Cantidad de filas que promete el chip `No leidos`.
+    var unreadConversationCount: Int {
+        ChatInboxCountPolicy.unreadConversationCount(
+            in: rows,
+            archivedIDs: localState.archivedIDs,
+            manuallyUnreadIDs: localState.manualUnreadIDs
+        )
     }
 
     private func syncUnreadBadge() {
@@ -1917,7 +1930,7 @@ final class InboxViewModel {
             return ChatFilterChipModel(
                 filter: filter,
                 title: quickChipTitle(quick),
-                count: quick == .unread ? unreadTotal : nil,
+                count: quick == .unread ? unreadConversationCount : nil,
                 isSelected: activeFilter == filter,
                 showsAgentBotIcon: quick == .chatbot,
                 leadingDivider: quick == .comments

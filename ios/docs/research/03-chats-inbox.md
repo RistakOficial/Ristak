@@ -334,7 +334,7 @@ Fuente: `PhoneChat.tsx:507-712, 6187-6458, 8061-8257` y RN
 |---|---|---|
 | `all` | `Todos` (bloqueado, no removible) | Sin filtro. Descripción: «Muestra todas las conversaciones activas.» |
 | `goal_completed` | `Meta completada` + glifo de robot | Chip automático, no configurable en el manager. Solo aparece si hay al menos un agente `enabled`; carga `/contacts/chats?goalCompletedUnreviewed=true` para filtrar antes de paginar y no abre automáticamente la primera fila. |
-| `unread` | `No leídos` (con contador `unreadTotal`, `99+` si >99) | `unreadCount > 0`. En RN además se fuerza 0 si el último mensaje es saliente (§4.6). «Sólo conversaciones con mensajes pendientes.» |
+| `unread` | `No leídos` (contador de conversaciones que coinciden, `99+` si >99) | `unreadCount > 0`. En RN además se fuerza 0 si el último mensaje es saliente (§4.6). «Sólo conversaciones con mensajes pendientes.» |
 | `appointments` | `Agendados` | `status=='appointment' \|\| hasAppointments` (RN añade `nextAppointmentDate`). «Contactos con cita guardada.» |
 | `customers` | `Clientes` (label custom `customersLabel`) | `status=='customer' \|\| purchases>0` (RN añade `ltv>0`). «Contactos marcados como clientes o con compras.» |
 | `leads` | `Leads`/`Interesados` (label custom) | No es customer ni appointment y `status=='lead'`. «Contactos interesados que todavía no son clientes ni citados.» |
@@ -557,8 +557,10 @@ informativo «Etiqueta ya agregada».
 - Al abrir un chat: poner `unreadCount=0` optimista local + `POST
   /contacts/chats/:id/read` (silencioso; si falla no bloquear — el backend
   registra).
-- `unreadTotal` (suma de no leídos de chats NO archivados) alimenta el badge
-  del dock/tab de Chats.
+- `unreadTotal` (suma de mensajes no leídos de chats NO archivados) alimenta el
+  subtítulo y el badge del dock/tab de Chats. El chip `No leídos` usa otra
+  métrica: número de conversaciones renderizables con pendiente. Así, dos chats
+  que suman 41 mensajes muestran `No leídos 2` y abren dos filas.
 - Web además mantiene un baseline local (`ristak_phone_chat_read_state_v1`) para
   filas sin `unreadCount` del server — con el backend actual siempre viene, así
   que el cliente nativo puede confiar en el server + regla outbound.
@@ -589,6 +591,11 @@ selección = toggle (no abre chat).
   bandeja normal y del `unreadTotal`; la vista Archivados lista solo esos y ahí
   los filtros rápidos se ignoran (se listan todos los archivados; RN usa filtro
   `all` dentro). Archivar el chat activo cierra su conversación.
+- El contador de la fila `Archivados` es la intersección entre los ids locales y
+  las conversaciones realmente cargadas/renderizables. No usa el tamaño crudo
+  del set local: ids obsoletos o todavía fuera de la paginación no pueden hacer
+  que el acceso prometa más filas de las que la vista muestra. Al paginar, el
+  contador se recalcula con las filas nuevas.
 - Silenciar solo pinta el icono de campana tachada en la fila (es una marca
   visual; no bloquea push hoy).
 

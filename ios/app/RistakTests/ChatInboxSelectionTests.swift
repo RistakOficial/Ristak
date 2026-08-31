@@ -63,6 +63,46 @@ final class ChatInboxSelectionTests: XCTestCase {
         XCTAssertFalse(contact.agentGoalCompletedUnreviewed)
     }
 
+    func testFilterCountersUseVisibleConversationsInsteadOfMessageOrStoredIDTotals() throws {
+        let rows = try [
+            decodeCountContact(id: "unread-1", unread: 1),
+            decodeCountContact(id: "unread-40", unread: 40),
+            decodeCountContact(id: "archived-visible", unread: 8),
+            decodeCountContact(id: "outbound", unread: 7, direction: "outbound"),
+            decodeCountContact(
+                id: "comment-only",
+                unread: 5,
+                hasCommentMessage: true,
+                hasPrivateDm: false
+            ),
+        ]
+        let archivedIDs = Set(["archived-visible", "archived-stale-1", "archived-stale-2"])
+
+        XCTAssertEqual(
+            ChatInboxCountPolicy.unreadMessageTotal(
+                in: rows,
+                archivedIDs: archivedIDs,
+                manuallyUnreadIDs: ["outbound"]
+            ),
+            41
+        )
+        XCTAssertEqual(
+            ChatInboxCountPolicy.unreadConversationCount(
+                in: rows,
+                archivedIDs: archivedIDs,
+                manuallyUnreadIDs: ["outbound"]
+            ),
+            2
+        )
+        XCTAssertEqual(
+            ChatInboxCountPolicy.loadedArchivedConversationCount(
+                in: rows,
+                archivedIDs: archivedIDs
+            ),
+            1
+        )
+    }
+
     private func decodeContact(
         id: String,
         agentGoalCompletedUnreviewed: Bool
@@ -82,6 +122,28 @@ final class ChatInboxSelectionTests: XCTestCase {
         try JSONDecoder().decode(
             ConversationAgentState.self,
             from: Data(#"{"contactId":"\#(contactID)","status":"\#(status)"}"#.utf8)
+        )
+    }
+
+
+    private func decodeCountContact(
+        id: String,
+        unread: Int,
+        direction: String = "inbound",
+        hasCommentMessage: Bool = false,
+        hasPrivateDm: Bool = false
+    ) throws -> ChatContact {
+        try JSONDecoder().decode(
+            ChatContact.self,
+            from: Data("""
+            {
+              "id": "\(id)",
+              "lastMessageDirection": "\(direction)",
+              "unreadCount": \(unread),
+              "hasCommentMessage": \(hasCommentMessage),
+              "hasPrivateDm": \(hasPrivateDm)
+            }
+            """.utf8)
         )
     }
 }

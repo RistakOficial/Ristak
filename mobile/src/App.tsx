@@ -179,6 +179,8 @@ import {
 } from './sessionAccess';
 import {
   applyChatLiveEvent,
+  countLoadedArchivedChatConversations,
+  countUnreadChatConversations,
   mergeChatContact,
   mergeChatContactPages,
   mergeFreshChatPage,
@@ -3807,6 +3809,20 @@ function ChatScreen({
       ? { ...contact, unreadCount: 1 }
       : contact
   )), [chats, manualUnreadChatIdSet]);
+  const unreadMessageTotal = useMemo(
+    () => displayChats.reduce((total, contact) => (
+      archivedChatIds.includes(contact.id) ? total : total + getUnreadCount(contact)
+    ), 0),
+    [archivedChatIds, displayChats],
+  );
+  const unreadConversationCount = useMemo(
+    () => countUnreadChatConversations(displayChats, archivedChatIds, getUnreadCount),
+    [archivedChatIds, displayChats],
+  );
+  const loadedArchivedChatCount = useMemo(
+    () => countLoadedArchivedChatConversations(displayChats, archivedChatIds),
+    [archivedChatIds, displayChats],
+  );
   const chatbotAgentStates = useMemo(
     () => Object.values(agentStatesByContactId).flat().filter((state) => {
       const status = getAgentStateStatus(state);
@@ -3844,17 +3860,12 @@ function ChatScreen({
     });
     return counts;
   }, [archivedChatIds, chatbotInboxSourceChats, chatbotStateGroups]);
-  const unreadTotal = useMemo(
-    () => displayChats.reduce((total, contact) => (
-      archivedChatIds.includes(contact.id) ? total : total + getUnreadCount(contact)
-    ), 0),
-    [archivedChatIds, displayChats],
-  );
-  const visibleUnreadTotal = settings.showUnreadIndicators ? unreadTotal : 0;
+  const visibleUnreadMessageTotal = settings.showUnreadIndicators ? unreadMessageTotal : 0;
+  const visibleUnreadConversationCount = settings.showUnreadIndicators ? unreadConversationCount : 0;
 
   useEffect(() => {
-    onUnreadTotalChange?.(visibleUnreadTotal);
-  }, [onUnreadTotalChange, visibleUnreadTotal]);
+    onUnreadTotalChange?.(visibleUnreadMessageTotal);
+  }, [onUnreadTotalChange, visibleUnreadMessageTotal]);
 
   const listBaseChats = useMemo(
     () => (chatbotFilterActive ? chatbotInboxSourceChats : displayChats).filter((contact) => (
@@ -3942,8 +3953,9 @@ function ChatScreen({
   const mutedChatIdSet = useMemo(() => new Set(mutedChatIds), [mutedChatIds]);
   const selectionActive = selectedChatIds.length > 0;
   const allVisibleChatsSelected = filteredChats.length > 0 && filteredChats.every((contact) => selectedChatIdSet.has(contact.id));
-  const archivedChatCount = archivedChatIds.length;
-  const canPaginateChatList = !(archivedViewOpen && archivedChatCount === 0);
+  const storedArchivedChatCount = archivedChatIds.length;
+  const archivedChatCount = loadedArchivedChatCount;
+  const canPaginateChatList = !(archivedViewOpen && storedArchivedChatCount === 0);
   const visibleFilters = useMemo(
     () => normalizedVisibleFilterIds.map((id) => filterPresetMap.get(id)).filter((filter): filter is ChatFilterPreset => Boolean(filter)),
     [filterPresetMap, normalizedVisibleFilterIds],
@@ -4837,7 +4849,7 @@ function ChatScreen({
     outputRange: [0, -chatRouteWidth],
   });
   const chatListPageStyle = selected ? { transform: [{ translateX: chatListTranslateX }] } : null;
-  const archivedEmptyVisible = archivedViewOpen && archivedChatCount === 0 && !selectionActive;
+  const archivedEmptyVisible = archivedViewOpen && storedArchivedChatCount === 0 && !selectionActive;
   const chatListHeaderContent = (
     <View
       style={styles.chatListHeaderWrap}
@@ -4851,7 +4863,7 @@ function ChatScreen({
           <ChatFilterBar
             active={effectiveActiveFilter}
             filters={visibleFilters}
-            unreadTotal={visibleUnreadTotal}
+            unreadConversationCount={visibleUnreadConversationCount}
             onChange={applyFilter}
           />
           {chatbotFilterActive ? (
@@ -15419,12 +15431,12 @@ function formatPaymentDate(value?: string | null, timezone = DEFAULT_BUSINESS_TI
 function ChatFilterBar({
   active,
   filters,
-  unreadTotal,
+  unreadConversationCount,
   onChange,
 }: {
   active: ChatFilterId;
   filters: ChatFilterPreset[];
-  unreadTotal: number;
+  unreadConversationCount: number;
   onChange: (filter: ChatFilterId) => void;
 }) {
   const scrollRef = useRef<ScrollView>(null);
@@ -15447,7 +15459,9 @@ function ChatFilterBar({
     >
       {filters.map((filter) => {
         const selected = filter.id === active;
-        const count = filter.id === 'unread' && unreadTotal > 0 ? (unreadTotal > 99 ? '99+' : String(unreadTotal)) : '';
+        const count = filter.id === 'unread' && unreadConversationCount > 0
+          ? (unreadConversationCount > 99 ? '99+' : String(unreadConversationCount))
+          : '';
         return (
           <React.Fragment key={filter.id}>
             {filter.separatorBefore ? <View style={styles.filterChipSeparator} /> : null}

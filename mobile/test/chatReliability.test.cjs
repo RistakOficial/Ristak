@@ -19,6 +19,8 @@ require.extensions['.ts'] = (module, filename) => {
 
 const {
   applyChatLiveEvent,
+  countLoadedArchivedChatConversations,
+  countUnreadChatConversations,
   mergeChatContactPages,
   mergeFreshChatPage,
   sortChatContactsByRecency,
@@ -154,6 +156,28 @@ test('seleccionar todos conserva ids que no estan en la pagina visible', () => {
   assert.deepEqual(
     toggleVisibleChatSelectionIds(['offscreen-1'], ['visible-1', 'visible-2']),
     ['offscreen-1', 'visible-1', 'visible-2'],
+  );
+});
+
+test('los contadores de filtros representan conversaciones visibles, no mensajes ni ids obsoletos', () => {
+  const chats = [
+    contact('unread-1', '2026-08-31T16:00:00.000Z', { unreadCount: 1 }),
+    contact('unread-40', '2026-08-31T15:00:00.000Z', { unreadCount: 40 }),
+    contact('archived-visible', '2026-08-31T14:00:00.000Z', { unreadCount: 8 }),
+    contact('read', '2026-08-31T13:00:00.000Z', { unreadCount: 0 }),
+  ];
+  const archivedIds = ['archived-visible', 'archived-stale-1', 'archived-stale-2'];
+
+  assert.equal(
+    countUnreadChatConversations(chats, archivedIds, (row) => Number(row.unreadCount || 0)),
+    2,
+  );
+  assert.equal(countLoadedArchivedChatConversations(chats, archivedIds), 1);
+  assert.equal(
+    chats.reduce((total, row) => (
+      archivedIds.includes(row.id) ? total : total + Number(row.unreadCount || 0)
+    ), 0),
+    41,
   );
 });
 
