@@ -16,6 +16,7 @@ export interface McpHeaderStatus {
   label: string
   variant: McpBadgeVariant
   ready: boolean
+  serverUrl: string
 }
 
 interface McpAccessPanelProps {
@@ -339,8 +340,13 @@ export const McpAccessPanel: React.FC<McpAccessPanelProps> = ({
           : 'neutral'
 
   useEffect(() => {
-    onStatusChange({ label: statusLabel, variant: statusVariant, ready: Boolean(status?.ready) })
-  }, [onStatusChange, status?.ready, statusLabel, statusVariant])
+    onStatusChange({
+      label: statusLabel,
+      variant: statusVariant,
+      ready: Boolean(status?.ready),
+      serverUrl: status?.serverUrl || serverUrl
+    })
+  }, [onStatusChange, serverUrl, status?.ready, status?.serverUrl, statusLabel, statusVariant])
 
   const formatDate = useCallback((value: string | null) => formatDateTime(value, {
     fallback: 'Nunca',

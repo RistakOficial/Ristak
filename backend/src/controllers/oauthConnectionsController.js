@@ -44,6 +44,7 @@ export async function getMcpAccessStatus(req, res) {
       },
       protections: {
         pkce: true,
+        authorizationResponseIssuer: true,
         refreshRotation: true,
         refreshReplayRevocation: true,
         immediateRevocation: true,

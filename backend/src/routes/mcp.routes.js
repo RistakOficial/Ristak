@@ -159,7 +159,10 @@ async function requireMcpAuth(req, res, next) {
     })
 
     if (!access) {
-      res.set('WWW-Authenticate', `Bearer resource_metadata="${metadataUrlFor(req)}", error="invalid_token"`)
+      res.set(
+        'WWW-Authenticate',
+        `Bearer resource_metadata="${metadataUrlFor(req)}", scope="ristak.read", error="invalid_token", error_description="OAuth access token requerido"`
+      )
       return res.status(401).json({
         error: 'unauthorized',
         error_description: 'OAuth access token requerido'

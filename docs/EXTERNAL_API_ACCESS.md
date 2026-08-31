@@ -51,11 +51,16 @@ de la interfaz de Ristak y no autentican clientes MCP ni integraciones de tercer
 ## MCP setup
 
 1. While logged into Ristak, open `Configuración > Developers > Conectar con MCP`.
-2. Use this remote server URL:
+2. Copy the exact remote server URL shown by Ristak:
 
    ```text
    https://YOUR_RENDER_DOMAIN/api/mcp
    ```
+
+   `GET /api/api-access/mcp/status` is the source of truth for this value. The
+   Developers panel and API documentation must use its `mcp.serverUrl`; they
+   must not rebuild the MCP URL from the browser address because the web UI and
+   the public MCP/OAuth service can have different origins.
 
    MCP clients use the built-in OAuth discovery endpoints. Ristak's authorization
    screen uses the normal web session and asks the user to consent to the
@@ -68,7 +73,12 @@ de la interfaz de Ristak y no autentican clientes MCP ni integraciones de tercer
    codex mcp login ristak
    ```
 
-   For ChatGPT, use a space or Work mode that supports MCP plugins/connectors.
+   For ChatGPT, use a space or Work mode that supports MCP plugins/connectors
+   and register the exact URL copied from Ristak. ChatGPT stores the endpoint in
+   the installed plugin version. **Reconnect** repeats OAuth against that stored
+   endpoint; it does not replace an obsolete URL. If the public Ristak endpoint
+   changed, create a new plugin/version with the current URL, verify OAuth and
+   `tools/list`, and only then remove the stale installation.
    For Claude, use `Settings > Connectors > Add custom connector`; Claude Code
    can register the same Streamable HTTP endpoint through its configuration or
    CLI. In every case, log into Ristak when OAuth opens, review the scopes and
@@ -105,6 +115,14 @@ catalog cannot bypass it. The registry covers these operational domains:
 - business costs, WhatsApp templates, mobile preferences and safe integration
   status;
 - Sites lifecycle, imported HTML files, preview and controlled publication.
+
+OAuth discovery advertises PKCE `S256`, Dynamic Client Registration and
+`authorization_response_iss_parameter_supported=true`. Every successful or
+error authorization callback includes the exact `iss` published in the
+authorization-server metadata. Unauthenticated MCP responses publish the
+protected-resource metadata URL, the minimum discovery scope and the OAuth
+error in `WWW-Authenticate`, so ChatGPT and other clients can restart discovery
+without guessing endpoints.
 
 Ristak Installer also has a private support delegation endpoint at
 `POST /api/internal/customer-operations/mcp`. It is not a customer-facing MCP
