@@ -1474,13 +1474,14 @@ test('plan offline respeta días y hora local, recupera pendientes y se completa
   })
 })
 
-test('un aviso manual entregado con la liga evita duplicar el recordatorio offline', async () => {
-  await withAccountTimezoneForTest('UTC', async () => {
+test('un aviso manual entregado evita duplicados aunque PostgreSQL devuelva el vencimiento como Date UTC', async () => {
+  await withAccountTimezoneForTest('America/Ciudad_Juarez', async () => {
     const suffix = randomUUID().slice(0, 10)
     const contactId = `contact_offline_manual_${suffix}`
     const messageId = `wa_offline_manual_${suffix}`
     let flowId = ''
     let paymentId = ''
+    let originalAll = null
 
     try {
       await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
@@ -1530,11 +1531,24 @@ test('un aviso manual entregado con la liga evita duplicar el recordatorio offli
         messageId,
         contactId,
         `Hola, aquí está tu aviso de pago: ${payment.payment_url}`,
-        '2099-05-10T12:05:00.000Z'
+        '2099-05-10T18:05:00.000Z'
       ])
 
+      // node-postgres entrega TIMESTAMPTZ como Date. La medianoche UTC aquí
+      // representa la fecha de calendario 2099-05-10 y no el día 9 en UTC-6.
+      originalAll = db.all
+      db.all = async (...args) => {
+        const rows = await originalAll(...args)
+        const sql = String(args[0] || '')
+        if (!sql.includes('FROM payments p')) return rows
+        return rows.map((row) => ({
+          ...row,
+          due_date: new Date('2099-05-10T00:00:00.000Z')
+        }))
+      }
+
       const results = await processDuePaymentAutomations({
-        now: new Date('2099-05-10T12:10:00.000Z'),
+        now: new Date('2099-05-10T18:10:00.000Z'),
         limit: 10,
         paymentIds: [paymentId]
       })
@@ -1549,17 +1563,18 @@ test('un aviso manual entregado con la liga evita duplicar el recordatorio offli
       const storedInstallment = await db.get('SELECT status FROM installment_payments WHERE payment_id = ?', [paymentId])
       const dispatch = await db.get('SELECT id FROM payment_automation_dispatches WHERE payment_id = ?', [paymentId])
       assert.equal(storedPayment.status, 'sent')
-      assert.equal(storedPayment.sent_at, '2099-05-10T12:05:00.000Z')
+      assert.equal(storedPayment.sent_at, '2099-05-10T18:05:00.000Z')
       assert.equal(storedInstallment.status, 'sent')
       assert.equal(dispatch, null)
 
       const repeated = await processDuePaymentAutomations({
-        now: new Date('2099-05-10T12:15:00.000Z'),
+        now: new Date('2099-05-10T18:15:00.000Z'),
         limit: 10,
         paymentIds: [paymentId]
       })
       assert.equal(repeated.length, 0)
     } finally {
+      if (originalAll) db.all = originalAll
       if (paymentId) {
         await db.run('DELETE FROM payment_automation_dispatches WHERE payment_id = ?', [paymentId])
       }

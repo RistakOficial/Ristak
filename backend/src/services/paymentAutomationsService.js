@@ -137,10 +137,29 @@ function addDateOnlyDays(dateOnly, days, timezone = DEFAULT_TIMEZONE) {
   return date.isValid ? date.plus({ days }).toISODate() : ''
 }
 
-function businessDateOnlyFromValue(value, timezone = DEFAULT_TIMEZONE) {
+function businessDateOnlyFromValue(
+  value,
+  timezone = DEFAULT_TIMEZONE,
+  { preserveUtcMidnightDate = false } = {}
+) {
   const zone = resolveTimezone(timezone)
 
   if (value instanceof Date) {
+    // PostgreSQL devuelve los vencimientos TIMESTAMPTZ como Date. En este
+    // proyecto una fecha de calendario se persiste como medianoche UTC; si la
+    // convertimos primero a la zona del negocio, cuentas UTC-6 la ven como el
+    // día anterior. Solo los consumidores de fechas de vencimiento activan
+    // esta preservación; los instantes reales siguen convirtiéndose de zona.
+    if (
+      preserveUtcMidnightDate &&
+      value.getUTCHours() === 0 &&
+      value.getUTCMinutes() === 0 &&
+      value.getUTCSeconds() === 0 &&
+      value.getUTCMilliseconds() === 0
+    ) {
+      const utcDate = DateTime.fromJSDate(value, { zone: 'utc' })
+      return utcDate.isValid ? utcDate.toISODate() : null
+    }
     const date = DateTime.fromJSDate(value).setZone(zone)
     return date.isValid ? date.toISODate() : null
   }
@@ -148,7 +167,10 @@ function businessDateOnlyFromValue(value, timezone = DEFAULT_TIMEZONE) {
   const text = cleanString(value, 80)
   if (!text) return null
 
-  const calendarDate = text.match(/^(\d{4}-\d{2}-\d{2})(?:[ T]00:00(?::00(?:\.0{1,6})?)?)?$/)
+  const calendarDatePattern = preserveUtcMidnightDate
+    ? /^(\d{4}-\d{2}-\d{2})(?:[ T]00:00(?::00(?:\.0{1,6})?)?)?(?:Z|\+00(?::?00)?)?$/i
+    : /^(\d{4}-\d{2}-\d{2})(?:[ T]00:00(?::00(?:\.0{1,6})?)?)?$/
+  const calendarDate = text.match(calendarDatePattern)
   if (calendarDate) return calendarDate[1]
 
   const normalized = text.replace(/\s+/, 'T')
@@ -220,7 +242,11 @@ function isOfflineReminderReady(payment, now, dueDate, timezone = DEFAULT_TIMEZO
 async function findDeliveredOfflineReminderInConversation(payment, timezone = DEFAULT_TIMEZONE) {
   const contactId = cleanString(payment.contact_id || payment.contactId, 200)
   const paymentUrl = buildPaymentUrl(payment)
-  const dueDate = businessDateOnlyFromValue(payment.due_date || payment.dueDate, timezone)
+  const dueDate = businessDateOnlyFromValue(
+    payment.due_date || payment.dueDate,
+    timezone,
+    { preserveUtcMidnightDate: true }
+  )
   const window = getOfflineReminderWindow(payment, dueDate, timezone)
   if (!contactId || !paymentUrl || !window) return null
 
@@ -1222,7 +1248,11 @@ async function getReminderCandidates(settings, now, limit, paymentIds = [], time
 
   const dueRows = rows.filter((row) => {
     // PAY2-007: fechas invalidas/vacias se excluyen; no se inventa vencimiento.
-    const dueDate = businessDateOnlyFromValue(row.due_date, timezone)
+    const dueDate = businessDateOnlyFromValue(
+      row.due_date,
+      timezone,
+      { preserveUtcMidnightDate: true }
+    )
     // Si el backend se reinició o estuvo temporalmente fuera, recuperamos el
     // recordatorio mientras el pago siga sin vencer. Los despachos persistentes
     // mantienen la idempotencia y evitan reenviar los que ya salieron.
