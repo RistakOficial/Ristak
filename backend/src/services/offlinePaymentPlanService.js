@@ -1,4 +1,4 @@
-import { db } from '../config/database.js'
+import { databaseDialect, db } from '../config/database.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import {
   DEFAULT_TIMEZONE,
@@ -7,7 +7,18 @@ import {
 } from '../utils/dateUtils.js'
 import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
 import { publishPaymentChangedEvent } from './paymentLiveEventsService.js'
-import { getPaymentSettings, getPublicPaymentSettings } from './paymentSettingsService.js'
+import {
+  getPaymentGatewayMode,
+  getPaymentSettings,
+  getPublicPaymentSettings
+} from './paymentSettingsService.js'
+import {
+  isConektaConnected,
+  isClipConnected,
+  isMercadoPagoConnected,
+  isRebillConnected,
+  isStripeConnected
+} from './integrationConnectionStateService.js'
 import { assertExactPaymentPlanTotal, getPaymentPlanDueSafety } from './paymentPlanSafetyService.js'
 import {
   assertPaymentPlanNamingChangeAllowed,
@@ -38,8 +49,57 @@ const CLOSED_PAYMENT_STATUSES = new Set([
 ])
 const LOCKED_SCHEDULE_STATUSES = new Set([
   ...CLOSED_PAYMENT_STATUSES,
-  'sent'
+  'sent',
+  'processing',
+  'requires_action',
+  'authorized',
+  'card_authorized'
 ])
+const ONLINE_PAYMENT_LINK_METHODS = Object.freeze({
+  stripe: 'stripe_link',
+  stripe_link: 'stripe_link',
+  conekta: 'conekta_link',
+  conekta_link: 'conekta_link',
+  mercadopago: 'mercadopago_link',
+  mercadopago_link: 'mercadopago_link',
+  mercado_pago: 'mercadopago_link',
+  clip: 'clip_link',
+  clip_card: 'clip_link',
+  clip_link: 'clip_link',
+  rebill: 'rebill_link',
+  rebill_checkout: 'rebill_link',
+  rebill_link: 'rebill_link'
+})
+const ONLINE_PAYMENT_LINK_PROVIDERS = Object.freeze({
+  stripe_link: 'stripe',
+  conekta_link: 'conekta',
+  mercadopago_link: 'mercadopago',
+  clip_link: 'clip',
+  rebill_link: 'rebill'
+})
+const PAYMENT_ROW_METHODS = Object.freeze({
+  offline: 'offline',
+  stripe: 'stripe',
+  conekta: 'conekta',
+  mercadopago: 'mercadopago',
+  clip: 'clip_card',
+  rebill: 'rebill_checkout'
+})
+const PAYMENT_GATEWAY_LABELS = Object.freeze({
+  stripe: 'Stripe',
+  conekta: 'Conekta',
+  mercadopago: 'Mercado Pago',
+  clip: 'CLIP',
+  rebill: 'Rebill'
+})
+const PAYMENT_GATEWAY_CONNECTION_CHECKS = Object.freeze({
+  stripe: isStripeConnected,
+  conekta: isConektaConnected,
+  mercadopago: isMercadoPagoConnected,
+  clip: isClipConnected,
+  rebill: isRebillConnected
+})
+const REBILL_SUPPORTED_CURRENCIES = new Set(['ARS', 'BRL', 'CLP', 'COP', 'MXN', 'USD'])
 
 function cleanString(value, maxLength = 1000) {
   return String(value ?? '').trim().slice(0, maxLength)
@@ -73,6 +133,85 @@ function normalizeFrequency(value) {
   return ['daily', 'weekly', 'biweekly', 'monthly', 'yearly', 'custom'].includes(normalized)
     ? normalized
     : 'custom'
+}
+
+function normalizeInstallmentCollectionMethod(value) {
+  const normalized = cleanString(value, 80).toLowerCase()
+  if (!normalized || ['offline', 'manual', 'cash', 'bank_transfer', 'transfer', 'deposit', 'check', 'other'].includes(normalized)) {
+    return { method: 'offline', provider: OFFLINE_PROVIDER }
+  }
+
+  const method = ONLINE_PAYMENT_LINK_METHODS[normalized]
+  const provider = method ? ONLINE_PAYMENT_LINK_PROVIDERS[method] : ''
+  if (!method || !provider) {
+    throw createHttpError('Forma de cobro inválida. Elige recordatorio offline o una pasarela conectada.')
+  }
+  return { method, provider }
+}
+
+function paymentGatewayLabel(provider) {
+  return PAYMENT_GATEWAY_LABELS[provider] || provider
+}
+
+function hasGatewayCheckoutActivity(row = {}) {
+  const metadata = parseJson(row.metadata_json || row.linked_payment_metadata_json)
+  return Boolean(
+    cleanString(row.stripe_payment_intent_id, 200) ||
+    cleanString(row.stripe_charge_id, 200) ||
+    cleanString(row.mercadopago_payment_id, 200) ||
+    cleanString(row.mercadopago_preference_id, 200) ||
+    cleanString(row.conekta_order_id, 200) ||
+    cleanString(row.conekta_charge_id, 200) ||
+    cleanString(row.conekta_payment_source_id, 200) ||
+    cleanString(row.clip_payment_id, 200) ||
+    cleanString(row.clip_receipt_no, 200) ||
+    cleanString(row.rebill_payment_id, 200) ||
+    cleanString(row.rebill_subscription_id, 200) ||
+    cleanString(row.rebill_customer_id, 200) ||
+    cleanString(row.rebill_card_id, 200) ||
+    cleanString(metadata.rebillHostedPaymentLink?.id, 200) ||
+    cleanString(metadata.rebillHostedPaymentLink?.url, 200) ||
+    cleanString(metadata.rebill?.paymentId, 200) ||
+    cleanString(metadata.clip?.paymentId, 200)
+  )
+}
+
+function hasLockedScheduleStatus(row = {}) {
+  return [row.status, row.payment_status]
+    .map((status) => cleanString(status, 40).toLowerCase())
+    .some((status) => LOCKED_SCHEDULE_STATUSES.has(status))
+}
+
+function existingInstallmentCollectionValue(row = {}) {
+  const linkedProvider = cleanString(row.linked_payment_provider, 40).toLowerCase()
+  return linkedProvider && linkedProvider !== OFFLINE_PROVIDER
+    ? linkedProvider
+    : row.payment_method || linkedProvider
+}
+
+async function resolveOnlinePaymentMode(provider, currency) {
+  if (provider === OFFLINE_PROVIDER) return ''
+  const connectionCheck = PAYMENT_GATEWAY_CONNECTION_CHECKS[provider]
+  if (!connectionCheck || !(await connectionCheck())) {
+    throw createHttpError(`Conecta ${paymentGatewayLabel(provider)} antes de usarla en este plan.`, 409)
+  }
+
+  const normalizedCurrency = cleanString(currency, 3).toUpperCase()
+  const accountCurrency = cleanString(await getAccountCurrency(), 3).toUpperCase()
+  if (provider === 'conekta' && normalizedCurrency !== 'MXN') {
+    throw createHttpError('Conekta sólo puede usarse en este plan cuando la moneda es MXN.', 409)
+  }
+  if (provider === 'clip' && normalizedCurrency !== 'MXN') {
+    throw createHttpError('CLIP sólo puede usarse en este plan cuando la moneda es MXN.', 409)
+  }
+  if (provider === 'mercadopago' && normalizedCurrency !== accountCurrency) {
+    throw createHttpError(`Mercado Pago está configurado para ${accountCurrency}; este plan conserva ${normalizedCurrency}.`, 409)
+  }
+  if (provider === 'rebill' && !REBILL_SUPPORTED_CURRENCIES.has(normalizedCurrency)) {
+    throw createHttpError(`Rebill no admite ${normalizedCurrency} en enlaces de pago.`, 409)
+  }
+
+  return getPaymentGatewayMode()
 }
 
 function recurrenceLabel(frequency) {
@@ -243,10 +382,30 @@ export async function persistOfflinePaymentPlanMirror(flowId) {
   const flow = await db.get('SELECT * FROM payment_flows WHERE id = ? AND payment_provider = ?', [id, OFFLINE_PROVIDER])
   if (!flow) return null
   const installments = await db.all(
-    `SELECT * FROM installment_payments
-     WHERE flow_id = ?
-       AND LOWER(COALESCE(status, 'pending')) NOT IN ('deleted', 'cancelled', 'canceled', 'void')
-     ORDER BY sequence ASC`,
+    `SELECT
+       i.*,
+       p.payment_provider AS linked_payment_provider,
+       p.payment_method AS linked_payment_method,
+       p.status AS linked_payment_status,
+       p.metadata_json AS linked_payment_metadata_json,
+       p.stripe_payment_intent_id,
+       p.stripe_charge_id,
+       p.mercadopago_payment_id,
+       p.mercadopago_preference_id,
+       p.conekta_order_id,
+       p.conekta_charge_id,
+       p.conekta_payment_source_id,
+       p.clip_payment_id,
+       p.clip_receipt_no,
+       p.rebill_payment_id,
+       p.rebill_subscription_id,
+       p.rebill_customer_id,
+       p.rebill_card_id
+     FROM installment_payments i
+     LEFT JOIN payments p ON p.id = i.payment_id
+     WHERE i.flow_id = ?
+       AND LOWER(COALESCE(i.status, 'pending')) NOT IN ('deleted', 'cancelled', 'canceled', 'void')
+     ORDER BY i.sequence ASC`,
     [id]
   )
   const metadata = parseJson(flow.metadata)
@@ -257,6 +416,10 @@ export async function persistOfflinePaymentPlanMirror(flowId) {
   const lastInstallment = visibleInstallments[visibleInstallments.length - 1]
   const hasFirstPayment = Number(flow.first_payment_amount || 0) > 0
   const status = mirrorStatus(flow, visibleInstallments)
+  const inferredDefaultMethod = metadata.defaultPaymentMethod ||
+    visibleInstallments.find((item) => !CLOSED_PAYMENT_STATUSES.has(cleanString(item.status, 40).toLowerCase()))?.payment_method ||
+    'offline'
+  const defaultCollection = normalizeInstallmentCollectionMethod(inferredDefaultMethod)
   const schedule = {
     provider: OFFLINE_PROVIDER,
     flowId: id,
@@ -266,6 +429,7 @@ export async function persistOfflinePaymentPlanMirror(flowId) {
     reminderTiming: 'scheduled',
     reminderDaysBefore: readReminderDaysBefore(metadata.reminderDaysBefore),
     reminderTime: readReminderTime(metadata.reminderTime),
+    defaultPaymentMethod: defaultCollection.method,
     firstPayment: hasFirstPayment
       ? {
           amount: Number(flow.first_payment_amount || 0),
@@ -282,8 +446,11 @@ export async function persistOfflinePaymentPlanMirror(flowId) {
       percentage: item.percentage ?? null,
       dueDate: item.due_date || null,
       status: item.status || null,
+      paymentStatus: item.linked_payment_status || null,
       paymentId: item.payment_id || null,
-      paymentMethod: item.payment_method || 'offline'
+      paymentMethod: item.payment_method || 'offline',
+      paymentProvider: item.linked_payment_provider || OFFLINE_PROVIDER,
+      hasPaymentActivity: hasGatewayCheckoutActivity(item)
     }))
   }
   const raw = {
@@ -617,13 +784,37 @@ export async function updateOfflinePaymentPlanSchedule(flowId, input = {}) {
   const reminderTime = input.reminderTime === undefined
     ? readReminderTime(metadata.reminderTime)
     : normalizeReminderTime(input.reminderTime)
+  const defaultCollection = normalizeInstallmentCollectionMethod(
+    input.defaultPaymentMethod || metadata.defaultPaymentMethod || 'offline'
+  )
   const title = cleanString(input.name || input.title || input.description || flow.concept, 300) || 'Plan de pagos offline'
   const frequency = normalizeFrequency(input.remainingFrequency || metadata.remainingFrequency)
   const submitted = Array.isArray(input.installments) ? input.installments : []
   if (!submitted.length) throw createHttpError('El plan offline necesita al menos un pago futuro.')
 
   const existing = await db.all(
-    `SELECT i.*, p.status AS payment_status, p.public_payment_id, p.payment_url, p.metadata_json
+    `SELECT
+       i.*,
+       p.status AS payment_status,
+       p.payment_provider AS linked_payment_provider,
+       p.payment_method AS linked_payment_method,
+       p.payment_mode AS linked_payment_mode,
+       p.public_payment_id,
+       p.payment_url,
+       p.metadata_json,
+       p.stripe_payment_intent_id,
+       p.stripe_charge_id,
+       p.mercadopago_payment_id,
+       p.mercadopago_preference_id,
+       p.conekta_order_id,
+       p.conekta_charge_id,
+       p.conekta_payment_source_id,
+       p.clip_payment_id,
+       p.clip_receipt_no,
+       p.rebill_payment_id,
+       p.rebill_subscription_id,
+       p.rebill_customer_id,
+       p.rebill_card_id
      FROM installment_payments i
      LEFT JOIN payments p ON p.id = i.payment_id
      WHERE i.flow_id = ?
@@ -643,27 +834,51 @@ export async function updateOfflinePaymentPlanSchedule(flowId, input = {}) {
     }
     if (submittedId) submittedIds.add(submittedId)
     const existingItem = byId.get(submittedId)
-    const existingStatus = cleanString(existingItem?.status || existingItem?.payment_status, 40).toLowerCase()
-    if (existingItem && LOCKED_SCHEDULE_STATUSES.has(existingStatus)) {
+    const existingHasGatewayActivity = existingItem && hasGatewayCheckoutActivity(existingItem)
+    if (existingItem && (hasLockedScheduleStatus(existingItem) || existingHasGatewayActivity)) {
       retainedIds.add(existingItem.id)
-      normalized.push({ existing: existingItem, amount: Number(existingItem.amount), dueDate: existingItem.due_date, locked: true })
+      normalized.push({
+        existing: existingItem,
+        amount: Number(existingItem.amount),
+        dueDate: existingItem.due_date,
+        collection: normalizeInstallmentCollectionMethod(existingInstallmentCollectionValue(existingItem)),
+        gatewayActivity: Boolean(existingHasGatewayActivity),
+        locked: true
+      })
       continue
+    }
+    const collection = normalizeInstallmentCollectionMethod(
+      item.method || item.paymentMethod || existingItem?.payment_method || existingItem?.linked_payment_provider || defaultCollection.method
+    )
+    const dueDate = await normalizeDueDate(item.dueDate || item.date, timezone, `El pago ${index + 1}`)
+    if (collection.provider !== OFFLINE_PROVIDER && dueDate < businessTodayDateOnly(timezone)) {
+      throw createHttpError(`El pago ${index + 1} en línea no puede programarse en una fecha pasada.`)
     }
     normalized.push({
       existing: existingItem || null,
       amount: normalizeAmount(item.amount, `monto del pago ${index + 1}`),
-      dueDate: await normalizeDueDate(item.dueDate || item.date, timezone, `El pago ${index + 1}`),
+      dueDate,
+      collection,
       locked: false
     })
     if (existingItem) retainedIds.add(existingItem.id)
   }
 
   const omittedLocked = (existing || []).find((row) => {
-    const status = cleanString(row.status || row.payment_status, 40).toLowerCase()
-    return LOCKED_SCHEDULE_STATUSES.has(status) && !retainedIds.has(row.id)
+    return (hasLockedScheduleStatus(row) || hasGatewayCheckoutActivity(row)) && !retainedIds.has(row.id)
   })
   if (omittedLocked) {
-    throw createHttpError('Los pagos enviados o registrados deben conservarse en el calendario.', 409)
+    throw createHttpError('Los pagos enviados o registrados, y los que ya tienen actividad en la pasarela, deben conservarse en el calendario.', 409)
+  }
+
+  const providerModes = new Map([[OFFLINE_PROVIDER, metadata.paymentMode || 'live']])
+  const providersToValidate = new Set([
+    defaultCollection.provider,
+    ...normalized.filter((item) => !item.locked).map((item) => item.collection.provider)
+  ])
+  for (const provider of providersToValidate) {
+    if (provider === OFFLINE_PROVIDER) continue
+    providerModes.set(provider, await resolveOnlinePaymentMode(provider, flow.currency))
   }
 
   const firstAmount = Number(flow.first_payment_amount || 0)
@@ -684,70 +899,153 @@ export async function updateOfflinePaymentPlanSchedule(flowId, input = {}) {
       const publicPaymentId = item.existing?.public_payment_id || createPublicPaymentId()
       const paymentUrl = item.existing?.payment_url || buildPublicPaymentUrl('', publicPaymentId)
       const rowTitle = paymentTitle(title, displaySequence, totalPayments)
+      const collection = item.collection || { method: 'offline', provider: OFFLINE_PROVIDER }
+      const onlinePaymentLink = collection.provider !== OFFLINE_PROVIDER
+      const paymentMode = providerModes.get(collection.provider) || metadata.paymentMode || 'live'
+      const existingPaymentMetadata = parseJson(item.existing?.metadata_json)
       const paymentMetadata = {
-        ...parseJson(item.existing?.metadata_json),
-        offlineReminder: true,
+        ...existingPaymentMetadata,
+        source: onlinePaymentLink ? 'payment_plan_checkout_link' : 'offline_payment_plan_installment',
+        offlineReminder: !onlinePaymentLink,
         reminderTiming: 'scheduled',
         reminderChannel: metadata.reminderChannel,
         reminderDaysBefore,
         reminderTime,
+        contactName: flow.contact_name || existingPaymentMetadata.contactName || '',
+        contactEmail: flow.contact_email || existingPaymentMetadata.contactEmail || '',
+        contactPhone: flow.contact_phone || existingPaymentMetadata.contactPhone || '',
+        paymentGateway: onlinePaymentLink
+          ? { provider: collection.provider, mode: paymentMode }
+          : undefined,
+        stripeMode: collection.provider === 'stripe' ? paymentMode : undefined,
+        conektaMode: collection.provider === 'conekta' ? paymentMode : undefined,
+        mercadoPagoMode: collection.provider === 'mercadopago' ? paymentMode : undefined,
+        clipMode: collection.provider === 'clip' ? paymentMode : undefined,
+        rebillMode: collection.provider === 'rebill' ? paymentMode : undefined,
         paymentPlan: {
           flowId: id,
           installmentId,
           sequence,
-          trigger: 'offline_reminder'
+          trigger: onlinePaymentLink ? 'scheduled_installment_link' : 'offline_reminder'
         }
       }
+      const collectionNote = onlinePaymentLink
+        ? `Enlace de pago con ${paymentGatewayLabel(collection.provider)}. Recordatorio ${reminderScheduleLabel(reminderDaysBefore, reminderTime)} por ${reminderChannelLabel(metadata.reminderChannel)}.`
+        : `Recordatorio ${reminderScheduleLabel(reminderDaysBefore, reminderTime)} por ${reminderChannelLabel(metadata.reminderChannel)}.`
 
       if (!item.locked) {
+        if (item.existing?.payment_id) {
+          const latestPayment = await tx.get(
+            `SELECT status, metadata_json, stripe_payment_intent_id, stripe_charge_id,
+                    mercadopago_payment_id, mercadopago_preference_id,
+                    conekta_order_id, conekta_charge_id, conekta_payment_source_id,
+                    clip_payment_id, clip_receipt_no,
+                    rebill_payment_id, rebill_subscription_id,
+                    rebill_customer_id, rebill_card_id
+             FROM payments
+             WHERE id = ?${databaseDialect === 'postgres' ? ' FOR UPDATE' : ''}`,
+            [item.existing.payment_id]
+          )
+          const latestStatus = cleanString(latestPayment?.status, 40).toLowerCase()
+          if (LOCKED_SCHEDULE_STATUSES.has(latestStatus) || hasGatewayCheckoutActivity(latestPayment)) {
+            throw createHttpError('Uno de los pagos recibió actividad mientras editabas el plan. Recarga antes de volver a guardar.', 409)
+          }
+        }
+
         await tx.run(
           `INSERT INTO installment_payments (
             id, flow_id, sequence, amount, due_date, frequency, payment_method,
             automatic, status, payment_id, notes, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'offline', 0, 'pending', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'pending', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
             sequence = excluded.sequence,
             amount = excluded.amount,
             due_date = excluded.due_date,
             frequency = excluded.frequency,
-            payment_method = 'offline',
+            payment_method = excluded.payment_method,
             automatic = 0,
             status = 'pending',
             payment_id = excluded.payment_id,
             notes = excluded.notes,
             updated_at = CURRENT_TIMESTAMP`,
-          [installmentId, id, sequence, item.amount, item.dueDate, frequency, paymentId, `Recordatorio ${reminderScheduleLabel(reminderDaysBefore, reminderTime)} por ${reminderChannelLabel(metadata.reminderChannel)}.`]
+          [installmentId, id, sequence, item.amount, item.dueDate, frequency, collection.method, paymentId, collectionNote]
         )
         await tx.run(
           `INSERT INTO payments (
             id, contact_id, amount, currency, status, payment_method, payment_mode,
             payment_provider, reference, title, description, public_payment_id,
             payment_url, metadata_json, date, due_date, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, 'pending', 'offline', ?, 'offline', ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
             amount = excluded.amount,
             currency = excluded.currency,
-            status = CASE WHEN LOWER(COALESCE(payments.status, 'pending')) IN ('paid', 'sent') THEN payments.status ELSE 'pending' END,
-            payment_method = 'offline',
-            payment_provider = 'offline',
+            status = 'pending',
+            payment_method = excluded.payment_method,
+            payment_mode = excluded.payment_mode,
+            payment_provider = excluded.payment_provider,
+            reference = excluded.reference,
             title = excluded.title,
             description = excluded.description,
+            public_payment_id = excluded.public_payment_id,
+            payment_url = excluded.payment_url,
             metadata_json = excluded.metadata_json,
             date = excluded.date,
             due_date = excluded.due_date,
+            sent_at = NULL,
+            paid_at = NULL,
+            stripe_payment_intent_id = NULL,
+            stripe_charge_id = NULL,
+            mercadopago_payment_id = NULL,
+            mercadopago_preference_id = NULL,
+            conekta_order_id = NULL,
+            conekta_charge_id = NULL,
+            conekta_payment_source_id = NULL,
+            clip_payment_id = NULL,
+            clip_receipt_no = NULL,
+            rebill_payment_id = NULL,
+            rebill_subscription_id = NULL,
+            rebill_customer_id = NULL,
+            rebill_card_id = NULL,
             updated_at = CURRENT_TIMESTAMP`,
-          [paymentId, flow.contact_id, item.amount, flow.currency, metadata.paymentMode || 'live', publicPaymentId, rowTitle, rowTitle, publicPaymentId, paymentUrl, JSON.stringify(paymentMetadata), item.dueDate, item.dueDate]
+          [
+            paymentId,
+            flow.contact_id,
+            item.amount,
+            flow.currency,
+            PAYMENT_ROW_METHODS[collection.provider] || collection.provider,
+            paymentMode,
+            collection.provider,
+            publicPaymentId,
+            rowTitle,
+            rowTitle,
+            publicPaymentId,
+            paymentUrl,
+            JSON.stringify(paymentMetadata),
+            item.dueDate,
+            item.dueDate
+          ]
         )
       } else {
         await tx.run('UPDATE installment_payments SET sequence = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [sequence, installmentId])
-        await tx.run('UPDATE payments SET title = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [rowTitle, rowTitle, paymentId])
+        const canRefreshPendingGatewayReminder = item.gatewayActivity &&
+          [item.existing?.status, item.existing?.payment_status]
+            .map((status) => cleanString(status, 40).toLowerCase())
+            .every((status) => !CLOSED_PAYMENT_STATUSES.has(status) && status !== 'sent')
+        await tx.run(
+          `UPDATE payments
+           SET title = ?,
+               description = ?,
+               metadata_json = CASE WHEN ? THEN ? ELSE metadata_json END,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [rowTitle, rowTitle, canRefreshPendingGatewayReminder, JSON.stringify(paymentMetadata), paymentId]
+        )
       }
     }
 
     for (const row of existing || []) {
       if (retainedIds.has(row.id)) continue
-      const status = cleanString(row.status || row.payment_status, 40).toLowerCase()
-      if (LOCKED_SCHEDULE_STATUSES.has(status)) continue
+      if (hasLockedScheduleStatus(row) || hasGatewayCheckoutActivity(row)) continue
       await tx.run("UPDATE installment_payments SET status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [row.id])
       if (row.payment_id) await tx.run("UPDATE payments SET status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [row.payment_id])
     }
@@ -755,6 +1053,7 @@ export async function updateOfflinePaymentPlanSchedule(flowId, input = {}) {
     const nextMetadata = {
       ...metadata,
       remainingFrequency: frequency,
+      defaultPaymentMethod: defaultCollection.method,
       reminderTiming: 'scheduled',
       reminderDaysBefore,
       reminderTime
@@ -856,13 +1155,20 @@ export async function markOfflinePaymentReminderSent(paymentId, sentAt = new Dat
 
 export async function syncOfflinePaymentPlanFromLocalPayment(paymentId) {
   const id = cleanString(paymentId, 200)
-  const payment = await db.get('SELECT * FROM payments WHERE id = ? AND payment_provider = ?', [id, OFFLINE_PROVIDER])
+  const payment = await db.get('SELECT * FROM payments WHERE id = ?', [id])
   if (!payment) return null
   const normalizedStatus = cleanString(payment.status, 40).toLowerCase()
   const nextStatus = ['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success'].includes(normalizedStatus)
     ? 'paid'
     : normalizedStatus
-  const installment = await db.get('SELECT flow_id FROM installment_payments WHERE payment_id = ? LIMIT 1', [id])
+  const installment = await db.get(
+    `SELECT i.flow_id
+     FROM installment_payments i
+     JOIN payment_flows f ON f.id = i.flow_id
+     WHERE i.payment_id = ? AND f.payment_provider = ?
+     LIMIT 1`,
+    [id, OFFLINE_PROVIDER]
+  )
   const firstFlow = installment ? null : await db.get('SELECT id FROM payment_flows WHERE first_payment_invoice_id = ? AND payment_provider = ? LIMIT 1', [id, OFFLINE_PROVIDER])
   const flowId = installment?.flow_id || firstFlow?.id
   if (!flowId) return null

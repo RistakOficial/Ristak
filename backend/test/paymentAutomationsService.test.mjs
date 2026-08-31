@@ -31,6 +31,7 @@ import {
   syncOfflinePaymentPlanFromLocalPayment,
   updateOfflinePaymentPlanSchedule
 } from '../src/services/offlinePaymentPlanService.js'
+import { syncStripePaymentPlanFromLocalPayment } from '../src/services/stripePaymentService.js'
 import {
   ACCOUNT_TIMEZONE_CONFIG_KEY,
   businessTodayDateOnly,
@@ -1587,5 +1588,360 @@ test('un aviso manual entregado evita duplicados aunque PostgreSQL devuelva el v
       }
       await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
     }
+  })
+})
+
+test('un plan offline puede convertir pagos pendientes a enlaces de Stripe y conserva su recordatorio programado', async () => {
+  const stripeConfigKeys = [
+    'account_currency',
+    'stripe_enabled',
+    'stripe_mode',
+    'stripe_publishable_key',
+    'stripe_secret_key_encrypted',
+    'stripe_manual_mode_connections',
+    'conekta_enabled',
+    'conekta_mode',
+    'conekta_public_key',
+    'conekta_private_key_encrypted',
+    'conekta_mode_connections'
+  ]
+
+  await snapshotAppConfig(stripeConfigKeys, async () => {
+    await setAppConfig('account_currency', 'USD')
+    await setAppConfig('stripe_enabled', true)
+    await setAppConfig('stripe_manual_mode_connections', {
+      test: {},
+      live: {
+        publishableKey: 'pk_live_local_contract_test',
+        secretKey: 'encrypted_local_contract_test'
+      }
+    })
+
+    await withAccountTimezoneForTest('UTC', async () => {
+      await withEmailCapture(async (captures) => {
+        const suffix = randomUUID().slice(0, 10)
+        const contactId = `contact_offline_stripe_${suffix}`
+        let flowId = ''
+
+        try {
+          await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+            paymentMode: 'live',
+            receipt: { businessName: 'Negocio con Stripe' },
+            automations: {
+              remindersEnabled: true,
+              reminderChannel: 'email',
+              reminderContentMode: 'template',
+              failedPaymentEnabled: false
+            }
+          })
+          await db.run(
+            `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+             VALUES (?, 'Cliente Enlace Stripe', ?, '+526561234567', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            [contactId, `${contactId}@example.test`]
+          )
+
+          const plan = await createOfflinePaymentPlan({
+            contact: {
+              id: contactId,
+              name: 'Cliente Enlace Stripe',
+              email: `${contactId}@example.test`,
+              phone: '+526561234567'
+            },
+            totalAmount: 100,
+            title: 'Plan editable con pasarela',
+            description: 'Plan editable con pasarela',
+            firstPayment: { enabled: false, amount: 0, method: 'none' },
+            remainingFrequency: 'monthly',
+            reminderDaysBefore: 1,
+            reminderTime: '12:00',
+            remainingPayments: [
+              { amount: 40, dueDate: '2099-06-10', frequency: 'monthly' },
+              { amount: 60, dueDate: '2099-06-10', frequency: 'monthly' }
+            ]
+          }, { baseUrl: PUBLIC_BASE_URL })
+          flowId = plan.flowId
+
+          const originalPayments = await db.all(
+            `SELECT p.id, p.public_payment_id, p.payment_url
+             FROM installment_payments i
+             JOIN payments p ON p.id = i.payment_id
+             WHERE i.flow_id = ?
+             ORDER BY i.sequence`,
+            [flowId]
+          )
+          assert.equal(originalPayments.length, 2)
+
+          await updateOfflinePaymentPlanSchedule(flowId, {
+            title: 'Plan editable con pasarela',
+            remainingFrequency: 'monthly',
+            reminderDaysBefore: 1,
+            reminderTime: '12:00',
+            installments: plan.scheduledPayments.map((payment) => ({
+              id: payment.installmentId,
+              amount: payment.amount,
+              dueDate: payment.dueDate,
+              method: 'stripe_link'
+            }))
+          })
+
+          const convertedPayments = await db.all(
+            `SELECT p.*
+             FROM installment_payments i
+             JOIN payments p ON p.id = i.payment_id
+             WHERE i.flow_id = ?
+             ORDER BY i.sequence`,
+            [flowId]
+          )
+          assert.equal(convertedPayments.length, 2)
+          assert.deepEqual(convertedPayments.map((payment) => payment.payment_provider), ['stripe', 'stripe'])
+          assert.deepEqual(convertedPayments.map((payment) => payment.payment_method), ['stripe', 'stripe'])
+          assert.deepEqual(
+            convertedPayments.map((payment) => payment.payment_url).sort(),
+            originalPayments.map((payment) => payment.payment_url).sort()
+          )
+          for (const payment of convertedPayments) {
+            const metadata = JSON.parse(payment.metadata_json)
+            assert.equal(metadata.source, 'payment_plan_checkout_link')
+            assert.equal(metadata.offlineReminder, false)
+            assert.equal(metadata.reminderTiming, 'scheduled')
+            assert.equal(metadata.reminderDaysBefore, 1)
+            assert.equal(metadata.reminderTime, '12:00')
+            assert.equal(metadata.paymentGateway.provider, 'stripe')
+            assert.equal(metadata.paymentGateway.mode, 'live')
+          }
+
+          const convertedInstallments = await db.all(
+            'SELECT id, amount, payment_method, status FROM installment_payments WHERE flow_id = ? ORDER BY sequence',
+            [flowId]
+          )
+          assert.deepEqual(convertedInstallments.map((item) => item.payment_method), ['stripe_link', 'stripe_link'])
+
+          await db.run(
+            'UPDATE payments SET stripe_payment_intent_id = ? WHERE id = ?',
+            ['pi_started_contract_test', convertedPayments[0].id]
+          )
+          await updateOfflinePaymentPlanSchedule(flowId, {
+            title: 'Plan editable con pasarela',
+            remainingFrequency: 'monthly',
+            reminderDaysBefore: 1,
+            reminderTime: '12:00',
+            installments: convertedInstallments.map((installment, index) => ({
+              id: installment.id,
+              amount: index === 0 ? 1 : installment.amount,
+              dueDate: '2099-06-10',
+              method: index === 0 ? 'offline' : 'stripe_link'
+            }))
+          })
+          const protectedPayment = await db.get(
+            'SELECT amount, payment_provider, stripe_payment_intent_id FROM payments WHERE id = ?',
+            [convertedPayments[0].id]
+          )
+          assert.equal(Number(protectedPayment.amount), Number(convertedPayments[0].amount))
+          assert.equal(protectedPayment.payment_provider, 'stripe')
+          assert.equal(protectedPayment.stripe_payment_intent_id, 'pi_started_contract_test')
+
+          await assert.rejects(
+            updateOfflinePaymentPlanSchedule(flowId, {
+              title: 'Plan editable con pasarela',
+              remainingFrequency: 'monthly',
+              reminderDaysBefore: 1,
+              reminderTime: '12:00',
+              installments: convertedInstallments.map((installment, index) => ({
+                id: installment.id,
+                amount: installment.amount,
+                dueDate: '2099-06-10',
+                method: index === 0 ? 'stripe_link' : 'conekta_link'
+              }))
+            }),
+            (error) => error?.status === 409 && /Conecta Conekta/i.test(error.message)
+          )
+
+          const automationResults = await processDuePaymentAutomations({
+            now: new Date('2099-06-09T12:00:00.000Z'),
+            limit: 10,
+            paymentIds: convertedPayments.map((payment) => payment.id)
+          })
+          assert.equal(automationResults.filter((item) => item.sent).length, 2)
+          assert.equal(captures.length, 2)
+          assert.ok(captures.every((capture) => /Abrir enlace de pago/.test(capture.html)))
+          assert.ok(captures.every((capture) => !/no cobra ninguna tarjeta/i.test(capture.html)))
+
+          const stillPending = await db.all(
+            'SELECT status FROM payments WHERE id IN (?, ?) ORDER BY id',
+            convertedPayments.map((payment) => payment.id)
+          )
+          assert.deepEqual(stillPending.map((payment) => payment.status), ['pending', 'pending'])
+
+          await processDuePaymentAutomations({
+            now: new Date('2099-06-09T12:05:00.000Z'),
+            limit: 10,
+            paymentIds: convertedPayments.map((payment) => payment.id)
+          })
+          assert.equal(captures.length, 2)
+
+          for (const payment of convertedPayments) {
+            await db.run(
+              "UPDATE payments SET status = 'paid', paid_at = CURRENT_TIMESTAMP WHERE id = ?",
+              [payment.id]
+            )
+            await syncStripePaymentPlanFromLocalPayment(payment.id)
+          }
+
+          const completedPlan = await db.get('SELECT status, schedule_json FROM payment_plans WHERE id = ?', [flowId])
+          assert.equal(completedPlan.status, 'completed')
+          assert.ok(JSON.parse(completedPlan.schedule_json).installments.every((item) => item.status === 'paid'))
+        } finally {
+          if (flowId) {
+            const paymentRows = await db.all('SELECT id FROM payments WHERE metadata_json LIKE ?', [`%${flowId}%`])
+            const paymentIds = paymentRows.map((row) => row.id)
+            if (paymentIds.length) {
+              const placeholders = paymentIds.map(() => '?').join(', ')
+              await db.run(`DELETE FROM payment_automation_dispatches WHERE payment_id IN (${placeholders})`, paymentIds)
+            }
+            await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId])
+            await db.run('DELETE FROM payment_plans WHERE id = ?', [flowId])
+            await db.run('DELETE FROM installment_payments WHERE flow_id = ?', [flowId])
+            if (paymentIds.length) {
+              const placeholders = paymentIds.map(() => '?').join(', ')
+              await db.run(`DELETE FROM payments WHERE id IN (${placeholders})`, paymentIds)
+            }
+            await db.run('DELETE FROM payment_flows WHERE id = ?', [flowId])
+          }
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+        }
+      })
+    })
+  })
+})
+
+test('un plan flexible guarda cualquier pasarela de enlace conectada como preferida', async () => {
+  const gatewayConfigKeys = [
+    PAYMENT_SETTINGS_CONFIG_KEY,
+    'account_currency',
+    'stripe_enabled',
+    'stripe_manual_mode_connections',
+    'conekta_enabled',
+    'conekta_mode_connections',
+    'mercadopago_enabled',
+    'mercadopago_mode_connections',
+    'clip_enabled',
+    'clip_mode_connections',
+    'rebill_enabled',
+    'rebill_mode_connections'
+  ]
+
+  await snapshotAppConfig(gatewayConfigKeys, async () => {
+    await setAppConfig('account_currency', 'MXN')
+    await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+      paymentMode: 'live',
+      automations: {
+        remindersEnabled: true,
+        reminderChannel: 'email',
+        failedPaymentEnabled: false
+      }
+    })
+    await setAppConfig('stripe_enabled', true)
+    await setAppConfig('stripe_manual_mode_connections', {
+      live: { publishableKey: 'pk_live_matrix', secretKey: 'encrypted_stripe_matrix' }
+    })
+    await setAppConfig('conekta_enabled', true)
+    await setAppConfig('conekta_mode_connections', {
+      live: { publicKey: 'key_live_matrix', privateKey: 'encrypted_conekta_matrix' }
+    })
+    await setAppConfig('mercadopago_enabled', true)
+    await setAppConfig('mercadopago_mode_connections', {
+      live: { userId: 'mp_user_matrix', accessToken: 'encrypted_mp_matrix' }
+    })
+    await setAppConfig('clip_enabled', true)
+    await setAppConfig('clip_mode_connections', {
+      live: { apiKey: 'encrypted_clip_matrix' }
+    })
+    await setAppConfig('rebill_enabled', true)
+    await setAppConfig('rebill_mode_connections', {
+      live: { publicKey: 'pk_rebill_matrix', secretKey: 'encrypted_rebill_matrix' }
+    })
+
+    await withAccountTimezoneForTest('UTC', async () => {
+      const suffix = randomUUID().slice(0, 10)
+      const contactId = `contact_gateway_matrix_${suffix}`
+      let flowId = ''
+
+      try {
+        await db.run(
+          `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
+           VALUES (?, 'Cliente Matriz Pasarelas', ?, '+526561234567', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [contactId, `${contactId}@example.test`]
+        )
+        const methods = ['stripe_link', 'conekta_link', 'mercadopago_link', 'clip_link', 'rebill_link']
+        const amounts = [10, 20, 30, 40, 50]
+        const plan = await createOfflinePaymentPlan({
+          contact: {
+            id: contactId,
+            name: 'Cliente Matriz Pasarelas',
+            email: `${contactId}@example.test`,
+            phone: '+526561234567'
+          },
+          totalAmount: 150,
+          title: 'Plan con pasarela elegible',
+          firstPayment: { enabled: false, amount: 0, method: 'none' },
+          remainingFrequency: 'monthly',
+          remainingPayments: amounts.map((amount, index) => ({
+            amount,
+            dueDate: `2099-07-${String(10 + index).padStart(2, '0')}`,
+            frequency: 'monthly'
+          }))
+        }, { baseUrl: PUBLIC_BASE_URL })
+        flowId = plan.flowId
+
+        const mirror = await updateOfflinePaymentPlanSchedule(flowId, {
+          title: 'Plan con pasarela elegible',
+          defaultPaymentMethod: 'rebill_link',
+          remainingFrequency: 'monthly',
+          reminderDaysBefore: 2,
+          reminderTime: '15:30',
+          installments: plan.scheduledPayments.map((payment, index) => ({
+            id: payment.installmentId,
+            amount: payment.amount,
+            dueDate: payment.dueDate,
+            method: methods[index]
+          }))
+        })
+
+        const rows = await db.all(
+          `SELECT p.payment_provider, p.payment_method, p.payment_mode, p.metadata_json, i.payment_method AS installment_method
+           FROM installment_payments i
+           JOIN payments p ON p.id = i.payment_id
+           WHERE i.flow_id = ?
+           ORDER BY i.sequence`,
+          [flowId]
+        )
+        assert.deepEqual(rows.map((row) => row.payment_provider), ['stripe', 'conekta', 'mercadopago', 'clip', 'rebill'])
+        assert.deepEqual(rows.map((row) => row.payment_method), ['stripe', 'conekta', 'mercadopago', 'clip_card', 'rebill_checkout'])
+        assert.deepEqual(rows.map((row) => row.installment_method), methods)
+        assert.ok(rows.every((row) => row.payment_mode === 'live'))
+        assert.deepEqual(rows.map((row) => JSON.parse(row.metadata_json).paymentGateway.provider), ['stripe', 'conekta', 'mercadopago', 'clip', 'rebill'])
+
+        const schedule = JSON.parse(mirror.schedule_json)
+        assert.equal(schedule.defaultPaymentMethod, 'rebill_link')
+        assert.equal(schedule.reminderDaysBefore, 2)
+        assert.equal(schedule.reminderTime, '15:30')
+      } finally {
+        if (flowId) {
+          const paymentRows = await db.all(
+            'SELECT payment_id AS id FROM installment_payments WHERE flow_id = ? AND payment_id IS NOT NULL',
+            [flowId]
+          )
+          const paymentIds = paymentRows.map((row) => row.id)
+          await db.run('DELETE FROM payment_plans WHERE id = ?', [flowId])
+          await db.run('DELETE FROM installment_payments WHERE flow_id = ?', [flowId])
+          if (paymentIds.length) {
+            const placeholders = paymentIds.map(() => '?').join(', ')
+            await db.run(`DELETE FROM payments WHERE id IN (${placeholders})`, paymentIds)
+          }
+          await db.run('DELETE FROM payment_flows WHERE id = ?', [flowId])
+        }
+        await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+      }
+    })
   })
 })

@@ -8,6 +8,7 @@ import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { calculatePaymentTax, getPaymentGatewayMode, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
+import { syncOfflinePaymentPlanFromLocalPayment } from './offlinePaymentPlanService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { resolvePaymentContactForGatewayPayment } from './paymentContactLinkService.js'
@@ -3023,6 +3024,7 @@ async function syncConektaPlanFromPayment(paymentRow, savedSource, config) {
     return activateConektaPaymentPlan(flowId, planSavedSource, config)
   }
 
+  await syncOfflinePaymentPlanFromLocalPayment(paymentRow.id)
   return persistConektaPaymentPlanMirror(flowId)
 }
 

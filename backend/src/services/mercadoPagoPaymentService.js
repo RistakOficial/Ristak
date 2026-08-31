@@ -19,6 +19,7 @@ import { sendPaymentNotification } from './pushNotificationsService.js'
 import { publishPaymentChangedEvent, publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
 // (PAY2-003) Encolar el comprobante automático tras un pago de Mercado Pago (igual que Conekta).
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
+import { syncOfflinePaymentPlanFromLocalPayment } from './offlinePaymentPlanService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
   buildMetaPublicPurchasePixelEvent,
@@ -3126,6 +3127,7 @@ async function syncMercadoPagoPaymentPlanFromLocalPayment(payment) {
   for (const row of touchedRows || []) {
     await persistMercadoPagoPaymentPlanMirror(row.flow_id)
   }
+  await syncOfflinePaymentPlanFromLocalPayment(payment.id)
 }
 
 async function updatePaymentFromMercadoPagoPayment(mpPayment, { mode = '' } = {}) {

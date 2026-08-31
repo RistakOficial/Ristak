@@ -8,6 +8,7 @@ import { getAccountCurrency } from '../utils/accountLocale.js'
 import { getPaymentPlanAuditSummary, hardDeleteRemovablePaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
 import { calculatePaymentTax, getPaymentGatewayMode, getPaymentSettings, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
+import { syncOfflinePaymentPlanFromLocalPayment } from './offlinePaymentPlanService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { resolvePaymentContactForGatewayPayment } from './paymentContactLinkService.js'
@@ -4919,6 +4920,7 @@ async function syncStripePlanFromPayment(paymentRow, savedMethod, config) {
     return
   }
 
+  await syncOfflinePaymentPlanFromLocalPayment(paymentRow.id)
   await persistStripePaymentPlanMirror(flowId)
 }
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Card, Button, Table, TableSelectionToolbar, DateRangePicker, ContactSearchInput, PageContainer, PageHeader, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading, NumberInput, CustomSelect, Modal, PaymentPlatformLogo } from '@/components/common'
+import { Card, Button, Table, TableSelectionToolbar, DateRangePicker, ContactSearchInput, PageContainer, PageHeader, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading, NumberInput, CustomSelect, TimePickerSelect, Modal, PaymentPlatformLogo } from '@/components/common'
 import { KpiCard } from '@/components/common/KpiCard/KpiCard'
 import type { Column, PaymentPlatformLogoId } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
@@ -223,7 +223,7 @@ const getPaymentPlanProviderLabel = (plan: PaymentPlan) => {
   if (isStripePaymentPlan(plan)) return 'Stripe'
   return 'HighLevel'
 }
-const STRIPE_PLAN_LOCKED_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'cancelled', 'canceled', 'registered', 'sent'])
+const STRIPE_PLAN_LOCKED_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'cancelled', 'canceled', 'registered', 'sent', 'processing', 'requires_action', 'authorized', 'card_authorized'])
 const STRIPE_PLAN_PAYMENT_METHOD_OPTIONS = [
   { value: 'stripe_auto', label: 'Tarjeta automática' },
   { value: 'bank_transfer', label: 'Transferencia' },
@@ -257,9 +257,40 @@ const REBILL_PLAN_PAYMENT_METHOD_OPTIONS = [
   { value: 'other', label: 'Otro' }
 ]
 const OFFLINE_PLAN_PAYMENT_METHOD_OPTIONS = [
-  { value: 'offline', label: 'Recordatorio offline' }
+  { value: 'offline', label: 'Recordatorio offline' },
+  { value: 'stripe_link', label: 'Enlace con Stripe' },
+  { value: 'conekta_link', label: 'Enlace con Conekta' },
+  { value: 'mercadopago_link', label: 'Enlace con Mercado Pago' },
+  { value: 'clip_link', label: 'Enlace con CLIP' },
+  { value: 'rebill_link', label: 'Enlace con Rebill' }
 ]
 const OFFLINE_PLAN_PAYMENT_METHODS = new Set(['cash', 'bank_transfer', 'transfer', 'deposit', 'check', 'other', 'manual', 'offline'])
+const OFFLINE_PLAN_PAYMENT_METHOD_ALIASES: Record<string, string> = {
+  stripe: 'stripe_link',
+  stripe_link: 'stripe_link',
+  conekta: 'conekta_link',
+  conekta_link: 'conekta_link',
+  mercadopago: 'mercadopago_link',
+  mercadopago_link: 'mercadopago_link',
+  mercado_pago: 'mercadopago_link',
+  clip: 'clip_link',
+  clip_card: 'clip_link',
+  clip_link: 'clip_link',
+  rebill: 'rebill_link',
+  rebill_checkout: 'rebill_link',
+  rebill_link: 'rebill_link'
+}
+type FlexiblePlanGateway = 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill'
+const OFFLINE_PLAN_PAYMENT_METHOD_GATEWAYS: Record<string, FlexiblePlanGateway> = {
+  stripe_link: 'stripe',
+  conekta_link: 'conekta',
+  mercadopago_link: 'mercadopago',
+  clip_link: 'clip',
+  rebill_link: 'rebill'
+}
+const REBILL_PLAN_SUPPORTED_CURRENCIES = new Set(['ARS', 'BRL', 'CLP', 'COP', 'MXN', 'USD'])
+const MAX_OFFLINE_PLAN_REMINDER_DAYS_BEFORE = 365
+const DEFAULT_OFFLINE_PLAN_REMINDER_TIME = '12:00'
 const STRIPE_PLAN_FREQUENCY_OPTIONS = [
   { value: 'custom', label: 'Personalizada' },
   { value: 'daily', label: 'Diaria' },
@@ -363,8 +394,14 @@ const getEditableRebillMethod = (method?: string | null) => {
   return normalized
 }
 
+const getEditableOfflineMethod = (method?: string | null) => {
+  const normalized = String(method || '').toLowerCase()
+  if (!normalized || OFFLINE_PLAN_PAYMENT_METHODS.has(normalized)) return 'offline'
+  return OFFLINE_PLAN_PAYMENT_METHOD_ALIASES[normalized] || 'offline'
+}
+
 const getEditablePlanMethod = (method: string | null | undefined, provider: LocalCheckoutPlanProvider) => {
-  if (provider === 'offline') return 'offline'
+  if (provider === 'offline') return getEditableOfflineMethod(method)
   if (provider === 'rebill') return getEditableRebillMethod(method)
   if (provider === 'mercadopago') return getEditableMercadoPagoMethod(method)
   if (provider === 'conekta') return getEditableConektaMethod(method)
@@ -850,6 +887,9 @@ export const Transactions: React.FC = () => {
   const [stripePlanFirstPaymentDraft, setStripePlanFirstPaymentDraft] = useState<StripePlanPaymentDraft | null>(null)
   const [stripePlanInstallmentDrafts, setStripePlanInstallmentDrafts] = useState<StripePlanPaymentDraft[]>([])
   const [paymentPlanScheduleDirty, setPaymentPlanScheduleDirty] = useState(false)
+  const [offlinePlanDefaultMethod, setOfflinePlanDefaultMethod] = useState('offline')
+  const [offlinePlanReminderDaysBefore, setOfflinePlanReminderDaysBefore] = useState(0)
+  const [offlinePlanReminderTime, setOfflinePlanReminderTime] = useState(DEFAULT_OFFLINE_PLAN_REMINDER_TIME)
   const [paymentPlanCreateModal, setPaymentPlanCreateModal] = useState<PaymentPlanCreateModalData>({
     open: false,
     selectedContact: null,
@@ -874,6 +914,8 @@ export const Transactions: React.FC = () => {
   const [stripeConnected, setStripeConnected] = useState(false)
   const [conektaConnected, setConektaConnected] = useState(false)
   const [mercadoPagoConnected, setMercadoPagoConnected] = useState(false)
+  const [clipConnected, setClipConnected] = useState(false)
+  const [rebillConnected, setRebillConnected] = useState(false)
   const [stripeStatusLoading, setStripeStatusLoading] = useState(true)
   const [transactionStatusFilters, setTransactionStatusFilters] = useUrlFilterState('statusFilters')
   const [paymentPlanStatusFilters, setPaymentPlanStatusFilters] = useUrlFilterState('planFilters')
@@ -932,11 +974,33 @@ export const Transactions: React.FC = () => {
     if (!plan || !isLocalCheckoutPaymentPlan(plan)) {
       setStripePlanFirstPaymentDraft(null)
       setStripePlanInstallmentDrafts([])
+      setOfflinePlanDefaultMethod('offline')
+      setOfflinePlanReminderDaysBefore(0)
+      setOfflinePlanReminderTime(DEFAULT_OFFLINE_PLAN_REMINDER_TIME)
       return
     }
 
     const provider = getLocalCheckoutPlanProvider(plan)
     const schedule = getStripePlanSchedulePayload(plan)
+    const installmentsForDefault = Array.isArray(schedule.installments) ? schedule.installments : []
+    const inferredDefaultMethod = schedule.defaultPaymentMethod ||
+      installmentsForDefault.find((item: Record<string, any>) => !isStripePlanPaymentLocked(item.status))?.paymentMethod ||
+      installmentsForDefault[0]?.paymentMethod ||
+      'offline'
+    setOfflinePlanDefaultMethod(
+      provider === 'offline' ? getEditablePlanMethod(inferredDefaultMethod, provider) : 'offline'
+    )
+    const storedReminderDaysBefore = Number(schedule.reminderDaysBefore)
+    setOfflinePlanReminderDaysBefore(
+      provider === 'offline' && Number.isInteger(storedReminderDaysBefore) && storedReminderDaysBefore >= 0
+        ? Math.min(storedReminderDaysBefore, MAX_OFFLINE_PLAN_REMINDER_DAYS_BEFORE)
+        : 0
+    )
+    setOfflinePlanReminderTime(
+      provider === 'offline' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(String(schedule.reminderTime || ''))
+        ? String(schedule.reminderTime)
+        : DEFAULT_OFFLINE_PLAN_REMINDER_TIME
+    )
     const firstPayment = schedule.firstPayment && typeof schedule.firstPayment === 'object'
       ? schedule.firstPayment
       : null
@@ -964,9 +1028,14 @@ export const Transactions: React.FC = () => {
 
     setStripePlanInstallmentDrafts(installments.map((item: Record<string, any>, index: number) => {
       const status = String(item.status || 'pending').toLowerCase()
+      const paymentStatus = String(item.paymentStatus || '').toLowerCase()
       const id = String(item.id || `stripe_installment_${index + 1}`)
-      const method = getEditablePlanMethod(item.paymentMethod || item.method, provider)
-      const locked = isStripePlanPaymentLocked(status) || (provider === 'mercadopago' && Boolean(item.preferenceId || item.paymentUrl))
+      const method = getEditablePlanMethod(item.paymentMethod || item.method || item.paymentProvider, provider)
+      const locked = isStripePlanPaymentLocked(status)
+        || isStripePlanPaymentLocked(paymentStatus)
+        || Boolean(item.hasPaymentActivity)
+        || (provider === 'mercadopago' && Boolean(item.preferenceId || item.paymentUrl))
+      const displayStatus = isStripePlanPaymentLocked(paymentStatus) ? paymentStatus : status
 
       return {
         localId: id,
@@ -975,7 +1044,7 @@ export const Transactions: React.FC = () => {
         amount: normalizeDraftAmount(item.amount),
         dueDate: getEditablePlanDate(item.dueDate || item.date || item.scheduledAt || plan.nextRunAt, method, locked, timezone),
         method,
-        status,
+        status: displayStatus,
         paymentId: item.paymentId || null,
         locked
       }
@@ -1009,12 +1078,16 @@ export const Transactions: React.FC = () => {
         setStripeConnected(Boolean(data?.stripe?.connected))
         setConektaConnected(Boolean(data?.conekta?.connected))
         setMercadoPagoConnected(Boolean(data?.mercadopago?.connected))
+        setClipConnected(Boolean(data?.clip?.connected))
+        setRebillConnected(Boolean(data?.rebill?.connected))
       })
       .catch(() => {
         if (cancelled) return
         setStripeConnected(false)
         setConektaConnected(false)
         setMercadoPagoConnected(false)
+        setClipConnected(false)
+        setRebillConnected(false)
       })
       .finally(() => {
         if (!cancelled) setStripeStatusLoading(false)
@@ -1024,6 +1097,37 @@ export const Transactions: React.FC = () => {
       cancelled = true
     }
   }, [])
+
+  const getOfflinePlanMethodAvailability = useCallback((method: string, currency?: string | null) => {
+    const gateway = OFFLINE_PLAN_PAYMENT_METHOD_GATEWAYS[method]
+    if (!gateway) return { available: true, reason: '' }
+    if (stripeStatusLoading) return { available: false, reason: 'Revisando conexión' }
+
+    const normalizedCurrency = String(currency || accountCurrency).trim().toUpperCase()
+    const normalizedAccountCurrency = String(accountCurrency).trim().toUpperCase()
+    const connected = {
+      stripe: stripeConnected,
+      conekta: conektaConnected,
+      mercadopago: mercadoPagoConnected,
+      clip: clipConnected,
+      rebill: rebillConnected
+    }[gateway]
+
+    if (!connected) return { available: false, reason: 'No conectada' }
+    if (gateway === 'conekta' && normalizedCurrency !== 'MXN') {
+      return { available: false, reason: 'Solo disponible en MXN' }
+    }
+    if (gateway === 'clip' && normalizedCurrency !== 'MXN') {
+      return { available: false, reason: 'Solo disponible en MXN' }
+    }
+    if (gateway === 'mercadopago' && normalizedCurrency !== normalizedAccountCurrency) {
+      return { available: false, reason: `Configurada en ${normalizedAccountCurrency}` }
+    }
+    if (gateway === 'rebill' && !REBILL_PLAN_SUPPORTED_CURRENCIES.has(normalizedCurrency)) {
+      return { available: false, reason: `No admite ${normalizedCurrency}` }
+    }
+    return { available: true, reason: '' }
+  }, [accountCurrency, clipConnected, conektaConnected, mercadoPagoConnected, rebillConnected, stripeConnected, stripeStatusLoading])
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -1624,6 +1728,30 @@ export const Transactions: React.FC = () => {
     }
   }
 
+  const updateOfflinePlanDefaultMethod = (method: string) => {
+    const plan = paymentPlanModal.plan
+    if (!plan || getLocalCheckoutPlanProvider(plan) !== 'offline') return
+    const availability = getOfflinePlanMethodAvailability(method, plan.currency)
+    if (!availability.available) {
+      showToast('warning', 'Pasarela no disponible', availability.reason || 'Conecta la pasarela antes de usarla en este plan.')
+      return
+    }
+
+    const applyMethod = (draft: StripePlanPaymentDraft): StripePlanPaymentDraft => {
+      if (draft.locked) return draft
+      const next = { ...draft, method }
+      if (!isOfflinePlanPaymentMethod(method) && isDateBeforeToday(next.dueDate, timezone)) {
+        next.dueDate = getTodayInputValue(timezone)
+      }
+      return next
+    }
+
+    setOfflinePlanDefaultMethod(method)
+    setStripePlanFirstPaymentDraft((current) => current ? applyMethod(current) : current)
+    setStripePlanInstallmentDrafts((current) => current.map(applyMethod))
+    setPaymentPlanScheduleDirty(true)
+  }
+
   const updateStripeFirstPaymentDraft = (updates: Partial<StripePlanPaymentDraft>) => {
     if (!stripePlanFirstPaymentDraft || stripePlanFirstPaymentDraft.locked) return
     setPaymentPlanScheduleDirty(true)
@@ -1693,7 +1821,7 @@ export const Transactions: React.FC = () => {
           label: getPlanPaymentLabel(nextPaymentNumber, nextTotalPayments),
           amount: '',
           dueDate: nextDueDate,
-          method: getDefaultPlanMethod(provider),
+          method: provider === 'offline' ? offlinePlanDefaultMethod : getDefaultPlanMethod(provider),
           status: 'pending',
           paymentId: null,
           locked: false
@@ -1717,7 +1845,7 @@ export const Transactions: React.FC = () => {
       const plan = paymentPlanModal.plan
       const provider = getLocalCheckoutPlanProvider(plan)
       const providerLabel = getPaymentPlanProviderLabel(plan)
-      const defaultMethod = getDefaultPlanMethod(provider)
+      const defaultMethod = provider === 'offline' ? offlinePlanDefaultMethod : getDefaultPlanMethod(provider)
       const schedule = getStripePlanSchedulePayload(plan)
       const name = String(formData.get('name') || plan.name || plan.title || 'Plan de pago').trim()
       const title = String(formData.get('title') || plan.title || name).trim()
@@ -1729,8 +1857,27 @@ export const Transactions: React.FC = () => {
         amount: Number(draft.amount),
         dueDate: draft.dueDate,
         method: draft.method || defaultMethod,
-        sequence: index + 1
+        sequence: index + 1,
+        locked: Boolean(draft.locked)
       }))
+
+      if (provider === 'offline' && paymentPlanScheduleDirty) {
+        const collectionDrafts = [
+          ...(stripePlanFirstPaymentDraft ? [{
+            method: stripePlanFirstPaymentDraft.method || defaultMethod,
+            locked: Boolean(stripePlanFirstPaymentDraft.locked)
+          }] : []),
+          ...installments
+        ]
+        const unavailablePayment = collectionDrafts.find((payment) => (
+          !payment.locked && !getOfflinePlanMethodAvailability(payment.method, plan.currency).available
+        ))
+        if (unavailablePayment) {
+          const availability = getOfflinePlanMethodAvailability(unavailablePayment.method, plan.currency)
+          showToast('warning', 'Pasarela no disponible', availability.reason || 'Conecta la pasarela antes de guardar este enlace de pago.')
+          return
+        }
+      }
 
       const invalidAmount = installments.find(installment => !Number.isFinite(installment.amount) || installment.amount <= 0)
       if (invalidAmount) {
@@ -1748,7 +1895,9 @@ export const Transactions: React.FC = () => {
         !isOfflinePlanPaymentMethod(installment.method) && isDateBeforeToday(installment.dueDate, timezone)
       ))
       if (pastAutomaticDate) {
-        showToast('error', 'Fecha inválida', 'Los cobros automáticos no pueden programarse en fechas pasadas.')
+        showToast('error', 'Fecha inválida', provider === 'offline'
+          ? 'Los enlaces de pago no pueden programarse en fechas pasadas.'
+          : 'Los cobros automáticos no pueden programarse en fechas pasadas.')
         return
       }
 
@@ -1759,7 +1908,29 @@ export const Transactions: React.FC = () => {
         termsNotes: termsNotes || null,
         namingOnly: !paymentPlanScheduleDirty,
         remainingFrequency,
-        installments
+        installments: installments.map(({ id, amount, dueDate, method, sequence }) => ({
+          id,
+          amount,
+          dueDate,
+          method,
+          sequence
+        }))
+      }
+
+      if (provider === 'offline') {
+        if (!Number.isInteger(offlinePlanReminderDaysBefore)
+          || offlinePlanReminderDaysBefore < 0
+          || offlinePlanReminderDaysBefore > MAX_OFFLINE_PLAN_REMINDER_DAYS_BEFORE) {
+          showToast('error', 'Anticipación inválida', `Usa un número entero entre 0 y ${MAX_OFFLINE_PLAN_REMINDER_DAYS_BEFORE}.`)
+          return
+        }
+        if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(offlinePlanReminderTime)) {
+          showToast('error', 'Hora inválida', 'Elige una hora válida para el recordatorio.')
+          return
+        }
+        payload.reminderDaysBefore = offlinePlanReminderDaysBefore
+        payload.reminderTime = offlinePlanReminderTime
+        payload.defaultPaymentMethod = offlinePlanDefaultMethod
       }
 
       if (stripePlanFirstPaymentDraft) {
@@ -1771,7 +1942,9 @@ export const Transactions: React.FC = () => {
 
         const firstPaymentMethod = stripePlanFirstPaymentDraft.method || defaultMethod
         if (!isOfflinePlanPaymentMethod(firstPaymentMethod) && isDateBeforeToday(stripePlanFirstPaymentDraft.dueDate, timezone)) {
-          showToast('error', 'Fecha inválida', 'El primer pago automático no puede programarse en una fecha pasada.')
+          showToast('error', 'Fecha inválida', provider === 'offline'
+            ? 'El primer enlace de pago no puede programarse en una fecha pasada.'
+            : 'El primer pago automático no puede programarse en una fecha pasada.')
           return
         }
 
@@ -3418,9 +3591,16 @@ export const Transactions: React.FC = () => {
                 value={draft.method || defaultMethod}
                 onChange={(event) => options.onUpdate({ method: event.target.value })}
               >
-                {methodOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
+                {methodOptions.map(option => {
+                  const availability = options.provider === 'offline'
+                    ? getOfflinePlanMethodAvailability(option.value, paymentPlanCurrency)
+                    : { available: true, reason: '' }
+                  return (
+                    <option key={option.value} value={option.value} disabled={!availability.available}>
+                      {option.label}{availability.reason ? ` — ${availability.reason}` : ''}
+                    </option>
+                  )
+                })}
               </CustomSelect>
             )}
           </div>
@@ -3456,7 +3636,7 @@ export const Transactions: React.FC = () => {
 
     return (
       <section className={styles.stripePlanEditor} aria-label="Calendario del plan">
-        <div className={styles.stripePlanControls}>
+        <div className={`${styles.stripePlanControls} ${provider === 'offline' ? styles.stripePlanControlsOffline : ''}`}>
           <div className={styles.formGroup}>
             <label>Frecuencia base</label>
             <CustomSelect
@@ -3469,6 +3649,52 @@ export const Transactions: React.FC = () => {
               ))}
             </CustomSelect>
           </div>
+          {provider === 'offline' && (
+            <>
+              <div className={styles.formGroup}>
+                <label>Pasarela para pagos pendientes</label>
+                <CustomSelect
+                  value={offlinePlanDefaultMethod}
+                  onChange={(event) => updateOfflinePlanDefaultMethod(event.target.value)}
+                >
+                  {OFFLINE_PLAN_PAYMENT_METHOD_OPTIONS.map((option) => {
+                    const availability = getOfflinePlanMethodAvailability(option.value, planCurrency)
+                    return (
+                      <option key={option.value} value={option.value} disabled={!availability.available}>
+                        {option.label}{availability.reason ? ` — ${availability.reason}` : ''}
+                      </option>
+                    )
+                  })}
+                </CustomSelect>
+              </div>
+              <div className={styles.formGroup}>
+                <label htmlFor="payment-plan-reminder-days">Días antes (0 = mismo día)</label>
+                <NumberInput
+                  id="payment-plan-reminder-days"
+                  value={offlinePlanReminderDaysBefore}
+                  min={0}
+                  max={MAX_OFFLINE_PLAN_REMINDER_DAYS_BEFORE}
+                  step={1}
+                  maxFractionDigits={0}
+                  onValueChange={(value) => {
+                    setOfflinePlanReminderDaysBefore(Math.trunc(value))
+                    setPaymentPlanScheduleDirty(true)
+                  }}
+                />
+              </div>
+              <div className={styles.formGroup}>
+                <label>Hora del recordatorio</label>
+                <TimePickerSelect
+                  value={offlinePlanReminderTime}
+                  onValueChange={(value) => {
+                    setOfflinePlanReminderTime(value)
+                    setPaymentPlanScheduleDirty(true)
+                  }}
+                  aria-label="Hora del recordatorio del plan de pagos"
+                />
+              </div>
+            </>
+          )}
         </div>
 
         <div className={styles.stripePlanPaymentRows}>

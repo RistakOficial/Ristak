@@ -12,6 +12,7 @@ import { resolvePaymentContactForGatewayPayment } from './paymentContactLinkServ
 import { sendPaymentNotification } from './pushNotificationsService.js'
 import { publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
+import { syncOfflinePaymentPlanFromLocalPayment } from './offlinePaymentPlanService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
   assertPaymentPlanNamingChangeAllowed,
@@ -4089,6 +4090,7 @@ async function syncRebillPaymentPlanFromLocalPayment(payment) {
 
     await persistRebillPaymentPlanMirror(row.flow_id).catch(() => undefined)
   }
+  await syncOfflinePaymentPlanFromLocalPayment(payment.id)
 }
 
 async function updatePaymentFromRebillPayment(rebillPayment = {}) {

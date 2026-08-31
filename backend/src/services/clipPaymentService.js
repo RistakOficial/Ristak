@@ -11,6 +11,7 @@ import { resolvePaymentContactForGatewayPayment } from './paymentContactLinkServ
 import { sendPaymentNotification } from './pushNotificationsService.js'
 import { publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
+import { syncOfflinePaymentPlanFromLocalPayment } from './offlinePaymentPlanService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import { shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
 import {
@@ -1034,6 +1035,7 @@ async function updatePaymentFromClipPayment(clipPayment) {
 
   await activateSubscriptionStartIfNeeded(updated, persistedStatus)
   await syncClipPaymentPlanFromLocalPayment(updated)
+  await syncOfflinePaymentPlanFromLocalPayment(updated.id)
 
   if (updated?.contact_id && nextStatus === 'paid' && !suppressProductionEffects) {
     registerGigstackPaymentForTransactionInBackground(updated.id)

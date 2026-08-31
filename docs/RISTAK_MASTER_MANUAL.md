@@ -5267,15 +5267,19 @@ Esta sección y todo su despacho en segundo plano requieren
   mismo flujo en el mismo barrido. Si dos o mas cuotas del mismo `payment_flow`
   estan dentro de la ventana, Ristak solo envia el recordatorio de la siguiente
   parcialidad abierta; los pagos unicos y pagos de otros flujos siguen
-  evaluandose de forma independiente.
+  evaluandose de forma independiente. La excepcion son las parcialidades de un
+  plan flexible que fueron convertidas expresamente a enlaces online: cada liga
+  elegible es un pago distinto y conserva su propio despacho idempotente, por lo
+  que dos ligas con el mismo vencimiento pueden avisarse sin que una bloquee a la
+  otra ni se repitan en el siguiente barrido.
 - Cada plan con `payment_provider='offline'` guarda su propia programacion:
   `reminderDaysBefore` acepta enteros de 0 a 365 (`0` significa el mismo dia y
   `1`, un dia antes) y `reminderTime` guarda `HH:mm`; los defaults son `0` y
   `12:00`. Ambos campos viven en metadata del flujo y de cada pago, y se reflejan
   en el calendario local. La pantalla **Programar plan** los muestra al elegir
-  **Recordatorios de pago offline**, con `NumberInput` sin steppers nativos y el
-  selector de hora comun. El MCP `payments_create_offline_plan` expone los mismos
-  campos.
+  **Recordatorios de pago offline** y **Editar plan** permite cambiarlos después
+  del alta, con `NumberInput` sin steppers nativos y el selector de hora comun.
+  El MCP `payments_create_offline_plan` expone los mismos campos.
 - El instante se interpreta en la zona horaria del negocio. El cron de
   `payment_automations` revisa cada cinco minutos y puede enviar desde ese instante
   hasta el final local del dia de vencimiento, para recuperar un tick perdido sin
@@ -5770,6 +5774,35 @@ pueden cambiar de importe o fecha; pausar detiene recordatorios futuros y
 cancelar o eliminar conserva los pagos enviados o pagados para no borrar el
 historial.
 
+Un plan creado como offline funciona también como calendario flexible. Desde
+**Editar plan**, la cuenta elige una **Pasarela para pagos pendientes** y puede
+cambiarla después: la preferencia se guarda en ese plan y se aplica en bloque a
+las parcialidades todavía pendientes y sin actividad financiera. Cada renglón
+mantiene además su propio selector para excepciones. Las opciones son
+**Recordatorio offline**, **Enlace con Stripe**, **Enlace con Conekta**,
+**Enlace con Mercado Pago**, **Enlace con CLIP** y **Enlace con Rebill**; sólo se
+habilitan las pasarelas conectadas en el modo de pagos actual. Conekta y CLIP
+exigen MXN, Mercado Pago exige la moneda configurada en la cuenta y Rebill sólo
+acepta las monedas admitidas por su checkout. El `payment_flow` conserva
+proveedor `offline` para mantener el calendario, mientras cada pago concreto
+cambia su `payment_provider`, método y modo a la pasarela elegida. Se conserva el
+`public_payment_id` y la URL estable `/pay/:id`, de modo que el recordatorio abre
+el checkout real sin fabricar ni guardar una URL temporal de la pasarela durante
+la edición. Esto permite cambiar la preferencia futura sin alterar pagos ya
+enviados, cobrados o iniciados en otra pasarela.
+
+Cambiar una parcialidad a liga online no la convierte en cargo automático: la
+tarjeta se captura en la página segura cuando el cliente abre el enlace. El aviso
+usa los `reminderDaysBefore` y `reminderTime` propios del plan, muestra el CTA de
+pago y deja la transacción en `pending`; la idempotencia vive en
+`payment_automation_dispatches`. Cuando Stripe, Conekta, Mercado Pago, CLIP o
+Rebill confirman el cobro, su sincronización actualiza también la parcialidad y
+el espejo del plan flexible. Una cuota queda inmutable en cuanto fue enviada
+como aviso offline, fue pagada/registrada, entró a procesamiento o ya tiene
+intent, charge, order, preference, liga hospedada u otro identificador de
+pasarela. El backend vuelve a comprobar ese bloqueo dentro de la transacción para
+cerrar carreras entre el editor y el checkout público.
+
 El nombre interno del plan, el titulo visible de la factura, su descripcion y
 las notas se editan por una ruta cosmetica separada del calendario. Ristak
 permite corregirlos mientras ninguna cuota del plan tenga un cobro, intento de
@@ -5803,11 +5836,12 @@ la cuota o primer pago a `processing` antes de llamar a la pasarela. Stripe,
 Conekta y Rebill usan este claim atomico mas los locks del cron para evitar doble
 cargo ante solapes de deploy, ticks concurrentes o ejecuciones manuales. Mercado
 Pago no cobra cuotas locales desde el cron; genera/libera links programados.
-Mercado Pago y CLIP no se ofrecen para crear planes nuevos, tampoco por MCP:
-Mercado Pago queda
-disponible para links únicos y suscripciones, y CLIP para pagos únicos. El cron
-de Mercado Pago sólo conserva compatibilidad con planes legados; reclama cada
-fila antes de generar el link y nunca libera automáticamente un link atrasado.
+Mercado Pago y CLIP no se ofrecen para crear **planes nativos de cobro recurrente**,
+tampoco por MCP: Mercado Pago queda disponible para links únicos y suscripciones,
+y CLIP para pagos únicos. Esta restricción no impide usarlos como links únicos
+dentro de un calendario flexible creado como offline y editado después. El cron
+de Mercado Pago sólo conserva compatibilidad con planes nativos legados; reclama
+cada fila antes de generar el link y nunca libera automáticamente un link atrasado.
 
 Blindajes obligatorios del reloj de cobros:
 
@@ -5939,9 +5973,11 @@ Alcance:
 
 - Cobros unicos por link publico `/pay/:publicPaymentId`.
 - Checkout de Sites con SDK oficial `https://sdk.clip.mx/js/clip-sdk.js`.
-- CLIP no se ofrece para suscripciones ni planes de pago en Ristak. Solo se usa
-  para pagos unicos, porque el flujo disponible no guarda tarjeta ni autoriza
-  cargos recurrentes/off-session administrados por Ristak.
+- CLIP no se ofrece para suscripciones ni planes nativos de cobro recurrente en
+  Ristak. Sí puede elegirse para una parcialidad pendiente de un plan flexible:
+  cada cuota sigue siendo un pago único por link, porque el flujo disponible no
+  guarda tarjeta ni autoriza cargos recurrentes/off-session administrados por
+  Ristak.
 - Meses sin intereses en cobros unicos: Ristak habilita `terms.enabled` en el
   objeto `Card` del SDK, usa `paymentAmount` igual al monto del cobro y envia a
   `POST /payments` el valor devuelto por `card.installments()`. CLIP solo muestra

@@ -551,6 +551,11 @@
   max-width: 430px;
 }
 
+.stripePlanControlsOffline {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  max-width: none;
+}
+
 .stripePlanPaymentRows {
   display: flex;
   flex-direction: column;

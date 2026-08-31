@@ -198,6 +198,16 @@ function parsePaymentMetadata(payment = {}) {
   }
 }
 
+function hasScheduledPaymentPlanReminder(payment = {}) {
+  const metadata = parsePaymentMetadata(payment) || {}
+  const paymentPlan = metadata.paymentPlan && typeof metadata.paymentPlan === 'object'
+    ? metadata.paymentPlan
+    : {}
+
+  return cleanString(metadata.reminderTiming, 40).toLowerCase() === 'scheduled' &&
+    Boolean(cleanString(paymentPlan.flowId || paymentPlan.flow_id, 200))
+}
+
 function getOfflineReminderSchedule(payment = {}) {
   const metadata = parsePaymentMetadata(payment) || {}
   const parsedDaysBefore = Number(metadata.reminderDaysBefore)
@@ -301,11 +311,12 @@ function getPaymentPlanFlowId(payment = {}) {
   )
 }
 
-function selectNextReminderPerPaymentPlan(rows = []) {
+function selectNextReminderPerPaymentPlan(rows = [], { allowMultipleForFlow = () => false } = {}) {
   const seenFlowIds = new Set()
   return rows.filter((row) => {
     const flowId = getPaymentPlanFlowId(row)
     if (!flowId) return true
+    if (allowMultipleForFlow(row)) return true
     if (seenFlowIds.has(flowId)) return false
     seenFlowIds.add(flowId)
     return true
@@ -1257,16 +1268,23 @@ async function getReminderCandidates(settings, now, limit, paymentIds = [], time
     // recordatorio mientras el pago siga sin vencer. Los despachos persistentes
     // mantienen la idempotencia y evitan reenviar los que ya salieron.
     const offlineReminder = isOfflinePaymentPlanPayment(row)
-    if (offlineReminder) {
+    const scheduledPlanReminder = hasScheduledPaymentPlanReminder(row)
+    if (offlineReminder || scheduledPlanReminder) {
       return isOfflineReminderReady(row, now, dueDate, timezone) &&
-        cleanString(row.status, 40).toLowerCase() !== 'sent' &&
+        (!offlineReminder || cleanString(row.status, 40).toLowerCase() !== 'sent') &&
         cleanString(row.installment_flow_provider, 40).toLowerCase() === 'offline' &&
         cleanString(row.installment_flow_state, 80).toLowerCase() === 'offline_plan_active'
     }
     return dueDate !== null && dueDate >= todayDate && dueDate <= targetDate
   })
 
-  return selectNextReminderPerPaymentPlan(dueRows).slice(0, limit)
+  return selectNextReminderPerPaymentPlan(dueRows, {
+    // Un enlace en línea conserva status=pending después de enviar el aviso para
+    // que el checkout siga aceptando el pago. La idempotencia vive en
+    // payment_automation_dispatches, así que no debemos dejar que ese renglón
+    // bloquee otros enlaces venciendo el mismo día dentro del mismo plan.
+    allowMultipleForFlow: (row) => hasScheduledPaymentPlanReminder(row) && !isOfflinePaymentPlanPayment(row)
+  }).slice(0, limit)
 }
 
 async function getFailedCandidates(settings, now, limit, paymentIds = []) {
