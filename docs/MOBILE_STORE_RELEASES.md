@@ -271,3 +271,10 @@ The workflow has a `submit_for_review` input.
 
 Keep `false` while store metadata, privacy/data safety, screenshots, reviewer
 credentials, and release notes are still being configured.
+
+For iOS review submissions, `fastlane deliver` keeps its normal metadata
+precheck enabled but excludes the in-app-purchase inspection. Fastlane cannot
+perform that specific inspection with an App Store Connect API key and otherwise
+fails after uploading a valid IPA, before requesting review. Purchases and
+subscriptions must still be verified in App Store Connect as part of the listing
+readiness check; this flag only avoids an unsupported Fastlane API-key check.
