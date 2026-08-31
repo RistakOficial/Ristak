@@ -402,6 +402,9 @@ test('metadata y DCR publican todos los scopes sin secret manual y cierran redir
   assert.equal(metadataJson.authorization_response_iss_parameter_supported, true)
   assert.match(metadataJson.registration_endpoint, /\/api\/oauth\/register$/)
 
+  const oidcMetadata = await requestServer('/.well-known/openid-configuration')
+  assert.equal(oidcMetadata.statusCode, 404)
+
   const registration = await requestServer('/api/oauth/register', {
     method: 'POST',
     body: {

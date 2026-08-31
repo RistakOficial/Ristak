@@ -353,10 +353,6 @@ router.get('/.well-known/oauth-authorization-server', (req, res) => {
   res.json(authorizationServerMetadata(req))
 })
 
-router.get('/.well-known/openid-configuration', (req, res) => {
-  res.json(authorizationServerMetadata(req))
-})
-
 router.post('/api/oauth/register', registrationRateLimiter, async (req, res) => {
   try {
     assertSupportedClientMetadata(req.body)
