@@ -10714,7 +10714,10 @@ protected-resource metadata, el scope minimo y el error OAuth. ChatGPT guarda la
 URL exacta dentro de la version instalada del plugin: **Reconectar** repite OAuth
 contra esa misma URL, no corrige una URL obsoleta. Si cambia el endpoint publico,
 se registra una version nueva con el `mcp.serverUrl` actual, se valida OAuth y
-`tools/list`, y despues se retira la instalacion anterior.
+`tools/list`, y despues se retira la instalacion anterior. Ristak no publica
+discovery OpenID Connect porque este flujo no implementa claims `openid` ni un
+endpoint `userinfo`; anunciar OAuth como si fuera OIDC produce una deteccion
+incorrecta en clientes como ChatGPT.
 
 La edición genérica de pagos no acepta `status`: registrar un pago requiere
 `ristak.execute`; anular, reembolsar o cancelar/eliminar un plan exige

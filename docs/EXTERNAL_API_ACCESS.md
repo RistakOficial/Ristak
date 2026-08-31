@@ -122,7 +122,8 @@ error authorization callback includes the exact `iss` published in the
 authorization-server metadata. Unauthenticated MCP responses publish the
 protected-resource metadata URL, the minimum discovery scope and the OAuth
 error in `WWW-Authenticate`, so ChatGPT and other clients can restart discovery
-without guessing endpoints.
+without guessing endpoints. Ristak does not advertise OpenID Connect: the MCP
+needs delegated OAuth authorization, not profile claims or a userinfo endpoint.
 
 Ristak Installer also has a private support delegation endpoint at
 `POST /api/internal/customer-operations/mcp`. It is not a customer-facing MCP
