@@ -5780,6 +5780,16 @@ un primer cobro y tampoco es actividad. En cuanto existe actividad financiera
 real, el plan ya no se puede eliminar y debe cancelarse para conservar el
 historial.
 
+En el editor, el estado de cada parcialidad aparece debajo de `Pago N/M` para
+conservar espacio para el menú contextual de tres puntos. Cuando la fila usa
+tarjeta o una pasarela de enlace, ese menú ofrece **Copiar enlace de pago**. La
+URL sale del pago real asociado a la parcialidad; para filas automáticas antiguas
+que todavía no tenían `public_payment_id`, el backend crea una identidad pública
+idempotente al solicitarla y reutiliza la misma liga en intentos posteriores. Los
+métodos manuales (efectivo, transferencia, depósito, cheque u offline) no exponen
+esa acción. La fila de domiciliación usa el mismo menú cuando conserva su enlace
+de autorización.
+
 Un plan creado como offline funciona también como calendario flexible. Desde
 **Editar plan**, la cuenta elige una **Pasarela para pagos pendientes** y puede
 cambiarla después: la preferencia se guarda en ese plan y se aplica en bloque a

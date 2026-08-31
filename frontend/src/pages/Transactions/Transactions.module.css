@@ -564,7 +564,7 @@
 
 .stripePlanPaymentRow {
   display: grid;
-  grid-template-columns: minmax(112px, 0.55fr) minmax(430px, 2.4fr) minmax(104px, max-content);
+  grid-template-columns: minmax(112px, 0.55fr) minmax(430px, 2.4fr) minmax(40px, max-content);
   gap: var(--spacing-sm);
   align-items: center;
   padding: var(--spacing-xs) var(--spacing-sm);
@@ -579,7 +579,9 @@
 
 .stripePlanPaymentMeta {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-xs);
   min-width: 0;
 }
 

@@ -45,7 +45,7 @@ import {
 import { formatInvoiceMultilineText, formatInvoiceSingleLineText } from '../utils/invoiceTextFormatter.js'
 import { findContactByPhoneCandidates, generateContactId } from '../services/contactIdentityService.js'
 import { getAccountCurrency, normalizePhoneForAccount } from '../utils/accountLocale.js'
-import { createRistakPaymentEntityId } from '../utils/idGenerator.js'
+import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import {
   hashPaginationCursorScope,
@@ -231,6 +231,74 @@ const resolveTransactionPaymentUrl = (transaction = {}, baseUrl = '') => {
   const provider = cleanString(transaction.payment_provider).toLowerCase()
   if (provider === 'mercadopago' && localUrl) return localUrl
   return cleanString(transaction.payment_url) || localUrl
+}
+
+const PAYMENT_PLAN_LINK_PROVIDERS = new Set(['stripe', 'conekta', 'mercadopago', 'clip', 'rebill'])
+const PAYMENT_PLAN_NON_CARD_METHODS = new Set([
+  'offline',
+  'manual',
+  'cash',
+  'bank_transfer',
+  'transfer',
+  'deposit',
+  'check',
+  'other'
+])
+
+const isPaymentPlanCardLinkCandidate = (transaction = {}, context = {}) => {
+  const provider = cleanString(transaction.payment_provider).toLowerCase()
+  if (!PAYMENT_PLAN_LINK_PROVIDERS.has(provider)) return false
+
+  const method = cleanString(transaction.payment_method || context.plan_payment_method).toLowerCase()
+  if (PAYMENT_PLAN_NON_CARD_METHODS.has(method)) return false
+  if (context.relation_type === 'card_setup') return true
+
+  return Boolean(method) && (
+    method === provider ||
+    method.includes('card') ||
+    method.includes('link') ||
+    method.includes('checkout') ||
+    method.startsWith('stripe') ||
+    method.startsWith('conekta') ||
+    method.startsWith('mercadopago') ||
+    method.startsWith('clip') ||
+    method.startsWith('rebill')
+  )
+}
+
+async function getPaymentPlanPaymentContext(paymentId) {
+  return db.get(
+    `SELECT *
+     FROM (
+       SELECT i.flow_id,
+              i.payment_method AS plan_payment_method,
+              f.payment_provider AS plan_provider,
+              'installment' AS relation_type
+       FROM installment_payments i
+       JOIN payment_flows f ON f.id = i.flow_id
+       WHERE i.payment_id = ?
+
+       UNION ALL
+
+       SELECT f.id AS flow_id,
+              f.first_payment_method AS plan_payment_method,
+              f.payment_provider AS plan_provider,
+              'first_payment' AS relation_type
+       FROM payment_flows f
+       WHERE f.first_payment_invoice_id = ?
+
+       UNION ALL
+
+       SELECT f.id AS flow_id,
+              'card_setup' AS plan_payment_method,
+              f.payment_provider AS plan_provider,
+              'card_setup' AS relation_type
+       FROM payment_flows f
+       WHERE f.card_setup_invoice_id = ?
+     ) plan_payment_context
+     LIMIT 1`,
+    [paymentId, paymentId, paymentId]
+  )
 }
 
 const buildTransactionAutomationPayload = (transaction = {}, req, overrides = {}) => {
@@ -2442,6 +2510,87 @@ export const getPaymentLink = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error obteniendo enlace'
+    })
+  }
+}
+
+/**
+ * Crea de forma idempotente la liga publica de una parcialidad con tarjeta.
+ * Los cobros automaticos historicos no siempre nacieron con public_payment_id;
+ * esta accion permite compartirlos sin fabricar una URL en el frontend.
+ */
+export const ensurePaymentPlanPaymentLink = async (req, res) => {
+  try {
+    const paymentId = cleanString(req.params?.id)
+    const transaction = paymentId
+      ? await db.get('SELECT * FROM payments WHERE id = ?', [paymentId])
+      : null
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        error: 'Pago no encontrado'
+      })
+    }
+
+    const context = await getPaymentPlanPaymentContext(paymentId)
+    if (!context || !isPaymentPlanCardLinkCandidate(transaction, context)) {
+      return res.status(409).json({
+        success: false,
+        error: 'Este pago no usa tarjeta o enlace de pago.'
+      })
+    }
+
+    const status = cleanString(transaction.status).toLowerCase()
+    if (['deleted', 'void', 'cancelled', 'canceled', 'refunded'].includes(status)) {
+      return res.status(409).json({
+        success: false,
+        error: 'Este pago ya no acepta un enlace de cobro.'
+      })
+    }
+
+    const baseUrl = getRequestBaseUrl(req)
+    const existingLink = resolveTransactionPaymentUrl(transaction, baseUrl)
+    if (existingLink) {
+      return res.json({ success: true, data: { link: existingLink } })
+    }
+
+    const publicPaymentId = createPublicPaymentId()
+    const paymentUrl = buildPaymentUrlFromBase(baseUrl, publicPaymentId)
+    if (!paymentUrl) {
+      return res.status(503).json({
+        success: false,
+        error: 'No se pudo resolver la URL pública de la aplicación.'
+      })
+    }
+
+    await db.run(
+      `UPDATE payments
+       SET public_payment_id = CASE
+             WHEN COALESCE(public_payment_id, '') = '' THEN ?
+             ELSE public_payment_id
+           END,
+           payment_url = CASE
+             WHEN COALESCE(payment_url, '') = '' AND COALESCE(public_payment_id, '') = '' THEN ?
+             ELSE payment_url
+           END,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [publicPaymentId, paymentUrl, paymentId]
+    )
+
+    const updated = await db.get('SELECT * FROM payments WHERE id = ?', [paymentId])
+    const link = resolveTransactionPaymentUrl(updated, baseUrl)
+    if (!link) throw new Error('No se pudo guardar el enlace público del pago.')
+
+    return res.json({ success: true, data: { link } })
+  } catch (error) {
+    logger.error(`Error preparando enlace de parcialidad: ${error.message}`)
+    return res.status(Number(error?.status) || 500).json({
+      success: false,
+      error: Number(error?.status) && Number(error.status) < 500
+        ? error.message
+        : 'No se pudo preparar el enlace de pago.'
     })
   }
 }

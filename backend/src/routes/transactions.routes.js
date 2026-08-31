@@ -16,7 +16,8 @@ import {
   approveTransferProof,
   rejectTransferProof,
   sendTransaction,
-  getPaymentLink
+  getPaymentLink,
+  ensurePaymentPlanPaymentLink
 } from '../controllers/transactionsController.js'
 import {
   actionPaymentPlan,
@@ -66,5 +67,6 @@ router.post('/:id/approve-transfer-proof', approveTransferProof)
 router.post('/:id/reject-transfer-proof', rejectTransferProof)
 router.post('/:id/send', sendTransaction)
 router.get('/:id/payment-link', getPaymentLink)
+router.post('/:id/payment-link', requirePaymentPlansFeature, ensurePaymentPlanPaymentLink)
 
 export default router

@@ -424,6 +424,12 @@ const getDefaultPlanMethod = (provider: LocalCheckoutPlanProvider) => {
   return 'stripe_auto'
 }
 
+const isPlanCardLinkMethod = (method: string | null | undefined, provider: LocalCheckoutPlanProvider) => {
+  const editableMethod = getEditablePlanMethod(method, provider)
+  if (provider === 'offline') return editableMethod !== 'offline'
+  return editableMethod === getDefaultPlanMethod(provider)
+}
+
 const getStripePlanMethodLabel = (method?: string | null, provider: LocalCheckoutPlanProvider = 'stripe') => {
   const normalized = getEditablePlanMethod(method, provider)
   return getPlanMethodOptions(provider).find(option => option.value === normalized)?.label || normalized
@@ -886,6 +892,7 @@ export const Transactions: React.FC = () => {
   })
   const [stripePlanFirstPaymentDraft, setStripePlanFirstPaymentDraft] = useState<StripePlanPaymentDraft | null>(null)
   const [stripePlanInstallmentDrafts, setStripePlanInstallmentDrafts] = useState<StripePlanPaymentDraft[]>([])
+  const [copyingPlanPaymentId, setCopyingPlanPaymentId] = useState('')
   const [paymentPlanScheduleDirty, setPaymentPlanScheduleDirty] = useState(false)
   const [offlinePlanDefaultMethod, setOfflinePlanDefaultMethod] = useState('offline')
   const [offlinePlanReminderDaysBefore, setOfflinePlanReminderDaysBefore] = useState(0)
@@ -2771,6 +2778,30 @@ export const Transactions: React.FC = () => {
     }
   }
 
+  const handleCopyPlanPaymentLink = async ({
+    paymentId = '',
+    paymentUrl = '',
+    paymentLabel
+  }: {
+    paymentId?: string | null
+    paymentUrl?: string | null
+    paymentLabel: string
+  }) => {
+    const actionId = paymentId || `setup:${paymentLabel}`
+    setCopyingPlanPaymentId(actionId)
+    try {
+      const link = String(paymentUrl || '').trim()
+        || (paymentId ? await transactionsService.ensurePaymentPlanPaymentLink(paymentId) : '')
+      if (!link) throw new Error('El pago no tiene un enlace disponible.')
+      await navigator.clipboard.writeText(link)
+      showToast('success', 'Enlace copiado', `El enlace de ${paymentLabel.toLowerCase()} quedó listo para enviarse.`)
+    } catch (error: any) {
+      showToast('error', 'No se pudo copiar el enlace', error?.message || 'No encontramos un enlace de pago para esta fila.')
+    } finally {
+      setCopyingPlanPaymentId('')
+    }
+  }
+
   const handleOpenStripeCardSetupLink = () => {
     if (!stripeCardSetupLinkModal.link) return
     window.open(stripeCardSetupLinkModal.link, '_blank', 'noopener,noreferrer')
@@ -3537,6 +3568,8 @@ export const Transactions: React.FC = () => {
     const defaultMethod = getDefaultPlanMethod(options.provider)
     const paymentLabel = getPlanPaymentLabel(paymentNumber, totalPayments)
     const paymentPlanCurrency = paymentPlanModal.plan?.currency || accountCurrency
+    const canCopyPaymentLink = Boolean(draft.paymentId) && isPlanCardLinkMethod(draft.method, options.provider)
+    const hasActions = canCopyPaymentLink || Boolean(options.onRemove)
 
     return (
       <div
@@ -3545,6 +3578,7 @@ export const Transactions: React.FC = () => {
       >
         <div className={styles.stripePlanPaymentMeta}>
           <strong>{paymentLabel}</strong>
+          {renderStripePlanPaymentStatusBadge(draft.status)}
         </div>
 
         <div className={styles.stripePlanPaymentFields}>
@@ -3607,17 +3641,46 @@ export const Transactions: React.FC = () => {
         </div>
 
         <div className={styles.stripePlanPaymentActions}>
-          {renderStripePlanPaymentStatusBadge(draft.status)}
-          {options.onRemove && (
-            <button
-              type="button"
-              className={styles.actionButton}
-              onClick={options.onRemove}
-              disabled={locked}
-              title={locked ? 'No puedes eliminar un pago ya cobrado' : 'Quitar pago'}
-            >
-              <Trash2 size={16} />
-            </button>
+          {hasActions && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label={`Más opciones de ${paymentLabel}`}
+                  title={`Más opciones de ${paymentLabel}`}
+                  disabled={copyingPlanPaymentId === draft.paymentId}
+                >
+                  <MoreVertical size={16} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" sideOffset={6}>
+                {canCopyPaymentLink && (
+                  <DropdownMenuItem
+                    onSelect={() => void handleCopyPlanPaymentLink({
+                      paymentId: draft.paymentId,
+                      paymentLabel
+                    })}
+                  >
+                    <Copy size={16} />
+                    <span>Copiar enlace de pago</span>
+                  </DropdownMenuItem>
+                )}
+                {canCopyPaymentLink && options.onRemove && <DropdownMenuSeparator />}
+                {options.onRemove && (
+                  <DropdownMenuItem
+                    onSelect={options.onRemove}
+                    disabled={locked}
+                    title={locked ? 'No puedes eliminar un pago ya cobrado' : undefined}
+                  >
+                    <Trash2 size={16} />
+                    <span>Eliminar pago</span>
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
       </div>
@@ -3702,6 +3765,7 @@ export const Transactions: React.FC = () => {
             <div className={styles.stripePlanPaymentRow}>
               <div className={styles.stripePlanPaymentMeta}>
                 <strong>Domiciliación</strong>
+                {renderStripePlanPaymentStatusBadge(cardSetupStatus || 'pending')}
               </div>
               <div className={`${styles.stripePlanPaymentFields} ${styles.stripePlanPaymentFieldsCompact}`}>
                 <div className={styles.formGroup}>
@@ -3714,7 +3778,34 @@ export const Transactions: React.FC = () => {
                 </div>
               </div>
               <div className={styles.stripePlanPaymentActions}>
-                {renderStripePlanPaymentStatusBadge(cardSetupStatus || 'pending')}
+                {getStripePlanCardSetupPaymentLink(plan) && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        aria-label="Más opciones de domiciliación"
+                        title="Más opciones de domiciliación"
+                        disabled={copyingPlanPaymentId === 'setup:Domiciliación'}
+                      >
+                        <MoreVertical size={16} />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" sideOffset={6}>
+                      <DropdownMenuItem
+                        onSelect={() => void handleCopyPlanPaymentLink({
+                          paymentUrl: getStripePlanCardSetupPaymentLink(plan),
+                          paymentLabel: 'Domiciliación'
+                        })}
+                      >
+                        <Copy size={16} />
+                        <span>Copiar enlace de pago</span>
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
               </div>
             </div>
           )}

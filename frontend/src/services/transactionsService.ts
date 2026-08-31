@@ -474,6 +474,11 @@ export const transactionsService = {
     return response.link
   },
 
+  async ensurePaymentPlanPaymentLink(id: string): Promise<string> {
+    const response = await apiClient.post<{ link: string }>(`/transactions/${id}/payment-link`, {})
+    return response.link
+  },
+
   async downloadFiscalInvoice(id: string, format: 'zip' | 'pdf' | 'xml' = 'zip'): Promise<void> {
     const response = await fetch(apiUrl(`/api/transactions/${encodeURIComponent(id)}/fiscal-invoice?format=${format}`), {
       headers: getAuthHeaders()
