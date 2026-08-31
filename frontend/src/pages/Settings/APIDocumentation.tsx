@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Copy, Database, ExternalLink, KeyRound, Network, RefreshCw, Server, ShieldCheck } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { PageHeader } from '@/components/common'
-import { getApiBaseUrl } from '@/services/apiBaseUrl'
+import { apiUrl, getApiBaseUrl } from '@/services/apiBaseUrl'
 import styles from './APIDocumentation.module.css'
 
 const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete'] as const
@@ -36,16 +36,30 @@ const methodOrder: Record<string, number> = {
   DELETE: 5
 }
 
+const canonicalMcpUrl = (value: unknown, fallback: string): string => {
+  if (typeof value !== 'string' || !value.trim()) return fallback
+
+  try {
+    const url = new URL(value.trim())
+    return ['http:', 'https:'].includes(url.protocol) && url.pathname === '/api/mcp'
+      ? url.toString()
+      : fallback
+  } catch {
+    return fallback
+  }
+}
+
 export const APIDocumentation: React.FC = () => {
   const { showToast } = useNotification()
   const [spec, setSpec] = useState<OpenApiSpec | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
 
-  const origin = getApiBaseUrl() || window.location.origin
+  const origin = (getApiBaseUrl() || window.location.origin).replace(/\/+$/, '')
   const externalApiBaseUrl = `${origin}/api/external`
   const openApiUrl = `${externalApiBaseUrl}/openapi.json`
-  const mcpServerUrl = `${origin}/api/mcp`
+  const fallbackMcpServerUrl = `${origin}/api/mcp`
+  const [mcpServerUrl, setMcpServerUrl] = useState(fallbackMcpServerUrl)
 
   const operations = useMemo<ApiOperation[]>(() => {
     if (!spec?.paths) return []
@@ -77,11 +91,23 @@ export const APIDocumentation: React.FC = () => {
       setLoadError('')
 
       try {
-        const response = await fetch(openApiUrl)
-        const data = await response.json()
+        const token = localStorage.getItem('auth_token')
+        const [response, mcpStatusResponse] = await Promise.all([
+          fetch(openApiUrl),
+          fetch(apiUrl('/api/api-access/mcp/status'), {
+            headers: token ? { Authorization: `Bearer ${token}` } : {}
+          })
+        ])
+        const [data, mcpStatusData] = await Promise.all([
+          response.json(),
+          mcpStatusResponse.json().catch(() => ({}))
+        ])
 
         if (!response.ok) throw new Error(data?.error || 'No se pudo cargar OpenAPI')
-        if (active) setSpec(data)
+        if (active) {
+          setSpec(data)
+          setMcpServerUrl(canonicalMcpUrl(mcpStatusData?.mcp?.serverUrl, fallbackMcpServerUrl))
+        }
       } catch (error: any) {
         if (active) setLoadError(error.message || 'No se pudo cargar la documentación')
       } finally {
@@ -94,7 +120,7 @@ export const APIDocumentation: React.FC = () => {
     return () => {
       active = false
     }
-  }, [openApiUrl])
+  }, [fallbackMcpServerUrl, openApiUrl])
 
   return (
     <main className={styles.page}>

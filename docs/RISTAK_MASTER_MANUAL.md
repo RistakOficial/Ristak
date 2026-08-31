@@ -2024,7 +2024,11 @@ Configuracion se organiza en:
   registra el servidor con `codex mcp add` y abre OAuth con
   `codex mcp login ristak`; ese flujo usa la sesion web normal de Ristak y pide
   consentimiento para los scopes. No genera, copia ni usa el API token de
-  REST/OpenAPI. La pantalla mantiene una jerarquia plana y responsive: el estado
+  REST/OpenAPI. La URL que se muestra y copia sale de
+  `GET /api/api-access/mcp/status`; la interfaz y la documentacion no deben
+  reconstruirla con el origen de la barra del navegador, porque el frontend y el
+  servicio publico MCP/OAuth pueden vivir en dominios distintos. La pantalla
+  mantiene una jerarquia plana y responsive: el estado
   del servidor aparece como un resumen unico y su etiqueta conserva el ancho
   natural del contenido; las areas disponibles se leen como una lista compacta
   en vez de una nube de etiquetas y los campos con acciones se apilan sin
@@ -10701,6 +10705,17 @@ pantalla humana por acción. Las escrituras conservan `idempotencyKey`, validaci
 de schema y auditoría con secretos redactados. Revocar el grant, desactivar al
 usuario, quitar un permiso/licencia o desconectar el proveedor bloquea la llamada
 siguiente aunque el token aún no haya vencido.
+
+El discovery OAuth publica registro dinamico, PKCE `S256` y soporte del
+parametro de emisor de la respuesta de autorizacion. Todo callback OAuth —tanto
+exitoso como de error— devuelve `iss` con el mismo issuer canonico del metadata;
+la respuesta `401` de `/api/mcp` incluye en `WWW-Authenticate` la URL de
+protected-resource metadata, el scope minimo y el error OAuth. ChatGPT guarda la
+URL exacta dentro de la version instalada del plugin: **Reconectar** repite OAuth
+contra esa misma URL, no corrige una URL obsoleta. Si cambia el endpoint publico,
+se registra una version nueva con el `mcp.serverUrl` actual, se valida OAuth y
+`tools/list`, y despues se retira la instalacion anterior.
+
 La edición genérica de pagos no acepta `status`: registrar un pago requiere
 `ristak.execute`; anular, reembolsar o cancelar/eliminar un plan exige
 `ristak.destructive`.

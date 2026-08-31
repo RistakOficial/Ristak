@@ -399,6 +399,7 @@ test('metadata y DCR publican todos los scopes sin secret manual y cierran redir
   const metadataJson = JSON.parse(metadata.text)
   assert.deepEqual(metadataJson.scopes_supported, MCP_SCOPE_VALUES)
   assert.equal(metadataJson.code_challenge_methods_supported[0], 'S256')
+  assert.equal(metadataJson.authorization_response_iss_parameter_supported, true)
   assert.match(metadataJson.registration_endpoint, /\/api\/oauth\/register$/)
 
   const registration = await requestServer('/api/oauth/register', {
@@ -500,6 +501,7 @@ test('flujo HTTP completo usa la sesión normal, autoriza con PKCE, canjea códi
   const callback = new URL(JSON.parse(authorization.text).redirectUrl)
   assert.equal(callback.origin + callback.pathname, fixture.redirectUri)
   assert.equal(callback.searchParams.get('state'), 'state-test')
+  assert.equal(callback.searchParams.get('iss'), localIssuer)
   const code = callback.searchParams.get('code')
   assert.match(code, /^code_/)
 

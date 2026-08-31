@@ -43,7 +43,8 @@ type DeveloperSection = 'mcp' | 'credentials' | 'webhooks' | 'docs' | 'logs'
 const INITIAL_MCP_STATUS: McpHeaderStatus = {
   label: 'Revisando',
   variant: 'neutral',
-  ready: false
+  ready: false,
+  serverUrl: ''
 }
 
 export const APIAccessSettings: React.FC = () => {
@@ -62,6 +63,7 @@ export const APIAccessSettings: React.FC = () => {
   const origin = (getApiBaseUrl() || window.location.origin).replace(/\/+$/, '')
   const externalApiBaseUrl = `${origin}/api/external`
   const mcpServerUrl = `${origin}/api/mcp`
+  const canonicalMcpServerUrl = mcpHeaderStatus.serverUrl || mcpServerUrl
   const webhookEndpoints: WebhookEndpoint[] = [
     {
       label: 'Contactos',
@@ -377,7 +379,7 @@ export const APIAccessSettings: React.FC = () => {
 
                 <div className={styles.developerDocsGrid}>
                   <ReadonlyField label="Endpoint base" value={externalApiBaseUrl} onCopy={() => copyText(externalApiBaseUrl, 'endpoint base')} />
-                  <ReadonlyField label="MCP server" value={mcpServerUrl} onCopy={() => copyText(mcpServerUrl, 'MCP server')} />
+                  <ReadonlyField label="MCP server" value={canonicalMcpServerUrl} onCopy={() => copyText(canonicalMcpServerUrl, 'MCP server')} />
                 </div>
 
                 <a className={styles.developerDocLink} href="/api-docs" target="_blank" rel="noreferrer">

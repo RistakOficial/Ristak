@@ -79,6 +79,7 @@ export function authorizationServerMetadata(req) {
     grant_types_supported: ['authorization_code', 'refresh_token'],
     token_endpoint_auth_methods_supported: ['none'],
     code_challenge_methods_supported: ['S256'],
+    authorization_response_iss_parameter_supported: true,
     scopes_supported: MCP_SCOPE_VALUES
   }
 }
@@ -105,11 +106,12 @@ function secureAuthorizationResponse(res) {
   res.set('X-Frame-Options', 'DENY')
 }
 
-function sendOAuthErrorRedirect(res, redirectUri, state, error, description) {
+function sendOAuthErrorRedirect(req, res, redirectUri, state, error, description) {
   const target = new URL(redirectUri)
   target.searchParams.set('error', error)
   if (description) target.searchParams.set('error_description', String(description).slice(0, 500))
   if (state) target.searchParams.set('state', String(state).slice(0, 2048))
+  target.searchParams.set('iss', originFor(req))
   secureAuthorizationResponse(res)
   res.redirect(target.toString())
 }
@@ -151,12 +153,13 @@ function authorizationSpaLocation(requestId) {
   return `/oauth/authorize?${new URLSearchParams({ request_id: requestId }).toString()}`
 }
 
-function authorizationCallbackLocation(authorization, { code, error, description } = {}) {
+function authorizationCallbackLocation(req, authorization, { code, error, description } = {}) {
   const target = new URL(authorization.redirectUri)
   if (code) target.searchParams.set('code', code)
   if (error) target.searchParams.set('error', error)
   if (description) target.searchParams.set('error_description', String(description).slice(0, 500))
   if (authorization.state) target.searchParams.set('state', authorization.state)
+  target.searchParams.set('iss', originFor(req))
   return target.toString()
 }
 
@@ -380,6 +383,7 @@ router.get('/api/oauth/authorize', oauthRateLimiter, async (req, res) => {
   } catch (error) {
     if (error?.safeRedirectUri) {
       return sendOAuthErrorRedirect(
+        req,
         res,
         error.safeRedirectUri,
         error.state,
@@ -436,7 +440,7 @@ router.post(
         secureAuthorizationResponse(res)
         return res.json({
           success: true,
-          redirectUrl: authorizationCallbackLocation(authorization, {
+          redirectUrl: authorizationCallbackLocation(req, authorization, {
             error: 'access_denied',
             description: 'La persona canceló la autorización en Ristak.'
           })
@@ -460,7 +464,7 @@ router.post(
       secureAuthorizationResponse(res)
       res.json({
         success: true,
-        redirectUrl: authorizationCallbackLocation(authorization, { code })
+        redirectUrl: authorizationCallbackLocation(req, authorization, { code })
       })
     } catch (error) {
       clearAuthorizationRequest(req, res, String(req.body?.request_id || ''))
@@ -469,6 +473,7 @@ router.post(
         target.searchParams.set('error', error.code || 'invalid_request')
         target.searchParams.set('error_description', String(error.message || 'Solicitud OAuth inválida.').slice(0, 500))
         if (error.state) target.searchParams.set('state', String(error.state).slice(0, 2048))
+        target.searchParams.set('iss', originFor(req))
         secureAuthorizationResponse(res)
         return res.status(error.status || 400).json({
           error: error.code || 'invalid_request',

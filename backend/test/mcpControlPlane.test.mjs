@@ -309,6 +309,9 @@ test('grant ampliado invalida el token viejo y publica el catálogo de control',
     jsonrpc: '2.0', id: 3, method: 'tools/list', params: {}
   })
   assert.equal(stale.statusCode, 401)
+  assert.match(stale.headers['www-authenticate'], /resource_metadata=/)
+  assert.match(stale.headers['www-authenticate'], /scope="ristak\.read"/)
+  assert.match(stale.headers['www-authenticate'], /error="invalid_token"/)
 
   const response = await requestMcp(fixture.fullToken, {
     jsonrpc: '2.0', id: 4, method: 'tools/list', params: {}
