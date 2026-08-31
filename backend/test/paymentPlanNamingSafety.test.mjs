@@ -157,33 +157,20 @@ test('renombra por separado plan y factura sin mover el calendario y sobrevive a
   }
 })
 
-test('permite renombrar un plan eliminado sin actividad y no lo revive', async () => {
+test('eliminar un plan offline sin actividad lo purga y ya no deja un espejo editable', async () => {
   const fixture = await seedUnusedOfflinePlan()
   try {
-    await applyOfflinePaymentPlanAction(fixture.flowId, 'delete')
-    const response = createResponse()
-    await updateInvoiceSchedule({
-      params: { scheduleId: fixture.flowId },
-      body: {
-        namingOnly: true,
-        name: 'Plan archivado corregido',
-        title: 'Factura archivada corregida'
-      }
-    }, response)
-    assert.equal(response.statusCode, 200)
-    assert.equal(response.payload.success, true)
+    const deletion = await applyOfflinePaymentPlanAction(fixture.flowId, 'delete')
+    assert.equal(deletion.deleted, true)
 
-    const flow = await db.get('SELECT concept, current_state FROM payment_flows WHERE id = ?', [fixture.flowId])
-    const installments = await db.all('SELECT status FROM installment_payments WHERE flow_id = ? ORDER BY sequence', [fixture.flowId])
-    const payments = await db.all('SELECT status FROM payments WHERE id IN (?, ?) ORDER BY id', fixture.paymentIds)
-    const mirror = await db.get('SELECT name, title, status FROM payment_plans WHERE id = ?', [fixture.flowId])
-    assert.equal(flow.concept, 'Plan archivado corregido')
-    assert.equal(flow.current_state, 'offline_plan_deleted')
-    assert.deepEqual(installments.map((row) => row.status), ['deleted', 'deleted'])
-    assert.deepEqual(payments.map((row) => row.status), ['deleted', 'deleted'])
-    assert.equal(mirror.name, 'Plan archivado corregido')
-    assert.equal(mirror.title, 'Factura archivada corregida')
-    assert.equal(mirror.status, 'deleted')
+    await assert.rejects(
+      () => updatePaymentPlanNaming(fixture.flowId, { name: 'Plan que ya no existe' }),
+      error => Number(error?.status) === 404
+    )
+    assert.equal(await db.get('SELECT id FROM payment_flows WHERE id = ?', [fixture.flowId]), null)
+    assert.equal(await db.get('SELECT id FROM installment_payments WHERE flow_id = ? LIMIT 1', [fixture.flowId]), null)
+    assert.equal(await db.get('SELECT id FROM payments WHERE id IN (?, ?) LIMIT 1', fixture.paymentIds), null)
+    assert.equal(await db.get('SELECT id FROM payment_plans WHERE id = ?', [fixture.flowId]), null)
   } finally {
     await cleanupFixture(fixture)
   }

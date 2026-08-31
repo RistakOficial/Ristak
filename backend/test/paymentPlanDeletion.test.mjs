@@ -7,6 +7,7 @@ import { applyStripePaymentPlanAction } from '../src/services/stripePaymentServi
 import { applyConektaPaymentPlanAction } from '../src/services/conektaPaymentService.js'
 import { applyRebillPaymentPlanAction } from '../src/services/rebillPaymentService.js'
 import { applyMercadoPagoPaymentPlanAction } from '../src/services/mercadoPagoPaymentService.js'
+import { applyOfflinePaymentPlanAction } from '../src/services/offlinePaymentPlanService.js'
 import {
   getPaymentPlanAuditSummary,
   hardDeleteRemovablePaymentPlan
@@ -16,7 +17,8 @@ const providerActions = {
   stripe: applyStripePaymentPlanAction,
   conekta: applyConektaPaymentPlanAction,
   rebill: applyRebillPaymentPlanAction,
-  mercadopago: applyMercadoPagoPaymentPlanAction
+  mercadopago: applyMercadoPagoPaymentPlanAction,
+  offline: applyOfflinePaymentPlanAction
 }
 
 function uniqueId(label) {
@@ -142,6 +144,64 @@ test('un plan live con una transacción registrada conserva todo su historial', 
 
     assert.ok(await db.get('SELECT id FROM payment_plans WHERE id = ?', [ids.flowId]))
     assert.ok(await db.get('SELECT id FROM payments WHERE id = ?', [ids.paymentId]))
+  } finally {
+    await cleanup(prefix)
+  }
+})
+
+test('un plan offline con una transacción registrada conserva todo su historial', async () => {
+  const prefix = uniqueId('payment_plan_offline_paid_guard')
+
+  try {
+    const ids = await seedLocalPlan({
+      prefix,
+      provider: 'offline',
+      paymentStatus: 'paid',
+      installmentStatus: 'paid'
+    })
+
+    await assert.rejects(
+      () => applyOfflinePaymentPlanAction(ids.flowId, 'delete'),
+      error => Number(error?.status) === 422 && /pagos|intentos|actividad financiera/i.test(error.message)
+    )
+
+    assert.ok(await db.get('SELECT id FROM payment_plans WHERE id = ?', [ids.flowId]))
+    assert.ok(await db.get('SELECT id FROM payments WHERE id = ?', [ids.paymentId]))
+  } finally {
+    await cleanup(prefix)
+  }
+})
+
+test('un plan offline ya marcado como eliminado y sin cobros se purga al reintentar', async () => {
+  const prefix = uniqueId('payment_plan_offline_stale_delete')
+
+  try {
+    const ids = await seedLocalPlan({
+      prefix,
+      provider: 'offline',
+      paymentStatus: 'sent',
+      installmentStatus: 'sent'
+    })
+    await db.run(
+      "UPDATE payment_flows SET current_state = 'offline_plan_deleted', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      [ids.flowId]
+    )
+    await db.run(
+      "UPDATE payment_plans SET status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      [ids.flowId]
+    )
+    await db.run(
+      'UPDATE payments SET sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [ids.paymentId]
+    )
+
+    const result = await applyOfflinePaymentPlanAction(ids.flowId, 'delete')
+
+    assert.equal(result.deleted, true)
+    assert.equal(await db.get('SELECT id FROM payment_plans WHERE id = ?', [ids.flowId]), null)
+    assert.equal(await db.get('SELECT id FROM payment_flows WHERE id = ?', [ids.flowId]), null)
+    assert.equal(await db.get('SELECT id FROM installment_payments WHERE id = ?', [ids.installmentId]), null)
+    assert.equal(await db.get('SELECT id FROM payments WHERE id = ?', [ids.paymentId]), null)
   } finally {
     await cleanup(prefix)
   }

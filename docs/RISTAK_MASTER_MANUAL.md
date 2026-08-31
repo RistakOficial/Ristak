@@ -5771,7 +5771,13 @@ pago y `M` es el total actual del plan. Si el calendario se edita, por ejemplo d
 existentes de `1/3` a `1/6` sin cambiar importes, fechas ni estados ya
 registrados. Las parcialidades offline ya enviadas se consideran auditables y no
 pueden cambiar de importe o fecha; pausar detiene recordatorios futuros y
-cancelar o eliminar conserva los pagos enviados o pagados para no borrar el
+cancelar conserva los pagos enviados o pagados. **Eliminar** usa una regla más
+estricta: si no existe pago recibido, intento financiero, anulación, reembolso ni
+identificador de pasarela, borra físicamente el plan y sus filas programadas. Un
+recordatorio offline marcado como `sent` no cuenta por sí solo como dinero
+cobrado; `first_payment_status='not_required'` confirma que el plan no configuró
+un primer cobro y tampoco es actividad. En cuanto existe actividad financiera
+real, el plan ya no se puede eliminar y debe cancelarse para conservar el
 historial.
 
 Un plan creado como offline funciona también como calendario flexible. Desde
@@ -5808,9 +5814,10 @@ las notas se editan por una ruta cosmetica separada del calendario. Ristak
 permite corregirlos mientras ninguna cuota del plan tenga un cobro, intento de
 cobro o recordatorio entregado. Un despacho fallido no congela los textos porque
 el cliente no recibio nada. La misma correccion se permite en un plan cancelado
-o eliminado que nunca tuvo actividad: solo cambia sus textos y conserva intactos
-el estado terminal, importes, vencimientos y metodos; nunca reactiva el plan ni
-llama a la pasarela. En cuanto existe actividad financiera o un recordatorio
+que nunca tuvo actividad: solo cambia sus textos y conserva intactos el estado
+terminal, importes, vencimientos y metodos; nunca reactiva el plan ni llama a la
+pasarela. Un plan eliminado sin actividad deja de existir, por lo que ya no queda
+un espejo editable. En cuanto existe actividad financiera o un recordatorio
 enviado, los textos quedan bloqueados para preservar la trazabilidad.
 
 El alta offline se guarda completamente en Ristak: no requiere una pasarela
@@ -5874,10 +5881,13 @@ Blindajes obligatorios del reloj de cobros:
   `UPDATE` que el plan continúa activo.
 - Un plan live puede eliminarse físicamente mientras no exista actividad
   financiera real. Las filas `scheduled`/`pending` creadas para representar
-  cobros futuros todavía no cuentan como transacciones y se limpian junto con
-  el plan. En cuanto existe un pago, intento, anulación, reembolso, identificador
-  de pasarela o factura generada por HighLevel, el borrado queda bloqueado y el
-  usuario debe cancelar el plan para conservar el historial.
+  cobros futuros y un recordatorio offline en `sent` todavía no cuentan como
+  dinero cobrado por sí solos, y se limpian junto con el plan. En cuanto existe
+  un pago, intento financiero, anulación, reembolso, identificador de pasarela o
+  factura generada por HighLevel, el borrado queda bloqueado y el usuario debe
+  cancelar el plan para conservar el historial. Esta misma purga aplica al
+  segundo intento de eliminar un plan offline que una versión anterior hubiera
+  dejado sólo con estado `offline_plan_deleted`.
 - Si HighLevel ya eliminó un schedule sin facturas pero Ristak todavía conserva
   su espejo local como `deleted`, volver a elegir **Eliminar** purga ese espejo
   sin repetir la llamada remota. Un `404 Invoice schedule not found` también se

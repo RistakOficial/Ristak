@@ -42,6 +42,7 @@ const NON_FINANCIAL_INDIVIDUAL_PAYMENT_STATUSES = new Set([
 
 const NON_FINANCIAL_PLAN_PAYMENT_STATUSES = new Set([
   '',
+  'not_required',
   'pending',
   'scheduled',
   'sent',

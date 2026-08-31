@@ -21,6 +21,10 @@ import {
 } from './integrationConnectionStateService.js'
 import { assertExactPaymentPlanTotal, getPaymentPlanDueSafety } from './paymentPlanSafetyService.js'
 import {
+  getPaymentPlanAuditSummary,
+  hardDeleteRemovablePaymentPlan
+} from './paymentRecordSafetyService.js'
+import {
   assertPaymentPlanNamingChangeAllowed,
   paymentPlanNamingFromMetadata
 } from './paymentPlanNamingService.js'
@@ -1074,18 +1078,41 @@ export async function applyOfflinePaymentPlanAction(flowId, action) {
   const normalizedAction = cleanString(action, 40).toLowerCase()
   const flow = await db.get('SELECT * FROM payment_flows WHERE id = ? AND payment_provider = ?', [id, OFFLINE_PROVIDER])
   if (!flow) throw createHttpError('Plan offline no encontrado.', 404)
+
+  if (normalizedAction === 'delete') {
+    const audit = await getPaymentPlanAuditSummary(id)
+    if (!audit.isTestMode && audit.hasLedgerActivity) {
+      throw createHttpError(
+        'Este plan ya tiene pagos, intentos, anulaciones o reembolsos registrados. No se puede eliminar; cancélalo para conservar el historial.',
+        422
+      )
+    }
+
+    const deletion = await hardDeleteRemovablePaymentPlan(id)
+    if (!deletion.deleted) {
+      throw createHttpError(
+        'El plan registró actividad financiera mientras se intentaba eliminar. Se conservó el historial.',
+        409
+      )
+    }
+
+    return {
+      id,
+      status: 'deleted',
+      source: OFFLINE_PROVIDER,
+      deleted: true
+    }
+  }
+
   const history = parseJson(flow.state_history, [])
   const currentState = cleanString(flow.current_state, 80).toLowerCase()
 
   if (currentState === DELETED_STATE) {
-    if (normalizedAction === 'delete') return persistOfflinePaymentPlanMirror(id)
     throw createHttpError('Un plan offline cancelado o eliminado ya no puede cambiar de estado.', 409)
   }
   if (currentState === CANCELLED_STATE) {
     if (normalizedAction === 'cancel') return persistOfflinePaymentPlanMirror(id)
-    if (normalizedAction !== 'delete') {
-      throw createHttpError('Un plan offline cancelado solo puede conservarse o eliminarse.', 409)
-    }
+    throw createHttpError('Un plan offline cancelado solo puede conservarse o eliminarse.', 409)
   }
 
   let nextState = ''
@@ -1095,8 +1122,6 @@ export async function applyOfflinePaymentPlanAction(flowId, action) {
     nextState = PAUSED_STATE
   } else if (normalizedAction === 'cancel') {
     nextState = CANCELLED_STATE
-  } else if (normalizedAction === 'delete') {
-    nextState = DELETED_STATE
   } else {
     throw createHttpError('Esa acción no aplica para planes offline.', 409)
   }
@@ -1106,19 +1131,18 @@ export async function applyOfflinePaymentPlanAction(flowId, action) {
       'UPDATE payment_flows SET current_state = ?, state_history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
       [nextState, JSON.stringify(flowStateHistory(nextState, Array.isArray(history) ? history : [])), id]
     )
-    if (normalizedAction === 'cancel' || normalizedAction === 'delete') {
-      const terminalStatus = normalizedAction === 'delete' ? 'deleted' : 'cancelled'
+    if (normalizedAction === 'cancel') {
       await tx.run(
         `UPDATE installment_payments
          SET status = ?, updated_at = CURRENT_TIMESTAMP
          WHERE flow_id = ? AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'registered', 'sent', 'refunded', 'void', 'deleted')`,
-        [terminalStatus, id]
+        ['cancelled', id]
       )
       await tx.run(
         `UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP
          WHERE id IN (SELECT payment_id FROM installment_payments WHERE flow_id = ?)
            AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'sent', 'refunded', 'void', 'deleted')`,
-        [terminalStatus, id]
+        ['cancelled', id]
       )
     }
   })
