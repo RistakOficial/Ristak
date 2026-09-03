@@ -4509,6 +4509,8 @@ async function resolveOfficialApiRestrictionAlerts({ businessPhoneNumberId, waba
 function getOfficialApiErrorText(error) {
   return [
     error?.message,
+    error?.graphCode,
+    error?.graphSubcode,
     error?.statusCode,
     safeJson(error?.ycloud || null)
   ].map(cleanString).filter(Boolean).join(' ')
@@ -4545,6 +4547,9 @@ function getOfficialApiRestrictionErrorReason(error) {
   if (!text) return ''
 
   if (API_CONVERSATION_SCOPED_ERROR_CODES.test(text)) return ''
+  if (isMetaDirectAuthorizationError(error)) {
+    return 'WhatsApp API perdió autorización o conexión para este número.'
+  }
   const hasBusinessScope = /\b(WABA|BUSINESS ACCOUNT|PHONE NUMBER|SENDER|QUALITY|MESSAGING LIMIT)\b/i.test(text)
   if (API_FALLBACK_RECIPIENT_ERROR_PATTERN.test(text) && !hasBusinessScope) return ''
   if (statusCode === 429) return 'WhatsApp API rechazó el envío por límite de volumen.'
@@ -6938,9 +6943,10 @@ export async function markLatestInboundWhatsAppApiMessageReadForContact({ contac
       token: config.systemUserToken,
       operational: true,
       // Un acuse de lectura puede fallar porque el WAMID ya no es operable o
-      // pertenece a otro contexto de Coexistence. Ese 100/33 no demuestra que
-      // el token haya muerto y jamás debe apagar el remitente completo.
-      authorizationPolicy: 'token_only',
+      // pertenece a otro contexto de Coexistence. Ese 100/33 genérico no apaga
+      // el remitente; uno que nombre exactamente al Phone Number ID sí prueba
+      // que Meta retiró acceso al activo completo.
+      authorizationPolicy: 'token_or_phone_asset',
       phoneNumberId,
       body: {
         messaging_product: 'whatsapp',
@@ -9370,10 +9376,9 @@ async function upsertMessage({
     }
   }
   const routingReason = cleanString(
-    normalizedMessage.fallbackReason ||
-    normalizedMessage.routingReason ||
-    payload.fallbackReason ||
-    payload.routingReason
+    normalizedMessage.fallbackReason || payload.fallbackReason
+      ? getAppliedQrFallbackReason(normalizedMessage.fallbackReason || payload.fallbackReason)
+      : normalizedMessage.routingReason || payload.routingReason
   )
   // Plantillas API (YCloud / Meta): el echo y los eventos de estado no incluyen el
   // cuerpo renderizado, solo el nombre interno de la plantilla. Reconstruimos el texto
@@ -10273,7 +10278,7 @@ export async function requeueEphemeralMetaDirectMediaBatch({ limit = 100 } = {})
 async function persistFailedOutboundApiMessage({ fromPhone, toPhone, type = 'text', content = {}, externalId, contactId, error, provider = PROVIDER_NAME } = {}) {
   try {
     const errorMessage = cleanString(error?.message || error)
-    const errorCode = cleanString(error?.code || error?.statusCode)
+    const errorCode = cleanString(error?.graphCode || error?.code || error?.statusCode)
     const persistedMessage = await upsertMessage({
       payload: {
         id: externalId || hashId('waapi_send_failed_event', `${fromPhone}|${toPhone}|${type}|${nowIso()}`),
@@ -12124,11 +12129,25 @@ function getMetaDirectReconnectMessage(error) {
     : META_DIRECT_RECONNECT_MESSAGE
 }
 
-function isMetaDirectAuthorizationError(error, { authorizationPolicy = 'full' } = {}) {
+function isMetaDirectPhoneAssetAuthorizationError(error, phoneNumberId = '') {
+  const graphCode = Number(error?.graphCode || error?.code || 0)
+  const graphSubcode = Number(error?.graphSubcode || error?.errorSubcode || 0)
+  const cleanPhoneNumberId = cleanString(phoneNumberId)
+  const text = cleanString(error?.graphMessage || error?.message)
+  if (graphCode !== 100 || graphSubcode !== 33 || !cleanPhoneNumberId || !text.includes(cleanPhoneNumberId)) {
+    return false
+  }
+  return /OBJECT WITH ID|DOES NOT EXIST|CANNOT BE LOADED|MISSING PERMISSIONS?/i.test(text)
+}
+
+function isMetaDirectAuthorizationError(error, { authorizationPolicy = 'full', phoneNumberId = '' } = {}) {
   const graphCode = Number(error?.graphCode || error?.code || 0)
   const graphSubcode = Number(error?.graphSubcode || error?.errorSubcode || 0)
   if (graphCode === 190) return true
   if (authorizationPolicy === 'token_only') return false
+  if (authorizationPolicy === 'token_or_phone_asset') {
+    return isMetaDirectPhoneAssetAuthorizationError(error, phoneNumberId)
+  }
   return isMetaDirectRegistrationError(error) || graphCode === 200 || (graphCode === 100 && graphSubcode === 33) ||
     cleanString(error?.code) === 'META_PHONE_NOT_AUTHORIZED'
 }
@@ -12138,7 +12157,7 @@ async function markMetaDirectAuthorizationRequired({
   phoneNumberId = '',
   authorizationPolicy = 'full'
 } = {}) {
-  if (!isMetaDirectAuthorizationError(error, { authorizationPolicy })) return false
+  if (!isMetaDirectAuthorizationError(error, { authorizationPolicy, phoneNumberId })) return false
   const configuredPhoneNumberId = cleanString(phoneNumberId) || cleanString(await getAppConfig(CONFIG_KEYS.metaPhoneNumberId))
   const reconnectMessage = getMetaDirectReconnectMessage(error)
   await Promise.all([
@@ -12244,7 +12263,7 @@ async function metaDirectGraphRequest(path, {
     error.graphSubcode = Number(graphError.error_subcode || 0) || null
     error.graphMessage = baseMessage
     error.graphDetails = actionableDetail || null
-    if (isMetaDirectAuthorizationError(error, { authorizationPolicy })) {
+    if (isMetaDirectAuthorizationError(error, { authorizationPolicy, phoneNumberId })) {
       error.message = getMetaDirectReconnectMessage(error)
     }
     if (operational) {
@@ -12253,6 +12272,60 @@ async function metaDirectGraphRequest(path, {
     throw error
   }
   return data
+}
+
+const META_DIRECT_AMBIGUOUS_SEND_GRAPH_CODES = new Set([131000])
+
+function isMetaDirectAmbiguousSendError(error) {
+  return META_DIRECT_AMBIGUOUS_SEND_GRAPH_CODES.has(Number(error?.graphCode || error?.code || 0))
+}
+
+function buildMetaDirectAmbiguousSendError(error) {
+  const graphCode = Number(error?.graphCode || error?.code || 0)
+  const codeLabel = graphCode ? ` el código ${graphCode}` : ' un error interno'
+  const actionableError = new Error(
+    `Meta devolvió${codeLabel} sin una causa específica y no confirmó el envío. ` +
+    'Ristak no usó el respaldo QR porque hacerlo en ese estado podría duplicar el mensaje. ' +
+    'Intenta de nuevo; si vuelve a pasar, reconecta WhatsApp API desde Configuración > WhatsApp.'
+  )
+  actionableError.name = error?.name || 'MetaDirectGraphError'
+  actionableError.statusCode = error?.statusCode || 502
+  actionableError.graphCode = error?.graphCode || null
+  actionableError.graphSubcode = error?.graphSubcode || null
+  actionableError.graphMessage = error?.graphMessage || cleanString(error?.message)
+  actionableError.graphDetails = error?.graphDetails || null
+  actionableError.originalError = error
+  return actionableError
+}
+
+// Graph 131000 no demuestra por sí solo si Meta alcanzó a aceptar el mensaje,
+// así que jamás brincamos directo a QR. Primero hacemos una lectura inocua del
+// Phone Number ID. Sólo si Meta confirma que ese activo ya no es accesible se
+// deshabilita la API y el mismo request puede usar su respaldo QR sin convertir
+// cualquier 5xx en un posible envío duplicado.
+async function resolveMetaDirectAmbiguousSendError(error, { phoneNumberId = '' } = {}) {
+  if (!isMetaDirectAmbiguousSendError(error)) return error
+
+  const cleanPhoneNumberId = cleanString(phoneNumberId)
+  try {
+    const config = await loadMetaDirectConfig({ includeSecrets: true })
+    if (cleanPhoneNumberId && config.systemUserToken) {
+      await metaDirectGraphRequest(`/${encodeURIComponent(cleanPhoneNumberId)}`, {
+        token: config.systemUserToken,
+        query: { fields: 'id' },
+        operational: true,
+        phoneNumberId: cleanPhoneNumberId
+      })
+    }
+  } catch (verificationError) {
+    if (isMetaDirectAuthorizationError(verificationError, { phoneNumberId: cleanPhoneNumberId })) {
+      logger.warn(`[Meta directo] Graph ${error?.graphCode || 131000} coincidió con un Phone Number ID sin autorización; se habilita el respaldo seguro.`)
+      return verificationError
+    }
+    logger.warn(`[Meta directo] No se pudo aclarar el error Graph ${error?.graphCode || 131000} sin arriesgar un duplicado: ${verificationError.message}`)
+  }
+
+  return buildMetaDirectAmbiguousSendError(error)
 }
 
 export async function repairWhatsAppProviderConnectionStates() {
@@ -14372,18 +14445,21 @@ export async function sendWhatsAppApiTemplateMessage({
           body: requestBody
         })
   } catch (error) {
+    const deliveryError = config.provider === META_DIRECT_PROVIDER_NAME
+      ? await resolveMetaDirectAmbiguousSendError(error, { phoneNumberId: phoneNumberId || config.phoneNumberId })
+      : error
     const retryDecision = await getOfficialApiFallbackDecision({
       config,
       fromPhone,
       phoneNumberId,
-      error,
+      error: deliveryError,
       allowReplyWindowFallback: false
     })
     if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio de plantilla API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
       return sendTemplateViaQr({
         fallbackReason: retryDecision.reason,
-        originalError: error,
+        originalError: deliveryError,
         fallbackPhoneNumberId: retryDecision.fallbackPhoneRow?.id
       })
     }
@@ -14398,10 +14474,10 @@ export async function sendWhatsAppApiTemplateMessage({
       },
       externalId,
       contactId,
-      error,
+      error: deliveryError,
       provider: config.provider
     })
-    throw error
+    throw deliveryError
   }
 
   await saveTemplateSend({
@@ -14574,11 +14650,14 @@ export async function sendWhatsAppApiInteractiveMessage({
           body: requestBody
         })
   } catch (error) {
+    const deliveryError = config.provider === META_DIRECT_PROVIDER_NAME
+      ? await resolveMetaDirectAmbiguousSendError(error, { phoneNumberId: phoneNumberId || config.phoneNumberId })
+      : error
     const retryDecision = await getOfficialApiFallbackDecision({
       config,
       fromPhone,
       phoneNumberId,
-      error
+      error: deliveryError
     })
     if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio interactivo API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
@@ -14590,7 +14669,7 @@ export async function sendWhatsAppApiInteractiveMessage({
         externalId,
         contactId,
         fallbackReason: retryDecision.reason,
-        originalError: error,
+        originalError: deliveryError,
         skipQrSendProtection
       })
     }
@@ -14602,10 +14681,10 @@ export async function sendWhatsAppApiInteractiveMessage({
       content: { interactive: interactivePayload.interactive },
       externalId,
       contactId,
-      error,
+      error: deliveryError,
       provider: config.provider
     })
-    throw error
+    throw deliveryError
   }
 
   const persistedMessage = await upsertMessage({
@@ -14648,15 +14727,25 @@ function buildQrFallbackError(originalError, fallbackError) {
   return error
 }
 
+const QR_FALLBACK_SENT_REASON = 'Ristak envió el mensaje por el respaldo QR del mismo número.'
+
+function getAppliedQrFallbackReason(fallbackReason = '') {
+  const reason = cleanString(fallbackReason)
+  if (!reason) return ''
+  if (/(?:US[ÓO]|ENVI[ÓO]).{0,80}(?:RESPALDO\s+)?QR/i.test(reason)) return reason
+  return `${reason} ${QR_FALLBACK_SENT_REASON}`
+}
+
 function decorateQrFallbackResponse(response = {}, fallbackReason = '') {
+  const appliedFallbackReason = getAppliedQrFallbackReason(fallbackReason)
   return {
     ...response,
     transport: 'qr',
-    ...(fallbackReason ? {
+    ...(appliedFallbackReason ? {
       fallback: true,
       fallbackFrom: 'api',
-      fallbackReason,
-      routingReason: fallbackReason
+      fallbackReason: appliedFallbackReason,
+      routingReason: appliedFallbackReason
     } : {})
   }
 }
@@ -15208,11 +15297,12 @@ export async function sendWhatsAppApiTextMessage({
         replyContext
       })
     } catch (error) {
+      const deliveryError = await resolveMetaDirectAmbiguousSendError(error, { phoneNumberId: metaPhoneNumberId })
       const retryDecision = await getOfficialApiFallbackDecision({
         config,
         fromPhone,
         phoneNumberId: metaPhoneNumberId,
-        error
+        error: deliveryError
       })
       if (allowQrFallback && retryDecision.shouldFallback) {
         logger.warn(`[WhatsApp API] Meta directo falló; usando QR para ${fromPhone}: ${retryDecision.reason}`)
@@ -15226,7 +15316,7 @@ export async function sendWhatsAppApiTextMessage({
           replyToMessageId,
           replyToProviderMessageId: replyContext?.message_id || replyToProviderMessageId,
           fallbackReason: retryDecision.reason,
-          originalError: error,
+          originalError: deliveryError,
           skipQrSendProtection,
           agentId
         })
@@ -15238,10 +15328,10 @@ export async function sendWhatsAppApiTextMessage({
         content: { text: { body } },
         externalId,
         contactId,
-        error,
+        error: deliveryError,
         provider: META_DIRECT_PROVIDER_NAME
       })
-      throw error
+      throw deliveryError
     }
 
     const persistedMessage = await upsertMessage({
@@ -15721,11 +15811,14 @@ export async function sendWhatsAppApiLocationMessage({
           body: requestBody
         })
   } catch (error) {
+    const deliveryError = config.provider === META_DIRECT_PROVIDER_NAME
+      ? await resolveMetaDirectAmbiguousSendError(error, { phoneNumberId: phoneNumberId || config.phoneNumberId })
+      : error
     const retryDecision = await getOfficialApiFallbackDecision({
       config,
       fromPhone,
       phoneNumberId,
-      error
+      error: deliveryError
     })
     if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio de ubicación API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
@@ -15737,7 +15830,7 @@ export async function sendWhatsAppApiLocationMessage({
         externalId,
         contactId,
         fallbackReason: retryDecision.reason,
-        originalError: error,
+        originalError: deliveryError,
         skipQrSendProtection
       })
     }
@@ -15748,10 +15841,10 @@ export async function sendWhatsAppApiLocationMessage({
       content: { text: { body: buildWhatsAppLocationText(location) }, location },
       externalId,
       contactId,
-      error,
+      error: deliveryError,
       provider: config.provider
     })
-    throw error
+    throw deliveryError
   }
 
   const responseLocation = normalizeWhatsAppLocation({
@@ -15989,11 +16082,14 @@ export async function sendWhatsAppApiImageMessage({
           body: requestBody
         })
   } catch (error) {
+    const deliveryError = config.provider === META_DIRECT_PROVIDER_NAME
+      ? await resolveMetaDirectAmbiguousSendError(error, { phoneNumberId: phoneNumberId || config.phoneNumberId })
+      : error
     const retryDecision = await getOfficialApiFallbackDecision({
       config,
       fromPhone,
       phoneNumberId,
-      error
+      error: deliveryError
     })
     if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio de foto API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
@@ -16008,7 +16104,7 @@ export async function sendWhatsAppApiImageMessage({
         contactId,
         publicBaseUrl,
         fallbackReason: retryDecision.reason,
-        originalError: error,
+        originalError: deliveryError,
         skipQrSendProtection
       })
     }
@@ -16020,10 +16116,10 @@ export async function sendWhatsAppApiImageMessage({
       content: { image: storedImage },
       externalId,
       contactId,
-      error,
+      error: deliveryError,
       provider: config.provider
     })
-    throw error
+    throw deliveryError
   }
 
   const responseImage = isPlainObject(response.image) ? response.image : {}
@@ -16289,11 +16385,14 @@ export async function sendWhatsAppApiDocumentMessage({
           body: requestBody
         })
   } catch (error) {
+    const deliveryError = config.provider === META_DIRECT_PROVIDER_NAME
+      ? await resolveMetaDirectAmbiguousSendError(error, { phoneNumberId: phoneNumberId || config.phoneNumberId })
+      : error
     const retryDecision = await getOfficialApiFallbackDecision({
       config,
       fromPhone,
       phoneNumberId,
-      error
+      error: deliveryError
     })
     if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio de documento API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
@@ -16309,7 +16408,7 @@ export async function sendWhatsAppApiDocumentMessage({
         contactId,
         publicBaseUrl,
         fallbackReason: retryDecision.reason,
-        originalError: error,
+        originalError: deliveryError,
         skipQrSendProtection
       })
     }
@@ -16321,10 +16420,10 @@ export async function sendWhatsAppApiDocumentMessage({
       content: { document: storedDocument },
       externalId,
       contactId,
-      error,
+      error: deliveryError,
       provider: config.provider
     })
-    throw error
+    throw deliveryError
   }
 
   const persistedMessage = await upsertMessage({
@@ -16569,11 +16668,14 @@ export async function sendWhatsAppApiVideoMessage({
           body: requestBody
         })
   } catch (error) {
+    const deliveryError = config.provider === META_DIRECT_PROVIDER_NAME
+      ? await resolveMetaDirectAmbiguousSendError(error, { phoneNumberId: phoneNumberId || config.phoneNumberId })
+      : error
     const retryDecision = await getOfficialApiFallbackDecision({
       config,
       fromPhone,
       phoneNumberId,
-      error
+      error: deliveryError
     })
     if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio de video API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
@@ -16587,7 +16689,7 @@ export async function sendWhatsAppApiVideoMessage({
         contactId,
         publicBaseUrl,
         fallbackReason: retryDecision.reason,
-        originalError: error,
+        originalError: deliveryError,
         skipQrSendProtection
       })
     }
@@ -16598,10 +16700,10 @@ export async function sendWhatsAppApiVideoMessage({
       content: { video: storedVideo },
       externalId,
       contactId,
-      error,
+      error: deliveryError,
       provider: config.provider
     })
-    throw error
+    throw deliveryError
   }
 
   const persistedMessage = await upsertMessage({
@@ -16883,11 +16985,14 @@ export async function sendWhatsAppApiAudioMessage({
           body: requestBody
         })
   } catch (error) {
+    const deliveryError = config.provider === META_DIRECT_PROVIDER_NAME
+      ? await resolveMetaDirectAmbiguousSendError(error, { phoneNumberId: phoneNumberId || config.phoneNumberId })
+      : error
     const retryDecision = await getOfficialApiFallbackDecision({
       config,
       fromPhone,
       phoneNumberId,
-      error
+      error: deliveryError
     })
     if (allowQrFallback && retryDecision.shouldFallback) {
       logger.warn(`[WhatsApp API] Envio de audio API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
@@ -16904,7 +17009,7 @@ export async function sendWhatsAppApiAudioMessage({
         publicBaseUrl,
         durationMs,
         fallbackReason: retryDecision.reason,
-        originalError: error,
+        originalError: deliveryError,
         skipQrSendProtection
       })
     }
@@ -16916,9 +17021,10 @@ export async function sendWhatsAppApiAudioMessage({
       content: { audio: storedAudio },
       externalId,
       contactId,
-      error
+      error: deliveryError,
+      provider: config.provider
     })
-    throw error
+    throw deliveryError
   }
 
   const persistedMessage = await upsertMessage({

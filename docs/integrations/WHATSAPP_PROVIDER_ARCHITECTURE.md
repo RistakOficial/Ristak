@@ -162,6 +162,15 @@ no debe confundirse con un bloqueo u opt-out sólo porque el texto diga `User`.
 Si el intento original autorizó QR, tiene texto renderizado, ocurrió hace menos
 de 15 minutos y el respaldo está listo, Ristak manda ese mismo texto por QR.
 
+`131000` de Meta sigue siendo ambiguo por sí solo y nunca autoriza QR de forma
+directa. Después de recibirlo en un envío, Ristak hace una sola lectura inocua
+del `Phone Number ID`. Si esa lectura confirma `100/33`, `190` u otra pérdida
+inequívoca de acceso al activo, marca la fila `AUTHORIZATION_REQUIRED` y puede
+usar el QR autorizado del mismo teléfono dentro de la solicitud original. Si el
+número sigue accesible o la comprobación también es ambigua, conserva el fallo
+API, no toca QR y explica que evitó el respaldo para no duplicar el mensaje. Los
+demás HTTP 5xx mantienen la prohibición general.
+
 La excepción semántica de plantilla excluye expresamente timeout, red, HTTP
 408/429/5xx, errores temporales o reintentables, ventana de conversación,
 destinatario bloqueado/opt-out y multimedia. La ventana tiene su propio fallback
@@ -726,8 +735,11 @@ corta para reconectar. `133010` no se presenta como un token vencido: indica que
 el número debe volver a vincularse/registrarse mediante Embedded Signup. Las
 operaciones auxiliares no tienen esa autoridad: un
 `100/33` aislado al marcar un mensaje como leído puede referirse sólo a ese WAMID
-o a su contexto de Coexistence y no debe apagar el remitente. En esa ruta sólo un
-`code=190`, que confirma que el token dejó de ser válido, cambia el estado global.
+o a su contexto de Coexistence y no debe apagar el remitente. La excepción es un
+`100/33` cuyo texto identifica exactamente al `Phone Number ID` configurado y
+confirma que ese objeto no existe, no puede cargarse o perdió permisos: esa señal
+sí pertenece al remitente completo. En esa ruta un `code=190` también cambia el
+estado global porque confirma que el token dejó de ser válido.
 No debe seguir presentando un token realmente revocado como conectado ni exponer
 el error crudo de Graph al usuario. La reconexión explícita vuelve a validar el
 activo y reactiva la misma fila; no borra historial, plantillas ni contactos.

@@ -124,3 +124,13 @@ test('apps nativas separan WhatsApp HighLevel de cada remitente SMS de HighLevel
   assert.match(iosRouting, /\.highLevelWhatsApp\(fromNumber: highLevelWhatsAppFromNumber\)/)
   assert.match(iosRouting, /title: "WhatsApp · HighLevel"/)
 })
+
+test('apps nativas muestran la causa de un mensaje saliente fallido dentro del globo', async () => {
+  const android = await readSource('mobile/src/App.tsx')
+  const ios = await readSource('ios/app/Ristak/Features/Chats/Thread/MessageBubbleView.swift')
+
+  assert.match(android, /const visibleErrorReason = String\(message\.errorReason \|\| ''\)\.trim\(\)/)
+  assert.match(android, /message\.failed && visibleErrorReason[\s\S]*?No se envió: \{visibleErrorReason\}/)
+  assert.match(ios, /message\.failed, isOutbound/)
+  assert.ok(ios.includes('Text("No se envió: \\(reason)")'))
+})

@@ -4251,9 +4251,16 @@ QR cuando el respaldo del mismo número está listo y autorizado. Una plantilla
 pendiente/rechazada, errores de contenido o media (`131053`), timeout, errores de
 red, HTTP 408/429/5xx o respuestas temporales/reintentables no cambian a QR; la
 validación estructural definitiva anterior es la única excepción de contenido.
+El `131000` de Meta tampoco basta por sí solo: Ristak consulta una vez y sin
+escribir el `Phone Number ID`. Sólo si esa comprobación demuestra que el activo
+perdió autorización marca la API para reconexión y usa el QR autorizado del mismo
+teléfono. Si el número todavía es accesible o la lectura no aclara el estado, no
+usa QR para evitar un duplicado y devuelve una explicación accionable. El código
+Graph real se guarda como `error_code`, en vez de reemplazarlo por el HTTP 500.
 Si un fallback legítimo confirma el envío, el historial registra el transporte
-real `qr` y la UI muestra un solo globo; no se oculta una segunda fila para
-aparentar deduplicación.
+real `qr`, su razón aclara también que Ristak sí envió mediante el respaldo, y la
+UI muestra un solo globo; no se oculta una segunda fila para aparentar
+deduplicación.
 Una vez que Baileys devuelve `key.id`, el request manual responde `sent` sin
 esperar hasta 20 segundos por `delivered`/`read`. Los ACK posteriores se guardan
 en background y actualizan la misma fila; si el ACK llega antes del INSERT, el

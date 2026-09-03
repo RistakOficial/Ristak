@@ -1880,6 +1880,14 @@ genericos como `api`; API/QR solo separa los dos verdes de WhatsApp. Los
 programados conservan el borde punteado y un mensaje fallido siempre usa el
 estado de error por encima del color del canal.
 
+Un mensaje saliente fallido muestra dentro del globo una versión breve de
+`errorReason` en `/movil`, Android e iOS; no debe reducir la información visible
+a la palabra `error` ni exigir mantener presionado el mensaje para conocer la
+causa. La alerta inmediata y la ficha de información conservan el detalle
+completo. Si el backend evitó un respaldo QR porque la aceptación de la API quedó
+ambigua, la explicación debe decirlo para que el usuario sepa que la protección
+contra duplicados fue intencional.
+
 Las razones tecnicas de ruteo como `Capturado desde la sesión de WhatsApp Web.`
 o `Capturado desde la sesión API.` no deben renderizarse como texto ni como nota
 del globo, porque el canal visible ya vive en el chip `API`/`QR` junto a la

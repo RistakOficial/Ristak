@@ -25355,6 +25355,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
     [message],
   );
   const visibleMessageText = linkPreview?.displayText ?? message.text;
+  const visibleErrorReason = String(message.errorReason || '').trim();
   const scheduledCountdown = scheduled ? formatNativeScheduledCountdown(message.scheduledAt || message.date, scheduledCountdownNow) : '';
   const metaLabel = scheduled
     ? `Programado para ${formatMessageTime(message.scheduledAt || message.date, timezone)}`
@@ -25547,6 +25548,9 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
             <Star size={11} color={COLORS.meta} fill={COLORS.meta} strokeWidth={2.2} />
             <Text style={styles.messageStarredText}>Destacado</Text>
           </View>
+        ) : null}
+        {message.failed && visibleErrorReason ? (
+          <Text numberOfLines={4} style={styles.messageErrorReason}>No se envió: {visibleErrorReason}</Text>
         ) : null}
         {message.routingReason ? <Text numberOfLines={2} style={styles.messageRoutingNote}>{message.routingReason}</Text> : null}
         {attachmentKind !== 'audio' ? (
@@ -34730,6 +34734,12 @@ function createAppStyles() {
   },
   messageRoutingNote: {
     color: COLORS.meta,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+  },
+  messageErrorReason: {
+    color: COLORS.danger,
     fontSize: 11,
     lineHeight: 15,
     fontWeight: '700',

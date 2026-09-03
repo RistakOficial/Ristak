@@ -27,6 +27,7 @@ import {
   sendWhatsAppApiReactionMessage,
   sendWhatsAppApiTemplateMessage,
   sendWhatsAppApiTextMessage,
+  setMetaDirectFetchForTest,
   setYCloudFetchForTest,
   syncYCloudContacts,
   syncYCloudMessageRecords
@@ -287,6 +288,82 @@ async function snapshotAppConfig(keys = [], callback) {
       `, [row.config_key, row.config_value])
     }
   }
+}
+
+async function withMetaDirectQrConfig({ phoneNumberId, wabaId, businessPhone }, callback) {
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [
+    keys.enabled,
+    keys.senderPhone,
+    keys.phoneNumberId,
+    keys.wabaId,
+    keys.provider,
+    keys.metaStatus,
+    keys.metaWabaId,
+    keys.metaPhoneNumberId,
+    keys.metaDisplayPhoneNumber,
+    keys.metaSystemUserToken,
+    keys.metaLastError,
+    keys.metaLastWebhookReceivedAt,
+    keys.metaLastRelayReceivedAt,
+    keys.metaLastSubscriptionRefreshAt
+  ]
+
+  return snapshotAppConfig(configKeys, async () => {
+    await initializeMasterKey()
+    const connectedAt = new Date().toISOString()
+    await setAppConfig(keys.enabled, '1')
+    await setAppConfig(keys.senderPhone, businessPhone)
+    await setAppConfig(keys.phoneNumberId, phoneNumberId)
+    await setAppConfig(keys.wabaId, wabaId)
+    await setAppConfig(keys.provider, 'meta_direct')
+    await setAppConfig(keys.metaStatus, 'connected')
+    await setAppConfig(keys.metaWabaId, wabaId)
+    await setAppConfig(keys.metaPhoneNumberId, phoneNumberId)
+    await setAppConfig(keys.metaDisplayPhoneNumber, businessPhone)
+    await setAppConfig(keys.metaSystemUserToken, encrypt('meta-direct-qr-fallback-test-token'))
+    await setAppConfig(keys.metaLastWebhookReceivedAt, connectedAt)
+    await setAppConfig(keys.metaLastRelayReceivedAt, connectedAt)
+    await setAppConfig(keys.metaLastSubscriptionRefreshAt, connectedAt)
+
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number, verified_name,
+        is_default_sender, api_send_enabled, qr_send_enabled, qr_status,
+        qr_connected_phone, status, created_at, updated_at
+      ) VALUES (?, 'meta_direct', ?, ?, ?, 'Meta QR Fallback Test', 1, 1, 1,
+        'connected', ?, 'CONNECTED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [phoneNumberId, wabaId, businessPhone, businessPhone, businessPhone])
+
+    await db.run(`
+      INSERT INTO whatsapp_qr_sessions (
+        id, phone_number_id, expected_phone, connected_phone, status,
+        consent_accepted, consent_text, consent_accepted_at, last_connected_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'connected', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [`qr_${phoneNumberId}`, phoneNumberId, businessPhone, businessPhone, QR_CONSENT_TEXT])
+
+    await db.run(`
+      INSERT INTO whatsapp_qr_auth_state (phone_number_id, auth_key, value_json, updated_at)
+      VALUES (?, 'creds', ?, CURRENT_TIMESTAMP)
+    `, [
+      phoneNumberId,
+      JSON.stringify({
+        me: { id: `${normalizeDigits(businessPhone)}@s.whatsapp.net` },
+        registered: true
+      })
+    ])
+
+    try {
+      return await callback({ keys })
+    } finally {
+      setMetaDirectFetchForTest(null)
+      resetWhatsAppQrServiceForTest()
+      await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    }
+  })
 }
 
 test('normaliza nombres reales de YCloud y descarta los genéricos', () => {
@@ -1679,6 +1756,196 @@ test('un timeout o 5xx ambiguo de API nunca dispara tambien el respaldo QR', asy
   } finally {
     setYCloudFetchForTest(null)
     await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await cleanup({ contactId, phone })
+  }
+})
+
+test('Meta 131000 usa QR sólo cuando una lectura confirma que el Phone Number ID perdió autorización', async () => {
+  const id = randomUUID()
+  const suffix = Date.now().toString().slice(-7)
+  const phone = `+52985${suffix}`
+  const businessPhone = `+52657${suffix}`
+  const phoneNumberId = `meta_phone_confirmed_fallback_${id}`
+  const wabaId = `meta_waba_confirmed_fallback_${id}`
+  const contactId = `rstk_contact_meta_confirmed_fallback_${id}`
+  const externalId = `meta_confirmed_fallback_${id}`
+  const body = 'Este mensaje debe salir una sola vez por QR'
+  const sentMessages = []
+  let apiPostCalls = 0
+  let authorizationProbeCalls = 0
+
+  await cleanup({ contactId, phone })
+
+  try {
+    await withMetaDirectQrConfig({ phoneNumberId, wabaId, businessPhone }, async ({ keys }) => {
+      await insertInboundMessageForOpenReplyWindow({ id, contactId, phone, businessPhone, phoneNumberId })
+      setBaileysRuntimeForTest(createFakeBaileysRuntime({
+        connectedJid: `${normalizeDigits(businessPhone)}@s.whatsapp.net`,
+        sentMessages
+      }))
+      setMetaDirectFetchForTest(async (url, options = {}) => {
+        const path = new URL(String(url)).pathname
+        const method = String(options.method || 'GET').toUpperCase()
+        if (path.endsWith(`/${phoneNumberId}/messages`) && method === 'POST') {
+          apiPostCalls += 1
+          return ycloudJsonResponse({
+            error: {
+              code: 131000,
+              message: '(#131000) Something went wrong: Something went wrong'
+            }
+          }, { status: 500, statusText: 'Internal Server Error' })
+        }
+        if (path.endsWith(`/${phoneNumberId}`) && method === 'GET') {
+          authorizationProbeCalls += 1
+          return ycloudJsonResponse({
+            error: {
+              code: 100,
+              error_subcode: 33,
+              message: `Unsupported get request. Object with ID '${phoneNumberId}' does not exist, cannot be loaded due to missing permissions, or does not support this operation.`
+            }
+          }, { status: 400, statusText: 'Bad Request' })
+        }
+        throw new Error(`Llamada Meta inesperada en la prueba: ${method} ${path}`)
+      })
+
+      const result = await sendWhatsAppApiTextMessage({
+        to: phone,
+        from: businessPhone,
+        text: body,
+        externalId,
+        contactId,
+        phoneNumberId,
+        allowQrFallback: true,
+        skipQrSendProtection: true
+      })
+
+      assert.equal(apiPostCalls, 1)
+      assert.equal(authorizationProbeCalls, 1)
+      assert.equal(sentMessages.length, 1)
+      assert.equal(sentMessages[0].payload.text, body)
+      assert.equal(result.transport, 'qr')
+      assert.equal(result.fallback, true)
+      assert.match(result.fallbackReason, /perdió autorización/i)
+      assert.match(result.fallbackReason, /envió el mensaje por el respaldo QR del mismo número/i)
+
+      const [message, failedApiRows, metaStatus, phoneState] = await Promise.all([
+        db.get(`
+          SELECT transport, routing_reason, status, error_code, error_message, message_text
+          FROM whatsapp_api_messages
+          WHERE contact_id = ? AND direction = 'outbound' AND message_text = ?
+          ORDER BY created_at DESC
+          LIMIT 1
+        `, [contactId, body]),
+        db.get(`
+          SELECT COUNT(*) AS total
+          FROM whatsapp_api_messages
+          WHERE contact_id = ? AND direction = 'outbound' AND transport = 'api' AND message_text = ?
+        `, [contactId, body]),
+        getAppConfig(keys.metaStatus),
+        db.get('SELECT status, api_send_enabled, qr_send_enabled, qr_status FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+      ])
+
+      assert.equal(message.transport, 'qr')
+      assert.match(message.routing_reason, /envió el mensaje por el respaldo QR del mismo número/i)
+      assert.ok(['sent', 'delivered'].includes(message.status))
+      assert.equal(message.error_code, null)
+      assert.equal(message.error_message, null)
+      assert.equal(failedApiRows.total, 0)
+      assert.equal(metaStatus, 'reconnect_required')
+      assert.deepEqual(phoneState, {
+        status: 'AUTHORIZATION_REQUIRED',
+        api_send_enabled: 0,
+        qr_send_enabled: 1,
+        qr_status: 'connected'
+      })
+    })
+  } finally {
+    await cleanup({ contactId, phone })
+  }
+})
+
+test('Meta 131000 conserva el bloqueo anti-duplicados y explica la causa cuando el Phone Number ID sigue accesible', async () => {
+  const id = randomUUID()
+  const suffix = Date.now().toString().slice(-7)
+  const phone = `+52984${suffix}`
+  const businessPhone = `+52656${suffix}`
+  const phoneNumberId = `meta_phone_ambiguous_no_fallback_${id}`
+  const wabaId = `meta_waba_ambiguous_no_fallback_${id}`
+  const contactId = `rstk_contact_meta_ambiguous_no_fallback_${id}`
+  const externalId = `meta_ambiguous_no_fallback_${id}`
+  const body = 'Este mensaje ambiguo no debe duplicarse por QR'
+  const sentMessages = []
+  let apiPostCalls = 0
+  let authorizationProbeCalls = 0
+
+  await cleanup({ contactId, phone })
+
+  try {
+    await withMetaDirectQrConfig({ phoneNumberId, wabaId, businessPhone }, async ({ keys }) => {
+      await insertInboundMessageForOpenReplyWindow({ id, contactId, phone, businessPhone, phoneNumberId })
+      setBaileysRuntimeForTest(createFakeBaileysRuntime({
+        connectedJid: `${normalizeDigits(businessPhone)}@s.whatsapp.net`,
+        sentMessages
+      }))
+      setMetaDirectFetchForTest(async (url, options = {}) => {
+        const path = new URL(String(url)).pathname
+        const method = String(options.method || 'GET').toUpperCase()
+        if (path.endsWith(`/${phoneNumberId}/messages`) && method === 'POST') {
+          apiPostCalls += 1
+          return ycloudJsonResponse({
+            error: {
+              code: 131000,
+              message: '(#131000) Something went wrong: Something went wrong'
+            }
+          }, { status: 500, statusText: 'Internal Server Error' })
+        }
+        if (path.endsWith(`/${phoneNumberId}`) && method === 'GET') {
+          authorizationProbeCalls += 1
+          return ycloudJsonResponse({ id: phoneNumberId })
+        }
+        throw new Error(`Llamada Meta inesperada en la prueba: ${method} ${path}`)
+      })
+
+      await assert.rejects(
+        () => sendWhatsAppApiTextMessage({
+          to: phone,
+          from: businessPhone,
+          text: body,
+          externalId,
+          contactId,
+          phoneNumberId,
+          allowQrFallback: true,
+          skipQrSendProtection: true
+        }),
+        /código 131000.*no confirmó el envío.*podría duplicar el mensaje/is
+      )
+
+      assert.equal(apiPostCalls, 1)
+      assert.equal(authorizationProbeCalls, 1)
+      assert.equal(sentMessages.length, 0)
+
+      const [message, metaStatus, phoneState] = await Promise.all([
+        db.get(`
+          SELECT transport, routing_reason, status, error_code, error_message, message_text
+          FROM whatsapp_api_messages
+          WHERE contact_id = ? AND direction = 'outbound' AND message_text = ?
+          ORDER BY created_at DESC
+          LIMIT 1
+        `, [contactId, body]),
+        getAppConfig(keys.metaStatus),
+        db.get('SELECT status, api_send_enabled FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+      ])
+
+      assert.equal(message.transport, 'api')
+      assert.equal(message.routing_reason, null)
+      assert.equal(message.status, 'failed')
+      assert.equal(message.error_code, '131000')
+      assert.match(message.error_message, /no usó el respaldo QR.*duplicar el mensaje/is)
+      assert.equal(message.message_text, body)
+      assert.equal(metaStatus, 'connected')
+      assert.deepEqual(phoneState, { status: 'CONNECTED', api_send_enabled: 1 })
+    })
+  } finally {
     await cleanup({ contactId, phone })
   }
 })
@@ -3278,7 +3545,10 @@ test('una pérdida 403 de autorización sí usa el QR de respaldo reconectando',
       assert.equal(message.error_code, null)
       assert.equal(message.error_message, null)
       assert.equal(message.message_text, body)
-      assert.equal(message.routing_reason, 'WhatsApp API perdió autorización o conexión para este número.')
+      assert.equal(
+        message.routing_reason,
+        'WhatsApp API perdió autorización o conexión para este número. Ristak envió el mensaje por el respaldo QR del mismo número.'
+      )
     })
   } finally {
     setYCloudFetchForTest(null)

@@ -790,7 +790,7 @@ test('Meta direct persists one text bubble, reconciles status ACKs, and saves CT
   }
 })
 
-test('un rechazo ambiguo al marcar leído no desconecta Meta, pero un token inválido sí', async () => {
+test('un rechazo ambiguo al marcar leído no desconecta Meta, pero perder el Phone Number ID o el token sí', async () => {
   const suffix = randomUUID()
   const phoneNumberId = `meta_phone_read_guard_${suffix}`
   const wabaId = `meta_waba_read_guard_${suffix}`
@@ -839,6 +839,35 @@ test('un rechazo ambiguo al marcar leído no desconecta Meta, pero un token inv�
         'SELECT status, api_send_enabled FROM whatsapp_api_phone_numbers WHERE id = ?',
         [phoneNumberId]
       ), { status: 'CONNECTED', api_send_enabled: 1 })
+
+      setMetaDirectFetchForTest(async () => graphResponse({
+        error: {
+          code: 100,
+          error_subcode: 33,
+          message: `Unsupported put request. Object with ID '${phoneNumberId}' does not exist, cannot be loaded due to missing permissions, or does not support this operation.`
+        }
+      }, 400))
+
+      await assert.rejects(
+        () => markLatestInboundWhatsAppApiMessageReadForContact({ contactId }),
+        /perdió permisos en Meta/
+      )
+      assert.equal(await db.get(
+        'SELECT config_value FROM app_config WHERE config_key = ?',
+        [getWhatsAppApiConfigKeys().metaStatus]
+      ).then(row => row?.config_value), 'reconnect_required')
+      assert.deepEqual(await db.get(
+        'SELECT status, api_send_enabled FROM whatsapp_api_phone_numbers WHERE id = ?',
+        [phoneNumberId]
+      ), { status: 'AUTHORIZATION_REQUIRED', api_send_enabled: 0 })
+
+      await setAppConfig(getWhatsAppApiConfigKeys().metaStatus, 'connected')
+      await setAppConfig(getWhatsAppApiConfigKeys().metaLastError, '')
+      await db.run(`
+        UPDATE whatsapp_api_phone_numbers
+        SET status = 'CONNECTED', api_send_enabled = 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [phoneNumberId])
 
       setMetaDirectFetchForTest(async () => graphResponse({
         error: {

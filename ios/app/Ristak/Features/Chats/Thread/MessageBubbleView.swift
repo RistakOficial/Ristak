@@ -324,6 +324,7 @@ struct MessageRowView: View, Equatable {
             emailBlock
             presentationBlock
             textBlock
+            errorReasonBlock
             routingReasonBlock
             metaRow.hidden()
         }
@@ -377,6 +378,7 @@ struct MessageRowView: View, Equatable {
                     emailBlock
                     presentationBlock
                     visualMediaTextBlock
+                    errorReasonBlock
                     routingReasonBlock
                 }
                 .padding(.top, 7)
@@ -396,6 +398,7 @@ struct MessageRowView: View, Equatable {
             || message.emailDetails != nil
             || message.presentation != nil
             || !visualMediaCaption.isEmpty
+            || (message.failed && !(message.errorReason ?? "").isEmpty)
             || !(message.routingReason ?? "").isEmpty
     }
 
@@ -777,6 +780,16 @@ struct MessageRowView: View, Equatable {
             Text(reason)
                 .font(.caption2)
                 .foregroundStyle(RistakTheme.textMute)
+        }
+    }
+
+    @ViewBuilder
+    private var errorReasonBlock: some View {
+        if let reason = message.errorReason, !reason.isEmpty, message.failed, isOutbound {
+            Text("No se envió: \(reason)")
+                .font(.caption2)
+                .foregroundStyle(RistakTheme.neg)
+                .lineLimit(4)
         }
     }
 
