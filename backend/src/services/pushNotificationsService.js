@@ -2638,27 +2638,57 @@ export async function sendAppointmentStatusNotification(appointment = {}, option
 }
 
 async function getAppointmentContactName(appointment = {}, options = {}) {
+  const explicitFullName = cleanNotificationText(
+    options.contactFullName ||
+    options.contact_full_name ||
+    options.fullName ||
+    options.full_name ||
+    appointment.contactFullName ||
+    appointment.contact_full_name ||
+    appointment.fullName ||
+    appointment.full_name
+  )
+  if (explicitFullName) return explicitFullName.slice(0, 90)
+
+  for (const source of [appointment, options]) {
+    const firstName = cleanNotificationText(source.firstName || source.first_name)
+    const lastName = cleanNotificationText(source.lastName || source.last_name)
+    const composedName = lastName ? [firstName, lastName].filter(Boolean).join(' ') : ''
+    if (composedName) return composedName.slice(0, 90)
+  }
+
+  let storedContact = null
+  const contactId = String(options.contactId || appointment.contactId || appointment.contact_id || '').trim()
+  if (contactId) {
+    storedContact = await db.get(
+      'SELECT full_name, first_name, last_name, phone FROM contacts WHERE id = ?',
+      [contactId]
+    ).catch(() => null)
+
+    const storedFirstName = cleanNotificationText(storedContact?.first_name)
+    const storedLastName = cleanNotificationText(storedContact?.last_name)
+    const storedFullName = cleanNotificationText(
+      storedContact?.full_name ||
+      (storedLastName ? [storedFirstName, storedLastName].filter(Boolean).join(' ') : '')
+    )
+    if (storedFullName) return storedFullName.slice(0, 90)
+  }
+
   const direct = cleanNotificationText(
-    options.contactName ||
     appointment.contactName ||
     appointment.contact_name ||
-    appointment.fullName ||
-    appointment.full_name ||
+    options.contactName ||
+    options.contact_name ||
     appointment.firstName ||
     appointment.first_name ||
+    options.firstName ||
+    options.first_name ||
     ''
   )
-  if (direct) return direct.slice(0, 90)
 
-  const contactId = String(options.contactId || appointment.contactId || appointment.contact_id || '').trim()
-  if (!contactId) return ''
-
-  const contact = await db.get(
-    'SELECT full_name, first_name, phone FROM contacts WHERE id = ?',
-    [contactId]
-  ).catch(() => null)
-
-  return cleanNotificationText(contact?.full_name || contact?.first_name || contact?.phone || '').slice(0, 90)
+  return (direct || cleanNotificationText(
+    storedContact?.first_name || storedContact?.last_name || storedContact?.phone || ''
+  )).slice(0, 90)
 }
 
 export async function sendAppointmentConfirmationNotification(appointment = {}, options = {}) {

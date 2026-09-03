@@ -281,6 +281,39 @@ test('push de cita confirmada muestra solo el nombre y conserva detalle en alert
   }
 })
 
+test('push de cita confirmada compone nombre y apellido cuando falta full_name', async () => {
+  const suffix = randomUUID()
+  const contactId = `push_confirmation_name_${suffix}`
+  const sentPayloads = []
+
+  setAppNotificationPayloadSenderForTest(async (payload) => {
+    sentPayloads.push(payload)
+    return { sent: 1, skipped: false }
+  })
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (id, phone, first_name, last_name, source, created_at, updated_at)
+      VALUES (?, ?, 'Ana', 'Confirmacion', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [contactId, `+52157${Date.now().toString().slice(-8)}`])
+
+    await sendAppointmentConfirmationNotification({
+      id: `appointment_confirmation_name_${suffix}`,
+      contactId,
+      firstName: 'Ana'
+    }, {
+      calendarId: `calendar_confirmation_name_${suffix}`
+    })
+
+    assert.equal(sentPayloads.length, 1)
+    assert.equal(sentPayloads[0].body, 'Ana Confirmacion')
+    assert.equal(sentPayloads[0].contactName, 'Ana Confirmacion')
+  } finally {
+    setAppNotificationPayloadSenderForTest(null)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
 test('push de evento con un contacto no se convierte en conversacion ni usa avatar', async () => {
   const sentPayloads = []
   setAppNotificationPayloadSenderForTest(async (payload) => {

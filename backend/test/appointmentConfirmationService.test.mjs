@@ -121,8 +121,8 @@ async function withConfirmationFixture({
     }
 
     await db.run(`
-      INSERT INTO contacts (id, phone, email, first_name, full_name)
-      VALUES (?, ?, ?, 'Ana', 'Ana Confirmacion')
+      INSERT INTO contacts (id, phone, email, first_name, last_name, full_name)
+      VALUES (?, ?, ?, 'Ana', 'Confirmacion', 'Ana Confirmacion')
     `, [
       contactId,
       `+52155${Date.now().toString().slice(-8)}${suffix.slice(0, 4)}`,
@@ -934,7 +934,8 @@ test('accion notify_push envia payload push cuando la IA detecta confirmacion', 
 
     assert.equal(payloads.length, 1)
     assert.equal(payloads[0].payload.title, '✅ Cita confirmada')
-    assert.equal(payloads[0].payload.body, 'Ana')
+    assert.equal(payloads[0].payload.body, 'Ana Confirmacion')
+    assert.equal(payloads[0].payload.contactName, 'Ana Confirmacion')
     assert.doesNotMatch(payloads[0].payload.body, /Consulta dental|Confirmo asistencia/)
     assert.equal(payloads[0].payload.tag, `appointment-confirmed-${appointmentId}`)
     assert.equal(payloads[0].payload.category, 'appointment_confirmed')
@@ -1010,6 +1011,12 @@ test('modo sin IA confirma sólo respuestas afirmativas sin abrir ventana', asyn
     confirmationTimeoutValue: 30,
     confirmationTimeoutUnit: 'minutes'
   }, async ({ contactId, appointmentId, sendId }) => {
+    const payloads = []
+    setAppNotificationPayloadSenderForTest(async (payload, options) => {
+      payloads.push({ payload, options })
+      return { sent: 1, webSent: 1, nativeSent: 0, skipped: false }
+    })
+
     await db.run(`
       UPDATE appointment_reminder_sends
       SET confirmation_deadline_at = ?,
@@ -1025,6 +1032,8 @@ test('modo sin IA confirma sólo respuestas afirmativas sin abrir ventana', asyn
       text: 'Sí, ahí estaré'
     })
     assert.equal(confirmation?.appointmentId, appointmentId)
+    assert.equal(payloads.length, 1)
+    assert.equal(payloads[0].payload.body, 'Ana Confirmacion')
 
     const window = await db.get(
       'SELECT id FROM appointment_confirmation_windows WHERE contact_id = ? AND appointment_id = ?',
@@ -1051,6 +1060,7 @@ test('modo sin IA confirma sólo respuestas afirmativas sin abrir ventana', asyn
       text: 'Sí, ya confirmé'
     })
     assert.equal(repeatedConfirmation, null)
+    assert.equal(payloads.length, 1)
   })
 })
 
@@ -1192,6 +1202,7 @@ test('respuesta ambigua nunca cancela, avisa una vez y cierra la escucha automá
     assert.equal(appointment.appointment_status, 'pending')
     assert.equal(payloads.length, 1)
     assert.match(payloads[0].payload.title, /respuesta ambigua/)
+    assert.match(payloads[0].payload.title, /Ana Confirmacion/)
 
     const laterInbound = await handleInboundForConfirmation({
       contactId,
@@ -1261,6 +1272,7 @@ test('el ultimátum empieza al enviarse y cancela sólo después de vencer sin r
     assert.ok(send.confirmation_timeout_processed_at)
     assert.equal(payloads.length, 1)
     assert.match(payloads[0].payload.title, /cancelada por falta de confirmación/i)
+    assert.match(payloads[0].payload.title, /Ana Confirmacion/)
   })
 })
 

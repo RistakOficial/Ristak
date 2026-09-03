@@ -5553,10 +5553,13 @@ destinatario del evento `appointment_confirmed`. La UI presenta ese evento como
 **Confirmaciones de cita** en Configuracion → Notificaciones; esa pagina es la
 compuerta canonica para desactivar el canal push por destinatario. Una
 confirmación exitosa usa el título semántico **Cita confirmada** y deja en el
-cuerpo únicamente el nombre guardado del contacto; no incluye hora, título de la
-cita, respuesta textual ni explicación del clasificador. Los avisos de respuesta
-ambigua, cancelación, plazo vencido o revisión humana conservan su explicación
-porque requieren una acción distinta. Los valores legacy
+cuerpo únicamente el nombre completo guardado del contacto. La resolución
+prioriza `full_name`; si ese campo falta, compone `first_name + last_name` y usa
+sólo el primer nombre como último fallback. La misma regla aplica al nombre que
+aparece en avisos de respuesta ambigua, cancelación, plazo vencido o revisión
+humana. El push de éxito no incluye hora, título de la cita, respuesta textual ni
+explicación del clasificador; los demás avisos conservan su explicación porque
+requieren una acción distinta. Los valores legacy
 `notify_push` siguen siendo legibles: en `no_confirm_action` equivalen a
 `no_action`, y dentro de `confirmation_success_action` ya no gobiernan el aviso.
 

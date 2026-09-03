@@ -31,6 +31,51 @@ function nowIso() {
   return new Date().toISOString()
 }
 
+function cleanContactNamePart(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+function resolveConfirmationContactName(...sources) {
+  const records = sources.filter(source => source && typeof source === 'object')
+
+  for (const record of records) {
+    const fullName = cleanContactNamePart(
+      record.full_name ||
+      record.fullName ||
+      record.contact_full_name ||
+      record.contactFullName
+    )
+    if (fullName) return fullName
+  }
+
+  for (const record of records) {
+    const firstName = cleanContactNamePart(
+      record.first_name || record.firstName || record.contact_first_name || record.contactFirstName
+    )
+    const lastName = cleanContactNamePart(
+      record.last_name || record.lastName || record.contact_last_name || record.contactLastName
+    )
+    const composedName = lastName ? [firstName, lastName].filter(Boolean).join(' ') : ''
+    if (composedName) return composedName
+  }
+
+  for (const record of records) {
+    const displayName = cleanContactNamePart(
+      record.contact_name || record.contactName || record.name
+    )
+    if (displayName) return displayName
+  }
+
+  for (const record of records) {
+    const firstName = cleanContactNamePart(
+      record.first_name || record.firstName || record.contact_first_name || record.contactFirstName
+    )
+    if (firstName) return firstName
+  }
+
+  return 'Contacto'
+}
+
 function parseReminderSendSourceConfig(value) {
   try {
     const parsed = JSON.parse(value || '{}')
@@ -581,6 +626,7 @@ async function processConfirmationTimeout(sendId, currentTime) {
         a.status AS legacy_status,
         a.deleted_at,
         c.first_name,
+        c.last_name,
         c.full_name
       FROM appointment_reminder_sends s
       LEFT JOIN appointment_reminders r ON r.id = s.reminder_id
@@ -678,7 +724,7 @@ async function processConfirmationTimeout(sendId, currentTime) {
         contactId: send.contact_id,
         calendarId: send.calendar_id,
         appointmentTitle: send.title,
-        contactName: send.first_name || send.full_name
+        contactName: resolveConfirmationContactName(send)
       }
     }
 
@@ -702,7 +748,7 @@ async function processConfirmationTimeout(sendId, currentTime) {
         contactId: send.contact_id,
         calendarId: send.calendar_id,
         appointmentTitle: send.title,
-        contactName: send.first_name || send.full_name
+        contactName: resolveConfirmationContactName(send)
       }
     }
 
@@ -734,7 +780,7 @@ async function processConfirmationTimeout(sendId, currentTime) {
       contactId: send.contact_id,
       calendarId: send.calendar_id,
       appointmentTitle: send.title,
-      contactName: send.first_name || send.full_name,
+      contactName: resolveConfirmationContactName(send),
       previousStatus: appointmentStatus || null
     }
   })
@@ -1186,7 +1232,7 @@ async function executeConfirmationSuccessActions({ contactId, appointmentId, act
     WHERE a.id = ?
   `, [appointmentId])
 
-  const contactName = String(appointment?.first_name || appointment?.full_name || reminderData?.first_name || 'Contacto').trim()
+  const contactName = resolveConfirmationContactName(appointment, reminderData)
   const appointmentTitle = String(appointment?.title || 'cita').trim()
 
   if (normalizedActions.includes('chat_badge')) {
@@ -1221,7 +1267,8 @@ async function executeConfirmationSuccessActions({ contactId, appointmentId, act
 
 async function executeNoConfirmAction({ contactId, appointmentId, action, result, resultDetail, reminderData }) {
   const appointment = await db.get(`
-    SELECT a.id, a.title, a.start_time, a.calendar_id, a.appointment_status, a.status, c.first_name, c.full_name
+    SELECT a.id, a.title, a.start_time, a.calendar_id, a.appointment_status, a.status,
+      c.first_name, c.last_name, c.full_name
     FROM appointments a
     LEFT JOIN contacts c ON c.id = a.contact_id
     WHERE a.id = ?
@@ -1254,7 +1301,7 @@ async function executeNoConfirmAction({ contactId, appointmentId, action, result
     human_needed: 'requiere atención humana'
   }
   const label = resultLabels[result] || 'no confirmó'
-  const contactName = String(appointment?.first_name || appointment?.full_name || reminderData?.first_name || 'Contacto').trim()
+  const contactName = resolveConfirmationContactName(appointment, reminderData)
   const appointmentTitle = String(appointment?.title || 'cita').trim()
   await sendAppointmentConfirmationNotification(appointment || { id: appointmentId, contactId }, {
     appointmentId,
@@ -1292,6 +1339,7 @@ export async function maybeConfirmAppointmentFromReply({ contactId, text } = {})
       a.start_time,
       a.calendar_id,
       c.first_name,
+      c.last_name,
       c.full_name
     FROM appointment_reminder_sends s
     JOIN appointments a ON a.id = s.appointment_id
@@ -1330,11 +1378,12 @@ export async function maybeConfirmAppointmentFromReply({ contactId, text } = {})
     calendar_id: pending.calendar_id,
     contact_id: id,
     first_name: pending.first_name,
+    last_name: pending.last_name,
     full_name: pending.full_name
   }, {
     appointmentId: pending.appointment_id,
     contactId: id,
-    contactName: pending.first_name || pending.full_name,
+    contactName: resolveConfirmationContactName(pending),
     calendarId: pending.calendar_id,
     startTime: pending.start_time
   }).catch(error => {
