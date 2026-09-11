@@ -94,7 +94,7 @@ function createDraft(): SubscriptionDraft {
     intervalType: 'monthly',
     intervalCount: '1',
     startDate: getTodayInputValue(),
-    applyTax: true,
+    applyTax: false,
     taxCalculationMode: DEFAULT_CHARGE_TAX_CALCULATION_MODE
   }
 }

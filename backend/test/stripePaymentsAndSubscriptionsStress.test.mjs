@@ -1256,7 +1256,8 @@ test('suscripciones: elimina una suscripcion local sin cobros registrados', asyn
   }
 })
 
-test('suscripciones Stripe: webhook invoice.payment_succeeded registra pago recurrente sin duplicar', async () => {
+for (const applyTax of [false, true]) {
+test(`suscripciones Stripe: webhook conserva impuesto ${applyTax ? 'activo' : 'apagado'} sin duplicar`, async () => {
   const { contactId, contact, savedMethodId } = await seedContactWithSavedCard('subscription_webhook')
   const webhookSecret = 'whsec_local_stress_suite'
   const invoiceId = `in_${suffix('subscription_invoice')}`
@@ -1278,6 +1279,7 @@ test('suscripciones Stripe: webhook invoice.payment_succeeded registra pago recu
 
   try {
     await configureStripe({ webhookSecret })
+    await savePaymentSettings({ taxes: { enabled: true, rateValue: 16, country: 'MX' } })
 
     const created = await createSubscription({
       contactId,
@@ -1287,6 +1289,8 @@ test('suscripciones Stripe: webhook invoice.payment_succeeded registra pago recu
       name: 'Webhook recurrente stress',
       description: 'Valida pagos recurrentes por invoice webhook',
       amount: 888.88,
+      applyTax,
+      taxCalculationMode: 'inclusive',
       intervalType: 'monthly',
       intervalCount: 1,
       paymentMethod: 'stripe_saved_card',
@@ -1346,6 +1350,13 @@ test('suscripciones Stripe: webhook invoice.payment_succeeded registra pago recu
     assert.equal(webhookPayment.status, 'paid')
     assert.equal(webhookPayment.payment_url, 'https://stripe.example.test/invoice')
     assert.equal(JSON.parse(webhookPayment.metadata_json).ristakSubscriptionId, created.id)
+    const paymentTax = JSON.parse(webhookPayment.metadata_json).tax
+    assert.equal(paymentTax.enabled, applyTax)
+    if (applyTax) {
+      assert.equal(paymentTax.taxAmount, 122.6)
+      assert.equal(paymentTax.totalAmount, 888.88)
+      assert.equal(paymentTax.rateValue, 16)
+    }
 
     const duplicateWebhook = await handleStripeWebhookEvent(Buffer.from('{}'), 'sig_test')
     assert.equal(duplicateWebhook.received, true)
@@ -1359,5 +1370,7 @@ test('suscripciones Stripe: webhook invoice.payment_succeeded registra pago recu
   } finally {
     setStripeFactoryForTest(null)
     await cleanupContact(contactId)
+    await savePaymentSettings({ taxes: { enabled: false } })
   }
 })
+}

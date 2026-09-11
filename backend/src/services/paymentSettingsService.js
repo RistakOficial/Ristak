@@ -17,7 +17,6 @@ const GIGSTACK_AUTOMATION_TYPES = ['pue_invoice', 'none']
 const GIGSTACK_CLIENT_MATCH_MODES = ['email', 'client_id_or_email']
 const GIGSTACK_FISCAL_SOURCES = ['manual', 'gigstack']
 const GIGSTACK_PROTECTED_FISCAL_FIELDS = [
-  'enabled',
   'taxName',
   'rateType',
   'rateValue',
@@ -215,7 +214,7 @@ export function normalizePaymentSettingsMode(value, fallback = DEFAULT_PAYMENT_S
 export function mergeGigstackFiscalProfileTaxes(currentTaxes = {}, profile = {}) {
   return {
     ...currentTaxes,
-    enabled: true,
+    enabled: cleanBoolean(currentTaxes.enabled, false),
     gigstackEnabled: true,
     gigstackFiscalSource: 'gigstack',
     gigstackSatConnected: profile.satConnected,
@@ -598,7 +597,7 @@ export function normalizePaymentSettings(input = {}, options = {}) {
       failedPaymentDelayHours: cleanNumber(automations.failedPaymentDelayHours, DEFAULT_PAYMENT_SETTINGS.automations.failedPaymentDelayHours, { min: 1, max: 168 })
     },
     taxes: {
-      enabled: gigstackEnabled ? true : cleanBoolean(taxes.enabled, DEFAULT_PAYMENT_SETTINGS.taxes.enabled),
+      enabled: cleanBoolean(taxes.enabled, DEFAULT_PAYMENT_SETTINGS.taxes.enabled),
       taxName: cleanString(taxes.taxName, 80) || DEFAULT_PAYMENT_SETTINGS.taxes.taxName,
       rateType: 'percentage',
       rateValue,

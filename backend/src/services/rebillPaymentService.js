@@ -1,4 +1,5 @@
 import fetch from 'node-fetch'
+import { paymentTaxSnapshotForTotal } from '../utils/paymentTaxSnapshot.js'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
@@ -1608,6 +1609,7 @@ async function createRebillSubscriptionPaymentFromWebhook(rebillPayment = {}, re
   )
   const metadata = {
     source: 'rebill_subscription_webhook',
+    tax: paymentTaxSnapshotForTotal(parseJson(subscriptionRow.metadata_json, {}).tax, amount),
     ristakSubscriptionId: subscriptionRow.id,
     rebillSubscriptionId: rebillMetadata.subscriptionId,
     rebillPaymentId: rebillMetadata.paymentId,
@@ -2065,6 +2067,7 @@ function validateRebillPaymentPlanPayload(input = {}, timezone = ACCOUNT_DEFAULT
       phone: cleanString(contact.phone, 80)
     },
     totalAmount: Math.round(totalAmount * 100) / 100,
+    applyTax: input.applyTax === true,
     currency,
     title: cleanString(input.title || input.invoicePayload?.title || input.invoicePayload?.name || input.description || 'Plan de pagos', 180),
     description: cleanString(input.description || input.concept || input.title || 'Plan de pagos', 500),
@@ -2091,6 +2094,7 @@ function buildRebillPlanPaymentMetadata(flow, installment, sequence, paymentMode
     rebillMode: paymentMode || 'test',
     paymentMode: paymentMode || 'test',
     source,
+    tax: paymentTaxSnapshotForTotal(parseJson(flow.metadata, {}).tax, installment.amount),
     contactName: flow.contact_name,
     contactEmail: flow.contact_email,
     contactPhone: flow.contact_phone,
@@ -2625,7 +2629,7 @@ async function updateRebillPaymentPlanScheduleLocked(flowId, input = {}, { baseU
   }
 
   const existing = await db.all(
-    `SELECT i.*, p.status AS payment_status
+    `SELECT i.*, p.status AS payment_status, p.metadata_json AS payment_metadata_json
      FROM installment_payments i LEFT JOIN payments p ON p.id = i.payment_id
      WHERE i.flow_id = ? AND LOWER(COALESCE(i.status, 'pending')) NOT IN ('deleted', 'cancelled', 'canceled', 'void')
      ORDER BY i.sequence ASC`,
@@ -2683,6 +2687,8 @@ async function updateRebillPaymentPlanScheduleLocked(flowId, input = {}, { baseU
     const paymentId = row.current?.payment_id || createId('rebill_plan_payment')
     const paymentStatus = row.method.paymentStatus
     if (row.current) {
+      const paymentMetadata = parseJson(row.current.payment_metadata_json, {})
+      paymentMetadata.tax = paymentTaxSnapshotForTotal(paymentMetadata.tax ?? metadata.tax, row.amount)
       await db.run(
         `UPDATE installment_payments
          SET sequence = ?, amount = ?, due_date = ?, frequency = ?, payment_method = ?, automatic = ?, status = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
@@ -2691,9 +2697,9 @@ async function updateRebillPaymentPlanScheduleLocked(flowId, input = {}, { baseU
       )
       await db.run(
         `UPDATE payments
-         SET amount = ?, currency = ?, title = ?, description = ?, date = ?, due_date = ?, payment_method = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+         SET amount = ?, currency = ?, title = ?, description = ?, date = ?, due_date = ?, payment_method = ?, status = ?, metadata_json = ?, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [row.amount, flow.currency, buildPlanInstallmentPaymentTitle(concept, row.sequence, Number(flow.first_payment_amount || 0) > 0, submitted.length + 1), buildPlanInstallmentPaymentTitle(concept, row.sequence, Number(flow.first_payment_amount || 0) > 0, submitted.length + 1), row.dueDate, row.dueDate, row.method.paymentMethod, paymentStatus, paymentId]
+        [row.amount, flow.currency, buildPlanInstallmentPaymentTitle(concept, row.sequence, Number(flow.first_payment_amount || 0) > 0, submitted.length + 1), buildPlanInstallmentPaymentTitle(concept, row.sequence, Number(flow.first_payment_amount || 0) > 0, submitted.length + 1), row.dueDate, row.dueDate, row.method.paymentMethod, paymentStatus, JSON.stringify(paymentMetadata), paymentId]
       )
     } else {
       const created = await createRebillPlanPaymentRow({
@@ -2705,7 +2711,7 @@ async function updateRebillPaymentPlanScheduleLocked(flowId, input = {}, { baseU
         title: buildPlanInstallmentPaymentTitle(concept, row.sequence, Number(flow.first_payment_amount || 0) > 0, submitted.length + 1),
         description: concept,
         dueDate: row.dueDate,
-        metadata: buildRebillPlanPaymentMetadata(flow, { id: installmentId }, row.sequence, mode, 'rebill_payment_plan_installment'),
+        metadata: buildRebillPlanPaymentMetadata(flow, { id: installmentId, amount: row.amount }, row.sequence, mode, 'rebill_payment_plan_installment'),
         baseUrl,
         mode
       })
@@ -2791,7 +2797,7 @@ export async function applyRebillPaymentPlanAction(flowId, action, options = {})
       title: `${flow.concept || 'Plan de pagos'} - cambio de tarjeta`,
       description: 'Autorización segura para reemplazar la tarjeta domiciliada.',
       dueDate: todayDateOnly(await getAccountTimezone().catch(() => ACCOUNT_DEFAULT_TIMEZONE)),
-      metadata: { ...metadata, source: 'rebill_payment_plan_card_change', paymentPlan: { flowId: cleanFlowId, trigger: 'card_setup' } },
+      metadata: { ...metadata, tax: paymentTaxSnapshotForTotal(metadata.tax, amount), source: 'rebill_payment_plan_card_change', paymentPlan: { flowId: cleanFlowId, trigger: 'card_setup' } },
       baseUrl: options.baseUrl,
       mode: metadata.paymentMode || metadata.rebillMode || 'test'
     })
@@ -2859,7 +2865,7 @@ export async function applyRebillPaymentPlanAction(flowId, action, options = {})
 function mapPublicPayment(row, config, baseUrl = '', settings = null, timezone = ACCOUNT_DEFAULT_TIMEZONE) {
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
-  const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
+  const tax = metadata.tax?.enabled === true ? metadata.tax : null
   const publicPaymentId = row.public_payment_id
   const hostedPaymentLink = getRebillHostedPaymentLink(metadata)
 
@@ -2921,7 +2927,7 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
   }
 
   const paymentSettings = await getPublicPaymentSettings()
-  const shouldApplyTax = input.applyTax !== false
+  const shouldApplyTax = input.applyTax === true
   const taxSettings = {
     ...paymentSettings.taxes,
     enabled: Boolean(paymentSettings.taxes?.enabled && shouldApplyTax),
@@ -2953,7 +2959,7 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
     ...inputMetadata,
     rebillHostedCheckout: true,
     ...(rebillInstallments ? { rebillInstallments } : {}),
-    ...(tax ? { tax } : {})
+    tax: tax || input.metadata?.tax || { enabled: false }
   }
   const conversationalTestEffectId = cleanString(input.source, 120) === 'conversational_agent_test'
     ? cleanString(metadata?.conversationalAgentTest?.testEffectId, 180) || null
@@ -3244,7 +3250,7 @@ export async function createRebillSavedCardPayment(input = {}, { mode = '', prov
   }
 
   const paymentSettings = await getPublicPaymentSettings()
-  const shouldApplyTax = input.applyTax !== false
+  const shouldApplyTax = input.applyTax === true
   const taxSettings = {
     ...paymentSettings.taxes,
     enabled: Boolean(paymentSettings.taxes?.enabled && shouldApplyTax),
@@ -3267,7 +3273,7 @@ export async function createRebillSavedCardPayment(input = {}, { mode = '', prov
       savedCardCharge: true,
       sourceId: savedSource.rebill_card_id
     },
-    ...(tax ? { tax } : {})
+    tax: tax || input.metadata?.tax || { enabled: false }
   }
 
   await db.run(
@@ -3311,6 +3317,12 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
   const accountCurrency = await getConfiguredCurrency()
   const accountTimezone = await getAccountTimezone().catch(() => ACCOUNT_DEFAULT_TIMEZONE)
   const plan = validateRebillPaymentPlanPayload({ ...input, currency: input.currency || accountCurrency }, accountTimezone)
+  const planTaxes = (await getPublicPaymentSettings()).taxes
+  plan.tax = calculatePaymentTax(plan.totalAmount, {
+    ...planTaxes,
+    enabled: Boolean(planTaxes?.enabled && plan.applyTax),
+    calculationMode: 'inclusive'
+  }) || { enabled: false }
   const savedSource = plan.paymentMethodId
     ? await resolveRebillSavedSource(plan.contact.id, plan.paymentMethodId, config)
     : null
@@ -3370,6 +3382,8 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
       JSON.stringify({
         source: plan.source,
         creationRequestKey: cleanString(input.idempotencyKey, 200),
+        applyTax: plan.applyTax,
+        tax: plan.tax,
         rebillMode: config.mode,
         paymentMode: config.mode,
         timezone: accountTimezone,
@@ -3416,6 +3430,7 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
         rebillMode: config.mode,
         paymentMode: config.mode,
         source: 'rebill_payment_plan_first_offline',
+        tax: paymentTaxSnapshotForTotal(plan.tax, plan.firstPayment.amount),
         contactName: plan.contact.name,
         contactEmail: plan.contact.email,
         contactPhone: plan.contact.phone,
@@ -3456,6 +3471,7 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
         rebillMode: config.mode,
         paymentMode: config.mode,
         source: 'rebill_payment_plan_first_saved_card',
+        tax: paymentTaxSnapshotForTotal(plan.tax, plan.firstPayment.amount),
         contactName: plan.contact.name,
         contactEmail: plan.contact.email,
         contactPhone: plan.contact.phone,
@@ -3495,6 +3511,7 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
         rebillMode: config.mode,
         paymentMode: config.mode,
         source: method.linkAvailable ? 'rebill_payment_plan_first_link' : 'rebill_payment_plan_first_scheduled',
+        tax: paymentTaxSnapshotForTotal(plan.tax, plan.firstPayment.amount),
         contactName: plan.contact.name,
         contactEmail: plan.contact.email,
         contactPhone: plan.contact.phone,
@@ -3534,6 +3551,7 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
         rebillMode: config.mode,
         paymentMode: config.mode,
         source: 'rebill_payment_plan_card_setup',
+        tax: paymentTaxSnapshotForTotal(plan.tax, plan.cardSetupAmount),
         contactName: plan.contact.name,
         contactEmail: plan.contact.email,
         contactPhone: plan.contact.phone,
@@ -3575,7 +3593,7 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
       dueDate: payment.dueDate,
       metadata: buildRebillPlanPaymentMetadata(
         flow,
-        { id: installmentId },
+        { id: installmentId, amount: payment.amount },
         payment.sequence,
         config.mode,
         'rebill_payment_plan_installment'

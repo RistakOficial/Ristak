@@ -4829,11 +4829,11 @@ export const PaymentsConfiguration: React.FC = () => {
                 Actualizar desde Gigstack
               </Button>
             </div>
-          ) : (
-            <div className={styles.switchStack}>
-              {renderSwitchRow('Cobrar impuestos', 'Cuando está apagado, registrar pagos y links no muestran opciones de impuestos.', taxes.enabled, (next) => setTaxValue('enabled', next))}
-            </div>
-          )}
+          ) : null}
+
+          <div className={styles.switchStack}>
+            {renderSwitchRow('Habilitar impuestos en los pagos', 'Los nuevos cobros empiezan sin impuesto. Actívalo en cada pago que lo requiera. Conectar Gigstack no cambia esta elección.', taxes.enabled, (next) => setTaxValue('enabled', next))}
+          </div>
 
           <div className={styles.formGrid}>
             {renderField(

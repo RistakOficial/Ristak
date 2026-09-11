@@ -4,7 +4,6 @@ import JSZip from 'jszip'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import {
-  calculatePaymentTax,
   decodeGigstackTokenMetadata,
   getPaymentSettings
 } from './paymentSettingsService.js'
@@ -352,27 +351,26 @@ function getPaymentTax(row, settings) {
   const metadata = parseJson(row.metadata_json)
   const storedTax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
 
-  if (storedTax?.enabled && Number(storedTax.taxAmount) > 0) {
-    return {
-      enabled: true,
-      taxName: cleanString(storedTax.taxName || storedTax.name) || settings.taxes.taxName,
-      rateType: 'percentage',
-      rateValue: roundMoney(storedTax.rateValue || storedTax.rate || settings.taxes.rateValue),
-      rateSource: storedTax.rateSource || settings.taxes.rateSource,
-      gigstackTaxFactor: storedTax.gigstackTaxFactor || settings.taxes.gigstackTaxFactor,
-      calculationMode: storedTax.calculationMode || settings.taxes.calculationMode,
-      country: storedTax.country || settings.taxes.country,
-      fiscalId: storedTax.fiscalId || settings.taxes.fiscalId,
-      fiscalLegalName: storedTax.fiscalLegalName || settings.taxes.fiscalLegalName,
-      fiscalPostalCode: storedTax.fiscalPostalCode || settings.taxes.fiscalPostalCode,
-      fiscalRegime: storedTax.fiscalRegime || settings.taxes.fiscalRegime,
-      provider: 'gigstack',
-      subtotalAmount: roundMoney(storedTax.subtotalAmount),
-      taxAmount: roundMoney(storedTax.taxAmount),
-      totalAmount: roundMoney(storedTax.totalAmount || row.amount)
-    }
+  if (metadata.applyTax === false || storedTax?.enabled !== true) return null
+
+  return {
+    enabled: true,
+    taxName: cleanString(storedTax.taxName || storedTax.name) || settings.taxes.taxName,
+    rateType: 'percentage',
+    rateValue: roundMoney(storedTax.rateValue ?? storedTax.rate ?? settings.taxes.rateValue),
+    rateSource: storedTax.rateSource || settings.taxes.rateSource,
+    gigstackTaxFactor: storedTax.gigstackTaxFactor || settings.taxes.gigstackTaxFactor,
+    calculationMode: storedTax.calculationMode || settings.taxes.calculationMode,
+    country: storedTax.country || settings.taxes.country,
+    fiscalId: storedTax.fiscalId || settings.taxes.fiscalId,
+    fiscalLegalName: storedTax.fiscalLegalName || settings.taxes.fiscalLegalName,
+    fiscalPostalCode: storedTax.fiscalPostalCode || settings.taxes.fiscalPostalCode,
+    fiscalRegime: storedTax.fiscalRegime || settings.taxes.fiscalRegime,
+    provider: 'gigstack',
+    subtotalAmount: roundMoney(storedTax.subtotalAmount),
+    taxAmount: roundMoney(storedTax.taxAmount),
+    totalAmount: roundMoney(storedTax.totalAmount || row.amount)
   }
-  return calculatePaymentTax(row.amount, settings.taxes)
 }
 
 async function buildGigstackPayload(row, settings, tax, mode) {
@@ -1407,6 +1405,8 @@ export async function registerGigstackPaymentForTransaction(paymentId, { expecte
   const settings = await getPaymentSettings({ includeSecrets: true, resolveBusinessProfile: false })
   const taxes = settings.taxes || {}
   if (!taxes.enabled || !taxes.gigstackEnabled) return { skipped: true, reason: 'gigstack_disabled' }
+  const tax = getPaymentTax(row, settings)
+  if (!tax?.enabled) return { skipped: true, reason: 'missing_tax' }
   const token = getGigstackTokenForMode(taxes, mode)
   try {
     assertGigstackTokenMode(token, mode)
@@ -1420,8 +1420,6 @@ export async function registerGigstackPaymentForTransaction(paymentId, { expecte
     throw error
   }
 
-  const tax = getPaymentTax(row, settings)
-  if (!tax?.enabled) return { skipped: true, reason: 'missing_tax' }
   if (!/^[A-Z]{3}$/.test(cleanString(row.currency, 3).toUpperCase())) {
     throw createGigstackError('El pago no tiene una moneda ISO válida; no se enviará a Gigstack.', { code: 'missing_payment_currency' })
   }
@@ -1547,11 +1545,14 @@ async function enqueueGigstackInvoiceJob(paymentId) {
 
   const [settings, payment] = await Promise.all([
     getPaymentSettings({ resolveBusinessProfile: false }),
-    db.get('SELECT payment_mode FROM payments WHERE id = ?', [cleanPaymentId])
+    db.get('SELECT payment_mode, metadata_json FROM payments WHERE id = ?', [cleanPaymentId])
   ])
   if (!payment) return { skipped: true, reason: 'payment_not_found' }
   if (!settings.taxes?.enabled || !settings.taxes?.gigstackEnabled) {
     return { skipped: true, reason: 'gigstack_disabled' }
+  }
+  if (!getPaymentTax(payment, settings)?.enabled) {
+    return { skipped: true, reason: 'missing_tax' }
   }
 
   const mode = normalizeGigstackPaymentMode(payment.payment_mode)

@@ -4827,40 +4827,54 @@ El modo de pasarelas puede ser `test` o `live`. Ese modo debe viajar con el pago
 en `payment_mode` o metadata equivalente para evitar mezclar pruebas con dinero
 real.
 
-Cuando Impuestos está activo, los formularios de cobro nuevo aplican el impuesto
-por defecto y abren el cálculo en **Se suma al total**. Esto cubre pagos únicos,
-productos cobrados desde el modal, planes de pago y suscripciones en escritorio y
-en el flujo móvil integrado. **Ya incluido** sigue disponible como elección por
-cobro mediante el `TabList`/segmentado; cambiarlo no modifica la configuración
-fiscal global de la cuenta.
+Los formularios de cobro nuevo comienzan **Sin impuesto**, incluso si Gigstack
+está conectado o Impuestos está habilitado en la cuenta. Esto cubre pagos únicos,
+productos cobrados desde el modal, planes y suscripciones en escritorio y móvil.
+El usuario debe elegir **Con impuesto** en cada alta. El modo de cálculo inicial
+sigue siendo **Se suma al total**; **Ya incluido** conserva el importe capturado.
+Una recarga de configuración nunca debe activar por sí sola la selección.
 
-En planes de pago, la elección hecha en el formulario viaja explícitamente a la
-creación del checkout inicial y queda en la metadata del flujo para futuras ligas
-de domiciliación o cambio de tarjeta. Si el usuario elige **Sin impuesto**, Stripe
-y Conekta no pueden recuperar el default fiscal de la cuenta ni agregar o mostrar
-un impuesto en esas ligas.
+Las altas por API/MCP tampoco aplican impuestos por omisión. Pasarelas y
+suscripciones sólo calculan un impuesto nuevo con `applyTax=true`; los flujos
+internos pueden conservar un desglose ya aprobado. Cada pago guarda la elección en
+`metadata_json.tax`: `{ enabled: false }` para excluirlo, o el desglose completo
+con `enabled: true` para incluirlo. No confundir la exclusión con una operación
+fiscal explícita a tasa cero o exenta, que conserva `enabled: true`.
+
+Los planes congelan la elección fiscal en su metadata y la llevan a cada
+parcialidad, incluido el primer pago. Las ligas de autorización de tarjeta
+también respetan la elección de aplicar o excluir impuesto.
+Los importes del calendario ya son finales: su desglose se asigna dentro de cada
+parcialidad sin volver a sumar impuesto. Una edición conserva el desglose del
+plan; no adopta la tasa actual de la cuenta. Los planes antiguos sin elección
+persistida no deben activar impuestos por omisión al generar otra liga.
 
 Las suscripciones guardan en `metadata_json.tax` el desglose fiscal autoritativo
 del alta y persisten en `amount` el total recurrente que recibe la pasarela. El
 importe configurado se expone por separado como `configuredAmount` para reabrir el
-formulario sin sumar el impuesto otra vez. Si una creación por API/MCP omite
-`applyTax` y la cuenta tiene Impuestos activo, backend aplica el impuesto en modo
-`exclusive`; `taxCalculationMode='inclusive'` conserva el importe como total y
-`applyTax=false` lo excluye. Al editar una suscripción existente sin tocar estos
-campos se conserva su tasa, modo y moneda históricos aunque después cambie la
-configuración de la cuenta. El pago inicial y los planes recurrentes usan el total
-ya calculado y nunca vuelven a aplicar el impuesto en la pasarela.
+formulario sin sumar el impuesto otra vez. Al editar sin tocar estos campos se
+conservan la elección, tasa, modo y moneda históricos. El pago inicial y los
+planes recurrentes usan el total ya calculado y nunca vuelven a aplicar el
+impuesto en la pasarela.
 
 ### Gigstack y facturación fiscal
 
 Gigstack no procesa el cobro. Ristak lo llama únicamente después de que el pago
-local quedó confirmado y con impuesto. Configuración > Pagos > Impuestos separa
+local quedó confirmado y conserva una elección fiscal explícita en el pago.
+La cola y el envío vuelven a revisar `metadata_json.tax.enabled`: un pago sin
+desglose, con `tax: null` o con `enabled: false` no se encola ni se registra en
+Gigstack. Nunca se reconstruye su impuesto desde la configuración global. Esto
+también aplica a reintentos que ya estaban en cola. La corrección no cancela ni
+altera documentos emitidos anteriormente; esos casos requieren conciliación con
+el registro remoto. Configuración > Pagos > Impuestos separa
 dos API keys: Test y Live. Ambas se cifran dentro de
 `app_config.payments_settings.taxes`; no son variables de entorno y nunca se
 regresan completas al frontend después de guardarlas.
 
 Mientras Gigstack está apagado, Impuestos funciona como una regla manual e
-interna de Ristak. Al conectarlo, Ristak consulta `GET /v2/teams/:id` con la llave
+interna de Ristak. El switch **Habilitar impuestos en los pagos** sigue disponible
+con Gigstack conectado. Conectar o actualizar el perfil fiscal conserva su estado
+y no activa la elección de un cobro nuevo. Al conectarlo, Ristak consulta `GET /v2/teams/:id` con la llave
 del ambiente activo e importa RFC, razón social, régimen, código postal, tasa,
 factor fiscal (`Tasa`, `Cuota` o `Exento`) y modo inclusivo/exclusivo. Esos
 campos quedan de sólo lectura y

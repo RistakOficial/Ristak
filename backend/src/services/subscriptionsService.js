@@ -251,7 +251,7 @@ async function resolveSubscriptionPricing(payload = {}, existing = {}) {
   const requestedCalculationMode = payload.taxCalculationMode ?? payload.tax_calculation_mode
   const applyTax = normalizeApplyTax(
     applyTaxValue,
-    existing.id ? Boolean(previousTax) : true
+    existing.id ? Boolean(previousTax) : false
   )
   const calculationMode = normalizeTaxCalculationMode(
     hasCalculationModeInput ? requestedCalculationMode : previousTax?.calculationMode,
@@ -267,7 +267,7 @@ async function resolveSubscriptionPricing(payload = {}, existing = {}) {
   // El desglose es autoritativo del backend. Nunca aceptamos un objeto tax
   // fabricado por el cliente ni recalculamos dos veces el total recurrente.
   if (tax) metadata.tax = tax
-  else delete metadata.tax
+  else metadata.tax = { enabled: false }
 
   return {
     amount: tax?.totalAmount || configuredAmount,

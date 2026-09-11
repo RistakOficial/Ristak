@@ -1,3 +1,4 @@
+import { paymentTaxSnapshotForTotal } from '../utils/paymentTaxSnapshot.js'
 import { databaseDialect, db } from '../config/database.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import {
@@ -8,6 +9,7 @@ import {
 import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
 import { publishPaymentChangedEvent } from './paymentLiveEventsService.js'
 import {
+  calculatePaymentTax,
   getPaymentGatewayMode,
   getPaymentSettings,
   getPublicPaymentSettings
@@ -339,6 +341,7 @@ function buildPaymentMetadata({
   contact,
   lineItems,
   tax,
+  amount,
   reminderChannel,
   reminderDaysBefore,
   reminderTime
@@ -354,7 +357,7 @@ function buildPaymentMetadata({
     contactEmail: contact.email,
     contactPhone: contact.phone,
     lineItems,
-    ...(tax ? { tax } : {}),
+    tax: paymentTaxSnapshotForTotal(tax, amount),
     paymentPlan: {
       flowId,
       ...(installmentId ? { installmentId } : {}),
@@ -588,7 +591,11 @@ export async function createOfflinePaymentPlan(input = {}, { baseUrl = '' } = {}
   const lineItems = Array.isArray(input.invoicePayload?.items)
     ? input.invoicePayload.items
     : Array.isArray(input.lineItems) ? input.lineItems : []
-  const tax = input.invoicePayload?.metadata?.tax || input.metadata?.tax || null
+  const tax = calculatePaymentTax(totalAmount, {
+    ...settings.taxes,
+    enabled: Boolean(settings.taxes?.enabled && input.applyTax === true),
+    calculationMode: 'inclusive'
+  }) || { enabled: false }
   const totalPayments = remainingPayments.length + (firstEnabled ? 1 : 0)
   const response = {
     flowId,
@@ -644,7 +651,9 @@ export async function createOfflinePaymentPlan(input = {}, { baseUrl = '' } = {}
           reminderTiming: 'scheduled',
           reminderDaysBefore,
           reminderTime,
-          lineItems
+          lineItems,
+          tax,
+          applyTax: tax.enabled
         })
       ]
     )
@@ -681,6 +690,7 @@ export async function createOfflinePaymentPlan(input = {}, { baseUrl = '' } = {}
             contact,
             lineItems,
             tax,
+            amount: firstAmount,
             reminderChannel,
             reminderDaysBefore,
             reminderTime
@@ -728,6 +738,7 @@ export async function createOfflinePaymentPlan(input = {}, { baseUrl = '' } = {}
             contact,
             lineItems,
             tax,
+            amount: payment.amount,
             reminderChannel,
             reminderDaysBefore,
             reminderTime
@@ -909,6 +920,7 @@ export async function updateOfflinePaymentPlanSchedule(flowId, input = {}) {
       const existingPaymentMetadata = parseJson(item.existing?.metadata_json)
       const paymentMetadata = {
         ...existingPaymentMetadata,
+        tax: paymentTaxSnapshotForTotal(existingPaymentMetadata.tax ?? metadata.tax, item.amount),
         source: onlinePaymentLink ? 'payment_plan_checkout_link' : 'offline_payment_plan_installment',
         offlineReminder: !onlinePaymentLink,
         reminderTiming: 'scheduled',
@@ -1277,7 +1289,7 @@ export async function getPublicOfflinePayment(publicPaymentId, { baseUrl = '' } 
           installments: Array.isArray(schedule.installments) ? schedule.installments : []
         }
       : null,
-    tax: metadata.tax || null,
+    tax: metadata.tax?.enabled === true ? metadata.tax : null,
     settings
   }
 }

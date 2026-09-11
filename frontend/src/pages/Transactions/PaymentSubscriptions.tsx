@@ -286,7 +286,7 @@ function createEmptyForm(timezone: string): SubscriptionFormState {
     startMode: '',
     paymentMethod: 'stripe_saved_card',
     paymentProvider: 'stripe',
-    applyTax: true,
+    applyTax: false,
     taxCalculationMode: DEFAULT_CHARGE_TAX_CALCULATION_MODE
   }
 }

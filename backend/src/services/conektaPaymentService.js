@@ -1,3 +1,4 @@
+import { paymentTaxSnapshotForTotal } from '../utils/paymentTaxSnapshot.js'
 import { createVerify } from 'crypto'
 import fetch from 'node-fetch'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
@@ -1030,7 +1031,7 @@ async function findPaymentById(paymentId) {
 function mapPublicPayment(row, config, baseUrl = '', settings = null, timezone = ACCOUNT_DEFAULT_TIMEZONE) {
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
-  const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
+  const tax = metadata.tax?.enabled === true ? metadata.tax : null
   const subscriptionStart = getPublicSubscriptionStart(metadata)
   const publicPaymentId = row.public_payment_id
   const conektaInstallments = normalizeConektaInstallmentOptions(metadata.conektaInstallments, {
@@ -1369,6 +1370,7 @@ async function syncConektaSubscriptionPaymentFromWebhook(subscription = {}, subs
   const amount = Number(subscriptionRow.amount || 0)
   const paymentMetadata = {
     source: 'conekta_subscription_webhook',
+    tax: paymentTaxSnapshotForTotal(parseJson(subscriptionRow.metadata_json, {}).tax, amount),
     ristakSubscriptionId: subscriptionRow.id,
     conektaSubscriptionId: cleanString(subscription.id),
     conektaPlanId: cleanString(subscription.plan_id),
@@ -2055,7 +2057,7 @@ export async function createConektaPaymentLink(input = {}, { baseUrl, mode = '' 
   }
 
   const paymentSettings = await getPublicPaymentSettings()
-  const shouldApplyTax = input.applyTax !== false
+  const shouldApplyTax = input.applyTax === true
   const taxSettings = {
     ...paymentSettings.taxes,
     enabled: Boolean(paymentSettings.taxes?.enabled && shouldApplyTax),
@@ -2091,7 +2093,7 @@ export async function createConektaPaymentLink(input = {}, { baseUrl, mode = '' 
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
     ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {}),
     ...(conektaInstallments ? { conektaInstallments } : {}),
-    ...(tax ? { tax } : {})
+    tax: tax || input.metadata?.tax || { enabled: false }
   }
   const conversationalTestEffectId = cleanString(input.source) === 'conversational_agent_test'
     ? cleanString(metadata?.conversationalAgentTest?.testEffectId) || null
@@ -2603,7 +2605,7 @@ function normalizeConektaPaymentPlanPayload(input = {}, timezone = DEFAULT_PAYME
     },
     totalAmount: Math.round(totalAmount * 100) / 100,
     currency,
-    applyTax: normalizeBoolean(input.applyTax, true),
+    applyTax: normalizeBoolean(input.applyTax, false),
     taxCalculationMode: ['exclusive', 'inclusive'].includes(input.taxCalculationMode)
       ? input.taxCalculationMode
       : undefined,
@@ -2665,6 +2667,7 @@ function buildConektaPlanInstallmentPaymentMetadata(flow, installment, sequence,
     contactName: flow.contact_name,
     contactEmail: flow.contact_email,
     contactPhone: flow.contact_phone,
+    tax: paymentTaxSnapshotForTotal(parseJson(flow.metadata, {}).tax, installment.amount),
     paymentPlan: {
       flowId: flow.id,
       installmentId: installment.id,
@@ -3110,6 +3113,12 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
   const accountCurrency = await getConfiguredCurrency()
   const accountTimezone = await getAccountTimezone()
   const plan = normalizeConektaPaymentPlanPayload({ ...input, currency: accountCurrency }, accountTimezone)
+  const planTaxes = (await getPublicPaymentSettings()).taxes
+  plan.tax = calculatePaymentTax(plan.totalAmount, {
+    ...planTaxes,
+    enabled: Boolean(planTaxes?.enabled && plan.applyTax),
+    calculationMode: 'inclusive'
+  }) || { enabled: false }
   const savedSource = plan.paymentMethodId
     ? await resolveConektaSavedSource(plan.contact.id, plan.paymentMethodId, config)
     : null
@@ -3171,6 +3180,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
         remainingFrequency: plan.remainingFrequency,
         lineItems: plan.lineItems,
         applyTax: plan.applyTax,
+        tax: plan.tax,
         taxCalculationMode: plan.taxCalculationMode,
         firstPaymentLinkRequired: !hasSavedCard && firstPaymentIsCard,
         cardSetupLinkRequired: needsSeparateCardSetup,
@@ -3211,6 +3221,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
       metadata: {
         paymentMode: config.mode,
         source: 'conekta_payment_plan_first_offline',
+        tax: paymentTaxSnapshotForTotal(plan.tax, plan.firstPayment.amount),
         contactName: plan.contact.name,
         contactEmail: plan.contact.email,
         contactPhone: plan.contact.phone,
@@ -3248,6 +3259,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
       metadata: {
         conektaMode: config.mode,
         source: 'conekta_payment_plan_first_saved_card',
+        tax: paymentTaxSnapshotForTotal(plan.tax, plan.firstPayment.amount),
         contactName: plan.contact.name,
         contactEmail: plan.contact.email,
         contactPhone: plan.contact.phone,
@@ -3278,14 +3290,15 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
       phone: plan.contact.phone,
       amount: plan.firstPayment.amount,
       currency: plan.currency,
-      applyTax: plan.applyTax,
-      taxCalculationMode: plan.taxCalculationMode,
+      applyTax: false,
+      taxCalculationMode: 'inclusive',
       title: firstPaymentTitle,
       description: firstPaymentDescription,
       dueDate: plan.firstPayment.date,
       source: 'conekta_payment_plan_first_link',
       lineItems: plan.lineItems,
       metadata: {
+        tax: paymentTaxSnapshotForTotal(plan.tax, plan.firstPayment.amount),
         paymentPlan: {
           flowId,
           trigger: 'first_payment'
@@ -3366,6 +3379,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
       metadata: {
         conektaMode: config.mode,
         source: 'conekta_payment_plan_installment',
+        tax: paymentTaxSnapshotForTotal(plan.tax, payment.amount),
         contactName: plan.contact.name,
         contactEmail: plan.contact.email,
         contactPhone: plan.contact.phone,
@@ -3744,7 +3758,7 @@ async function createConektaPaymentPlanCardSetupLink(flow, { baseUrl } = {}) {
     phone: flow.contact_phone,
     amount: cardSetupAmount,
     currency,
-    applyTax: normalizeBoolean(metadata.applyTax, true),
+    applyTax: normalizeBoolean(metadata.applyTax, false),
     taxCalculationMode: ['exclusive', 'inclusive'].includes(metadata.taxCalculationMode)
       ? metadata.taxCalculationMode
       : undefined,
@@ -4043,7 +4057,7 @@ async function updateConektaPaymentPlanScheduleLocked(flowId, input = {}, { base
         dueDate,
         dueDate,
         hasSavedCard ? flow.conekta_payment_source_id : null,
-        JSON.stringify(buildConektaPlanInstallmentPaymentMetadata(flow, { id: installmentId }, nextSequence, paymentMode))
+        JSON.stringify(buildConektaPlanInstallmentPaymentMetadata(flow, { id: installmentId, amount }, nextSequence, paymentMode))
       ]
     )
 
@@ -4857,7 +4871,7 @@ export async function createConektaSavedCardPayment(input = {}, { providerIdempo
   const title = cleanString(input.title) || 'Pago'
   const description = cleanString(input.description) || title
   const paymentSettings = await getPublicPaymentSettings()
-  const shouldApplyTax = input.applyTax !== false
+  const shouldApplyTax = input.applyTax === true
   const taxSettings = {
     ...paymentSettings.taxes,
     enabled: Boolean(paymentSettings.taxes?.enabled && shouldApplyTax),
@@ -4886,7 +4900,7 @@ export async function createConektaSavedCardPayment(input = {}, { providerIdempo
     },
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
     ...(conektaInstallments ? { conektaInstallments } : {}),
-    ...(tax ? { tax } : {})
+    tax: tax || input.metadata?.tax || { enabled: false }
   }
 
   await db.run(

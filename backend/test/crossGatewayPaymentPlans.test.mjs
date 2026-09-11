@@ -10,6 +10,7 @@ import {
   setConektaFetchForTest
 } from '../src/services/conektaPaymentService.js'
 import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
+import { createOfflinePaymentPlan, updateOfflinePaymentPlanSchedule } from '../src/services/offlinePaymentPlanService.js'
 import {
   createStripePaymentPlan,
   getPublicStripePayment,
@@ -351,9 +352,10 @@ test('planes de pago: la selección sin impuesto llega al checkout de Stripe y C
           taxName: 'IVA',
           rateValue: 16,
           calculationMode: 'exclusive',
-          country: 'MX'
+          country: 'MX',
+          gigstackEnabled: true
         }
-      })
+      }, { allowGigstackFiscalOverride: true })
       await saveStripePaymentConfig({
         enabled: true,
         mode: 'test',
@@ -384,7 +386,6 @@ test('planes de pago: la selección sin impuesto llega al checkout de Stripe y C
         title: 'Plan Stripe sin impuesto',
         description: 'Plan Stripe sin impuesto',
         totalAmount: 1000,
-        applyTax: false,
         taxCalculationMode: 'exclusive',
         firstPayment: {
           enabled: true,
@@ -407,7 +408,7 @@ test('planes de pago: la selección sin impuesto llega al checkout de Stripe y C
       })
 
       assert.equal(stripeFirstPaymentRow.amount, 250)
-      assert.equal(JSON.parse(stripeFirstPaymentRow.metadata_json || '{}').tax, undefined)
+      assert.deepEqual(JSON.parse(stripeFirstPaymentRow.metadata_json || '{}').tax, { enabled: false })
       assert.equal(stripeCheckout.amount, 250)
       assert.equal(stripeCheckout.tax, null)
 
@@ -440,7 +441,7 @@ test('planes de pago: la selección sin impuesto llega al checkout de Stripe y C
       })
 
       assert.equal(conektaSetupRow.amount, 25)
-      assert.equal(JSON.parse(conektaSetupRow.metadata_json || '{}').tax, undefined)
+      assert.deepEqual(JSON.parse(conektaSetupRow.metadata_json || '{}').tax, { enabled: false })
       assert.equal(conektaCheckout.amount, 25)
       assert.equal(conektaCheckout.tax, null)
 
@@ -450,6 +451,59 @@ test('planes de pago: la selección sin impuesto llega al checkout de Stripe y C
       )
       assert.equal(flowTaxes.length, 2)
       assert.ok(flowTaxes.every((row) => JSON.parse(row.metadata || '{}').applyTax === false))
+
+      for (const createPlan of [createStripePaymentPlan, createConektaPaymentPlan]) {
+        const taxedPlan = await createPlan({
+          contact,
+          title: 'Plan con impuesto explícito',
+          totalAmount: 1160,
+          applyTax: true,
+          taxCalculationMode: 'exclusive',
+          firstPayment: { enabled: true, amount: 290, date: addDaysDateOnly(1), method: 'card' },
+          remainingFrequency: 'custom',
+          remainingPayments: [{ sequence: 1, amount: 870, dueDate: addDaysDateOnly(20), frequency: 'custom' }]
+        }, { baseUrl: 'https://example.test' })
+        const first = await db.get('SELECT amount, metadata_json FROM payments WHERE id = ?', [taxedPlan.firstPaymentPaymentId])
+        assert.equal(first.amount, 290, 'el checkout no vuelve a sumar IVA a una parcialidad ya calculada')
+        assert.equal(JSON.parse(first.metadata_json).tax.taxAmount, 40)
+        const installment = await db.get('SELECT p.amount, p.metadata_json FROM payments p JOIN installment_payments i ON i.payment_id = p.id WHERE i.flow_id = ?', [taxedPlan.flowId])
+        assert.equal(installment.amount, 870)
+        assert.equal(JSON.parse(installment.metadata_json).tax.taxAmount, 120)
+        assert.equal(JSON.parse(installment.metadata_json).tax.enabled, true)
+      }
+    })
+  } finally {
+    await cleanupContact(contactId)
+  }
+})
+
+test('planes offline: crear y editar conserva la elección fiscal aunque cambie la cuenta', async () => {
+  const contactId = `contact_${suffix('offline_tax')}`
+  try {
+    await withIsolatedGatewayConfig(async () => {
+      await db.run("INSERT INTO contacts (id, full_name, email) VALUES (?, 'Cliente plan offline', ?)", [contactId, `${contactId}@example.test`])
+      for (const applyTax of [false, true]) {
+        await savePaymentSettings({
+          paymentMode: 'test',
+          automations: { remindersEnabled: true, reminderChannel: 'email' },
+          taxes: { enabled: true, gigstackEnabled: true, rateValue: 16, country: 'MX' }
+        }, { allowGigstackFiscalOverride: true })
+        const plan = await createOfflinePaymentPlan({
+          contact: { id: contactId }, totalAmount: 1160, applyTax,
+          remainingPayments: [{ amount: 1160, dueDate: addDaysDateOnly(20) }]
+        })
+        const before = await db.get('SELECT p.metadata_json FROM payments p JOIN installment_payments i ON i.payment_id = p.id WHERE i.flow_id = ?', [plan.flowId])
+        assert.equal(JSON.parse(before.metadata_json).tax.enabled, applyTax)
+        await savePaymentSettings({ taxes: { rateValue: 8 } }, { allowGigstackFiscalOverride: true })
+        await updateOfflinePaymentPlanSchedule(plan.flowId, { installments: [
+          { amount: 290, dueDate: addDaysDateOnly(20) },
+          { amount: 870, dueDate: addDaysDateOnly(40) }
+        ] })
+        const rows = await db.all("SELECT p.amount, p.metadata_json FROM payments p JOIN installment_payments i ON i.payment_id = p.id WHERE i.flow_id = ? AND i.status <> 'deleted' ORDER BY i.sequence", [plan.flowId])
+        assert.deepEqual(rows.map(row => row.amount), [290, 870])
+        assert.ok(rows.every(row => JSON.parse(row.metadata_json).tax.enabled === applyTax))
+        if (applyTax) assert.deepEqual(rows.map(row => JSON.parse(row.metadata_json).tax.taxAmount), [40, 120])
+      }
     })
   } finally {
     await cleanupContact(contactId)

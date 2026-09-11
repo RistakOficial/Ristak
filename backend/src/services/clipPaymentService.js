@@ -509,7 +509,7 @@ function getPublicSubscriptionStart(metadata = {}) {
 function mapPublicPayment(row, config, baseUrl = '', settings = null, timezone = ACCOUNT_DEFAULT_TIMEZONE) {
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
-  const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
+  const tax = metadata.tax?.enabled === true ? metadata.tax : null
   const subscriptionStart = getPublicSubscriptionStart(metadata)
   const publicPaymentId = row.public_payment_id
   const clipInstallments = normalizeClipInstallmentOptions(metadata.clipInstallments, {
@@ -573,7 +573,7 @@ export async function createClipPaymentLink(input = {}, { baseUrl, mode = '' } =
   }
 
   const paymentSettings = await getPublicPaymentSettings()
-  const shouldApplyTax = input.applyTax !== false
+  const shouldApplyTax = input.applyTax === true
   const taxSettings = {
     ...paymentSettings.taxes,
     enabled: Boolean(paymentSettings.taxes?.enabled && shouldApplyTax),
@@ -612,7 +612,7 @@ export async function createClipPaymentLink(input = {}, { baseUrl, mode = '' } =
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
     ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {}),
     ...(clipInstallments ? { clipInstallments } : {}),
-    ...(tax ? { tax } : {})
+    tax: tax || input.metadata?.tax || { enabled: false }
   }
   const conversationalTestEffectId = cleanString(input.source) === 'conversational_agent_test'
     ? cleanString(metadata?.conversationalAgentTest?.testEffectId) || null

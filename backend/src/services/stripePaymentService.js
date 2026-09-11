@@ -1,3 +1,4 @@
+import { paymentTaxSnapshotForTotal } from '../utils/paymentTaxSnapshot.js'
 import Stripe from 'stripe'
 import { db, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
@@ -1301,7 +1302,7 @@ async function findPaymentById(paymentId) {
 function mapPublicPayment(row, config, baseUrl = '', settings = null, paymentPlan = null, timezone = ACCOUNT_DEFAULT_TIMEZONE) {
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
-  const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
+  const tax = metadata.tax?.enabled === true ? metadata.tax : null
   const stripeInstallments = normalizeStripeInstallmentOptions(metadata.stripeInstallments, {
     amount: row.amount,
     currency: row.currency || config?.defaultCurrency || DEFAULT_CURRENCY,
@@ -1676,7 +1677,7 @@ export async function createStripePaymentLink(input = {}, { baseUrl, mode = '' }
   }
 
   const paymentSettings = await getPublicPaymentSettings()
-  const shouldApplyTax = input.applyTax !== false
+  const shouldApplyTax = input.applyTax === true
   const taxSettings = {
     ...paymentSettings.taxes,
     enabled: Boolean(paymentSettings.taxes?.enabled && shouldApplyTax),
@@ -1709,7 +1710,7 @@ export async function createStripePaymentLink(input = {}, { baseUrl, mode = '' }
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
     ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {}),
     ...(stripeInstallments ? { stripeInstallments } : {}),
-    ...(tax ? { tax } : {})
+    tax: tax || input.metadata?.tax || { enabled: false }
   }
   const conversationalTestEffectId = cleanString(input.source) === 'conversational_agent_test'
     ? cleanString(metadata?.conversationalAgentTest?.testEffectId) || null
@@ -2648,6 +2649,7 @@ async function insertSubscriptionPaymentFromInvoice(invoice, subscriptionRow, ne
   const paymentId = createId('stripe_subscription_payment')
   const metadata = {
     source: 'stripe_subscription_invoice',
+    tax: paymentTaxSnapshotForTotal(parseJson(subscriptionRow.metadata_json, {}).tax, amount),
     ristakSubscriptionId: subscriptionRow.id,
     stripeSubscriptionId: subscriptionRow.stripe_subscription_id || extractInvoiceSubscriptionId(invoice),
     stripeInvoiceId: invoiceId,
@@ -3969,7 +3971,7 @@ function validateStripePaymentPlanPayload(input = {}, timezone = DEFAULT_PAYMENT
     },
     totalAmount: Math.round(totalAmount * 100) / 100,
     currency,
-    applyTax: normalizeBoolean(input.applyTax, true),
+    applyTax: normalizeBoolean(input.applyTax, false),
     taxCalculationMode: ['exclusive', 'inclusive'].includes(input.taxCalculationMode)
       ? input.taxCalculationMode
       : undefined,
@@ -4102,6 +4104,7 @@ function buildPlanInstallmentPaymentMetadata(flow, installment, sequence, paymen
     contactName: flow.contact_name,
     contactEmail: flow.contact_email,
     contactPhone: flow.contact_phone,
+    tax: paymentTaxSnapshotForTotal(parseJson(flow.metadata, {}).tax, installment.amount),
     paymentPlan: {
       flowId: flow.id,
       installmentId: installment.id,
@@ -4567,7 +4570,7 @@ async function updateStripePaymentPlanScheduleLocked(flowId, input = {}, origina
         title,
         dueDate,
         dueDate,
-        JSON.stringify(buildPlanInstallmentPaymentMetadata(flow, { id: installmentId }, nextSequence, paymentMode))
+        JSON.stringify(buildPlanInstallmentPaymentMetadata(flow, { id: installmentId, amount }, nextSequence, paymentMode))
       ]
     )
 
@@ -4967,7 +4970,7 @@ async function createStripePaymentPlanCardSetupLink(flow, { baseUrl } = {}) {
     phone: flow.contact_phone,
     amount: cardSetupAmount,
     currency,
-    applyTax: normalizeBoolean(metadata.applyTax, true),
+    applyTax: normalizeBoolean(metadata.applyTax, false),
     taxCalculationMode: ['exclusive', 'inclusive'].includes(metadata.taxCalculationMode)
       ? metadata.taxCalculationMode
       : undefined,
@@ -5308,7 +5311,7 @@ export async function createStripeSavedCardPayment(input = {}, { providerIdempot
   const title = cleanString(input.title) || 'Pago'
   const description = cleanString(input.description) || title
   const paymentSettings = await getPublicPaymentSettings()
-  const shouldApplyTax = input.applyTax !== false
+  const shouldApplyTax = input.applyTax === true
   const taxSettings = {
     ...paymentSettings.taxes,
     enabled: Boolean(paymentSettings.taxes?.enabled && shouldApplyTax),
@@ -5332,7 +5335,7 @@ export async function createStripeSavedCardPayment(input = {}, { providerIdempot
       expYear: savedMethod.exp_year || null
     },
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
-    ...(tax ? { tax } : {})
+    tax: tax || input.metadata?.tax || { enabled: false }
   }
 
   await db.run(
@@ -5383,6 +5386,12 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
   const accountCurrency = await getConfiguredCurrency()
   const accountTimezone = await getAccountTimezone()
   const plan = validateStripePaymentPlanPayload({ ...input, currency: accountCurrency }, accountTimezone)
+  const planTaxes = (await getPublicPaymentSettings()).taxes
+  plan.tax = calculatePaymentTax(plan.totalAmount, {
+    ...planTaxes,
+    enabled: Boolean(planTaxes?.enabled && plan.applyTax),
+    calculationMode: 'inclusive'
+  }) || { enabled: false }
   plan.cardSetupAmount = await resolveStripeCardSetupAmount(input.cardSetupAmount)
   const savedMethod = plan.paymentMethodId
     ? await resolveStripeSavedMethod(plan.contact.id, plan.paymentMethodId, config)
@@ -5444,6 +5453,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
         remainingFrequency: plan.remainingFrequency,
         lineItems: plan.lineItems,
         applyTax: plan.applyTax,
+        tax: plan.tax,
         taxCalculationMode: plan.taxCalculationMode,
         firstPaymentLinkRequired: !hasSavedCard && firstPaymentIsCard,
         cardSetupLinkRequired: needsSeparateCardSetup
@@ -5481,6 +5491,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       metadata: {
         paymentMode: config.mode,
         source: 'stripe_payment_plan_first_offline',
+        tax: paymentTaxSnapshotForTotal(plan.tax, plan.firstPayment.amount),
         contactName: plan.contact.name,
         contactEmail: plan.contact.email,
         contactPhone: plan.contact.phone,
@@ -5518,6 +5529,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       metadata: {
         stripeMode: config.mode,
         source: 'stripe_payment_plan_first_saved_card',
+        tax: paymentTaxSnapshotForTotal(plan.tax, plan.firstPayment.amount),
         contactName: plan.contact.name,
         contactEmail: plan.contact.email,
         contactPhone: plan.contact.phone,
@@ -5549,14 +5561,15 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       phone: plan.contact.phone,
       amount: plan.firstPayment.amount,
       currency: plan.currency,
-      applyTax: plan.applyTax,
-      taxCalculationMode: plan.taxCalculationMode,
+      applyTax: false,
+      taxCalculationMode: 'inclusive',
       title: firstPaymentTitle,
       description: firstPaymentDescription,
       dueDate: plan.firstPayment.date,
       source: 'stripe_payment_plan_first_link',
       lineItems: plan.lineItems,
       metadata: {
+        tax: paymentTaxSnapshotForTotal(plan.tax, plan.firstPayment.amount),
         paymentPlan: {
           flowId,
           trigger: 'first_payment'
@@ -5637,6 +5650,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       metadata: {
         stripeMode: config.mode,
         source: 'stripe_payment_plan_installment',
+        tax: paymentTaxSnapshotForTotal(plan.tax, payment.amount),
         contactName: plan.contact.name,
         contactEmail: plan.contact.email,
         contactPhone: plan.contact.phone,

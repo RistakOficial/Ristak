@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import { afterEach, describe, it } from 'node:test'
 import JSZip from 'jszip'
 
@@ -39,6 +40,47 @@ afterEach(async () => {
 })
 
 describe('Gigstack payment registration', () => {
+  it('never queues or sends an untaxed payment, even with global taxes and Gigstack enabled', async () => {
+    await savePaymentSettings({ taxes: { enabled: true, gigstackEnabled: true, rateValue: 16 } }, { allowGigstackFiscalOverride: true })
+    let requests = 0
+    globalThis.fetch = async () => { requests += 1; throw new Error('No debe llamar al proveedor') }
+
+    for (const metadata of [{}, { tax: { enabled: false } }, { tax: null }, { applyTax: false, tax: { enabled: true, rateValue: 16 } }]) {
+      const paymentId = `untaxed_${crypto.randomUUID()}`
+      try {
+        await db.run(
+          `INSERT INTO payments (id, amount, currency, status, payment_mode, metadata_json)
+           VALUES (?, 6000, 'MXN', 'paid', 'live', ?)`,
+          [paymentId, JSON.stringify(metadata)]
+        )
+        assert.deepEqual(await registerGigstackPaymentForTransactionInBackground(paymentId), { skipped: true, reason: 'missing_tax' })
+        assert.deepEqual(await registerGigstackPaymentForTransaction(paymentId), { skipped: true, reason: 'missing_tax' })
+        assert.equal(await db.get('SELECT payment_id FROM gigstack_invoice_jobs WHERE payment_id = ?', [paymentId]), null)
+      } finally {
+        await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
+      }
+    }
+    assert.equal(requests, 0)
+  })
+
+  it('rechecks a previously queued payment before contacting Gigstack', async () => {
+    await savePaymentSettings({ taxes: { enabled: true, gigstackEnabled: true } }, { allowGigstackFiscalOverride: true })
+    const paymentId = `untaxed_retry_${crypto.randomUUID()}`
+    let requests = 0
+    globalThis.fetch = async () => { requests += 1; throw new Error('No debe llamar al proveedor') }
+    try {
+      await db.run("INSERT INTO payments (id, amount, currency, status, payment_mode, metadata_json) VALUES (?, 20000, 'MXN', 'paid', 'live', ?)", [paymentId, JSON.stringify({ tax: { enabled: false } })])
+      await db.run("INSERT INTO gigstack_invoice_jobs (payment_id, payment_mode, status) VALUES (?, 'live', 'retry')", [paymentId])
+      const result = await processGigstackInvoiceJob(paymentId)
+      assert.equal(result.reason, 'missing_tax')
+      assert.equal((await db.get('SELECT status FROM gigstack_invoice_jobs WHERE payment_id = ?', [paymentId])).status, 'skipped')
+      assert.equal(requests, 0)
+    } finally {
+      await db.run('DELETE FROM gigstack_invoice_jobs WHERE payment_id = ?', [paymentId])
+      await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
+    }
+  })
+
   it('imports the fiscal profile and tax rate from the Gigstack team', async () => {
     const testToken = fakeGigstackToken(false)
     globalThis.fetch = async (url, options) => {

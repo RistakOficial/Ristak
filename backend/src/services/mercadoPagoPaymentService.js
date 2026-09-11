@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
+import { paymentTaxSnapshotForTotal } from '../utils/paymentTaxSnapshot.js'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
@@ -851,7 +852,7 @@ async function findPaymentById(paymentId) {
 function mapPublicPayment(row, config, baseUrl = '', settings = null, timezone = ACCOUNT_DEFAULT_TIMEZONE) {
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
-  const tax = metadata.tax && typeof metadata.tax === 'object' ? metadata.tax : null
+  const tax = metadata.tax?.enabled === true ? metadata.tax : null
   const mercadoPagoInstallments = normalizeMercadoPagoInstallmentOptions(metadata.mercadoPagoInstallments, { emptyAsNull: true })
   const subscriptionStart = getPublicSubscriptionStart(metadata)
   const publicPaymentId = row.public_payment_id
@@ -1363,7 +1364,7 @@ export async function createMercadoPagoPaymentLink(input = {}, { baseUrl, mode =
   }
 
   const paymentSettings = await getPublicPaymentSettings()
-  const shouldApplyTax = input.applyTax !== false
+  const shouldApplyTax = input.applyTax === true
   const taxSettings = {
     ...paymentSettings.taxes,
     enabled: Boolean(paymentSettings.taxes?.enabled && shouldApplyTax),
@@ -1389,7 +1390,7 @@ export async function createMercadoPagoPaymentLink(input = {}, { baseUrl, mode =
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
     ...(input.metadata && typeof input.metadata === 'object' ? input.metadata : {}),
     ...(mercadoPagoInstallments ? { mercadoPagoInstallments } : {}),
-    ...(tax ? { tax } : {})
+    tax: tax || input.metadata?.tax || { enabled: false }
   }
 
   const result = await insertPaymentRow({
@@ -3428,6 +3429,7 @@ async function insertSubscriptionPaymentFromMercadoPagoAuthorizedPayment(authori
     : null
   const metadata = {
     source: 'mercadopago_subscription_authorized_payment',
+    tax: paymentTaxSnapshotForTotal(parseJson(subscriptionRow.metadata_json, {}).tax, amount),
     ristakSubscriptionId: subscriptionRow.id,
     mercadoPagoPreapprovalId: cleanString(authorizedPayment.preapproval_id) || subscriptionRow.mercadopago_preapproval_id || '',
     mercadoPagoAuthorizedPaymentId: authorizedPaymentId,

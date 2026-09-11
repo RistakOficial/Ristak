@@ -204,8 +204,9 @@ describe('payment settings tax calculation', () => {
     assert.equal(tax.totalAmount, 119)
   })
 
-  it('skips taxes only when the global switch is off', () => {
+  it('respects disabled taxes even with Gigstack connected', () => {
     assert.equal(calculatePaymentTax(100, { enabled: false, country: 'MX' }), null)
+    assert.equal(calculatePaymentTax(100, { enabled: false, gigstackEnabled: true, country: 'MX' }), null)
   })
 
   it('normalizes Gigstack fiscal defaults selected from dropdowns', () => {
@@ -267,7 +268,7 @@ describe('payment settings tax calculation', () => {
       }
     })
 
-    assert.equal(settings.taxes.enabled, true)
+    assert.equal(settings.taxes.enabled, false)
     assert.equal(settings.taxes.rateValue, 8)
     assert.equal(settings.taxes.rateSource, 'gigstack')
     assert.equal(settings.taxes.gigstackFiscalSource, 'gigstack')
@@ -428,6 +429,7 @@ describe('Gigstack fiscal ownership', () => {
     assert.equal(taxes.fiscalId, 'AAA010101AAA')
     assert.equal(taxes.rateValue, 16)
     assert.equal(taxes.gigstackFiscalSource, 'gigstack')
+    assert.equal(taxes.enabled, false)
   })
 
   it('requires the fiscal sync path before Gigstack can be activated', async () => {
@@ -460,6 +462,7 @@ describe('Gigstack fiscal ownership', () => {
 
     const settings = await savePaymentSettings({
       taxes: {
+        enabled: false,
         rateValue: 8,
         fiscalId: 'CAMBIO-NO-AUTORIZADO',
         gigstackDefaultProductKey: '85121600'
@@ -467,6 +470,8 @@ describe('Gigstack fiscal ownership', () => {
     })
 
     assert.equal(settings.taxes.rateValue, 16)
+    assert.equal(settings.taxes.enabled, false)
+    assert.equal(settings.taxes.gigstackEnabled, true)
     assert.equal(settings.taxes.fiscalId, 'AAA010101AAA')
     assert.equal(settings.taxes.gigstackFiscalSource, 'gigstack')
     assert.equal(settings.taxes.gigstackDefaultProductKey, '85121600')

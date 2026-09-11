@@ -881,7 +881,8 @@ export const createTransaction = async (req, res) => {
     const accountTimezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
     const finalDate = resolvePaymentTimestamp(date, accountTimezone)
     const finalPaymentMode = normalizePaymentMode(paymentMode)
-    const metadataJson = metadata && typeof metadata === 'object' ? JSON.stringify(metadata) : null
+    const paymentMetadata = metadata && typeof metadata === 'object' ? metadata : {}
+    const metadataJson = JSON.stringify({ ...paymentMetadata, tax: paymentMetadata.tax || { enabled: false } })
 
     // (PAY-007) INSERT idempotente: ON CONFLICT DO NOTHING cierra la ventana de
     // carrera entre el chequeo previo y el insert. Si no se insertó (changes==0),

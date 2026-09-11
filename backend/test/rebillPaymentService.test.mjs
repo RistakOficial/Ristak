@@ -780,7 +780,8 @@ test('Rebill cobra tarjeta guardada enviando customer como objeto en checkout', 
   })
 })
 
-test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidades con cardId', async () => {
+for (const applyTax of [false, true]) {
+test(`Rebill conserva impuesto ${applyTax ? 'activo' : 'apagado'} al crear y cobrar un plan`, async () => {
   await initializeMasterKey()
 
   await snapshotRebillConfig(async () => {
@@ -916,7 +917,7 @@ test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidad
 
     try {
       await cleanupContact(contactId)
-      await setAppConfig('payments_settings', { paymentMode: 'test' })
+      await setAppConfig('payments_settings', { paymentMode: 'test', taxes: { enabled: true, gigstackEnabled: true, rateValue: 16, country: 'MX' } })
       await saveRebillPaymentConfig({
         enabled: true,
         mode: 'test',
@@ -936,6 +937,7 @@ test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidad
         contact,
         title: 'Plan Rebill con reloj propio',
         description: 'Plan Rebill con reloj propio',
+        applyTax,
         totalAmount: 1300,
         currency: 'MXN',
         firstPayment: {
@@ -959,12 +961,14 @@ test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidad
       assert.equal(plan.scheduledPayments.length, 1)
       assert.equal(plan.scheduledPayments[0].status, 'waiting_card_authorization')
 
-      const firstPayment = await db.get('SELECT status, payment_url FROM payments WHERE id = ?', [plan.firstPaymentPaymentId])
+      const firstPayment = await db.get('SELECT status, payment_url, metadata_json FROM payments WHERE id = ?', [plan.firstPaymentPaymentId])
       assert.equal(firstPayment.status, 'sent')
       assert.equal(firstPayment.payment_url, 'https://pay.rebill.com/plan/pl_rebill_plan_first_test')
+      assert.equal(JSON.parse(firstPayment.metadata_json).tax.enabled, applyTax)
+      if (applyTax) assert.equal(JSON.parse(firstPayment.metadata_json).tax.taxAmount, 68.97)
 
       const installment = await db.get(
-        `SELECT i.status, i.payment_id, p.status AS payment_status, p.payment_url
+        `SELECT i.status, i.payment_id, p.status AS payment_status, p.payment_url, p.metadata_json
            FROM installment_payments i
            JOIN payments p ON p.id = i.payment_id
           WHERE i.flow_id = ?`,
@@ -973,6 +977,8 @@ test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidad
       assert.equal(installment.status, 'waiting_card_authorization')
       assert.equal(installment.payment_status, 'pending')
       assert.equal(installment.payment_url, '')
+      assert.equal(JSON.parse(installment.metadata_json).tax.enabled, applyTax)
+      if (applyTax) assert.equal(JSON.parse(installment.metadata_json).tax.taxAmount, 110.34)
 
       const mirror = await db.get('SELECT source, status, schedule_json FROM payment_plans WHERE id = ?', [plan.flowId])
       const schedule = JSON.parse(mirror.schedule_json)
@@ -1042,3 +1048,4 @@ test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidad
     }
   })
 })
+}

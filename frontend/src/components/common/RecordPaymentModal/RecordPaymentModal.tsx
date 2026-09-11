@@ -1429,7 +1429,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setPaymentTitle('')
     setDescription('')
     setCurrency(accountCurrency)
-    setIncludeIVA(Boolean(paymentTaxes.enabled))
+    setIncludeIVA(false)
     setTaxCalculationMode(DEFAULT_CHARGE_TAX_CALCULATION_MODE)
     setPaymentMode(initialPaymentMode)
     // El plan abre por defecto con "Cobrar inmediato" (primer pago con tarjeta),
@@ -1518,7 +1518,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setPaymentAutomations(paymentSettings.automations || defaultPaymentSettings.automations)
       setPaymentTaxes(nextTaxes)
       setTaxCalculationMode(DEFAULT_CHARGE_TAX_CALCULATION_MODE)
-      setIncludeIVA(Boolean(nextTaxes.enabled))
     } catch {
       setPaymentAutomations(defaultPaymentSettings.automations)
       setPaymentTaxes(defaultPaymentSettings.taxes)
@@ -3448,6 +3447,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           dueDate: invoicePayload.dueDate,
           metadata: {
             lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
+            tax: { enabled: false },
             ...(invoiceSummary.includesTax && {
               tax: {
                 enabled: true,
@@ -3552,6 +3552,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           })) || [],
           metadata: {
             lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
+            tax: { enabled: false },
             ...(invoiceSummary.includesTax && {
               tax: {
                 enabled: true,
@@ -3676,6 +3677,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             dueDate: invoicePayload.dueDate,
             metadata: {
               lineItems: Array.isArray(invoicePayload.items) ? invoicePayload.items : [],
+              tax: { enabled: false },
               ...(invoiceSummary.includesTax && {
                 tax: {
                   enabled: true,

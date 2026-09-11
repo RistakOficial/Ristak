@@ -21,13 +21,12 @@ async function deleteSubscriptions(ids) {
   }
 }
 
-test('suscripciones nuevas suman el IVA al total por defecto y conservan la elección fiscal', async () => {
+test('suscripciones nuevas no aplican impuesto por defecto y conservan la elección fiscal', async () => {
   const previousPaymentSettings = await getAppConfig(PAYMENT_SETTINGS_CONFIG_KEY)
   const subscriptionIds = []
 
   try {
-    // Aunque la configuración histórica de la cuenta diga "incluido", el alta
-    // interactiva nueva debe comenzar en "se suma al total".
+    // La cuenta puede ofrecer impuestos; cada alta debe elegirlos explícitamente.
     await savePaymentSettings({
       taxes: {
         enabled: true,
@@ -40,6 +39,7 @@ test('suscripciones nuevas suman el IVA al total por defecto y conservan la elec
 
     const exclusive = await createSubscription({
       name: uniqueName('subscription_tax_exclusive'),
+      applyTax: true,
       amount: 100,
       intervalType: 'monthly',
       intervalCount: 1,
@@ -80,7 +80,6 @@ test('suscripciones nuevas suman el IVA al total por defecto y conservan la elec
     const withoutTax = await createSubscription({
       name: uniqueName('subscription_without_tax'),
       amount: 100,
-      applyTax: false,
       intervalType: 'monthly',
       intervalCount: 1,
       startDate: '2099-01-01',
@@ -101,6 +100,10 @@ test('suscripciones nuevas suman el IVA al total por defecto y conservan la elec
     assert.equal(edited.configuredAmount, 100)
     assert.equal(edited.tax?.rateValue, 16)
     assert.equal(edited.tax?.taxAmount, 16)
+
+    const editedWithoutTax = await updateSubscription(withoutTax.id, { description: 'Sigue sin impuesto' })
+    assert.equal(editedWithoutTax.tax, null)
+    assert.equal(editedWithoutTax.amount, 100)
   } finally {
     await deleteSubscriptions(subscriptionIds)
     if (previousPaymentSettings === null) {
