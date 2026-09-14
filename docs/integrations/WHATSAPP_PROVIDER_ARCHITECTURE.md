@@ -413,6 +413,14 @@ Este paso no usa IDs, estados ni credenciales YCloud.
 
 ## Contratos de webhook
 
+La identidad del número que entrega el adaptador manda también en la entrada.
+Meta directo usa `metadata.phone_number_id`; Baileys conserva el ID de la fila
+de su sesión. Nunca se reemplaza ese ID por la primera fila que comparta teléfono.
+Si un evento API no trae ID, la búsqueda por teléfono se limita a su proveedor.
+La compuerta de desconexión consulta esa misma fila, aunque esté inactiva: una
+fila QR hermana no bloquea Meta conectado ni permite saltarse una API retirada.
+El orden en que se conectaron API y QR no cambia la recepción del chat ni de IA.
+
 ### YCloud
 
 YCloud entrega un evento propio con `id`, `type`, `apiVersion`, `createTime` y

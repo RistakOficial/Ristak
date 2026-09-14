@@ -138,6 +138,13 @@ test('YCloud descarga media entrante con API key y guarda una copia permanente e
     await setAppConfig(keys.wabaId, 'waba_ycloud_media_bunny')
     await setAppConfig(keys.provider, 'ycloud')
 
+    // Sin Phone Number ID en el evento, el teléfono debe resolverse dentro de
+    // YCloud aunque una fila QR del mismo número se haya conectado primero.
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers
+        (id, provider, phone_number, display_phone_number, api_send_enabled, qr_send_enabled, qr_status)
+      VALUES (?, 'qr', ?, ?, 0, 1, 'connected')
+    `, [`qr_${phoneNumberId}`, businessPhone, businessPhone])
     await db.run(`
       INSERT INTO whatsapp_api_phone_numbers (
         id, provider, waba_id, phone_number, display_phone_number, verified_name,
@@ -191,10 +198,11 @@ test('YCloud descarga media entrante con API key y guarda una copia permanente e
     assert.equal(liveStats.created, 1)
     assert.equal(providerDownloads[0]?.apiKey, 'ycloud-media-test-api-key')
     const liveRow = await db.get(
-      'SELECT id, contact_id, media_url, raw_payload_json FROM whatsapp_api_messages WHERE ycloud_message_id = ?',
+      'SELECT id, contact_id, business_phone_number_id, media_url, raw_payload_json FROM whatsapp_api_messages WHERE ycloud_message_id = ?',
       [liveMessageId]
     )
     assert.ok(liveRow)
+    assert.equal(liveRow.business_phone_number_id, phoneNumberId)
     assert.match(liveRow.media_url, new RegExp(`^${endpoint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/cdn/`))
     assert.equal(liveRow.media_url.includes('api.ycloud.com'), false)
     assert.equal(JSON.parse(liveRow.raw_payload_json).image.link, liveRow.media_url)
@@ -249,6 +257,7 @@ test('YCloud descarga media entrante con API key y guarda una copia permanente e
     await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [phone]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [`qr_${phoneNumberId}`]).catch(() => undefined)
     await db.run(`DELETE FROM media_assets WHERE metadata_json LIKE '%ycloud_inbound_media%'`).catch(() => undefined)
     await restoreAppConfig(configKeys, previousConfig)
     restoreEnv(previousEnv)

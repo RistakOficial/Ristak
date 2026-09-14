@@ -2758,6 +2758,11 @@ Todo registro WhatsApp debe distinguir `provider` (`ycloud`, `meta_direct` o
 endpoints, nombres de webhook ni columnas de ID específicas. Baileys nunca debe
 presentarse como proveedor de API oficial.
 
+La entrada respeta el ID del número entregado por Meta o por la sesión QR.
+Cuando ambos comparten teléfono, la fila QR no puede hacer que Ristak descarte
+mensajes de una API conectada. Sin ID explícito, un evento API se resuelve sólo
+entre filas de su proveedor; una API realmente desactivada sigue bloqueada.
+
 La captura de Baileys comprueba la disponibilidad oficial con la fila elegida y
 su proveedor real. Meta directo se considera operativo por su estado y token
 propios; la ausencia de una API key YCloud no autoriza capturar su tráfico vivo

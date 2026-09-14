@@ -393,6 +393,75 @@ test('Meta direct activo ignora el eco vivo de Baileys y conserva la plantilla c
   }
 })
 
+test('Meta inbound respeta su Phone Number ID aunque QR y otro proveedor compartan teléfono', async () => {
+  const suffix = randomUUID()
+  const phoneNumberId = `meta_routing_${suffix}`
+  const qrPhoneNumberId = `qr_routing_${suffix}`
+  const ycloudPhoneNumberId = `ycloud_routing_${suffix}`
+  const wabaId = `waba_routing_${suffix}`
+  const businessPhone = `+1588${Date.now().toString().slice(-7)}`
+  const customerPhone = `+5288${Date.now().toString().slice(-8)}`
+  let contactId = ''
+  const callbacks = []
+  try {
+    // Reproduce el orden real: QR ya existe antes de conectar Meta.
+    for (const [id, provider] of [[qrPhoneNumberId, 'qr'], [ycloudPhoneNumberId, 'ycloud']]) {
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers
+          (id, provider, phone_number, display_phone_number, api_send_enabled, qr_send_enabled, qr_status)
+        VALUES (?, ?, ?, ?, 0, 1, 'connected')
+      `, [id, provider, businessPhone, businessPhone])
+    }
+    await withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, async () => {
+      const receive = id => processMetaDirectWebhookPayload({
+        payload: webhookEnvelope({
+          wabaId, phoneNumberId, businessPhone,
+          contacts: [{ wa_id: customerPhone, profile: { name: 'Prueba ruteo' } }],
+          messages: [{ id, from: customerPhone, type: 'text', text: { body: 'Hola' } }]
+        }),
+        eventRowId: `event-${id}`,
+        onInboundPersisted: result => { callbacks.push(result) }
+      })
+      const [inbound] = await receive(`wamid.routing.active.${suffix}`)
+      assert.equal(inbound.ignored, undefined)
+      assert.equal(inbound.businessPhoneNumberId, phoneNumberId)
+      contactId = inbound.contactId
+      assert.ok(contactId)
+      const row = await db.get(`
+        SELECT business_phone_number_id, provider, source_adapter, transport, message_text
+        FROM whatsapp_api_messages WHERE id = ?
+      `, [inbound.messageId])
+      assert.deepEqual(row, {
+        business_phone_number_id: phoneNumberId, provider: 'meta_direct',
+        source_adapter: 'meta_direct', transport: 'api', message_text: 'Hola'
+      })
+      assert.equal(callbacks.length, 1)
+      const [duplicate] = await receive(`wamid.routing.active.${suffix}`)
+      assert.equal(duplicate.messageId, inbound.messageId)
+      assert.equal(duplicate.isNew, false)
+      assert.equal(callbacks.length, 1)
+
+      // Una API desactivada no puede tomar el QR ni otro remitente activo.
+      await db.run('UPDATE whatsapp_api_phone_numbers SET api_send_enabled = 0 WHERE id = ?', [phoneNumberId])
+      await db.run('UPDATE whatsapp_api_phone_numbers SET api_send_enabled = 1 WHERE id = ?', [ycloudPhoneNumberId])
+      const [blocked] = await receive(`wamid.routing.disabled.${suffix}`)
+      assert.equal(blocked.ignored, true)
+      assert.equal(blocked.reason, 'phone_disconnected_from_ristak')
+      assert.equal(blocked.businessPhoneNumberId, phoneNumberId)
+      assert.equal(await db.get('SELECT id FROM whatsapp_api_messages WHERE wamid = ?', [`wamid.routing.disabled.${suffix}`]), null)
+      assert.equal(callbacks.length, 1)
+    })
+  } finally {
+    await db.run('DELETE FROM chat_delivery_outbox WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM whatsapp_api_attribution WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM whatsapp_api_messages WHERE phone = ?', [customerPhone])
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [customerPhone])
+    await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM contacts WHERE phone = ?', [customerPhone])
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id IN (?, ?)', [qrPhoneNumberId, ycloudPhoneNumberId])
+  }
+})
+
 test('Meta direct persists one text bubble, reconciles status ACKs, and saves CTWA attribution', async () => {
   const suffix = randomUUID()
   const phoneNumberId = `meta_phone_${suffix}`

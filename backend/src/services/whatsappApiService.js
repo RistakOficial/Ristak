@@ -4043,16 +4043,25 @@ export async function setWhatsAppApiDefaultPhoneNumber({ phoneNumberId } = {}) {
   return getWhatsAppApiStatus()
 }
 
-async function findBusinessPhoneNumberId(phone = '') {
+async function findBusinessPhoneNumberId(phone = '', { phoneNumberId, provider, transport = 'api' } = {}) {
+  // El adaptador ya conoce la identidad del número (Meta metadata o sesión QR).
+  // No sustituirla por una fila hermana del mismo teléfono, ni siquiera si está
+  // desactivada: el guard de desconexión debe consultar esa misma identidad.
+  const explicitId = cleanString(phoneNumberId)
+  if (explicitId) return explicitId
   const normalized = normalizePhoneForStorage(phone) || cleanString(phone)
   if (!normalized) return null
 
+  const cleanProvider = cleanString(provider).toLowerCase()
   const rows = await db.all(`
-    SELECT id, phone_number, display_phone_number, qr_connected_phone
+    SELECT id, provider, phone_number, display_phone_number, qr_connected_phone
     FROM whatsapp_api_phone_numbers
   `).catch(() => [])
 
-  const match = rows.find(row => rowMatchesAnyPhone(row, [normalized]))
+  const match = rows.find(row =>
+    (transport === 'qr' || !cleanProvider || cleanString(row.provider).toLowerCase() === cleanProvider) &&
+    rowMatchesAnyPhone(row, [normalized])
+  )
 
   return match?.id || null
 }
@@ -9359,7 +9368,11 @@ async function upsertMessage({
     payload.contact_id
   )
   const cleanTransport = cleanString(normalizedMessage.transport || payload.transport || transport || 'api').toLowerCase() || 'api'
-  const businessPhoneNumberId = await findBusinessPhoneNumberId(identity.businessPhone)
+  const businessPhoneNumberId = await findBusinessPhoneNumberId(identity.businessPhone, {
+    phoneNumberId: normalizedMessage.phoneNumberId,
+    provider: incomingProvider,
+    transport: cleanTransport
+  })
   if (cleanTransport !== 'qr' && businessPhoneNumberId) {
     const localPhone = await db.get(`
       SELECT api_send_enabled
@@ -10441,6 +10454,7 @@ export async function captureQrChatMessage({
       ...(raw?.context ? { context: raw.context } : {}),
       ...(raw?.reaction ? { reaction: raw.reaction } : {}),
       ...(cleanDirection === 'inbound' && profileName ? { profileName } : {}),
+      phoneNumberId: phoneRow?.id,
       transport: 'qr',
       sendTime: messageTimestamp,
       createTime: messageTimestamp,
@@ -12662,7 +12676,10 @@ async function reconcileMetaDirectMessageStatus({ item } = {}) {
   const messageId = hashId('waapi_msg', wamid)
   const customerPhone = normalizePhoneForStorage(message.to || message.recipient_id) || cleanString(message.to || message.recipient_id)
   const businessPhone = normalizePhoneForStorage(message.from) || cleanString(message.from)
-  const businessPhoneNumberId = cleanString(message.phoneNumberId) || await findBusinessPhoneNumberId(businessPhone)
+  const businessPhoneNumberId = await findBusinessPhoneNumberId(businessPhone, {
+    phoneNumberId: message.phoneNumberId,
+    provider: META_DIRECT_PROVIDER_NAME
+  })
   const messageTimestamp = toDateTime(message.sendTime || message.timestamp) || nowIso()
 
   await db.run(`
