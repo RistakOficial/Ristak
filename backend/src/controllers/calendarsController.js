@@ -1662,6 +1662,7 @@ export async function getEvents(req, res) {
       startTime: range.start,
       endTime: range.end,
       calendarId,
+      includeCancelled: false,
       signal: requestScope.signal
     });
 

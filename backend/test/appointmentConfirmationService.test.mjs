@@ -1236,6 +1236,8 @@ test('el ultimátum empieza al enviarse y cancela sólo después de vencer sin r
     confirmationTimeoutValue: 30,
     confirmationTimeoutUnit: 'minutes'
   }, async ({ appointmentId, sendId }) => {
+    await db.run(`UPDATE appointments SET google_event_id = 'existing-google-event',
+      google_sync_status = 'synced' WHERE id = ?`, [appointmentId])
     const payloads = []
     setAppNotificationPayloadSenderForTest(async (payload, options) => {
       payloads.push({ payload, options })
@@ -1258,10 +1260,11 @@ test('el ultimátum empieza al enviarse y cancela sólo después de vencer sin r
     assert.equal(expired.cancelled, 1)
 
     const appointment = await db.get(
-      'SELECT appointment_status FROM appointments WHERE id = ?',
+      'SELECT appointment_status, google_sync_status FROM appointments WHERE id = ?',
       [appointmentId]
     )
     assert.equal(appointment.appointment_status, 'cancelled')
+    assert.equal(appointment.google_sync_status, 'pending', 'Google desconectado conserva la cancelación pendiente para reintentar')
 
     const send = await db.get(`
       SELECT confirmation_timeout_status, confirmation_timeout_processed_at

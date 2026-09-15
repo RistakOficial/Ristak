@@ -1489,6 +1489,48 @@ function mockMixedRecipientDns() {
     resolve4: async () => ['192.0.2.25'], resolve6: async () => []
   }))
 }
+
+test('recupera una cancelación automática histórica marcada synced y reintenta Google sin recrear la cita', async () => {
+  await withGoogleSafetyFixture(async ({ db, google, local, create, calendarId, providerId, events, googleRequests }) => {
+    const appointment = await create({ googleEventId: 'timeout-cancel', googleProviderCalendarId: providerId })
+    const sendId = `timeout-send-${randomUUID()}`
+    events.set('timeout-cancel', { id: 'timeout-cancel', status: 'confirmed', etag: '"original"' })
+    const originalFetch = global.fetch
+    let failDelete = true
+    try {
+      await db.run(`UPDATE appointments SET status = 'cancelled', appointment_status = 'cancelled',
+        google_sync_status = 'synced' WHERE id = ?`, [appointment.id])
+      await db.run(`INSERT INTO appointment_reminder_sends
+        (id, reminder_id, appointment_id, status, message_type, confirmation_timeout_status)
+        VALUES (?, ?, ?, 'sent', 'confirmation', 'cancelled')`, [sendId, `removed-${sendId}`, appointment.id])
+      global.fetch = async (url, options = {}) => {
+        if (failDelete && options.method === 'DELETE') {
+          failDelete = false
+          return googleJson({ error: { message: 'temporary cancellation failure' } }, 503)
+        }
+        return originalFetch(url, options)
+      }
+      const failed = await google.syncLocalAppointmentsToGoogle({ calendarId })
+      assert.equal(failed.failed, 1)
+      assert.equal((await local.getLocalAppointment(appointment.id)).googleSyncStatus, 'error')
+      assert.ok(events.has('timeout-cancel'))
+
+      const retried = await google.syncLocalAppointmentsToGoogle({ calendarId })
+      assert.equal(retried.synced, 1)
+      assert.equal(events.has('timeout-cancel'), false)
+      const cancelled = await local.getLocalAppointment(appointment.id)
+      assert.equal(cancelled.appointmentStatus, 'cancelled')
+      assert.equal(cancelled.googleSyncStatus, 'synced')
+      assert.equal(cancelled.googleEventId, null)
+      assert.equal((await google.syncLocalAppointmentsToGoogle({ calendarId })).total, 0)
+      assert.equal(googleRequests.filter(request => request.method === 'DELETE').length, 1)
+      assert.equal(googleRequests.filter(request => request.method === 'POST').length, 0)
+    } finally {
+      global.fetch = originalFetch
+      await db.run('DELETE FROM appointment_reminder_sends WHERE id = ?', [sendId])
+    }
+  })
+})
 const mixedParticipants = [
   { role: 'requester', name: 'Correo inválido', email: 'bien@bien.com' },
   { role: 'primary_attendee', name: 'Correo válido', email: 'bueno@example.test' }

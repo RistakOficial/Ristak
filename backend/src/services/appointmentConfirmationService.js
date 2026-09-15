@@ -756,6 +756,8 @@ async function processConfirmationTimeout(sendId, currentTime) {
       UPDATE appointments
       SET appointment_status = 'cancelled',
           status = 'cancelled',
+          google_sync_status = CASE WHEN google_sync_status = 'history_only' THEN 'history_only' ELSE 'pending' END,
+          google_sync_error = NULL,
           date_updated = CURRENT_TIMESTAMP
       WHERE id = ?
         AND deleted_at IS NULL
@@ -1278,7 +1280,10 @@ async function executeNoConfirmAction({ contactId, appointmentId, action, result
     const previousStatus = String(appointment?.appointment_status || appointment?.status || '').trim().toLowerCase()
     const cancelled = await db.run(`
       UPDATE appointments
-      SET appointment_status = 'cancelled', status = 'cancelled', date_updated = CURRENT_TIMESTAMP
+      SET appointment_status = 'cancelled', status = 'cancelled',
+          google_sync_status = CASE WHEN google_sync_status = 'history_only' THEN 'history_only' ELSE 'pending' END,
+          google_sync_error = NULL,
+          date_updated = CURRENT_TIMESTAMP
       WHERE id = ?
         AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('cancelled', 'canceled')
     `, [appointmentId])

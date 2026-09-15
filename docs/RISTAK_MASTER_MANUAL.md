@@ -4402,6 +4402,15 @@ Reglas base:
 - La base guarda instantes en UTC.
 - Fechas de calendario se interpretan en zona del negocio.
 - No dependas del timezone del navegador para datos CRM.
+- La agenda visible excluye citas `cancelled`/`canceled` en mes, semana, día,
+  listados y conteos diarios. Los KPIs de cancelaciones y el historial del
+  contacto conservan sus registros. `/api/calendars/events` solicita esa misma
+  exclusión; las lecturas internas de historial y sincronización siguen
+  incluyendo canceladas. El calendario de escritorio relee eventos, próximas
+  citas y conteos ante cambios de citas por SSE, reconexión o regreso a la app,
+  agrupando avisos consecutivos y descartando respuestas de una vista anterior.
+  El stream requiere permiso de Chat; sin ese permiso o sin conexión al stream,
+  relee cada minuto mientras la agenda está visible, sin ampliar permisos.
 - Las superficies autenticadas de escritorio, `/movil`, Android Expo e iOS
   conservan por cuenta la lista de calendarios y snapshots acotados de eventos.
   Si falla una creación por red, timeout, `408`, `425`, `429` o `5xx`, guardan
@@ -5568,6 +5577,17 @@ histórica de cancelacion, el silencio conserva la cita.
 Eliminar un recordatorio desactiva sus ultimátums pendientes; los envios ya
 realizados se conservan como auditoría, pero esa regla retirada no puede cancelar
 una cita después.
+
+La cancelación automática marca `google_sync_status='pending'` en la misma
+escritura que cancela la cita, conserva el estado `history_only` si existía y
+solicita retirar el evento de Google. Si la integración está desconectada o
+Google falla, la sincronización registrada reintenta al estar disponible.
+También recupera cancelaciones históricas que conservaron incorrectamente
+`synced`: exige una cita actualmente cancelada con espejo de Google y evidencia
+de cancelación por plazo vencido en los envíos de confirmación. Una eliminación
+exitosa limpia el vínculo remoto y no se repite; nunca recrea el evento ni
+borra el historial local. Las cancelaciones recibidas desde Google sin esa
+evidencia conservan su acuse e identidad remota.
 
 El push de confirmaciones se procesa por default al confirmar, recibir una
 respuesta no afirmativa, vencer el plazo o requerir revision. Todos esos caminos

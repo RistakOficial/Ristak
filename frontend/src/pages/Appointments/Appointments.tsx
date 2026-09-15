@@ -63,6 +63,9 @@ import {
   type ReminderSenderOption
 } from '@/services/appointmentRemindersService';
 import { sortAppointmentRemindersByTimeline } from '@/services/appointmentReminderOrdering';
+import { subscribeToChatLiveEvents } from '@/services/chatLiveEventsService';
+import { invalidateRistakApiReadCache } from '@/services/authFetch';
+import { hasModuleAccess } from '@/utils/accessControl';
 import {
   messageTemplatesService,
   type MessageTemplate
@@ -339,7 +342,8 @@ const buildAppointmentsPath = (viewMode: ViewMode, date: Date, calendarId?: stri
   `/appointments/${viewMode}/${formatDateKey(date)}${calendarId ? `/calendar/${encodeURIComponent(calendarId)}` : ''}`;
 
 export const Appointments: React.FC = () => {
-  const { locationId, accessToken } = useAuth();
+  const { locationId, accessToken, user } = useAuth();
+  const canReadLiveChat = hasModuleAccess(user, 'chat', 'read');
   const { showToast } = useNotification();
   const { theme } = useTheme();
   const { formatLocalDateShort, timezone } = useTimezone();
@@ -1184,6 +1188,59 @@ export const Appointments: React.FC = () => {
       loadUpcomingEvents();
     }
   }, [selectedCalendar, locationId, accessToken, loadUpcomingEvents]);
+
+  // Las cancelaciones por plazo ocurren en el servidor aunque esta agenda siga
+  // abierta. Releer el estado canónico también actualiza conteos y caché offline.
+  useEffect(() => {
+    if (!selectedCalendar?.id) return;
+    let timer: number | null = null;
+    let stopped = false;
+    let refreshing = false;
+    let queued = false;
+    let connectedOnce = false;
+    let liveConnected = false;
+    const refresh = () => {
+      if (stopped || document.visibilityState === 'hidden') return;
+      if (refreshing) { queued = true; return; }
+      if (timer !== null) return;
+      timer = window.setTimeout(() => {
+        timer = null;
+        refreshing = true;
+        invalidateRistakApiReadCache({ pathPrefixes: ['/api/calendars'], abortInflight: false });
+        void Promise.allSettled([loadEvents(), loadUpcomingEvents()]).finally(() => {
+          refreshing = false;
+          if (queued) { queued = false; refresh(); }
+        });
+      }, 200);
+    };
+    const unsubscribe = canReadLiveChat ? subscribeToChatLiveEvents({
+      onMessage: () => undefined,
+      onDataChanged: event => {
+        if (event.domains.includes('appointments')) refresh();
+      },
+      onStatusChange: status => {
+        liveConnected = status === 'connected';
+        if (status !== 'connected') return;
+        if (connectedOnce) refresh();
+        connectedOnce = true;
+      }
+    }) : () => undefined;
+    // El permiso de Calendarios no implica permiso de Chat. Si no hay stream
+    // autorizado/disponible, reconciliar sólo mientras la agenda esté visible.
+    const fallbackTimer = window.setInterval(() => {
+      if (!liveConnected) refresh();
+    }, 60_000);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      stopped = true;
+      unsubscribe();
+      window.clearInterval(fallbackTimer);
+      if (timer !== null) window.clearTimeout(timer);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [selectedCalendar?.id, loadEvents, loadUpcomingEvents, canReadLiveChat]);
 
   useEffect(() => {
     const unsubscribe = subscribeCalendarOfflineStore(refreshOfflineOutboxState);

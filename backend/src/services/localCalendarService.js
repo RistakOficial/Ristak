@@ -6687,6 +6687,7 @@ async function countAppointmentsByBusinessDay({ calendarId, bounds, signal } = {
      AND ${upperBound}
      AND COALESCE(a.sync_status, '') != 'pending_delete'
      AND a.deleted_at IS NULL
+     AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN ('cancelled', 'canceled')
     GROUP BY day_bounds.day_key
     ORDER BY day_bounds.day_key ASC
   `, [...boundParams, calendarId], { signal })
@@ -6722,6 +6723,7 @@ async function listAppointmentPreviewsByBusinessDay({ calendarId, bounds, previe
           AND ${sql.sort} < ${sql.parameter}
           AND COALESCE(a.sync_status, '') != 'pending_delete'
           AND a.deleted_at IS NULL
+          AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN ('cancelled', 'canceled')
         ORDER BY ${sql.sort} ASC, a.id ASC
         LIMIT ?
       ) preview_day_${index}
@@ -6925,7 +6927,8 @@ export async function listVisibleLocalAppointmentsPage({
     `${sql.sort} >= ${sql.parameter}`,
     `${sql.sort} < ${sql.parameter}`,
     "COALESCE(a.sync_status, '') != 'pending_delete'",
-    'a.deleted_at IS NULL'
+    'a.deleted_at IS NULL',
+    "LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN ('cancelled', 'canceled')"
   ]
   const params = [normalizedCalendarId, normalizedStart, normalizedExclusiveEnd]
   if (decodedCursor) {
@@ -7191,7 +7194,7 @@ export async function getLocalAppointmentsOverview({
   }
 }
 
-export async function listLocalAppointments({ startTime, endTime, calendarId, includeOverlapping = false, signal } = {}) {
+export async function listLocalAppointments({ startTime, endTime, calendarId, includeOverlapping = false, includeCancelled = true, signal } = {}) {
   // IMPORTANTE: esta consulta hace JOIN con `contacts`, y AMBAS tablas (appointments y
   // contacts) tienen columnas `deleted_at`/`sync_status`. En Postgres, referenciarlas sin
   // el alias de tabla lanza «column reference "deleted_at" is ambiguous» y revienta el
@@ -7200,6 +7203,12 @@ export async function listLocalAppointments({ startTime, endTime, calendarId, in
   // pero producción usa Postgres.
   const conditions = ["COALESCE(a.sync_status, '') != 'pending_delete'", 'a.deleted_at IS NULL']
   const params = []
+
+  // Los consumidores de historial y sincronización siguen leyendo todas las
+  // citas. La agenda visible solicita sólo las que no están canceladas.
+  if (!includeCancelled) {
+    conditions.push("LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN ('cancelled', 'canceled')")
+  }
 
   if (startTime) {
     conditions.push(includeOverlapping ? 'COALESCE(a.end_time, a.start_time) >= ?' : 'a.start_time >= ?')

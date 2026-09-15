@@ -9,11 +9,48 @@ import {
   getLocalAppointmentDayCounts,
   getLocalAppointmentsOverview,
   listLocalAppointmentMonthPreview,
+  listLocalAppointments,
+  getLocalAppointment,
+  getLocalAppointmentStats,
   listVisibleLocalAppointmentsPage,
   upsertLocalCalendar
 } from '../src/services/localCalendarService.js'
 
 const BUSINESS_TIMEZONE = 'America/New_York'
+
+test('las canceladas salen de la agenda, sus conteos y páginas, conservando historial y estadísticas', async () => {
+  const calendarId = `rstk_cal_cancelled_view_${randomUUID()}`
+  await upsertLocalCalendar({ id: calendarId, name: 'Agenda sin canceladas' })
+  const statuses = ['cancelled', 'canceled', 'confirmed', 'pending', 'showed', 'noshow']
+  const range = { calendarId, startTime: '2099-06-01T04:00:00.000Z', endTime: '2099-06-02T03:59:59.999Z', timezone: BUSINESS_TIMEZONE }
+  try {
+    for (const [index, status] of statuses.entries()) {
+      await db.run(`INSERT INTO appointments (id, calendar_id, title, status, appointment_status, start_time, end_time)
+        VALUES (?, ?, ?, ?, ?, '2099-06-01T16:00:00.000Z', '2099-06-01T17:00:00.000Z')`,
+      [`${calendarId}_${index}`, calendarId, status, status, status])
+    }
+    const counts = await getLocalAppointmentDayCounts(range)
+    assert.equal(counts.total, 4)
+    const month = await listLocalAppointmentMonthPreview({ ...range, previewLimit: 5 })
+    assert.equal(month.total, 4)
+    assert.deepEqual(month.days[0].items.map(item => item.appointmentStatus).sort(), statuses.slice(2).sort())
+    const seen = []
+    let cursor = ''
+    do {
+      const page = await listVisibleLocalAppointmentsPage({ ...range, limit: 2, cursor })
+      assert.equal(page.total, 4)
+      seen.push(...page.items.map(item => item.appointmentStatus))
+      cursor = page.pagination.nextCursor
+    } while (cursor)
+    assert.deepEqual(seen.sort(), statuses.slice(2).sort())
+    assert.equal((await listLocalAppointments({ ...range, includeCancelled: false })).length, 4)
+    assert.equal((await listLocalAppointments(range)).length, 6)
+    assert.equal((await getLocalAppointment(`${calendarId}_0`)).appointmentStatus, 'cancelled')
+    assert.equal((await getLocalAppointmentStats(range)).cancelled, 1)
+  } finally {
+    await deleteCalendars([calendarId])
+  }
+})
 
 async function deleteCalendars(calendarIds) {
   const placeholders = calendarIds.map(() => '?').join(', ')

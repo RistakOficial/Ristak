@@ -1585,6 +1585,17 @@ async function findGoogleEventAfterAmbiguousWrite({ config, calendarId, eventId 
   }
 }
 
+// Las versiones anteriores cancelaban localmente sin invalidar el acuse de
+// Google. Sólo recuperamos cancelaciones con evidencia del plazo vencido;
+// una cancelación recibida desde Google conserva su identidad y su acuse.
+function confirmationTimeoutCancellationExistsSql(appointmentIdSql) {
+  return `EXISTS (
+    SELECT 1 FROM appointment_reminder_sends cancellation_send
+    WHERE cancellation_send.appointment_id = ${appointmentIdSql}
+      AND cancellation_send.confirmation_timeout_status = 'cancelled'
+  )`
+}
+
 export async function syncAppointmentToGoogle(appointmentOrId, { sendUpdates = 'all' } = {}) {
   const notificationMode = sendUpdates === 'none' ? 'none' : 'all'
   const config = await getGoogleCalendarConfig({ includeCredentials: true })
@@ -1622,7 +1633,13 @@ export async function syncAppointmentToGoogle(appointmentOrId, { sendUpdates = '
 
     const status = cleanString(appointment.appointmentStatus || appointment.status).toLowerCase()
     if (status === 'cancelled' || status === 'canceled') {
-      if (appointment.googleSyncStatus === 'synced') return { enabled: true, appointment }
+      if (appointment.googleSyncStatus === 'synced') {
+        const missedCancellation = appointment.googleEventId && await db.get(`
+          SELECT id FROM appointments
+          WHERE id = ? AND ${confirmationTimeoutCancellationExistsSql('appointments.id')}
+        `, [appointment.id])
+        if (!missedCancellation) return { enabled: true, appointment }
+      }
       await deleteGoogleEventForAppointment(appointment)
       return {
         enabled: true,
@@ -1863,6 +1880,11 @@ export async function syncLocalAppointmentsToGoogle({ calendarId = null, limit =
       OR COALESCE(google_event_id, '') = ''
       OR COALESCE(google_provider_calendar_id, '') = ''
       OR LOWER(google_provider_calendar_id) != LOWER(?)
+      OR (
+        LOWER(COALESCE(appointment_status, status, '')) IN ('cancelled', 'canceled')
+        AND COALESCE(google_event_id, '') != ''
+        AND ${confirmationTimeoutCancellationExistsSql('appointments.id')}
+      )
     )
   )`)
   const targetOwnershipParams = linkedCalendars.flatMap(calendar => [
