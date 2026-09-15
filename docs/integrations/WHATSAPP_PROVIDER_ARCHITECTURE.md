@@ -545,11 +545,20 @@ MIME `application/xml` o `application/zip`.
 Meta directo también conserva el contrato conversacional nativo. Una respuesta
 saliente usa `context.message_id`; una reacción usa `type=reaction` con
 `reaction.message_id` y `reaction.emoji`; al abrir el chat, el visto se manda por
-Graph con `PUT /{PHONE_NUMBER_ID}/messages`, `status=read` y el `wamid` entrante.
+Graph con `POST /{PHONE_NUMBER_ID}/messages`, `status=read` y el `wamid` entrante.
 Ese acuse se resuelve por la fila real `provider=meta_direct`: nunca debe caer al
 endpoint `markAsRead` de YCloud por una preferencia global vieja. Si el número
 tiene QR como respaldo, Baileys tampoco manda un segundo visto mientras
 `api_send_enabled=1`.
+
+Un error de lectura Graph `100/33` no desactiva la conexión ni cambia el
+proveedor, incluso si su texto menciona el Phone Number ID: también puede
+significar que esa operación no está soportada. El acuse fallido conserva el
+estado remoto pendiente y se registra en logs; sólo un token inválido (`190`)
+marca reconexión desde esta ruta. Los envíos mantienen su detección completa de
+permisos y registro del número. El contrato POST también está implementado en
+el [SDK oficial de Meta](https://github.com/WhatsApp/WhatsApp-Nodejs-SDK/blob/main/src/api/messages.ts)
+(`status` usa `send`, cuyo método común es POST).
 
 La suscripción `/{WABA_ID}/subscribed_apps` se crea al conectar. Si el relay no
 ha recibido eventos durante al menos 30 minutos, el siguiente envío Meta Direct

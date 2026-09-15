@@ -538,7 +538,7 @@ test('Meta direct persists one text bubble, reconciles status ACKs, and saves CT
       assert.equal(readReceipt.providerMessageId, inboundWamid)
       assert.equal(readRequests.length, 1)
       assert.match(readRequests[0].url, new RegExp(`/${phoneNumberId}/messages$`))
-      assert.equal(readRequests[0].options.method, 'PUT')
+      assert.equal(readRequests[0].options.method, 'POST')
       assert.deepEqual(readRequests[0].body, {
         messaging_product: 'whatsapp',
         status: 'read',
@@ -859,7 +859,7 @@ test('Meta direct persists one text bubble, reconciles status ACKs, and saves CT
   }
 })
 
-test('un rechazo ambiguo al marcar leído no desconecta Meta, pero perder el Phone Number ID o el token sí', async () => {
+test('un rechazo de lectura 100/33 conserva Meta incluso si nombra el número; un token inválido sí desconecta', async () => {
   const suffix = randomUUID()
   const phoneNumberId = `meta_phone_read_guard_${suffix}`
   const wabaId = `meta_waba_read_guard_${suffix}`
@@ -919,24 +919,29 @@ test('un rechazo ambiguo al marcar leído no desconecta Meta, pero perder el Pho
 
       await assert.rejects(
         () => markLatestInboundWhatsAppApiMessageReadForContact({ contactId }),
-        /perdió permisos en Meta/
+        /Unsupported put request/
       )
       assert.equal(await db.get(
         'SELECT config_value FROM app_config WHERE config_key = ?',
         [getWhatsAppApiConfigKeys().metaStatus]
-      ).then(row => row?.config_value), 'reconnect_required')
+      ).then(row => row?.config_value), 'connected')
       assert.deepEqual(await db.get(
         'SELECT status, api_send_enabled FROM whatsapp_api_phone_numbers WHERE id = ?',
         [phoneNumberId]
-      ), { status: 'AUTHORIZATION_REQUIRED', api_send_enabled: 0 })
+      ), { status: 'CONNECTED', api_send_enabled: 1 })
+      assert.notEqual((await db.get(
+        'SELECT status FROM whatsapp_api_messages WHERE wamid = ?', [inboundWamid]
+      )).status, 'read')
 
-      await setAppConfig(getWhatsAppApiConfigKeys().metaStatus, 'connected')
-      await setAppConfig(getWhatsAppApiConfigKeys().metaLastError, '')
-      await db.run(`
-        UPDATE whatsapp_api_phone_numbers
-        SET status = 'CONNECTED', api_send_enabled = 1, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `, [phoneNumberId])
+      const outboundWamid = `wamid.meta.after.read.failure.${suffix}`
+      setMetaDirectFetchForTest(async () => graphResponse({
+        messaging_product: 'whatsapp', messages: [{ id: outboundWamid }]
+      }))
+      const sent = await sendWhatsAppApiTextMessage({
+        to: customerPhone, from: businessPhone, text: 'Sigue operando tras fallar el visto',
+        contactId, phoneNumberId, allowQrFallback: false
+      })
+      assert.equal(sent.wamid, outboundWamid)
 
       setMetaDirectFetchForTest(async () => graphResponse({
         error: {

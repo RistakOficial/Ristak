@@ -3355,13 +3355,18 @@ Cuando el usuario abre o marca como leida una conversacion movil, el estado loca
 se actualiza en `chat_read_states` y el backend debe encolar en background el
 acuse externo del canal cuando exista soporte nativo: WhatsApp API/YCloud usa
 `/whatsapp/inboundMessages/{id}/markAsRead` con `wamid` o id de YCloud,
-WhatsApp API/Meta directo usa Graph `PUT /{PHONE_NUMBER_ID}/messages` con
+WhatsApp API/Meta directo usa Graph `POST /{PHONE_NUMBER_ID}/messages` con
 `status='read'` y el `wamid` entrante,
 WhatsApp QR/Baileys usa `sock.readMessages([{ remoteJid, id, fromMe }])`, y
 Messenger/Instagram usan `sender_action='mark_seen'`. Correo no participa en
 este contrato porque no es chat conversacional. El acuse externo puede tardar,
 fallar o agotar timeout sin bloquear la respuesta local del chat, pero debe
 quedar registrado en logs porque no equivale a visto real del proveedor.
+Un rechazo Graph `100/33` del visto no apaga WhatsApp API aunque mencione el
+número: no prueba por sí solo que se hayan perdido permisos. Esta ruta sólo
+exige reconexión por token inválido (`190`); los envíos conservan sus controles
+de permisos y registro. El mensaje sólo se marca como leído remotamente cuando
+Meta confirma el acuse.
 Si la fila del número conserva API oficial activa, su QR asociado es respaldo y
 no puede mandar un segundo acuse de lectura por Baileys.
 Configuracion > Privacidad guarda

@@ -6948,14 +6948,14 @@ export async function markLatestInboundWhatsAppApiMessageReadForContact({ contac
     }
 
     await metaDirectGraphRequest(`/${encodeURIComponent(phoneNumberId)}/messages`, {
-      method: 'PUT',
+      method: 'POST',
       token: config.systemUserToken,
       operational: true,
-      // Un acuse de lectura puede fallar porque el WAMID ya no es operable o
-      // pertenece a otro contexto de Coexistence. Ese 100/33 genérico no apaga
-      // el remitente; uno que nombre exactamente al Phone Number ID sí prueba
-      // que Meta retiró acceso al activo completo.
-      authorizationPolicy: 'token_or_phone_asset',
+      // Graph 100/33 también rechaza operaciones no soportadas y puede nombrar
+      // el Phone Number ID aunque el remitente siga enviando. Un visto fallido
+      // no demuestra pérdida de acceso al número; sólo un token inválido (190)
+      // justifica desconectar aquí. Los envíos conservan la política completa.
+      authorizationPolicy: 'token_only',
       phoneNumberId,
       body: {
         messaging_product: 'whatsapp',
@@ -12143,25 +12143,11 @@ function getMetaDirectReconnectMessage(error) {
     : META_DIRECT_RECONNECT_MESSAGE
 }
 
-function isMetaDirectPhoneAssetAuthorizationError(error, phoneNumberId = '') {
-  const graphCode = Number(error?.graphCode || error?.code || 0)
-  const graphSubcode = Number(error?.graphSubcode || error?.errorSubcode || 0)
-  const cleanPhoneNumberId = cleanString(phoneNumberId)
-  const text = cleanString(error?.graphMessage || error?.message)
-  if (graphCode !== 100 || graphSubcode !== 33 || !cleanPhoneNumberId || !text.includes(cleanPhoneNumberId)) {
-    return false
-  }
-  return /OBJECT WITH ID|DOES NOT EXIST|CANNOT BE LOADED|MISSING PERMISSIONS?/i.test(text)
-}
-
-function isMetaDirectAuthorizationError(error, { authorizationPolicy = 'full', phoneNumberId = '' } = {}) {
+function isMetaDirectAuthorizationError(error, { authorizationPolicy = 'full' } = {}) {
   const graphCode = Number(error?.graphCode || error?.code || 0)
   const graphSubcode = Number(error?.graphSubcode || error?.errorSubcode || 0)
   if (graphCode === 190) return true
   if (authorizationPolicy === 'token_only') return false
-  if (authorizationPolicy === 'token_or_phone_asset') {
-    return isMetaDirectPhoneAssetAuthorizationError(error, phoneNumberId)
-  }
   return isMetaDirectRegistrationError(error) || graphCode === 200 || (graphCode === 100 && graphSubcode === 33) ||
     cleanString(error?.code) === 'META_PHONE_NOT_AUTHORIZED'
 }
