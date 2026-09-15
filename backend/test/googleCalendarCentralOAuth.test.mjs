@@ -1490,6 +1490,35 @@ function mockMixedRecipientDns() {
   }))
 }
 
+test('el acuse de Google conserva microsegundos y distingue ediciones dentro del mismo milisegundo', async () => {
+  await withGoogleSafetyFixture(async ({ db, google, local, create, providerId, events }) => {
+    const appointment = await create({ googleEventId: 'precise-version', googleProviderCalendarId: providerId })
+    events.set('precise-version', { id: 'precise-version', ...google.buildGoogleEventPayload(appointment) })
+    await db.run("UPDATE appointments SET date_updated = '2030-09-01T12:00:17.436831Z' WHERE id = ?", [appointment.id])
+    const synced = await google.syncAppointmentToGoogle(appointment.id)
+    assert.equal(synced.appointment.googleSyncStatus, 'synced')
+    assert.equal(synced.appointment.dateUpdated, '2030-09-01T12:00:17.436Z')
+    assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(synced.appointment)), 'providerSyncVersion'), false)
+
+    events.set('precise-version', { ...events.get('precise-version'), summary: 'Título remoto anterior' })
+
+    const originalFetch = global.fetch
+    try {
+      global.fetch = async (url, options = {}) => {
+        const response = await originalFetch(url, options)
+        if (options.method === 'PATCH') {
+          await db.run("UPDATE appointments SET date_updated = '2030-09-01T12:00:17.436999Z', title = 'Edición concurrente' WHERE id = ?", [appointment.id])
+        }
+        return response
+      }
+      await assert.rejects(google.syncAppointmentToGoogle(appointment.id), error => error.code === 'appointment_provider_response_stale')
+      const current = await local.getLocalAppointment(appointment.id)
+      assert.equal(current.title, 'Edición concurrente')
+      assert.equal(current.googleSyncStatus, 'pending')
+    } finally { global.fetch = originalFetch }
+  })
+})
+
 test('recupera una cancelación automática histórica marcada synced y reintenta Google sin recrear la cita', async () => {
   await withGoogleSafetyFixture(async ({ db, google, local, create, calendarId, providerId, events, googleRequests }) => {
     const appointment = await create({ googleEventId: 'timeout-cancel', googleProviderCalendarId: providerId })
@@ -1499,7 +1528,7 @@ test('recupera una cancelación automática histórica marcada synced y reintent
     let failDelete = true
     try {
       await db.run(`UPDATE appointments SET status = 'cancelled', appointment_status = 'cancelled',
-        google_sync_status = 'synced' WHERE id = ?`, [appointment.id])
+        google_sync_status = 'synced', date_updated = '2030-09-01T12:00:17.436831Z' WHERE id = ?`, [appointment.id])
       await db.run(`INSERT INTO appointment_reminder_sends
         (id, reminder_id, appointment_id, status, message_type, confirmation_timeout_status)
         VALUES (?, ?, ?, 'sent', 'confirmation', 'cancelled')`, [sendId, `removed-${sendId}`, appointment.id])

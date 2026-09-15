@@ -125,6 +125,12 @@ Usa estos formatos de forma intencional:
   final si contienen fechas. Espera un refetch canónico del backend y descarta
   respuestas anteriores para evitar que la UI muestre timestamps intermedios o
   datos sin normalizar.
+- Un timestamp usado como versión para aceptar una respuesta externa conserva
+  toda la precisión de la base. PostgreSQL guarda microsegundos, mientras `Date`
+  y la representación ISO pública conservan milisegundos. Para los acuses de
+  Google usa la versión interna `providerSyncVersion` del mismo snapshot leído
+  por `getLocalAppointment()`; no trunques la columna, redondees el candado ni
+  modifiques fechas históricas para hacer coincidir la comparación.
 - Si la mutación puede detonar webhooks, espejos locales, crones inmediatos o
   cobros vencidos "hoy", espera la recarga canónica antes de cerrar el flujo o
   enseñar la tabla. El usuario debe ver la fecha final del negocio, no el estado

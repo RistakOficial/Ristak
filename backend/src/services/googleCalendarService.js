@@ -1441,7 +1441,7 @@ function googleMirrorFence(expectedAppointment = null) {
     return { sql: '', params: [] }
   }
 
-  const dateUpdated = normalizeToUtcIso(
+  const dateUpdated = expectedAppointment.providerSyncVersion || normalizeToUtcIso(
     expectedAppointment.dateUpdated || expectedAppointment.date_updated,
     'UTC'
   )

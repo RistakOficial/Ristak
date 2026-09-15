@@ -6480,6 +6480,7 @@ export async function getLocalAppointment(appointmentId) {
   const row = await db.get(`
     SELECT
       a.*,
+      CAST(a.date_updated AS TEXT) AS provider_sync_version,
       c.full_name AS contact_name,
       c.email AS contact_email,
       c.phone AS contact_phone
@@ -6491,6 +6492,10 @@ export async function getLocalAppointment(appointmentId) {
 
   if (!row) return null
   const appointment = appointmentRowToApi(row)
+  // Date/ISO de la API conserva milisegundos; PostgreSQL guarda microsegundos.
+  // El acuse del proveedor debe comparar la versión exacta del mismo snapshot,
+  // sin exponer esta metadata interna en JSON ni truncar el candado de edición.
+  Object.defineProperty(appointment, 'providerSyncVersion', { value: row.provider_sync_version })
   appointment.participants = await getAppointmentParticipants(appointment.id)
   return appointment
 }

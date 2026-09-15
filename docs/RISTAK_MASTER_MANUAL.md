@@ -5589,6 +5589,13 @@ exitosa limpia el vínculo remoto y no se repite; nunca recrea el evento ni
 borra el historial local. Las cancelaciones recibidas desde Google sin esa
 evidencia conservan su acuse e identidad remota.
 
+Los acuses de Google comparan la versión exacta `date_updated` leída como texto
+desde la misma fila de la cita, conservando los microsegundos de PostgreSQL.
+Esa versión es metadata interna no serializable; la fecha pública mantiene ISO
+UTC. Convertir primero la versión a `Date` o ISO de milisegundos produciría
+conflictos falsos y reintentos permanentes. Una edición real, incluso dentro del
+mismo milisegundo, sigue invalidando el acuse anterior.
+
 El push de confirmaciones se procesa por default al confirmar, recibir una
 respuesta no afirmativa, vencer el plazo o requerir revision. Todos esos caminos
 usan `sendAppointmentConfirmationNotification`, por lo que respetan

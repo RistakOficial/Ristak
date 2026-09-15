@@ -61,6 +61,29 @@ try {
   const repeatedMigrations = await runVersionedMigrations()
   assert.equal(repeatedMigrations?.applied, 0)
 
+  // El acuse de Google usa la versión exacta de PostgreSQL, no la fecha ISO
+  // pública (milisegundos). No debe fallar una fila sin cambios ni aceptar una
+  // edición distinta dentro del mismo milisegundo.
+  const { getLocalAppointment } = await import('../src/services/localCalendarService.js')
+  const precisionCalendarId = `precision_calendar_${process.pid}`
+  const precisionAppointmentId = `precision_appointment_${process.pid}`
+  await database.db.run('INSERT INTO calendars (id, name) VALUES (?, ?)', [precisionCalendarId, 'Calendar precision'])
+  await database.db.run(`
+    INSERT INTO appointments (id, calendar_id, title, start_time, end_time, date_updated)
+    VALUES (?, ?, 'Version precision', '2030-09-01T17:00:00Z', '2030-09-01T18:00:00Z', '2030-09-01T12:00:17.436831Z')
+  `, [precisionAppointmentId, precisionCalendarId])
+  const preciseAppointment = await getLocalAppointment(precisionAppointmentId)
+  assert.equal(preciseAppointment.dateUpdated, '2030-09-01T12:00:17.436Z')
+  assert.match(preciseAppointment.providerSyncVersion, /\.436831/)
+  assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(preciseAppointment)), 'providerSyncVersion'), false)
+  const exactVersionMatches = () => database.db.get(
+    'SELECT id FROM appointments WHERE id = ? AND date_updated = ?',
+    [precisionAppointmentId, preciseAppointment.providerSyncVersion]
+  )
+  assert.equal((await exactVersionMatches())?.id, precisionAppointmentId)
+  await database.db.run("UPDATE appointments SET date_updated = '2030-09-01T12:00:17.436999Z' WHERE id = ?", [precisionAppointmentId])
+  assert.equal(await exactVersionMatches(), null)
+
   const migrations = await database.db.get('SELECT COUNT(*) AS total FROM schema_migrations')
   assert.ok(Number(migrations?.total || 0) > 0)
 
