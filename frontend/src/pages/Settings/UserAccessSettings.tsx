@@ -18,7 +18,7 @@ import {
   Users,
   Zap
 } from 'lucide-react'
-import { Badge, Button, Card, Modal, TabList } from '@/components/common'
+import { Badge, Button, Card, Modal, SecretInput, TabList } from '@/components/common'
 import { UserNotificationPreferencesAdmin } from './UserNotificationPreferencesAdmin' // (MOB-006)
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -312,7 +312,7 @@ function getDraftPayload(draft: Draft): SaveTeamUserInput {
     email: draft.email.trim(),
     phone: draft.phone.trim(),
     role,
-    password: draft.password?.trim() || undefined,
+    password: draft.password || undefined,
     accessConfig: normalizeAccessConfig(draft.accessConfig, role)
   }
 }
@@ -497,6 +497,8 @@ export const UserAccessSettings: React.FC = () => {
   const [deleting, setDeleting] = useState(false)
   const [revokingInvitationId, setRevokingInvitationId] = useState<string | null>(null)
   const [createExpanded, setCreateExpanded] = useState(false)
+  const [createMode, setCreateMode] = useState<'direct' | 'invite'>('direct')
+  const [createPasswordVisible, setCreatePasswordVisible] = useState(false)
   const [createPreset, setCreatePreset] = useState<AccessPreset>('default')
   const [createDraft, setCreateDraft] = useState<Draft>(() => blankDraft())
   const [editDraft, setEditDraft] = useState<Draft | null>(null)
@@ -594,11 +596,16 @@ export const UserAccessSettings: React.FC = () => {
 
   const openCreate = () => {
     setCreateDraft(blankDraft())
+    setCreateMode('direct')
+    setCreatePasswordVisible(false)
     setCreatePreset('default')
     setCreateExpanded(true)
   }
 
   const closeCreate = () => {
+    if (savingCreate) return
+    setCreateDraft(blankDraft())
+    setCreatePasswordVisible(false)
     setCreateExpanded(false)
   }
 
@@ -620,26 +627,39 @@ export const UserAccessSettings: React.FC = () => {
     const payload = getDraftPayload(createDraft)
 
     if (!payload.email) {
-      showToast('warning', 'Falta correo', 'Necesitamos un correo para enviar la invitación segura.')
+      showToast('warning', 'Falta correo', 'Agrega el correo que la persona usará para iniciar sesión. No necesitas conectarlo a Ristak.')
+      return
+    }
+
+    if (createMode === 'direct' && !payload.password) {
+      showToast('warning', 'Falta contraseña', 'Asigna una contraseña para activar el acceso.')
       return
     }
 
     try {
       setSavingCreate(true)
-      const response = await userAccessService.inviteUser({
-        firstName: payload.firstName,
-        lastName: payload.lastName,
-        email: payload.email,
-        phone: payload.phone,
-        role: payload.role,
-        accessConfig: payload.accessConfig
-      })
-      setInvitations((current) => [response.invitation, ...current])
+      if (createMode === 'direct') {
+        const created = await userAccessService.createUser(payload)
+        setMembers((current) => [created, ...current])
+        setSelectedId(created.id)
+        showToast('success', 'Usuario creado', 'Ya puede entrar con su correo y la contraseña asignada. Compártele los datos de acceso por un medio privado.')
+      } else {
+        const response = await userAccessService.inviteUser({
+          firstName: payload.firstName,
+          lastName: payload.lastName,
+          email: payload.email,
+          phone: payload.phone,
+          role: payload.role,
+          accessConfig: payload.accessConfig
+        })
+        setInvitations((current) => [response.invitation, ...current])
+        showToast('success', 'Invitación enviada', 'La persona recibirá un enlace privado para crear su contraseña y activar el acceso.')
+      }
       setCreateDraft(blankDraft())
+      setCreatePasswordVisible(false)
       setCreateExpanded(false)
-      showToast('success', 'Invitación enviada', 'La persona recibirá un enlace privado para crear su contraseña y activar el acceso.')
     } catch (error: any) {
-      showToast('error', 'No se envió la invitación', error?.message || 'Revisa el correo y la conexión de email.')
+      showToast('error', createMode === 'direct' ? 'No se creó el usuario' : 'No se envió la invitación', error?.message || 'Revisa los datos e intenta otra vez.')
     } finally {
       setSavingCreate(false)
     }
@@ -650,7 +670,7 @@ export const UserAccessSettings: React.FC = () => {
     const payload = getDraftPayload(editDraft)
 
     if (!payload.email && !payload.phone) {
-      showToast('warning', 'Falta contacto', 'Debe quedar correo o teléfono.')
+      showToast('warning', 'Faltan datos de acceso', 'Debe quedar correo o teléfono.')
       return
     }
 
@@ -759,11 +779,11 @@ export const UserAccessSettings: React.FC = () => {
             <div className={styles.addRowText}>
               <span className={styles.sectionTitle}>Nuevo acceso</span>
               <span className={styles.sectionDescription}>
-                Envía una invitación segura y define desde ahora su rol y permisos.
+                Crea un usuario con su rol y permisos. No necesita ser contacto ni tener una cuenta previa de Ristak.
               </span>
             </div>
             <Button type="button" variant="primary" onClick={openCreate} leftIcon={<UserPlus size={16} />}>
-              Invitar persona
+              Agregar usuario
             </Button>
           </div>
         </section>
@@ -771,17 +791,34 @@ export const UserAccessSettings: React.FC = () => {
         <Modal
           isOpen={createExpanded}
           onClose={closeCreate}
-          title="Invitar persona"
+          title="Agregar usuario"
           type="custom"
           size="lg"
           showCloseButton
         >
           <form className={styles.modalForm} onSubmit={handleCreate}>
+            <TabList
+              tabs={[
+                { value: 'direct', label: 'Crear usuario' },
+                { value: 'invite', label: 'Invitar por correo' }
+              ]}
+              activeTab={createMode}
+              onTabChange={(value) => {
+                if (savingCreate || value === createMode) return
+                setCreateMode(value === 'invite' ? 'invite' : 'direct')
+                setCreateDraft((current) => ({ ...current, password: '' }))
+                setCreatePasswordVisible(false)
+              }}
+            />
             <div className={styles.formBlock}>
               <div className={styles.blockHeader}>
                 <div>
                   <h4 className={styles.blockTitle}>1 · Datos de la persona</h4>
-                  <p className={styles.blockDescription}>Le enviaremos un enlace privado para que cree su propia contraseña.</p>
+                  <p className={styles.blockDescription}>
+                    {createMode === 'direct'
+                      ? 'Asigna una contraseña y activa su acceso al guardar. No necesitas conectar el correo del negocio.'
+                      : 'Le enviaremos un enlace privado para crear su contraseña. Esta opción requiere correo saliente conectado en Configuración > Correos.'}
+                  </p>
                 </div>
               </div>
 
@@ -812,6 +849,7 @@ export const UserAccessSettings: React.FC = () => {
                     id="access-email"
                     className={styles.input}
                     type="email"
+                    required
                     value={createDraft.email}
                     onChange={(event) => setCreateDraft((current) => ({ ...current, email: event.target.value }))}
                     autoComplete="email"
@@ -819,7 +857,7 @@ export const UserAccessSettings: React.FC = () => {
                   />
                 </div>
                 <div className={styles.field}>
-                  <label className={styles.label} htmlFor="access-phone">Teléfono</label>
+                  <label className={styles.label} htmlFor="access-phone">Teléfono (opcional)</label>
                   <input
                     id="access-phone"
                     className={styles.input}
@@ -830,9 +868,33 @@ export const UserAccessSettings: React.FC = () => {
                     placeholder="+52 656 000 0000"
                   />
                 </div>
+                {createMode === 'direct' && (
+                  <div className={`${styles.field} ${styles.fieldWide}`}>
+                    <label className={styles.label} htmlFor="access-password">Contraseña de acceso</label>
+                    <SecretInput
+                      id="access-password"
+                      value={createDraft.password || ''}
+                      onChange={(password) => setCreateDraft((current) => ({ ...current, password }))}
+                      visible={createPasswordVisible}
+                      onVisibleChange={setCreatePasswordVisible}
+                      revealLabel="Mostrar contraseña"
+                      hideLabel="Ocultar contraseña"
+                      autoComplete="new-password"
+                      minLength={10}
+                      required
+                      disabled={savingCreate}
+                      aria-describedby="access-password-help"
+                    />
+                    <p id="access-password-help" className={styles.helperText}>
+                      Usa al menos 10 caracteres con mayúsculas, minúsculas y números. La persona podrá cambiarla desde su perfil.
+                    </p>
+                  </div>
+                )}
                 <div className={`${styles.field} ${styles.fieldWide}`}>
                   <p className={styles.helperText}>
-                    El correo es obligatorio. Ristak no te mostrará ni te pedirá la contraseña de la persona invitada.
+                    {createMode === 'direct'
+                      ? 'El correo identifica al usuario al iniciar sesión. No se enviará una invitación ni se creará un contacto del CRM.'
+                      : 'No necesita ser contacto ni tener una cuenta previa. Si no tienes correo conectado, elige Crear usuario.'}
                   </p>
                 </div>
               </div>
@@ -892,7 +954,7 @@ export const UserAccessSettings: React.FC = () => {
                 Cancelar
               </Button>
               <Button type="submit" variant="primary" loading={savingCreate} leftIcon={<UserPlus size={16} />}>
-                Enviar invitación
+                {createMode === 'direct' ? 'Crear usuario' : 'Enviar invitación'}
               </Button>
             </div>
           </form>
@@ -1052,7 +1114,7 @@ export const UserAccessSettings: React.FC = () => {
                     <div className={styles.blockHeader}>
                       <div>
                         <h4 className={styles.blockTitle}>Datos básicos</h4>
-                        <p className={styles.blockDescription}>Nombre, contacto y contraseña opcional.</p>
+                        <p className={styles.blockDescription}>Nombre, correo, teléfono y contraseña opcional.</p>
                       </div>
                     </div>
 
@@ -1124,7 +1186,7 @@ export const UserAccessSettings: React.FC = () => {
 
                   <div className={styles.adminNote}>
                     {editDraft.email ? <Mail size={16} /> : <Phone size={16} />}
-                    <span>La persona puede iniciar sesión con su correo o teléfono y la contraseña asignada.</span>
+                    <span>La persona puede iniciar sesión con su correo y la contraseña asignada.</span>
                   </div>
 
                   <div className={styles.editorBlock}>

@@ -3,6 +3,8 @@ import { describe, it } from 'node:test'
 
 import { db, databaseReady } from '../src/config/database.js'
 import { createUser, updateUser } from '../src/controllers/userAccessController.js'
+import { login } from '../src/controllers/authController.js'
+import { verifyPassword } from '../src/utils/auth.js'
 import {
   getEffectiveAccessConfig,
   hasUserAccess,
@@ -177,5 +179,65 @@ describe('user access config', () => {
       ])
       restoreLicenseEnv()
     }
+  })
+
+  it('creates a usable login without SMTP, a CRM contact or a previous Ristak account', async () => {
+    await databaseReady
+    const restoreLicenseEnv = withoutLicenseEnforcement()
+    const email = `independent-user-${Date.now()}@example.com`
+    // Deliberately preserve spaces and more than 120 characters end to end.
+    const password = `  SecureAccess123${'x'.repeat(120)}  `
+    try {
+      assert.equal(await db.get('SELECT id FROM contacts WHERE email = ?', [email]), null)
+      assert.equal(await db.get('SELECT id FROM users WHERE email = ?', [email]), null)
+      assert.equal(await db.get("SELECT config_value FROM app_config WHERE config_key = 'email_smtp_config'"), null)
+
+      const res = createMockResponse()
+      await createUser({ body: {
+        firstName: 'Equipo', email: ` ${email.toUpperCase()} `, password,
+        role: 'employee', accessConfig: { contacts: 'read', settings_users: 'write' }
+      } }, res)
+      assert.equal(res.statusCode, 201)
+      assert.equal(res.payload.user.email, email)
+      assert.equal(res.payload.user.isActive, true)
+      assert.equal(res.payload.user.password, undefined)
+      assert.equal(res.payload.user.password_hash, undefined)
+      assert.equal(res.payload.user.accessConfig.settings_users, 'none')
+      assert.equal(await db.get('SELECT id FROM contacts WHERE email = ?', [email]), null)
+
+      const stored = await db.get('SELECT password_hash FROM users WHERE email = ?', [email])
+      assert.notEqual(stored.password_hash, password)
+      assert.equal(verifyPassword(password, stored.password_hash), true)
+      const loginRes = createMockResponse()
+      await login({ body: { email, password } }, loginRes)
+      assert.equal(loginRes.statusCode, 200)
+      assert.equal(loginRes.payload.success, true)
+      assert.equal(loginRes.payload.user.role, 'employee')
+      assert.ok(loginRes.payload.token)
+
+      const duplicate = createMockResponse()
+      await createUser({ body: { email, password } }, duplicate)
+      assert.equal(duplicate.statusCode, 400)
+      assert.equal((await db.get('SELECT COUNT(*) AS count FROM users WHERE email = ?', [email])).count, 1)
+    } finally {
+      await db.run('DELETE FROM users WHERE email = ?', [email])
+      restoreLicenseEnv()
+    }
+  })
+
+  it('rejects phone-only or malformed login emails and weak passwords before creating access', async () => {
+    await databaseReady
+    const before = await db.get('SELECT COUNT(*) AS count FROM users')
+    for (const body of [
+      { phone: '+525555123456', password: 'SecureAccess123' },
+      { email: 'not-an-email', password: 'SecureAccess123' },
+      { email: 'weak-access@example.com', password: '1234' }
+    ]) {
+      const res = createMockResponse()
+      await createUser({ body }, res)
+      assert.equal(res.statusCode, 400)
+      assert.equal(res.payload.success, false)
+    }
+    assert.equal((await db.get('SELECT COUNT(*) AS count FROM users')).count, before.count)
   })
 })

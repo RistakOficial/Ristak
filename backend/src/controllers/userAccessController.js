@@ -43,7 +43,14 @@ function normalizeMemberInput(input = {}, { requirePassword = false, requireCont
   const rawPhone = cleanText(input.phone, 40)
   const phone = rawPhone ? normalizePhoneForStorage(rawPhone) : ''
   const role = normalizeUserRole(input.role)
-  const password = cleanText(input.password, 120)
+  // Las credenciales deben conservar exactamente lo que la persona escribió.
+  const password = typeof input.password === 'string' ? input.password : ''
+
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    const error = new Error('Ingresa un correo válido para iniciar sesión.')
+    error.status = 400
+    throw error
+  }
 
   if (requireContact) {
     assertEmailOrPhone(email, phone)
@@ -110,7 +117,7 @@ async function assertUniqueMember({ email, phone, username }, ignoredUserId = nu
   const existing = await db.get(sql, params)
   if (!existing) return
 
-  const error = new Error('Ya existe una persona con ese correo o teléfono.')
+  const error = new Error('Ya existe un usuario con ese correo o teléfono.')
   error.status = 400
   throw error
 }
@@ -519,7 +526,13 @@ export async function acceptUserInvitation(req, res) {
 export async function createUser(req, res) {
   try {
     const member = normalizeMemberInput(req.body, { requirePassword: true })
-    const username = member.email || member.phone
+    // El login usa correo. Aceptar sólo un teléfono creaba accesos inutilizables.
+    if (!member.email) {
+      const error = new Error('Agrega el correo que la persona usará para iniciar sesión. No necesitas conectar una cuenta de correo.')
+      error.status = 400
+      throw error
+    }
+    const username = member.email
 
     await assertUniqueMember({ email: member.email, phone: member.phone, username })
 

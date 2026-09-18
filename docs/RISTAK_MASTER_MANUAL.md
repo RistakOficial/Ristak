@@ -2054,6 +2054,24 @@ los cursores intermedios sin volver esas consultas a offset.
 
 ## Permisos, licencia y acceso
 
+En **Configuración > Usuarios > Agregar usuario**, el alta predeterminada es
+**Crear usuario**: el administrador indica correo de acceso, contraseña, rol y
+permisos. Al guardar mediante `POST /api/auth/users`, el usuario queda activo y
+puede entrar inmediatamente a esa instalación. No requiere un contacto del CRM,
+una cuenta previa en el portal central ni una integración de correo conectada;
+tampoco crea un contacto ni envía mensajes. El correo es el identificador del
+login y debe ser válido; el teléfono es opcional y no sustituye al correo.
+La contraseña conserva exactamente sus caracteres y se guarda únicamente como
+hash en `users.password_hash`, con la política de seguridad existente. El
+administrador comparte las credenciales por un medio privado y la persona puede
+cambiar su contraseña desde el perfil. No se agregan secrets de arranque.
+
+**Invitar por correo** sigue siendo una alternativa: necesita correo saliente
+conectado en **Configuración > Correos** y activa el acceso cuando la persona
+acepta el enlace y elige su contraseña. Si no hay correo conectado, se usa
+**Crear usuario**. Ninguna de las dos opciones exige ser contacto del CRM; ambas
+conservan el control administrativo, los roles y los permisos del negocio.
+
 Hay tres capas distintas:
 
 1. Auth: el usuario debe tener sesion valida.
@@ -10862,7 +10880,7 @@ preferencias y lectura de chat; suscripciones y decisiones sobre comprobantes;
 recordatorios de citas y sincronización de Google Calendar; carpetas, catálogos y
 pruebas de automatizaciones; submissions y video analytics de Sites; carpetas y
 assets de Media; tracking; configuración de cuenta/notificaciones y administración
-seleccionada de usuarios. Las altas nuevas usan invitaciones sin contraseña:
+seleccionada de usuarios. Las altas mediante MCP usan invitaciones sin contraseña:
 Ristak envía por el correo conectado un enlace de 48 horas, la persona crea su
 propia contraseña y el cliente MCP nunca recibe token, enlace ni password. El
 administrador puede listar o revocar pendientes desde Ristak o mediante tools
