@@ -39,10 +39,10 @@ import {
   PageHeader,
   PaymentLinkReadyPanel,
   PaymentPlatformLogo,
-  TabList,
   Table,
   TableSelectionToolbar
 } from '@/components/common'
+import { PaymentTaxFields } from '@/components/common/PaymentTaxFields/PaymentTaxFields'
 import { KpiCard } from '@/components/common/KpiCard/KpiCard'
 import type { BadgeVariant, Column, PaymentLinkReadyData, PaymentPlatformLogoId } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -52,12 +52,7 @@ import { useAccountCurrency } from '@/hooks'
 import type { Contact } from '@/types'
 import { formatCurrency } from '@/utils/format'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
-import {
-  calculateConfiguredTax,
-  DEFAULT_CHARGE_TAX_CALCULATION_MODE,
-  getConfiguredTaxName,
-  getConfiguredTaxRate
-} from '@/utils/paymentTax'
+import { DEFAULT_CHARGE_TAX_CALCULATION_MODE } from '@/utils/paymentTax'
 import { toDateTimeLocalInputValue, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import { subscribeToPaymentLiveEvents, type PaymentLiveEvent } from '@/services/paymentLiveEventsService'
@@ -1102,18 +1097,6 @@ export const PaymentSubscriptions: React.FC = () => {
       calculationMode: editingSubscription.tax.calculationMode
     }
   }, [editingSubscription?.tax, paymentTaxes])
-  const configuredSubscriptionAmount = Number(form.amount) || 0
-  const subscriptionTaxBreakdown = calculateConfiguredTax(
-    configuredSubscriptionAmount,
-    formTaxSettings,
-    form.applyTax,
-    form.taxCalculationMode
-  )
-  const subscriptionTaxName = getConfiguredTaxName(formTaxSettings)
-  const subscriptionTaxRate = getConfiguredTaxRate(formTaxSettings)
-  const subscriptionTaxRateLabel = formTaxSettings.rateType === 'percentage'
-    ? `${subscriptionTaxRate}%`
-    : formatCurrency(subscriptionTaxRate, accountCurrency)
 
   const applyPaymentMethod = (option: { value: SubscriptionPaymentMethod; provider: PaymentGatewayProvider }) => {
     setForm((current) => ({
@@ -2223,45 +2206,16 @@ export const PaymentSubscriptions: React.FC = () => {
                 />
               </div>
 
-              {formTaxSettings.enabled && (
-                <>
-                  <div className={`${styles.formGroup} ${styles.fullWidth}`}>
-                    <label>{subscriptionTaxName}</label>
-                    <TabList
-                      tabs={[
-                        { value: 'sin', label: `Sin ${subscriptionTaxName}` },
-                        { value: 'con', label: `Aplicar ${subscriptionTaxRateLabel}` }
-                      ]}
-                      activeTab={form.applyTax ? 'con' : 'sin'}
-                      onTabChange={(value) => setForm((current) => ({ ...current, applyTax: value === 'con' }))}
-                      variant="compact"
-                      fullWidth
-                    />
-                  </div>
-
-                  {form.applyTax && (
-                    <div className={`${styles.formGroup} ${styles.fullWidth}`}>
-                      <label>Cálculo del impuesto</label>
-                      <TabList
-                        tabs={[
-                          { value: 'exclusive', label: 'Se suma al total' },
-                          { value: 'inclusive', label: 'Ya incluido' }
-                        ]}
-                        activeTab={form.taxCalculationMode}
-                        onTabChange={(value) => setForm((current) => ({
-                          ...current,
-                          taxCalculationMode: value as PaymentTaxSettings['calculationMode']
-                        }))}
-                        variant="compact"
-                        fullWidth
-                      />
-                      <p className={styles.formHint}>
-                        {subscriptionTaxName}: {formatCurrency(subscriptionTaxBreakdown.taxAmount, accountCurrency)} · Total recurrente: {formatCurrency(subscriptionTaxBreakdown.totalAmount, accountCurrency)}
-                      </p>
-                    </div>
-                  )}
-                </>
-              )}
+              <PaymentTaxFields
+                className={styles.fullWidth}
+                taxes={formTaxSettings}
+                amount={Number(form.amount) || 0}
+                currency={accountCurrency}
+                applyTax={form.applyTax}
+                calculationMode={form.taxCalculationMode}
+                onApplyTaxChange={(value) => setForm((current) => ({ ...current, applyTax: value }))}
+                onCalculationModeChange={(value) => setForm((current) => ({ ...current, taxCalculationMode: value }))}
+              />
 
               <div className={styles.formGroup}>
                 <label>Frecuencia</label>

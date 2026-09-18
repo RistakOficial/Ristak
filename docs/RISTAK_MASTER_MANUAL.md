@@ -4852,6 +4852,11 @@ productos cobrados desde el modal, planes y suscripciones en escritorio y móvil
 El usuario debe elegir **Con impuesto** en cada alta. El modo de cálculo inicial
 sigue siendo **Se suma al total**; **Ya incluido** conserva el importe capturado.
 Una recarga de configuración nunca debe activar por sí sola la selección.
+El modal compartido `CreateSubscriptionModal` (Pagos y Chat) permite elegir el
+impuesto manualmente y envía `applyTax` y `taxCalculationMode` de forma explícita.
+Al cerrarlo y abrir una suscripción nueva, vuelve a **Sin impuesto**. Su selector
+`PaymentTaxFields` también se reutiliza al editar suscripciones, donde conserva
+la elección fiscal guardada y muestra el total recurrente antes de guardar.
 
 Las altas por API/MCP tampoco aplican impuestos por omisión. Pasarelas y
 suscripciones sólo calculan un impuesto nuevo con `applyTax=true`; los flujos

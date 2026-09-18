@@ -7,6 +7,7 @@ import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { conektaPaymentsService, type ConektaSavedPaymentSource } from '@/services/conektaPaymentsService'
 import { stripePaymentsService, type StripeSavedPaymentMethod } from '@/services/stripePaymentsService'
+import { defaultPaymentSettings, paymentSettingsService, type PaymentTaxSettings } from '@/services/paymentSettingsService'
 import {
   subscriptionsService,
   type PaymentSubscription,
@@ -15,6 +16,7 @@ import {
 } from '@/services/subscriptionsService'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { formatCurrency } from '@/utils/format'
+import { DEFAULT_CHARGE_TAX_CALCULATION_MODE } from '@/utils/paymentTax'
 import { todayDateOnlyInTimezone } from '@/utils/timezone'
 import { Button } from '../Button'
 import { ContactSearchInput, type ContactSearchInputContact } from '../ContactSearchInput/ContactSearchInput'
@@ -24,6 +26,7 @@ import { Modal } from '../Modal'
 import { NumberInput } from '../NumberInput'
 import { PaymentLinkReadyPanel, type PaymentLinkReadyData } from '../PaymentLinkReadyPanel'
 import { PaymentPlatformLogo, type PaymentPlatformLogoId } from '../PaymentPlatformLogo'
+import { PaymentTaxFields } from '../PaymentTaxFields/PaymentTaxFields'
 import styles from './CreateSubscriptionModal.module.css'
 
 type SubscriptionProvider = Exclude<PaymentGatewayProvider, 'clip'>
@@ -50,6 +53,8 @@ interface SubscriptionDraft {
   startMode: SubscriptionStartMode
   paymentMethod: SubscriptionPaymentMethod
   paymentProvider: SubscriptionProvider
+  applyTax: boolean
+  taxCalculationMode: PaymentTaxSettings['calculationMode']
 }
 
 export interface CreateSubscriptionModalProps {
@@ -127,7 +132,9 @@ function createDraft(timezone: string, providers: SubscriptionProvider[]): Subsc
     durationType: 'continuous',
     startMode: '',
     paymentMethod,
-    paymentProvider: provider
+    paymentProvider: provider,
+    applyTax: false,
+    taxCalculationMode: DEFAULT_CHARGE_TAX_CALCULATION_MODE
   }
 }
 
@@ -244,6 +251,7 @@ export function CreateSubscriptionModal({
   const [step, setStep] = useState<SubscriptionStep>('details')
   const [selectedContact, setSelectedContact] = useState<ContactSearchInputContact | null>(null)
   const [draft, setDraft] = useState<SubscriptionDraft>(() => createDraft(timezone, subscriptionProviders))
+  const [paymentTaxes, setPaymentTaxes] = useState<PaymentTaxSettings>(defaultPaymentSettings.taxes)
   const [saving, setSaving] = useState(false)
   const [loadingSavedCards, setLoadingSavedCards] = useState(false)
   const [stripeCards, setStripeCards] = useState<StripeSavedPaymentMethod[]>([])
@@ -279,6 +287,25 @@ export function CreateSubscriptionModal({
     setSelectedStripeCardId('')
     setSelectedConektaCardId('')
   }, [initialContact?.id, isOpen, lockInitialContact, providerKey, timezone])
+
+  useEffect(() => {
+    if (!isOpen) return
+    const controller = new AbortController()
+    setPaymentTaxes(defaultPaymentSettings.taxes)
+
+    paymentSettingsService.getSettings(controller.signal).then((settings) => {
+      if (!controller.signal.aborted) {
+        // Cargar la regla de la cuenta nunca activa el impuesto del cobro.
+        setPaymentTaxes(settings.taxes || defaultPaymentSettings.taxes)
+      }
+    }).catch(() => {
+      if (!controller.signal.aborted) {
+        showToast('warning', 'No se cargaron los impuestos', 'La suscripción sigue sin impuesto. Vuelve a abrir el formulario si necesitas aplicarlo.')
+      }
+    })
+
+    return () => controller.abort()
+  }, [isOpen, showToast])
 
   useEffect(() => {
     if (!isOpen || !resolvedContact?.id || (!subscriptionProviders.includes('stripe') && !subscriptionProviders.includes('conekta'))) {
@@ -425,6 +452,8 @@ export function CreateSubscriptionModal({
       status: startsByLink ? 'incomplete' : 'active',
       amount,
       currency: accountCurrency,
+      applyTax: Boolean(paymentTaxes.enabled && draft.applyTax),
+      taxCalculationMode: draft.taxCalculationMode,
       intervalType: draft.intervalType,
       intervalCount,
       startDate: draft.startDate,
@@ -662,6 +691,16 @@ export function CreateSubscriptionModal({
                   />
                 </div>
               ) : null}
+              <PaymentTaxFields
+                className={styles.fullWidth}
+                taxes={paymentTaxes}
+                amount={amount}
+                currency={accountCurrency}
+                applyTax={draft.applyTax}
+                calculationMode={draft.taxCalculationMode}
+                onApplyTaxChange={(value) => patchDraft('applyTax', value)}
+                onCalculationModeChange={(value) => patchDraft('taxCalculationMode', value)}
+              />
             </div>
           ) : step === 'start_method' ? (
             <div className={styles.paymentOptions}>
