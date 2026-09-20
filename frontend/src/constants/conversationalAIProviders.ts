@@ -122,6 +122,31 @@ export function getConversationalModelOptions(providerId?: string | null) {
   return getConversationalAIProviderOption(providerId).modelGroups.flatMap((group) => group.options)
 }
 
+export function getAvailableConversationalModelGroups(
+  providerId: ConversationalAIProviderId,
+  catalog: { models: string[]; refreshedAt: number | null } | null | undefined,
+  selectedModel: string
+): ConversationalAIModelGroup[] {
+  const provider = getConversationalAIProviderOption(providerId)
+  if (providerId !== 'openai') return provider.modelGroups
+  const known = new Map(aiModelOptions.map((option) => [option.value, option]))
+  const groups = catalog?.refreshedAt != null
+    ? [{
+        label: 'Disponibles en tu conexión de OpenAI',
+        options: catalog.models.map((model) => known.get(model) || {
+          value: model, label: model, description: 'Modelo descubierto en tu conexión de OpenAI.'
+        })
+      }]
+    : provider.modelGroups
+  if (!groups.some((group) => group.options.some((option) => option.value === selectedModel))) {
+    return [{
+      label: 'Modelo guardado',
+      options: [known.get(selectedModel) || { value: selectedModel, label: selectedModel, description: 'Modelo seleccionado para este agente.' }]
+    }, ...groups]
+  }
+  return groups
+}
+
 export function getDefaultConversationalModel(providerId?: string | null) {
   return getConversationalAIProviderOption(providerId).defaultModel
 }
@@ -138,7 +163,7 @@ export function getKnownConversationalModel(providerId?: string | null, model?: 
 export function getConversationalModelLabel(providerId?: string | null, model?: string | null) {
   const provider = getKnownConversationalAIProvider(providerId)
   if (provider === 'openai') {
-    return aiModelOptions.find((option) => option.value === getKnownAIModel(model))?.label || DEFAULT_AI_MODEL
+    return aiModelOptions.find((option) => option.value === getKnownAIModel(model))?.label || getKnownAIModel(model)
   }
   const knownModel = getKnownConversationalModel(provider, model)
   return getConversationalModelOptions(provider).find((option) => option.value === knownModel)?.label || knownModel

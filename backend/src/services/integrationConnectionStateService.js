@@ -57,6 +57,11 @@ export async function isGoogleCalendarConnected() {
   return Boolean(config?.connectionMode === 'oauth' && cleanString(config.refreshTokenEncrypted))
 }
 
+export async function isOpenAIConnected() {
+  const { getOpenAIApiKey } = await import('./aiRuntimeService.js')
+  return Boolean(await getOpenAIApiKey().catch(() => null))
+}
+
 export async function isHighLevelConnected() {
   const row = await db.get(
     `SELECT location_id, api_token

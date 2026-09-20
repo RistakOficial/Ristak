@@ -7,6 +7,7 @@ import {
   isMetaAdsConnected,
   isMercadoPagoConnected,
   isMetaConnected,
+  isOpenAIConnected,
   isMetaSocialConnected,
   isRebillConnected,
   isStripeConnected,
@@ -31,6 +32,7 @@ import {
   stopMetaSocialRefreshCron
 } from './metaSync.cron.js'
 import { startMetaVersionCron, stopMetaVersionCron } from './metaVersionCron.js'
+import { startOpenAIModelCatalogCron, stopOpenAIModelCatalogCron } from './openAIModelCatalog.cron.js'
 import { startRebillPaymentPlansCron, stopRebillPaymentPlansCron } from './rebillPaymentPlans.cron.js'
 import { startStripePaymentPlansCron, stopStripePaymentPlansCron } from './stripePaymentPlans.cron.js'
 import { startWhatsAppApiHistoryBackfillCron, stopWhatsAppApiHistoryBackfillCron } from './whatsappApiHistoryBackfill.cron.js'
@@ -47,6 +49,15 @@ let registered = false
 export function registerIntegrationCrons() {
   if (registered) return
   registered = true
+
+  registerIntegrationCron({
+    name: 'openai-model-catalog',
+    label: 'OpenAI modelos',
+    provider: 'openai',
+    isEnabled: isOpenAIConnected,
+    start: startOpenAIModelCatalogCron,
+    stop: stopOpenAIModelCatalogCron
+  })
 
   registerIntegrationCron({
     name: 'google-calendar-sync',

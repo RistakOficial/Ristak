@@ -74,7 +74,6 @@ const REQUIRED_DATA_FIELDS = new Set([
   'custom'
 ])
 const REQUIRED_DATA_LEVELS = new Set(['required', 'optional', 'conditional'])
-const REQUIRED_DATA_SCOPES = new Set(['any_action', 'appointment', 'payment'])
 const REQUIRED_DATA_CONDITION_FACT_SCOPES = new Map([
   ['appointment.primary_attendee_is_different', 'appointment'],
   ['appointment.has_guests', 'appointment'],
@@ -303,7 +302,7 @@ function normalizeRequirementField(input) {
   const field = cleanId(raw.field || raw.id, 80)
   if (!REQUIRED_DATA_FIELDS.has(field)) return null
   let level = REQUIRED_DATA_LEVELS.has(raw.level) ? raw.level : 'required'
-  let scope = REQUIRED_DATA_SCOPES.has(raw.scope) ? raw.scope : 'any_action'
+  let scope = 'any_action'
   const label = field === 'custom' ? cleanText(raw.label, 120) : ''
   if (field === 'custom' && !label) return null
   const rawCondition = raw.condition && typeof raw.condition === 'object' && !Array.isArray(raw.condition)
@@ -318,7 +317,7 @@ function normalizeRequirementField(input) {
   // implícito. Sólo los hechos estructurados que el servidor puede comprobar
   // mantienen el nivel condicional.
   if (level === 'conditional' && !condition) level = 'optional'
-  if (condition) scope = conditionScope
+  if (level === 'conditional' && condition) scope = conditionScope
   return {
     field,
     level,
@@ -333,12 +332,18 @@ function normalizeDataRequirements(input = {}) {
   const updateContact = raw.updateContact && typeof raw.updateContact === 'object' ? raw.updateContact : {}
   const participants = raw.participants && typeof raw.participants === 'object' ? raw.participants : {}
   const fields = []
-  const seen = new Set()
+  const seen = new Map()
   for (const source of Array.isArray(raw.fields) ? raw.fields : []) {
     const field = normalizeRequirementField(source)
     const key = field ? `${field.field}:${field.label || ''}:${field.scope}` : ''
-    if (!field || seen.has(key)) continue
-    seen.add(key)
+    if (!field) continue
+    if (seen.has(key)) {
+      // Two legacy action scopes can collapse to one field. Never let an
+      // optional copy weaken an existing required copy during that migration.
+      if (field.level === 'required') fields[seen.get(key)] = field
+      continue
+    }
+    seen.set(key, fields.length)
     fields.push(field)
     if (fields.length >= 20) break
   }

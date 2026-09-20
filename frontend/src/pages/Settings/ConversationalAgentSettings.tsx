@@ -16,6 +16,7 @@ import {
 } from '@/components/phone/PhoneChatPreview'
 import {
   conversationalAIProviderOptions,
+  getAvailableConversationalModelGroups,
   getConversationalAIProviderOption,
   getConversationalModelLabel,
   getDefaultConversationalModel,
@@ -1286,7 +1287,6 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
   onChange,
   onFlushSave
 }) => {
-  const { showToast } = useNotification()
   const { labels } = useLabels()
   const customersLowerLabel = formatCrmLabelLower(labels.customers, DEFAULT_CRM_LABELS.customers)
   const capabilities = agent.capabilitiesConfig || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG
@@ -1314,28 +1314,20 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
     void onFlushSave().catch(() => undefined)
   }
 
-  const updateCapability = (next: ConversationalCapabilityItem, { pause = true } = {}) => {
+  const updateCapability = (next: ConversationalCapabilityItem) => {
     const exists = capabilities.items.some((item) => item.id === next.id)
     const items = exists
       ? capabilities.items.map((item) => (item.id === next.id ? next : item))
       : [...capabilities.items, next]
     onChange({
-      capabilitiesConfig: { ...capabilities, schemaVersion: 3, items },
-      ...(pause && agent.enabled ? { enabled: false } : {})
+      capabilitiesConfig: { ...capabilities, schemaVersion: 3, items }
     })
-    if (pause && agent.enabled) {
-      showToast('info', 'Agente en pausa', 'Configura y prueba la nueva capacidad antes de volver a publicarlo.')
-    }
   }
 
-  const updateCapabilitiesConfig = (patch: Partial<ConversationalCapabilitiesConfig>, { pause = true } = {}) => {
+  const updateCapabilitiesConfig = (patch: Partial<ConversationalCapabilitiesConfig>) => {
     onChange({
-      capabilitiesConfig: { ...capabilities, ...patch, schemaVersion: 3 },
-      ...(pause && agent.enabled ? { enabled: false } : {})
+      capabilitiesConfig: { ...capabilities, ...patch, schemaVersion: 3 }
     })
-    if (pause && agent.enabled) {
-      showToast('info', 'Agente en pausa', 'Guarda y prueba esta configuración antes de volver a publicarlo.')
-    }
   }
 
   const toggleCapability = (id: ConversationalCapabilityId, enabled: boolean) => {
@@ -1343,7 +1335,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
     const next = enabled
       ? buildNativeCapabilityFromAgent(agent, id, calendars, accountCurrency, canUsePaymentLinks)
       : ({ ...(current || buildNativeCapabilityFromAgent(agent, id, calendars, accountCurrency, canUsePaymentLinks)), enabled: false } as ConversationalCapabilityItem)
-    updateCapability(next, { pause: true })
+    updateCapability(next)
   }
 
   const scheduleCapability = getNativeCapability(capabilities, 'schedule_appointment')
@@ -1506,7 +1498,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
               onChange={(enabled) => updateCapability({
                 ...scheduleCapability,
                 testMode: { ...scheduleCapability.testMode, enabled, cleanupAfterMinutes: 5 }
-              }, { pause: false })}
+              })}
               aria-label="Activar modo test para citas"
             />
           </div>
@@ -1553,7 +1545,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                 onChange={(enabled) => updateCapability({
                   ...paymentCapability,
                   testMode: { ...paymentCapability.testMode, enabled, cleanupAfterMinutes: 5 }
-                }, { pause: false })}
+                })}
                 aria-label="Activar modo test para pagos"
               />
             </div>
@@ -2310,7 +2302,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
               <span className={styles.nativeCapabilityIcon}><UserCheck size={18} /></span>
               <div>
                 <strong>Datos requeridos</strong>
-                <span>Elige exactamente qué información puede pedir antes de agendar o cobrar.</span>
+                <span>Los datos obligatorios se piden antes de completar cualquiera de las capacidades activas: agendar, cobrar, mandar un enlace o pasar a una persona.</span>
               </div>
               <Badge variant={dataRequirements.enabled ? 'info' : 'neutral'}>
                 {dataRequirements.fields.length + dataRequirements.participants.guestFields.length || 'Ninguno'}
@@ -2337,7 +2329,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                         onChange={(event) => {
                           const level = event.target.value as ConversationalRequiredDataItem['level']
                           if (level !== 'conditional') {
-                            updateRequiredDataItem(option.field, { level, condition: undefined })
+                            updateRequiredDataItem(option.field, { level, scope: 'any_action', condition: undefined })
                             return
                           }
                           const selected = requiredDataConditionOptions.find((item) => item.scope === requirement.scope) || requiredDataConditionOptions[0]
@@ -2354,18 +2346,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                         <option value="optional">Opcional</option>
                         <option value="conditional">Condicional</option>
                       </CustomSelect>
-                      {requirement.level !== 'conditional' ? (
-                        <CustomSelect
-                          value={requirement.scope}
-                          onChange={(event) => updateRequiredDataItem(option.field, { scope: event.target.value as ConversationalRequiredDataItem['scope'] })}
-                          portal
-                          aria-label={`Cuándo pedir ${option.label}`}
-                        >
-                          <option value="any_action">Para cualquier acción final</option>
-                          <option value="appointment">Para confirmar una cita nueva</option>
-                          <option value="payment">Para cobrar</option>
-                        </CustomSelect>
-                      ) : (
+                      {requirement.level === 'conditional' && (
                         <CustomSelect
                           value={requirement.condition?.fact || requiredDataConditionOptions[0].fact}
                           aria-label={`Condición para ${option.label}`}
@@ -2644,10 +2625,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const selectedProviderStatus = getProviderStatus(aiProviders, selectedProviderId)
   const selectedProviderConnected = Boolean(selectedProviderStatus?.connected)
   const selectedAgentModelValue = getKnownConversationalModel(selectedProviderId, agent.model)
-  const selectedAgentModel = selectedProvider.modelGroups
+  const selectedAgentModelGroups = getAvailableConversationalModelGroups(selectedProviderId, selectedProviderStatus?.modelCatalog, selectedAgentModelValue)
+  const selectedAgentModel = selectedAgentModelGroups
     .flatMap((group) => group.options)
     .find((option) => option.value === selectedAgentModelValue)
-  const selectedAgentModelOptions = selectedProvider.modelGroups.map((group) => ({
+  const selectedAgentModelOptions = selectedAgentModelGroups.map((group) => ({
     label: group.label,
     options: group.options.map((option) => ({
       value: option.value,
@@ -3643,7 +3625,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
               <QuestionSelectRow
                 question={`¿Qué modelo de ${selectedProvider.label} va a usar?`}
-                helper={`Elige el modelo exacto que va a escribir. Ejemplo: ${selectedAgentModel?.label || selectedAgentModelValue} se usa sólo en este agente.`}
+                helper={selectedProviderId === 'openai'
+                  ? (selectedProviderStatus?.modelCatalog?.status === 'ready'
+                    ? 'La lista se actualiza automáticamente cada 24 horas con tu conexión de OpenAI. El modelo de este agente sólo cambia cuando tú lo eliges.'
+                    : selectedProviderConnected
+                      ? 'No se pudo actualizar la lista de OpenAI. Puedes conservar el modelo guardado; Ristak volverá a consultar automáticamente.'
+                      : 'Conecta OpenAI para obtener los modelos disponibles en tu cuenta y actualizar la lista automáticamente.')
+                  : `Elige el modelo exacto que va a escribir. Ejemplo: ${selectedAgentModel?.label || selectedAgentModelValue} se usa sólo en este agente.`}
                 value={selectedAgentModelValue}
                 options={selectedAgentModelOptions}
                 selectLabel={`Modelo de ${selectedProvider.label}`}
@@ -4437,7 +4425,11 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         }
 
         try {
-          const next = await conversationalAgentService.updateAgent(agentId, agentToInput(agent))
+          const input = agentToInput(agent)
+          // Ordinary edits must preserve the server's publication state, even
+          // when another tab paused the agent after this editor was opened.
+          if (effectiveEnabled === undefined) delete input.enabled
+          const next = await conversationalAgentService.updateAgent(agentId, input)
           agentMutationVersionsRef.current.set(
             agentId,
             (agentMutationVersionsRef.current.get(agentId) || 0) + 1

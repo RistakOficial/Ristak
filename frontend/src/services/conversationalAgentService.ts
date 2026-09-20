@@ -212,6 +212,12 @@ export interface ConversationalAIProviderStatus {
   connectionIssue: string | null
   canDelete: boolean
   defaultModel: string
+  modelCatalog?: {
+    models: string[]
+    status: 'pending' | 'ready' | 'unavailable' | 'disconnected'
+    checkedAt: number | null
+    refreshedAt: number | null
+  } | null
 }
 
 export interface ConversationalAgentEntryConflict {
@@ -1114,9 +1120,9 @@ function normalizeCapabilitiesConfig(value: unknown): ConversationalCapabilities
         const level: ConversationalRequiredDataLevel = rawField.level === 'conditional'
           ? (condition ? 'conditional' : 'optional')
           : (rawField.level === 'optional' ? 'optional' : 'required')
-        const scope: ConversationalRequiredDataScope = condition
+        const scope: ConversationalRequiredDataScope = level === 'conditional' && condition
           ? REQUIRED_DATA_CONDITION_SCOPES[condition.fact]
-          : (['appointment', 'payment'].includes(rawField.scope) ? rawField.scope : 'any_action')
+          : 'any_action'
         return [{
           field: rawField.field,
           level,

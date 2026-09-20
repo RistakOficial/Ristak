@@ -10,6 +10,9 @@ import {
 import { db } from '../src/config/database.js'
 import { getAIRuntimeStatus } from '../src/services/aiRuntimeService.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
+import { isOpenAIConnected } from '../src/services/integrationConnectionStateService.js'
+import { getIntegrationCronState } from '../src/jobs/integrationCronRuntime.js'
+import { syncRegisteredIntegrationCronsForProvider } from '../src/jobs/integrationCronRegistry.js'
 
 async function getStoredAIAgentConfigRow() {
   return db.get('SELECT * FROM ai_agent_config WHERE id = 1').catch(() => null)
@@ -50,6 +53,7 @@ test('conectar OpenAI desde proveedores conversacionales guarda la credencial co
 
   try {
     await db.run('DELETE FROM ai_agent_config WHERE id = 1').catch(() => undefined)
+    assert.equal(await isOpenAIConnected(), false)
     await db.run(`
       INSERT INTO ai_agent_config (
         id,
@@ -67,7 +71,7 @@ test('conectar OpenAI desde proveedores conversacionales guarda la credencial co
       assert.equal(options?.headers?.Authorization, `Bearer ${apiKey}`)
       return {
         ok: true,
-        json: async () => ({ data: [] })
+        json: async () => ({ data: [{ id: 'gpt-6-astra' }, { id: 'gpt-5.6-luna' }] })
       }
     }
 
@@ -77,6 +81,14 @@ test('conectar OpenAI desde proveedores conversacionales guarda la credencial co
     const row = await db.get('SELECT model, business_context, response_style, recommendation_mode, web_search_enabled FROM ai_agent_config WHERE id = 1')
 
     assert.equal(openAIProvider?.connected, true)
+    assert.equal(await isOpenAIConnected(), true)
+    assert.ok(openAIProvider.modelCatalog.models.includes('gpt-6-astra'))
+    assert.equal(getIntegrationCronState().find((entry) => entry.name === 'openai-model-catalog').active, true)
+    await syncRegisteredIntegrationCronsForProvider('openai', { reason: 'test-repeat-connect' })
+    await db.run('UPDATE ai_agent_config SET openai_api_key_encrypted = NULL WHERE id = 1')
+    assert.equal(await isOpenAIConnected(), false)
+    await syncRegisteredIntegrationCronsForProvider('openai', { reason: 'test-disconnect' })
+    assert.equal(getIntegrationCronState().find((entry) => entry.name === 'openai-model-catalog').active, false)
     assert.equal(openAIProvider?.defaultModel, 'gpt-5.6-luna')
     assert.equal(status.configured, true)
     assert.equal(status.model, 'gpt-5.6-luna')
@@ -88,5 +100,6 @@ test('conectar OpenAI desde proveedores conversacionales guarda la credencial co
   } finally {
     globalThis.fetch = originalFetch
     await restoreAIAgentConfigRow(previousConfig)
+    await syncRegisteredIntegrationCronsForProvider('openai', { reason: 'test-cleanup' })
   }
 })

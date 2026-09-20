@@ -4,6 +4,7 @@ export const aiModelOptionGroups = [
   {
     label: 'Modelos actuales',
     options: [
+      { value: 'gpt-6-astra', label: 'GPT-6 Astra', description: 'Modelo de OpenAI para razonamiento complejo y tareas con herramientas.' },
       { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', description: 'Frontier de OpenAI: máxima capacidad para análisis complejo, criterio y trabajo profesional.' },
       { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', description: 'Balance entre inteligencia y costo para la mayoría de los casos.' },
       { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', description: 'Default de OpenAI para agentes: el más rápido y económico para alto volumen.' }
@@ -94,5 +95,6 @@ export const aiModelOptionGroups = [
 export const aiModelOptions = aiModelOptionGroups.flatMap((group) => group.options)
 
 export function getKnownAIModel(value?: string | null) {
-  return aiModelOptions.some((option) => option.value === value) ? String(value) : DEFAULT_AI_MODEL
+  const model = String(value || '').trim()
+  return /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/.test(model) ? model : DEFAULT_AI_MODEL
 }

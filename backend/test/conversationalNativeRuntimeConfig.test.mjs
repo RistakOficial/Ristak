@@ -218,9 +218,55 @@ test('Datos requeridos conserva sólo condiciones estructuradas que el servidor 
   assert.deepEqual(capabilities.dataRequirements.fields[1], {
     field: 'phone',
     level: 'optional',
-    scope: 'payment'
+    scope: 'any_action'
   })
   assert.deepEqual(capabilities.dataRequirements.participants.guestFields, [])
+})
+
+test('los datos sin condición aplican a todas las capacidades y migran los alcances anteriores', () => {
+  const capabilities = normalizeConversationalCapabilitiesConfig({
+    dataRequirements: { fields: [
+      { field: 'full_name', level: 'required', scope: 'appointment' },
+      { field: 'email', level: 'required', scope: 'payment' },
+      { field: 'phone', level: 'optional', scope: 'appointment' },
+      { field: 'phone', level: 'required', scope: 'payment' }
+    ] }
+  })
+  assert.ok(capabilities.dataRequirements.fields.every((field) => field.scope === 'any_action'))
+  assert.equal(capabilities.dataRequirements.fields.length, 3)
+  assert.equal(capabilities.dataRequirements.fields.find((field) => field.field === 'phone').level, 'required')
+})
+
+test('editar un agente publicado conserva su estado y rechazar cambios incompletos conserva la configuración vigente', async () => {
+  let agent
+  try {
+    agent = await createConversationalAgent({
+      name: `Edición publicada ${randomUUID()}`,
+      enabled: true,
+      capabilitiesConfig: { items: [{ id: 'handoff_human', enabled: true, rules: '' }] }
+    })
+    const updated = await updateConversationalAgent(agent.id, {
+      promptConfig: { strategyText: 'Atiende las preguntas del cliente.', personalityText: 'Amable y directo.' },
+      capabilitiesConfig: {
+        items: [{ id: 'handoff_human', enabled: true, rules: '' }],
+        dataRequirements: { fields: [{ field: 'full_name', level: 'required', scope: 'appointment' }] }
+      },
+      model: 'gpt-6-astra'
+    })
+    assert.equal(updated.enabled, true)
+    assert.equal(updated.model, 'gpt-6-astra')
+    assert.equal(updated.capabilitiesConfig.dataRequirements.fields[0].scope, 'any_action')
+    await assert.rejects(updateConversationalAgent(agent.id, {
+      capabilitiesConfig: { items: [{ id: 'send_link', enabled: true, url: '' }] }
+    }))
+    const preserved = await getConversationalAgent(agent.id)
+    assert.equal(preserved.enabled, true)
+    assert.deepEqual(preserved.capabilitiesConfig, updated.capabilitiesConfig)
+    assert.equal((await updateConversationalAgent(agent.id, { enabled: false })).enabled, false)
+    assert.equal((await updateConversationalAgent(agent.id, { name: 'Editado en pausa' })).enabled, false)
+  } finally {
+    await removeAgent(agent?.id)
+  }
 })
 
 test('agendar normaliza quién termina la cita y el manifest expone ese contrato', () => {

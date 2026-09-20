@@ -8803,6 +8803,7 @@ Crons de integracion que deben pasar por registry y detector local:
 
 - HighLevel sync.
 - Meta sync/version.
+- OpenAI: catálogo diario de modelos con caché persistente.
 - Google Calendar sync.
 - WhatsApp QR watchdog.
 - Stripe/Conekta/Mercado Pago/Rebill payment plans. En Rebill el cron cobra
@@ -8976,18 +8977,36 @@ chat de asistente personal.
 
 ### Catalogo y default de OpenAI
 
-Cuando el proveedor es OpenAI, el catalogo actual ofrece GPT-5.6 Sol para
-trabajo complejo, GPT-5.6 Terra para balance de capacidad y costo, y GPT-5.6
-Luna para alto volumen sensible a costo. El default nuevo del Chatbot y de los
-agentes conversacionales es `gpt-5.6-luna`; los flujos automaticos de menor
+En el editor de Chatbot de escritorio, OpenAI consulta `GET /v1/models` con la
+conexión cifrada existente y actualiza el catálogo cada 24 horas. Descubre
+generaciones nuevas, incluido `gpt-6-astra` cuando la conexión lo devuelve, sin
+necesitar un cambio de código por cada modelo. Excluye familias especializadas
+de imagen, audio, embeddings, Codex y búsqueda; la API de modelos no certifica
+por sí sola cada combinación de herramientas o parámetros. La lista estática
+queda como respaldo inicial y también incluye Astra. El default nuevo del Chatbot
+y de los agentes conversacionales es `gpt-5.6-luna`; los flujos automaticos de menor
 costo aprobados por backend usan ese mismo modelo. La seleccion explicita de un
 usuario nunca se reemplaza. Al conectar o reconectar OpenAI, una configuracion
 que aun conserve exactamente el default anterior `gpt-5.4-mini` se promueve a
-Luna; los modelos anteriores siguen disponibles para quien los haya elegido.
+Luna; un modelo guardado se conserva incluso si deja de aparecer en la lista o
+aún no tiene una etiqueta conocida. Descubrir modelos nunca publica, pausa ni
+cambia automáticamente el modelo de un agente.
+
+`openAIModelCatalogService` persiste el catálogo, el último intento y la última
+consulta exitosa en `app_config.openai_model_catalog_v1`, vinculados a una huella
+de la conexión, sin guardar la API key en ese registro. Los errores conservan la
+última lista de esa misma conexión y se reintentan al vencer 24 horas. El servicio
+comparte solicitudes simultáneas y usa un lock distribuido con renovación.
+`openai-model-catalog` se registra como cron del proveedor `openai`: revisa la
+caché al arrancar y cada hora, pero sólo consulta al proveedor si venció. Arranca
+únicamente con conexión local válida; reconectar sincroniza el registry. Abrir
+el editor también recupera una caché vencida. La credencial sigue cifrada en
+`ai_agent_config.openai_api_key_encrypted`; no hay nuevos secrets obligatorios.
 
 En Sites, crear una pagina con IA usa GPT-5.6 Sol por defecto y los cambios
-pequenos usan GPT-5.6 Luna. Web, Android e iOS exponen el mismo catalogo de
-OpenAI para que el usuario no pierda opciones al cambiar de superficie.
+pequenos usan GPT-5.6 Luna. Los catálogos estáticos de las otras superficies
+conservan su propia ruta de actualización; el descubrimiento diario aquí descrito
+alimenta el editor de Chatbot de escritorio a través de `aiProviders[].modelCatalog`.
 
 La API conserva:
 
@@ -9062,10 +9081,14 @@ queda amarrada a un calendario; cobro a un producto/precio real o a un anticipo
 configurado; enlace a una URL web absoluta y segura con protocolo HTTP(S);
 traspaso a sus reglas y usuario; objetivo propio a una descripcion concreta. Una
 URL ausente, relativa o con otro protocolo deja `send_link` no disponible y su
-tool no se expone al modelo. Al editar una capacidad activa el agente se
-pausa para probarlo antes de volver a publicar. Un borrador apagado puede quedar
-incompleto; al publicar, el backend valida el manifiesto otra vez y consulta la
-realidad operativa antes de persistir el cambio: calendario y usuario activos,
+tool no se expone al modelo. En el editor de escritorio, editar capacidades,
+datos requeridos, estrategia, personalidad o modelo conserva el estado publicado o pausado. Sólo el control
+explícito Publicar/Pausar cambia ese estado. El autosave normal omite `enabled`
+para no pisar una pausa hecha desde otra sesión. Si una edición de un agente
+publicado está incompleta o no pasa la validación, sigue atendiendo con su última
+configuración válida mientras el formulario conserva los cambios para corregirlos.
+Un borrador apagado puede quedar incompleto; al publicar, el backend valida el
+manifiesto otra vez y consulta la realidad operativa antes de persistir el cambio: calendario y usuario activos,
 producto/precio relacionados y cobrables, moneda de la cuenta, monto de
 anticipo y destino HTTP(S) de enlaces directos o triggers.
 
@@ -9178,7 +9201,7 @@ El bloque **Control y datos** y las capacidades guardan estos contratos dentro d
   limpieza fija a los cinco minutos. El valor raiz anterior sólo se lee para
   migrar configuraciones viejas y ya no aparece como categoria en la interfaz.
 - `dataRequirements`: define exactamente que datos puede solicitar, si son
-  obligatorios, opcionales o condicionales, para que accion aplican, como se
+  obligatorios, opcionales o condicionales, como se
   actualiza el contacto y que campos se piden a titulares distintos o invitados.
 
 Los datos del contacto y de titulares distintos/invitados se eligen en dos
@@ -9192,8 +9215,12 @@ politica obligatoria de handoff ya determino completar: confirmar una cita nueva
 cobrar, entregar un enlace u objetivo o pasar el chat al equipo. No bloquean
 consultas, ofertas de horario, cancelaciones
 ni la reagenda de una cita existente. Ademas, sólo aplican si esa capacidad esta
-lista y el `scope` del requisito coincide con la accion concreta. La configuracion de titulares distintos o invitados sólo
-entra cuando Agenda esta disponible y el cliente menciona expresamente que la
+lista. Los campos obligatorios y opcionales aplican automáticamente a todas las
+capacidades activas (`scope: any_action`); los alcances antiguos de cita/cobro se
+normalizan al leer y guardar. Si dos campos anteriores se unifican, se conserva
+la obligación más estricta. El editor ya no pide elegir la acción de nuevo.
+Sólo un campo Condicional conserva un alcance derivado de su condición factual.
+La configuracion de titulares distintos o invitados sólo entra cuando Agenda esta disponible y el cliente menciona expresamente que la
 cita es para otra persona o que habra invitados. Esa configuracion nunca obliga a
 pedir telefono, correo o nombre adicional al solicitante del hilo.
 
@@ -9207,7 +9234,7 @@ el contacto; normalmente dura esa vuelta, y un handoff obligatorio lo conserva e
 su latch hasta completarse. Así un dato obligatorio no entra en un ciclo
 imposible. Los campos marcados `required` se vuelven una precondicion real de
 servidor antes de confirmar una cita nueva, cobrar, entregar un enlace u objetivo
-o pasar el chat cuando tienen alcance `any_action`; no
+o pasar el chat; no
 basta con que el modelo diga que ya los obtuvo. Los opcionales no bloquean y los
 condicionales conservan su condicion explicita para que el modelo los solicite
 cuando corresponda. Un nombre, telefono o correo valido que ya sea distinto no

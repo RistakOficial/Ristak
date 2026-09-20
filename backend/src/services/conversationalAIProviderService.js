@@ -3,6 +3,7 @@ import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { DEFAULT_OPENAI_MODEL, LEGACY_DEFAULT_OPENAI_MODEL } from '../config/openAIModels.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
+import { getOpenAIModelCatalog } from './openAIModelCatalogService.js'
 
 export const DEFAULT_CONVERSATIONAL_AI_PROVIDER = 'openai'
 
@@ -117,7 +118,11 @@ async function getProviderStatus(provider) {
   if (provider.id === 'openai') {
     const { getAIRuntimeStatus } = await import('./aiRuntimeService.js')
     const status = await getAIRuntimeStatus({})
+    const modelCatalog = status.configured && !status.needsReconnect
+      ? await getOpenAIModelCatalog().catch(() => ({ models: [], status: 'unavailable', checkedAt: null, refreshedAt: null }))
+      : null
     return buildProviderStatus(provider, {
+      modelCatalog,
       connected: Boolean(status.configured && !status.needsReconnect),
       tokenPreview: status.tokenPreview || null,
       needsReconnect: Boolean(status.needsReconnect),
@@ -223,6 +228,9 @@ export async function connectConversationalAIProvider(providerId, apiKey) {
       apiKey: cleanKey,
       model: provider.defaultModel
     })
+
+    const { syncRegisteredIntegrationCronsForProvider } = await import('../jobs/integrationCronRegistry.js')
+    await syncRegisteredIntegrationCronsForProvider('openai', { reason: 'openai-connected' })
 
     await db.run(`
       UPDATE conversational_agents
