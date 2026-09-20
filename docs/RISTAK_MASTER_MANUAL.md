@@ -6482,6 +6482,21 @@ Ristak usa Meta en varias areas:
   `/api/meta/sync/settings`; backend valida la lista y el job sigue apagado si
   no existe una cuenta publicitaria conectada. Cada ejecución conserva guard
   anti-solape y lock distribuido para no duplicar consultas a Meta.
+- Las imagenes/creatives de anuncios y sus videos se consultan mediante
+  `metaGraphBatchService.js`: `POST` a la version configurada de Graph con
+  hasta 50 operaciones `GET /{object-id}` por lote. Se deduplican IDs, se
+  conserva `appsecret_proof` y se valida cada respuesta individual; un objeto
+  eliminado, sin permiso o con respuesta invalida no descarta los demas.
+  No usar consultas raiz `GET /?ids=...`: Meta las retira en todas las versiones
+  soportadas el **27 de octubre de 2026**, junto con `pretty`, `debug`,
+  `date_format` y el comportamiento legacy `ETag`/`If-None-Match`.
+  El endpoint `debug_token` sigue vigente y no es el parametro `debug`.
+  Esta migracion conserva la version Graph configurada; no requiere reconectar
+  Meta ni agregar credenciales. Referencias:
+  [changelog v26.0](https://developers.facebook.com/docs/graph-api/changelog/version26.0/)
+  y [solicitudes por lotes](https://developers.facebook.com/docs/graph-api/batch-requests).
+  Regresion: `backend/test/metaAdsCreativeFields.test.mjs` y
+  `backend/test/metaGraphBatchService.test.mjs`.
 - En la misma configuración, los selectores y resúmenes de cuenta publicitaria,
   **Dataset o pixel**, Facebook Page e Instagram muestran únicamente el nombre
   legible. Los IDs se conservan como valores internos para hablar con Meta, pero

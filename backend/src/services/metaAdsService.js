@@ -5,6 +5,7 @@ import { encrypt, decrypt, isEncrypted } from '../utils/encryption.js'
 import { API_URLS, META_INSIGHTS_FIELDS, PAGINATION } from '../config/constants.js'
 import { splitDateRangeIntoMonths, formatDate, daysAgo } from '../utils/dateUtils.js'
 import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
+import { fetchMetaObjectsById } from './metaGraphBatchService.js'
 import {
   getActiveMetaOAuthIntegration,
   mergeMetaAdsOAuthConfig,
@@ -447,43 +448,19 @@ function extractCreativeMedia(creative = {}, videoMediaById = new Map(), adImage
 }
 
 async function fetchMetaVideoMedia(videoIds, accessToken, appSecretProof = '') {
-  const uniqueVideoIds = [...new Set(videoIds.map(normalizeId).filter(Boolean))]
+  const videosById = await fetchMetaObjectsById(videoIds, META_VIDEO_FIELDS, accessToken, appSecretProof)
   const videoMediaById = new Map()
 
-  if (uniqueVideoIds.length === 0) {
-    return videoMediaById
-  }
+  videosById.forEach((video, videoId) => {
+    const thumbnails = Array.isArray(video?.thumbnails?.data) ? video.thumbnails.data : []
+    const preferredThumbnail = thumbnails.find(thumbnail => thumbnail.is_preferred) || thumbnails[0]
 
-  for (const chunk of chunkArray(uniqueVideoIds, 50)) {
-    try {
-      const params = new URLSearchParams({
-        ids: chunk.join(','),
-        fields: META_VIDEO_FIELDS,
-        access_token: accessToken
-      })
-      if (appSecretProof) params.set('appsecret_proof', appSecretProof)
-      const response = await fetch(`${API_URLS.META_GRAPH}?${params.toString()}`)
-      const data = await response.json()
-
-      if (data.error) {
-        logger.warn(`No se pudo obtener video media de Meta: ${data.error.message}`)
-        continue
-      }
-
-      Object.entries(data || {}).forEach(([videoId, video]) => {
-        const thumbnails = Array.isArray(video?.thumbnails?.data) ? video.thumbnails.data : []
-        const preferredThumbnail = thumbnails.find(thumbnail => thumbnail.is_preferred) || thumbnails[0]
-
-        videoMediaById.set(String(videoId), {
-          videoUrl: pickFirstString(video?.source),
-          thumbnailUrl: pickFirstString(preferredThumbnail?.uri),
-          previewUrl: pickFirstString(video?.permalink_url)
-        })
-      })
-    } catch (error) {
-      logger.warn(`Error obteniendo video media de Meta: ${safeMetaGraphTransportError(error)}`)
-    }
-  }
+    videoMediaById.set(videoId, {
+      videoUrl: pickFirstString(video?.source),
+      thumbnailUrl: pickFirstString(preferredThumbnail?.uri),
+      previewUrl: pickFirstString(video?.permalink_url)
+    })
+  })
 
   return videoMediaById
 }
@@ -496,31 +473,14 @@ async function fetchMetaCreativesForAds(adIds, accessToken, accountId = null, ap
     return new Map()
   }
 
-  for (const chunk of chunkArray(uniqueAdIds, 50)) {
-    try {
-      const params = new URLSearchParams({
-        ids: chunk.join(','),
-        fields: `id,creative{${META_AD_CREATIVE_FIELDS}}`,
-        access_token: accessToken
-      })
-      if (appSecretProof) params.set('appsecret_proof', appSecretProof)
-      const response = await fetch(`${API_URLS.META_GRAPH}?${params.toString()}`)
-      const data = await response.json()
-
-      if (data.error) {
-        logger.warn(`No se pudieron obtener creatives de Meta: ${data.error.message}`)
-        continue
-      }
-
-      Object.entries(data || {}).forEach(([adId, adData]) => {
-        if (adData?.creative) {
-          rawCreativesByAdId.set(String(adId), adData.creative)
-        }
-      })
-    } catch (error) {
-      logger.warn(`Error obteniendo creatives de Meta: ${safeMetaGraphTransportError(error)}`)
+  const adsById = await fetchMetaObjectsById(
+    uniqueAdIds, `id,creative{${META_AD_CREATIVE_FIELDS}}`, accessToken, appSecretProof
+  )
+  adsById.forEach((adData, adId) => {
+    if (adData?.creative) {
+      rawCreativesByAdId.set(adId, adData.creative)
     }
-  }
+  })
 
   const videoIds = [...rawCreativesByAdId.values()].map(getCreativeVideoId).filter(Boolean)
   const imageHashes = [...rawCreativesByAdId.values()].flatMap(getCreativeImageHashes)
