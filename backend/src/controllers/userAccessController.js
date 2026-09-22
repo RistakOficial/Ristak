@@ -9,7 +9,7 @@ import {
   serializeAccessConfig
 } from '../utils/userAccess.js'
 import { logger } from '../utils/logger.js'
-import { getLicenseState, requestPortalUserInvitation, requestPortalUserRefresh } from '../services/licenseService.js'
+import { getLicenseState, requestPortalUserInvitation, requestPortalUserRefresh, getCentralIdentityStatus, verifyCentralIdentityCredentials } from '../services/licenseService.js'
 import { constrainUserAccessToLicense } from '../services/userPermissionService.js'
 
 const USER_INVITATION_TTL_MS = 48 * 60 * 60 * 1000
@@ -417,14 +417,19 @@ export async function acceptUserInvitation(req, res) {
     const rawToken = cleanText(req.body?.token, 500)
     const password = String(req.body?.password || '')
     if (!rawToken) throw invitationError('El enlace está incompleto.', 400, 'user_invitation_token_missing')
-    const passwordPolicyError = validatePasswordPolicy(password)
-    if (passwordPolicyError) {
-      throw invitationError(passwordPolicyError, 400, 'user_invitation_password_invalid')
-    }
-    const passwordHash = hashPassword(password)
     const nowIso = new Date().toISOString()
     const tokenHash = invitationTokenHash(rawToken)
     const licenseState = await getLicenseState()
+    const pending = await db.get('SELECT email FROM user_invitations WHERE token_hash = ?', [tokenHash])
+    const identityManaged = pending && (await getCentralIdentityStatus(pending.email)).registered
+    if (identityManaged) {
+      const central = await verifyCentralIdentityCredentials(pending.email, password)
+      if (central.registered !== true || central.valid !== true) throw invitationError('Ese correo ya tiene una contraseña de Ristak. Usa la misma para aceptar esta invitación.', 401, 'identity_password_required')
+    } else {
+      const passwordPolicyError = validatePasswordPolicy(password)
+      if (passwordPolicyError) throw invitationError(passwordPolicyError, 400, 'user_invitation_password_invalid')
+    }
+    const passwordHash = hashPassword(identityManaged ? `Aa1${crypto.randomBytes(32).toString('base64url')}` : password)
 
     const accepted = await db.transaction(async transaction => {
       const invitation = await transaction.get(
@@ -523,7 +528,8 @@ export async function createUser(req, res) {
 
     await assertUniqueMember({ email: member.email, phone: member.phone, username })
 
-    const passwordHash = hashPassword(member.password)
+    const identity = await getCentralIdentityStatus(member.email)
+    const passwordHash = hashPassword(identity.registered ? `Aa1${crypto.randomBytes(32).toString('base64url')}` : member.password)
     const result = await db.run(
       `INSERT INTO users (
         username, email, phone, password_hash, full_name, first_name, last_name, role, is_active, access_config
@@ -558,7 +564,9 @@ export async function createUser(req, res) {
 
     res.status(201).json({
       success: true,
-      user: serializeMember(createdMember)
+      user: serializeMember(createdMember),
+      identityManaged: identity.registered,
+      message: identity.registered ? 'Acceso agregado. La persona entra con su contraseña única de Ristak.' : 'Acceso agregado.'
     })
   } catch (error) {
     logger.error('Error creando usuario interno:', error)
@@ -618,8 +626,15 @@ export async function updateUser(req, res) {
     ]
 
     if (member.password) {
+      if (existing.email && (await getCentralIdentityStatus(existing.email)).registered) {
+        throw invitationError('Esta persona usa una contraseña única de Ristak. Sólo ella puede cambiarla desde su perfil o recuperarla por correo.', 409, 'identity_password_managed')
+      }
       updates.unshift('password_hash = ?')
       params.unshift(hashPassword(member.password))
+    }
+
+    if (member.password || cleanEmail(existing.email) !== member.email) {
+      updates.push('token_version = COALESCE(token_version, 0) + 1')
     }
 
     params.push(targetId)

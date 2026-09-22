@@ -1,6 +1,6 @@
 import { verifyToken } from '../utils/auth.js'
 import { db } from '../config/database.js'
-import { getLicenseState, isLicenseEnforced } from '../services/licenseService.js'
+import { getLicenseState, isLicenseEnforced, isCentralIdentitySessionCurrent } from '../services/licenseService.js'
 
 export async function requireAuth(req, res, next) {
   try {
@@ -69,6 +69,9 @@ export async function requireAuth(req, res, next) {
       }
 
       req.license = license
+      if (!isCentralIdentitySessionCurrent(payload, license)) {
+        return res.status(401).json({ success: false, code: 'token_revoked', error: 'Tu acceso de Ristak cambió. Inicia sesión con tu contraseña única.' })
+      }
     }
 
     next()

@@ -6,9 +6,11 @@ import { readFile } from 'node:fs/promises'
 import { db, databaseReady } from '../src/config/database.js'
 import { createUserInvitation, acceptUserInvitation, revokeUserInvitation, createUser, updateUser } from '../src/controllers/userAccessController.js'
 import { constrainUserAccessToLicense } from '../src/services/userPermissionService.js'
+import { verifyPassword } from '../src/utils/auth.js'
 import { resetLicenseCache, setVerifiedAppBaseUrlResolverForTests } from '../src/services/licenseService.js'
 
 let server, actorId, deliveryMode, delivered, features
+const identities = new Map()
 const response = () => ({ statusCode: 200, body: null, status(code) { this.statusCode = code; return this }, json(body) { this.body = body; return this } })
 const input = () => ({ email: `team-${crypto.randomUUID()}@example.test`, role: 'employee', accessConfig: { contacts: 'read', chat: 'write', sites: 'write', settings_email: 'write' } })
 
@@ -23,7 +25,10 @@ before(async () => {
     const payload = JSON.parse(body || '{}')
     res.setHeader('Content-Type', 'application/json')
     if (req.url === '/api/license/verify') {
-      return res.end(JSON.stringify({ allowed: true, plan: 'basic', features, license_token: 'local-test', expires_at: new Date(Date.now() + 3600000).toISOString() }))
+      return res.end(JSON.stringify({ allowed: true, plan: 'basic', features, identity_id: identities.has(payload.email) ? 'global-invite-person' : null, identity_version: 0, license_token: 'local-test', expires_at: new Date(Date.now() + 3600000).toISOString() }))
+    }
+    if (req.url === '/api/license/identity/credentials') {
+      return res.end(JSON.stringify({ registered: identities.has(payload.email), valid: identities.get(payload.email) === payload.password }))
     }
     if (req.url === '/api/license/users/invite') {
       delivered.push(payload)
@@ -46,6 +51,7 @@ before(async () => {
   setVerifiedAppBaseUrlResolverForTests(async () => '')
 })
 beforeEach(() => {
+  identities.clear()
   features = { dashboard: true, contacts: true, chat: true, team_access: true, sites: false, email: false }
   deliveryMode = 'sent'
   delivered = []
@@ -101,6 +107,24 @@ test('una respuesta perdida conserva el enlace y evita duplicar el envío', asyn
   const accepted = response()
   await acceptUserInvitation({ body: { token: delivered[0].invitation_token, password: 'SecureTeam123' } }, accepted)
   assert.equal(accepted.statusCode, 410)
+})
+
+test('aceptar otra invitación conserva la contraseña global existente sin copiarla a la cuenta', async () => {
+  const member = input()
+  identities.set(member.email, 'legacy')
+  const created = response()
+  await createUserInvitation({ body: member, user: { userId: actorId } }, created)
+  assert.equal(created.statusCode, 201)
+  const token = delivered[0].invitation_token
+  const rejected = response()
+  await acceptUserInvitation({ body: { token, password: 'AnotherPassword123' } }, rejected)
+  assert.equal(rejected.statusCode, 401)
+  const accepted = response()
+  await acceptUserInvitation({ body: { token, password: 'legacy' } }, accepted)
+  assert.equal(accepted.statusCode, 201)
+  const user = await db.get('SELECT role, password_hash FROM users WHERE email = ?', [member.email])
+  assert.equal(user.role, 'employee')
+  assert.equal(verifyPassword('legacy', user.password_hash), false)
 })
 
 test('un rechazo definitivo permite reintentar sin dejar una invitación bloqueada', async () => {

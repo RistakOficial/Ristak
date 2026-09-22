@@ -2061,10 +2061,58 @@ puede entrar inmediatamente a esa instalación. No requiere un contacto del CRM,
 una cuenta previa en el portal central ni una integración de correo conectada;
 tampoco crea un contacto ni envía mensajes. El correo es el identificador del
 login y debe ser válido; el teléfono es opcional y no sustituye al correo.
-La contraseña conserva exactamente sus caracteres y se guarda únicamente como
-hash en `users.password_hash`, con la política de seguridad existente. El
+Para usuarios todavía no unificados, la contraseña conserva exactamente sus
+caracteres y se guarda únicamente como hash en `users.password_hash`. El
 administrador comparte las credenciales por un medio privado y la persona puede
 cambiar su contraseña desde el perfil. No se agregan secrets de arranque.
+
+### Identidad única y acceso a varias cuentas
+
+El backend del Installer dispone de una identidad personal por correo normalizado
+en `user_identities`, independiente de la cuenta comercial y de los usuarios
+locales. La pantalla pública de selección de cuentas está pendiente: este cambio
+no conecta todavía el formulario de `ristak.com/login` con el nuevo flujo.
+
+La API `/api/auth/identity/login` autentica esa contraseña única. El titular puede
+reutilizar su credencial central existente. Un empleado que sólo existe en una
+instalación confirma primero un código enviado a su correo; crear ese correo y
+asignarle una contraseña dentro de una app no permite reclamar su identidad en
+otras cuentas. Tras confirmar el correo, la contraseña elegida se utiliza para
+todas sus membresías. Un registro concurrente nunca sobrescribe otra contraseña.
+
+Con una sesión de identidad, `GET /api/auth/identity/accounts` devuelve las
+instalaciones asociadas y el rol de cada una. El contrato permite entrar
+directamente si existe una sola opción o presentar un selector cuando hay varias.
+`POST /api/auth/identity/accounts/:installationId/enter` vuelve a comprobar el
+usuario activo de la app seleccionada, la licencia y la disponibilidad antes de
+emitir un enlace SSO de cinco minutos y un solo uso. El destino sale del registro
+de instalación; el navegador no decide el dominio. El SSO conserva el ID local,
+rol y permisos de esa cuenta; sólo el titular puede inicializar una app vacía.
+
+En las apps que incluyen este cambio, una identidad ya unificada se valida
+centralmente: un rechazo o una caída del verificador nunca habilitan la contraseña
+local anterior. El hash central no se distribuye a las instalaciones. Agregar ese
+correo a otra cuenta conserva su contraseña, y un administrador de cuenta no
+puede reemplazarla. Al aceptar una invitación se usa la contraseña ya existente.
+La recuperación se dirige al correo transaccional central. Los enlaces de reset
+locales anteriores no pueden sustituir una contraseña global.
+
+El cambio de contraseña desde el perfil se aplica a la identidad completa.
+`identity_id` y `identity_version` viajan en la validación de licencia y en la
+sesión; las sesiones anteriores se rechazan al revalidar el snapshot de licencia
+de cada app. La sesión central y los SSO pendientes se invalidan inmediatamente.
+La sesión especial del soporte del Installer permanece independiente. Las apps
+anteriores deben actualizarse para aplicar la contraseña única también al login
+directo; no se considera completa la activación hasta integrar el selector y
+desplegar ese soporte en las instalaciones.
+
+Los hashes de contraseña viven en `user_identities.password_hash`; los retos de
+correo y recuperación guardan sólo hashes, vencimiento UTC e intentos en
+`identity_challenges`. Los códigos vencen en 15 minutos, admiten cinco intentos y
+se limitan a seis solicitudes por correo por hora. Los enlaces de recuperación
+vencen en una hora. No se agregan secrets ni crons; se reutilizan la base y el
+correo central configurado en Installer. El contrato y las rutas se detallan en
+el README de Installer.
 
 **Invitar por correo** está incluido en todos los planes. Usa el correo
 transaccional de Ristak Installer mediante `POST /api/license/users/invite`;

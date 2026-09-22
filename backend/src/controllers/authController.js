@@ -27,7 +27,14 @@ import {
   consumeSetupToken,
   claimCentralOAuthHandoff,
   createCentralGoogleLoginUrl,
-  requestPortalUserRefresh
+  requestPortalUserRefresh,
+  verifyCentralIdentityCredentials,
+  getCentralIdentityStatus,
+  changeCentralIdentityPassword,
+  requestCentralIdentityPasswordReset,
+  centralIdentitySessionClaims,
+  isCentralIdentitySessionCurrent,
+  resetLicenseCache
 } from '../services/licenseService.js'
 import { saveAccountLocaleSettings } from '../utils/accountLocale.js'
 import { getEffectiveAccessConfig } from '../utils/userAccess.js'
@@ -271,8 +278,9 @@ export async function login(req, res) {
         if (!existingUser) {
           const sync = centralCredentials || await verifyOwnerCredentialsWithServer(loginEmail, password)
 
-          if (sync.valid && sync.support_access !== true && sync.password_hash) {
-            if (!verifyPassword(password, sync.password_hash)) {
+          if (sync.valid && sync.support_access !== true && (sync.password_hash || sync.identity_id)) {
+            const bootstrapPasswordHash = sync.password_hash || hashPassword(`Aa1${crypto.randomBytes(32).toString('base64url')}`)
+            if (sync.password_hash && !verifyPassword(password, bootstrapPasswordHash)) {
               throw new Error('El Installer devolvió un hash de dueño que no coincide con las credenciales validadas')
             }
 
@@ -288,7 +296,7 @@ export async function login(req, res) {
               `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
                SELECT ?, ?, ?, ?, ?, ?
                WHERE NOT EXISTS (SELECT 1 FROM users)`,
-              [username, loginEmail, sync.password_hash, username, 'admin', 1]
+              [username, loginEmail, bootstrapPasswordHash, username, 'admin', 1]
             )
 
             if (Number(result?.changes || 0) > 0) {
@@ -315,7 +323,7 @@ export async function login(req, res) {
         }
       }
 
-      if (user && credentialsValidatedByPortal && !verifyPassword(password, user.password_hash)) {
+      if (user && credentialsValidatedByPortal && !centralCredentials?.identity_id && !verifyPassword(password, user.password_hash)) {
         throw new Error('El hash entregado por el Installer no coincide con las credenciales validadas')
       }
     }
@@ -328,8 +336,23 @@ export async function login(req, res) {
       })
     }
 
-    // Verificar password
-    let isValidPassword = supportAccess || credentialsValidatedByPortal || verifyPassword(password, user.password_hash)
+    // An enrolled person has one central password. Never accept a stale local
+    // password after central rejection or a network failure.
+    let licenseState = isLicenseEnforced()
+      ? bootstrapLicenseState || await verifyLicenseWithServer(user.email)
+      : null
+    let identityCredentials = null
+    if (licenseState?.allowed && licenseState.identityId && !supportAccess) {
+      try {
+        identityCredentials = await verifyCentralIdentityCredentials(loginEmail, password)
+      } catch (error) {
+        return res.status(503).json({ success: false, message: 'No pudimos confirmar tu acceso de Ristak. Intenta de nuevo en unos momentos.' })
+      }
+      if (identityCredentials.registered !== true || identityCredentials.valid !== true) {
+        return res.status(401).json({ success: false, message: 'Correo o contraseña incorrectos' })
+      }
+    }
+    let isValidPassword = supportAccess || identityCredentials?.valid || credentialsValidatedByPortal || verifyPassword(password, user.password_hash)
 
     // En instalaciones gestionadas, el portal central resuelve dos casos sin
     // compartir secretos: sincroniza la contraseña vigente del dueño o confirma
@@ -337,6 +360,7 @@ export async function login(req, res) {
     const shouldCheckCentralCredentials = isLicenseEnforced()
       && !credentialsValidatedByPortal
       && !supportAccess
+      && !identityCredentials?.registered
       && (!isValidPassword || isManagedOwnerEmail(user.email))
 
     if (shouldCheckCentralCredentials) {
@@ -380,13 +404,13 @@ export async function login(req, res) {
 
     // Identidad local correcta. Antes de abrir sesión, validar el permiso
     // comercial contra el servidor central de licencias (si está configurado).
-    let licenseState = null
     if (isLicenseEnforced()) {
-      licenseState = bootstrapLicenseState || await verifyLicenseWithServer(user.email)
-
       if (!licenseState.allowed) {
         logger.warn(`⚠️  Login bloqueado por licencia (${licenseState.reason}) para "${loginEmail}"`)
         return sendLicenseBlocked(res, licenseState)
+      }
+      if (identityCredentials?.registered && (identityCredentials.identity_id !== licenseState.identityId || identityCredentials.credential_version !== licenseState.identityVersion)) {
+        return res.status(401).json({ success: false, message: 'Tu contraseña cambió durante el acceso. Inicia sesión de nuevo.' })
       }
     }
 
@@ -402,7 +426,8 @@ export async function login(req, res) {
       username: user.username,
       email: user.email,
       role: user.role,
-      tokenVersion: user.token_version ?? 0 // (AUTH-003) para revocar al cambiar contraseña
+      tokenVersion: user.token_version ?? 0, // (AUTH-003) para revocar al cambiar contraseña
+      ...centralIdentitySessionClaims(licenseState)
     }
     const token = supportAccess
       ? generatePersistentSupportToken(tokenPayload)
@@ -592,6 +617,9 @@ export async function verifyTokenEndpoint(req, res) {
       if (!licenseState.allowed) {
         return sendLicenseBlocked(res, licenseState)
       }
+      if (!isCentralIdentitySessionCurrent(payload, licenseState)) {
+        return res.status(401).json({ success: false, message: 'Tu acceso de Ristak cambió. Inicia sesión con tu contraseña única.' })
+      }
     }
 
     res.json({
@@ -658,6 +686,16 @@ export async function changePassword(req, res) {
       })
     }
 
+    if (isLicenseEnforced() && (await getCentralIdentityStatus(user.email)).registered) {
+      const identity = await changeCentralIdentityPassword(user.email, currentPassword, newPassword)
+      resetLicenseCache()
+      return res.json({ success: true, message: 'Tu contraseña se actualizó para todas tus cuentas de Ristak.', token: generateToken({
+        userId: user.id, username: user.username, email: user.email, role: user.role,
+        tokenVersion: user.token_version ?? 0,
+        identityId: identity.identity_id, identityVersion: identity.credential_version
+      }) })
+    }
+
     // Verificar contraseña actual
     const isValidPassword = verifyPassword(currentPassword, user.password_hash)
 
@@ -698,9 +736,9 @@ export async function changePassword(req, res) {
     })
   } catch (error) {
     logger.error('❌ Error cambiando contraseña:', error)
-    res.status(500).json({
+    res.status(error.status || 500).json({
       success: false,
-      message: 'Error en el servidor'
+      message: error.status ? error.message : 'Error en el servidor'
     })
   }
 }
@@ -731,6 +769,11 @@ export async function forgotPassword(req, res) {
 
     const user = await db.get('SELECT id, email FROM users WHERE LOWER(email) = LOWER(?) AND is_active = 1', [email])
     if (!user?.id || !user.email) return genericOk()
+
+    if ((await getCentralIdentityStatus(user.email)).registered) {
+      await requestCentralIdentityPasswordReset(user.email)
+      return genericOk()
+    }
 
     const rawToken = crypto.randomBytes(32).toString('hex')
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex')
@@ -797,10 +840,13 @@ export async function resetPassword(req, res) {
     // para que la comparación funcione en Postgres (y en SQLite).
     const userIdNum = Number(row.user_id)
     const user = Number.isFinite(userIdNum)
-      ? await db.get('SELECT id, token_version FROM users WHERE id = ? AND is_active = 1', [userIdNum])
+      ? await db.get('SELECT id, email, token_version FROM users WHERE id = ? AND is_active = 1', [userIdNum])
       : null
     if (!user?.id) {
       return res.status(400).json({ success: false, error: 'El enlace es inválido.' })
+    }
+    if (user.email && (await getCentralIdentityStatus(user.email)).registered) {
+      return res.status(409).json({ success: false, error: 'Tu correo ya usa una contraseña única de Ristak. Solicita un enlace nuevo desde el inicio de sesión.' })
     }
 
     const newHash = hashPassword(newPassword)
@@ -1147,13 +1193,17 @@ export async function ssoLogin(req, res) {
         return res.status(403).json({ success: false, message: 'Usuario inactivo. Contacta al administrador.' })
       }
 
+      const googleLicense = isLicenseEnforced() ? await verifyLicenseWithServer(user.email) : null
+      if (googleLicense && !googleLicense.allowed) return sendLicenseBlocked(res, googleLicense)
+
       await db.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id])
       const sessionToken = generateToken({
         userId: user.id,
         username: user.username,
         email: user.email,
         role: user.role,
-        tokenVersion: user.token_version ?? 0
+        tokenVersion: user.token_version ?? 0,
+        ...centralIdentitySessionClaims(googleLicense)
       })
       const [apiTokenMetadata, appId] = await Promise.all([
         getApiTokenMetadataForUser(user.id),
@@ -1165,7 +1215,7 @@ export async function ssoLogin(req, res) {
         appId,
         ...(apiToken ? { apiToken } : {}),
         apiTokenMetadata,
-        user: serializeAuthUser(user)
+        user: serializeAuthUser(user, googleLicense)
       })
     }
 
@@ -1191,6 +1241,14 @@ export async function ssoLogin(req, res) {
     let user = await findUserByLoginEmail(ownerEmail)
     let apiToken = null
     let license = null
+
+    const identityOwnerBootstrap = peeked.identity_id && peeked.subject_user_id === 'bootstrap-owner' && ownerEmail === getManagedOwnerEmail()
+    if (peeked.identity_id && !identityOwnerBootstrap && (!user || String(user.id) !== String(peeked.subject_user_id))) {
+      return res.status(403).json({ success: false, message: 'Este acceso ya no corresponde a tu usuario en esta cuenta.' })
+    }
+    if (user && !user.is_active) {
+      return res.status(403).json({ success: false, message: 'Usuario inactivo. Contacta al administrador.' })
+    }
 
     if (!user) {
       const existingUser = await db.get('SELECT id FROM users LIMIT 1')
@@ -1259,6 +1317,9 @@ export async function ssoLogin(req, res) {
     if (!license.allowed) {
       return sendLicenseBlocked(res, license, 'Tu licencia de Ristak no está activa.')
     }
+    if (peeked.identity_id && (peeked.identity_id !== license.identityId || peeked.identity_version !== license.identityVersion)) {
+      return res.status(403).json({ success: false, message: 'Tu acceso cambió. Vuelve a entrar desde Ristak.' })
+    }
 
     await db.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id])
 
@@ -1267,7 +1328,8 @@ export async function ssoLogin(req, res) {
       username: user.username,
       email: user.email,
       role: user.role,
-      tokenVersion: user.token_version ?? 0 // (AUTH-003)
+      tokenVersion: user.token_version ?? 0, // (AUTH-003)
+      ...centralIdentitySessionClaims(license)
     })
 
     const [apiTokenMetadata, appId] = await Promise.all([
@@ -1564,7 +1626,8 @@ export async function setup(req, res) {
       username: createdUser.username,
       email: ownerEmail,
       role: createdUser.role || 'admin',
-      tokenVersion: createdUser.token_version ?? 0 // (AUTH-003)
+      tokenVersion: createdUser.token_version ?? 0, // (AUTH-003)
+      ...centralIdentitySessionClaims(licenseState)
     })
 
     logger.success(`✅ Primer usuario creado: ${createdUser.username}`)

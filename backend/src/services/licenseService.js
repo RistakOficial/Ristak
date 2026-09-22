@@ -603,6 +603,38 @@ export async function requestPortalUserInvitation({ invitationId, email, token }
   }
 }
 
+export async function verifyCentralIdentityCredentials(email, password) {
+  if (!isLicenseEnforced()) return { registered: false, valid: false }
+  return callLicenseServer('/api/license/identity/credentials', { email, password })
+}
+
+export async function getCentralIdentityStatus(email) {
+  if (!isLicenseEnforced()) return { registered: false }
+  const state = await getLicenseState({ email, forceRefresh: true })
+  if (!state.allowed) throw Object.assign(new Error(state.message || 'No pudimos confirmar tu acceso de Ristak.'), { status: 503 })
+  return { registered: Boolean(state.identityId) }
+}
+
+export async function changeCentralIdentityPassword(email, currentPassword, newPassword) {
+  return callLicenseServer('/api/license/identity/change-password', {
+    email, current_password: currentPassword, new_password: newPassword
+  })
+}
+
+export async function requestCentralIdentityPasswordReset(email) {
+  return callLicenseServer('/api/license/identity/forgot-password', { email }, { timeoutMs: 15_000 })
+}
+
+export function centralIdentitySessionClaims(state) {
+  return state?.identityId ? { identityId: state.identityId, identityVersion: state.identityVersion } : {}
+}
+
+export function isCentralIdentitySessionCurrent(payload, state) {
+  if (payload?.supportAccess === true) return true
+  if (!state?.identityId) return !payload?.identityId
+  return payload?.identityId === state.identityId && payload?.identityVersion === state.identityVersion
+}
+
 /**
  * Avisa al portal central que los usuarios de esta instalación cambiaron, para
  * que vuelva a leerlos y el login móvil pueda enrutar a cualquier usuario
@@ -862,6 +894,8 @@ async function performLicenseVerification(targetEmail, generation) {
       enforced: true,
       plan,
       features,
+      identityId: data.identity_id || null,
+      identityVersion: data.identity_version ?? null,
       featuresSourceValid: hasValidFeatures,
       limits: normalizeLicenseLimits(data.limits),
       externalModules: normalizeExternalModules(data.external_modules),

@@ -1,9 +1,10 @@
-import test, { before, beforeEach, after } from 'node:test'
+import test, { before, beforeEach, afterEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 
 import { db } from '../src/config/database.js'
-import { login, ssoLogin, verifyTokenEndpoint } from '../src/controllers/authController.js'
+import { login, ssoLogin, verifyTokenEndpoint, changePassword } from '../src/controllers/authController.js'
+import { createUser, updateUser } from '../src/controllers/userAccessController.js'
 import { hashPassword, verifyPassword, verifyToken } from '../src/utils/auth.js'
 import { requireAuth } from '../src/middleware/authMiddleware.js'
 import { resetLicenseCache } from '../src/services/licenseService.js'
@@ -15,6 +16,10 @@ const bootstrapOwnerPassword = 'OwnerPortalPass123'
 const googleOwnerEmail = 'google-owner@example.com'
 const googleOwnerSetupToken = 'google-owner-setup-token'
 const supportAdminEmail = 'installer-admin@example.com'
+const identities = new Map()
+let identityUnavailable = false
+let identityResponseOverride = null
+let identitySsoUser = null
 
 before(async () => {
   licenseServer = http.createServer((req, res) => {
@@ -23,6 +28,21 @@ before(async () => {
     req.on('end', () => {
       const body = rawBody ? JSON.parse(rawBody) : {}
       res.setHeader('Content-Type', 'application/json')
+
+      if (req.url === '/api/license/identity/credentials') {
+        const identity = identities.get(body.email)
+        if (identityUnavailable) { res.statusCode = 503; return res.end(JSON.stringify({ success: false })) }
+        if (identityResponseOverride) return res.end(JSON.stringify(identityResponseOverride))
+        const valid = identity && identity.password === body.password
+        return res.end(JSON.stringify({ success: true, registered: Boolean(identity), valid,
+          ...(valid ? { identity_id: identity.id, credential_version: identity.version } : {}) }))
+      }
+      if (req.url === '/api/license/identity/change-password') {
+        const identity = identities.get(body.email)
+        if (!identity || identity.password !== body.current_password) { res.statusCode = 401; return res.end(JSON.stringify({ success: false, message: 'Contraseña actual incorrecta.' })) }
+        identity.password = body.new_password; identity.version++
+        return res.end(JSON.stringify({ success: true, identity_id: identity.id, credential_version: identity.version }))
+      }
 
       if (req.url === '/api/owner-credentials/verify') {
         if (body.email === bootstrapOwnerEmail && body.password === bootstrapOwnerPassword) {
@@ -37,6 +57,11 @@ before(async () => {
       }
 
       if (req.url === '/api/setup-token/verify' || req.url === '/api/setup-token/consume') {
+        if (body.token === 'identity-sso-test' && identitySsoUser) {
+          const identity = identities.get(identitySsoUser.email)
+          return res.end(JSON.stringify({ valid: true, email: identitySsoUser.email,
+            identity_id: identity.id, identity_version: identity.version, subject_user_id: String(identitySsoUser.id) }))
+        }
         if (body.token === googleOwnerSetupToken && body.installation_id === 'inst_google_bootstrap') {
           res.end(JSON.stringify({
             valid: true,
@@ -80,11 +105,14 @@ before(async () => {
       }
 
       if (req.url === '/api/license/verify') {
+        const identity = identities.get(body.email)
         res.end(JSON.stringify({
           allowed: true,
           client_id: 'cli_support',
           plan: 'professional',
           features: { dashboard: true },
+          identity_id: identity?.id || null,
+          identity_version: identity?.version ?? null,
           license_token: 'license_support_token',
           expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString()
         }))
@@ -121,12 +149,114 @@ function createMockResponse() {
 }
 
 beforeEach(() => {
+  identities.clear(); identityUnavailable = false; identityResponseOverride = null; identitySsoUser = null
   delete process.env.LICENSE_SERVER_URL
   delete process.env.CLIENT_ID
   delete process.env.LICENSE_KEY
   delete process.env.INSTALLATION_ID
   delete process.env.OWNER_EMAIL
   resetLicenseCache()
+})
+afterEach(async () => {
+  for (const email of identities.keys()) await db.run('DELETE FROM users WHERE email = ?', [email])
+})
+
+async function managedIdentityUser() {
+  const email = `identity-${Date.now()}-${Math.random()}@example.com`
+  const inserted = await db.run('INSERT INTO users(username,email,password_hash,role,is_active) VALUES(?,?,?,?,1)', [email,email,hashPassword('LocalOldPassword123'),'employee'])
+  identities.set(email, { id: 'global-person', password: 'GlobalPassword123', version: 2 })
+  process.env.LICENSE_SERVER_URL = licenseServerUrl
+  process.env.CLIENT_ID = 'identity-client'; process.env.LICENSE_KEY = 'identity-license'
+  process.env.INSTALLATION_ID = 'identity-installation'; process.env.OWNER_EMAIL = 'owner@example.com'
+  return { id: inserted.lastID, email }
+}
+
+test('un empleado usa su contraseña única y una contraseña local anterior ya no lo deja entrar', async () => {
+  const user = await managedIdentityUser()
+  const rejected = createMockResponse()
+  await login({ body: { email:user.email, password:'LocalOldPassword123' } }, rejected)
+  assert.equal(rejected.statusCode, 401)
+  const accepted = createMockResponse()
+  await login({ body: { email:user.email, password:'GlobalPassword123' } }, accepted)
+  assert.equal(accepted.statusCode, 200)
+  const claims = verifyToken(accepted.payload.token)
+  assert.equal(claims.identityId, 'global-person'); assert.equal(claims.identityVersion, 2)
+  assert.equal(claims.role, 'employee')
+  const stored = await db.get('SELECT password_hash FROM users WHERE id = ?', [user.id])
+  assert.equal(verifyPassword('GlobalPassword123', stored.password_hash), false)
+  assert.equal(verifyPassword('LocalOldPassword123', stored.password_hash), true)
+})
+
+test('un fallo de verificación central nunca habilita la contraseña vieja', async () => {
+  const user = await managedIdentityUser(); identityUnavailable = true
+  const result = createMockResponse()
+  await login({ body: { email:user.email, password:'LocalOldPassword123' } }, result)
+  assert.equal(result.statusCode, 503)
+  assert.equal(result.payload.token, undefined)
+})
+
+test('una verificación central incompleta no permite usar la contraseña local', async () => {
+  const user = await managedIdentityUser()
+  for (const payload of [{ success: true }, { success: true, registered: false, valid: false }]) {
+    identityResponseOverride = payload
+    const result = createMockResponse()
+    await login({ body: { email: user.email, password: 'LocalOldPassword123' } }, result)
+    assert.equal(result.statusCode, 401)
+    assert.equal(result.payload.token, undefined)
+  }
+})
+
+test('cambiar la contraseña desde una cuenta revoca las sesiones anteriores de la identidad', async () => {
+  const user = await managedIdentityUser()
+  const signedIn = createMockResponse()
+  await login({ body: { email:user.email, password:'GlobalPassword123' } }, signedIn)
+  const changed = createMockResponse()
+  await changePassword({ body:{currentPassword:'GlobalPassword123',newPassword:'NewGlobalPassword456'}, user:{userId:user.id} }, changed)
+  assert.equal(changed.statusCode, 200)
+  assert.equal(verifyToken(changed.payload.token).identityVersion, 3)
+  const checked = createMockResponse()
+  await verifyTokenEndpoint({ body:{token:signedIn.payload.token} }, checked)
+  assert.equal(checked.statusCode, 401)
+  const protectedResult = createMockResponse()
+  await requireAuth({ headers:{authorization:`Bearer ${signedIn.payload.token}`} }, protectedResult, () => assert.fail('a revoked session must not continue'))
+  assert.equal(protectedResult.statusCode, 401)
+})
+
+test('un administrador de cuenta no puede cambiar la contraseña global de un empleado', async () => {
+  const user = await managedIdentityUser()
+  const updated = createMockResponse()
+  await updateUser({ params:{userId:user.id},user:{userId:'different-admin'},body:{email:user.email,role:'employee',password:'AdminOverride123'} }, updated)
+  assert.equal(updated.statusCode, 409)
+  assert.equal(identities.get(user.email).password, 'GlobalPassword123')
+})
+
+test('dar acceso a un correo ya unificado conserva su contraseña y su rol local', async () => {
+  const user = await managedIdentityUser()
+  await db.run('DELETE FROM users WHERE id = ?', [user.id])
+  const created = createMockResponse()
+  await createUser({body:{email:user.email,role:'employee',password:'AdminChoice123'}}, created)
+  assert.equal(created.statusCode, 201); assert.equal(created.payload.identityManaged, true)
+  const stored = await db.get('SELECT role,password_hash FROM users WHERE email = ?', [user.email])
+  assert.equal(stored.role, 'employee')
+  assert.equal(verifyPassword('AdminChoice123', stored.password_hash), false)
+  assert.equal(identities.get(user.email).password, 'GlobalPassword123')
+})
+
+test('SSO conserva al empleado y rechaza usuarios inactivos o un ID cambiado', async () => {
+  const user = await managedIdentityUser(); identitySsoUser = user
+  const active = createMockResponse()
+  await ssoLogin({body:{token:'identity-sso-test'}}, active)
+  assert.equal(active.statusCode, 200); assert.equal(active.payload.user.role,'employee')
+  assert.equal(verifyToken(active.payload.token).identityId,'global-person')
+  await db.run('UPDATE users SET is_active = 0 WHERE id = ?', [user.id])
+  const inactive = createMockResponse()
+  await ssoLogin({body:{token:'identity-sso-test'}}, inactive)
+  assert.equal(inactive.statusCode, 403)
+  await db.run('UPDATE users SET is_active = 1 WHERE id = ?', [user.id])
+  identitySsoUser = { ...user, id: Number(user.id) + 1000 }
+  const replaced = createMockResponse()
+  await ssoLogin({body:{token:'identity-sso-test'}}, replaced)
+  assert.equal(replaced.statusCode, 403)
 })
 
 test('login accepts Android-style pasted identifiers with spaces and different casing', async () => {
