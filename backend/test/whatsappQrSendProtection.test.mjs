@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 
 import { db } from '../src/config/database.js'
+import { prepareWhatsAppApiTextDelivery } from '../src/services/whatsappApiService.js'
 import {
   QR_CONSENT_TEXT,
   resetWhatsAppQrServiceForTest,
@@ -11,6 +12,7 @@ import {
   sendWhatsAppQrImageMessage,
   sendWhatsAppQrVideoMessage,
   sendWhatsAppQrTextMessage,
+  prepareWhatsAppQrTextDelivery,
   setBaileysRuntimeForTest
 } from '../src/services/whatsappQrService.js'
 import {
@@ -218,6 +220,24 @@ async function withQrFixture(callback) {
     await cleanupQrFixture(phoneNumberId)
   }
 }
+
+test('preparar QR conecta sin enviar y el envío posterior reutiliza esa sesión', async () => {
+  const sentMessages = []
+  await withQrFixture(async ({ phoneNumberId }) => {
+    const runtime = createFakeBaileysRuntime(sentMessages)
+    const open = runtime.makeWASocket
+    let opened = 0
+    runtime.makeWASocket = (...args) => { opened += 1; return open(...args) }
+    setBaileysRuntimeForTest(runtime)
+    await prepareWhatsAppApiTextDelivery({ phoneNumberId, to: CONTACT_PHONE })
+    assert.equal(opened, 1)
+    await prepareWhatsAppQrTextDelivery({ phoneNumberId })
+    assert.equal(opened, 1)
+    assert.equal(sentMessages.length, 0)
+    await sendWhatsAppQrTextMessage({ phoneNumberId, to: CONTACT_PHONE, text: 'Respuesta', skipQrSendProtection: true })
+    assert.equal(sentMessages.length, 1)
+  })
+})
 
 test('WhatsApp QR responde al aceptar el mensaje sin esperar el ACK de entrega', async () => {
   const sentMessages = []

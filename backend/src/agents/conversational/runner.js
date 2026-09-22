@@ -4,7 +4,7 @@ import { DateTime } from 'luxon'
 import { z } from 'zod'
 import { db } from '../../config/database.js'
 import { logger } from '../../utils/logger.js'
-import { DEFAULT_TIMEZONE, getAccountTimezone, normalizeToUtcIso } from '../../utils/dateUtils.js'
+import { DEFAULT_TIMEZONE, getAccountTimezone, normalizeToUtcIso, parseStoredUtcDateTime } from '../../utils/dateUtils.js'
 import { getAccountLocaleSettings } from '../../utils/accountLocale.js'
 import {
   getAIRuntimeConfig,
@@ -1141,15 +1141,7 @@ async function loadConversationRows(contactId, channel = 'whatsapp', {
   const boundedLimit = Math.max(1, Math.trunc(Number(limit) || HISTORY_LIMIT))
   const boundedOffset = Math.max(0, Math.trunc(Number(offset) || 0))
   const boundary = buildHistorySearchBoundary(throughMessage || {})
-  const boundarySql = boundary
-    ? `AND (
-        COALESCE(message_timestamp, created_at) < ? OR
-        (COALESCE(message_timestamp, created_at) = ? AND id <= ?)
-      )`
-    : ''
-  const boundaryParams = boundary
-    ? [boundary.timestamp, boundary.timestamp, boundary.id]
-    : []
+  const { sql: boundarySql, params: boundaryParams } = conversationHistoryBoundarySql(contactId, normalizedChannel, boundary)
   const substantiveSql = substantiveOnly ? "AND LOWER(COALESCE(message_type, '')) NOT IN ('reaction', 'sticker')" : ''
   if (COMMENT_CHAT_CHANNELS.has(normalizedChannel)) {
     const platform = commentChannelToPlatform(normalizedChannel)
@@ -1226,15 +1218,7 @@ async function countConversationRows(contactId, channel = 'whatsapp', {
 } = {}) {
   const normalizedChannel = normalizeConversationalChannel(channel)
   const boundary = buildHistorySearchBoundary(throughMessage || {})
-  const boundarySql = boundary
-    ? `AND (
-        COALESCE(message_timestamp, created_at) < ? OR
-        (COALESCE(message_timestamp, created_at) = ? AND id <= ?)
-      )`
-    : ''
-  const boundaryParams = boundary
-    ? [boundary.timestamp, boundary.timestamp, boundary.id]
-    : []
+  const { sql: boundarySql, params: boundaryParams } = conversationHistoryBoundarySql(contactId, normalizedChannel, boundary)
   if (COMMENT_CHAT_CHANNELS.has(normalizedChannel)) {
     const platform = commentChannelToPlatform(normalizedChannel)
     const row = await db.get(`
@@ -1285,15 +1269,44 @@ function escapeHistoryLikeQuery(value) {
 }
 
 function buildHistorySearchBoundary(beforeMessage = {}) {
-  const timestamp = String(
+  const value = (
     beforeMessage.messageTimestamp ||
     beforeMessage.message_timestamp ||
     beforeMessage.createdAt ||
     beforeMessage.created_at ||
     ''
-  ).trim()
+  )
   const id = String(beforeMessage.id || '').trim()
-  return timestamp && id ? { timestamp, id } : null
+  if (!value || !id) return null
+  const instant = parseStoredUtcDateTime(value)
+  if (!instant) {
+    throw Object.assign(new Error('La fecha del mensaje límite del historial no es válida.'), {
+      code: 'conversational_history_timestamp_invalid'
+    })
+  }
+  return { timestamp: instant.toISO(), id }
+}
+
+function conversationHistoryBoundarySql(contactId, channel, boundary, { inclusive = true } = {}) {
+  if (!boundary) return { sql: '', params: [] }
+  const isComment = COMMENT_CHAT_CHANNELS.has(channel)
+  const isSocial = SOCIAL_CHAT_CHANNELS.has(channel)
+  const table = isComment || isSocial ? 'meta_social_messages'
+    : channel === EMAIL_CONVERSATIONAL_CHANNEL ? 'email_messages' : 'whatsapp_api_messages'
+  const channelFilter = isComment || isSocial
+    ? `AND platform = '${isComment ? commentChannelToPlatform(channel) : channel}'
+       AND message_type ${isComment ? 'IN' : 'NOT IN'} ('comment', 'comment_reply_public', 'comment_reply_private')`
+    : channel === EMAIL_CONVERSATIONAL_CHANNEL ? '' : phoneMessageTransportFilter(channel)
+  // Compare against the canonical row inside SQL. A PostgreSQL Date loses
+  // microseconds, and Date.toString() is not a valid PostgreSQL timestamp.
+  // Keeping the boundary in the database preserves precision on both engines.
+  return {
+    sql: `AND (COALESCE(message_timestamp, created_at), id) ${inclusive ? '<=' : '<'} (
+      SELECT COALESCE(message_timestamp, created_at), id FROM ${table}
+      WHERE contact_id = ? AND id = ? ${channelFilter}
+    )`,
+    params: [contactId, boundary.id]
+  }
 }
 
 /**
@@ -1315,11 +1328,7 @@ async function searchConversationRows(contactId, channel = 'whatsapp', {
   const boundedOffset = Math.max(0, Math.trunc(Number(offset) || 0))
   const boundary = buildHistorySearchBoundary(beforeMessage)
   if (!boundary) return []
-  const boundarySql = `AND (
-    COALESCE(message_timestamp, created_at) < ? OR
-    (COALESCE(message_timestamp, created_at) = ? AND id < ?)
-  )`
-  const boundaryParams = [boundary.timestamp, boundary.timestamp, boundary.id]
+  const { sql: boundarySql, params: boundaryParams } = conversationHistoryBoundarySql(contactId, normalizedChannel, boundary, { inclusive: false })
 
   if (COMMENT_CHAT_CHANNELS.has(normalizedChannel)) {
     const platform = commentChannelToPlatform(normalizedChannel)
@@ -1590,8 +1599,8 @@ export async function loadToolCallingV2ConversationEnvelopeThroughMessage({
   const boundary = buildHistorySearchBoundary(boundaryMessage || {})
   if (
     !boundaryMessage ||
-    boundary.id !== cleanBoundaryId ||
-    !boundary.timestamp
+    boundary?.id !== cleanBoundaryId ||
+    !boundary?.timestamp
   ) {
     throw Object.assign(
       new Error('El mensaje que originó la terminal no apareció en el historial canónico.'),
@@ -5480,6 +5489,15 @@ export function getPendingMandatoryHandoffEscalationReason(state = {}) {
   }
 }
 
+export function getInboundMandatoryHandoffEscalationReason({ state, attemptCount, policyConfigured = false } = {}) {
+  const pending = getPendingMandatoryHandoffEscalationReason(state)
+  if (pending) return pending
+  const lastError = String(state?.inboundProcessingLastError || state?.inbound_processing_last_error || '')
+  if (lastError.startsWith('WHATSAPP_QR_CONNECTION_NOT_READY:')) return null
+  if (!policyConfigured || Math.max(1, Number(attemptCount) || 1) < MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS) return null
+  return { marker: 'mandatory_handoff_attempt_threshold', errorCode: 'mandatory_handoff_gate_attempts_exhausted' }
+}
+
 function shouldEscalateMandatoryHandoffGate({
   phase = 'pre',
   inboundClaim = null
@@ -7687,6 +7705,42 @@ export async function failInboundAndQueueMandatoryHandoffRetry({
   return { queued: true, pendingEntry }
 }
 
+export function buildConversationalTransportRetryPlan(error, { nowMs = Date.now() } = {}) {
+  const delivery = error?.conversationalReplyDelivery
+  if (error?.code !== 'WHATSAPP_QR_CONNECTION_NOT_READY' || error.providerSendAttempted !== false ||
+    !delivery || delivery.providerSendUncheckpointed || delivery.durableStatus !== 'pending') return null
+  const attemptCount = Math.max(1, Number(delivery.attemptCount) || 1)
+  if (attemptCount >= 6) return null
+  const delayMs = Math.min(300_000, 30_000 * 2 ** (attemptCount - 1))
+  return { attemptCount, delayMs, scheduledFor: normalizeToUtcIso(new Date(nowMs + delayMs), 'UTC') }
+}
+
+export async function failInboundAndQueueTransportRetry({ contactId, phone, claim, error, plan } = {}, dependencies = {}) {
+  if (!claim?.messageId || !claim?.claimToken || !plan?.scheduledFor) return { queued: false }
+  const database = dependencies.database || db
+  const failInbound = dependencies.failInbound || failConversationInboundMessage
+  const persistRerun = dependencies.persistRerun || persistPendingRerun
+  const scheduleRerun = dependencies.scheduleRerun || scheduleConversationalAgentRerun
+  const channel = normalizeConversationalChannel(claim.channel)
+  const pendingEntry = {
+    contactId, phone, messageId: claim.messageId, channel, scheduledFor: plan.scheduledFor,
+    transportRetry: { code: error.code, attemptCount: plan.attemptCount }
+  }
+  const committed = await database.transaction(async () => {
+    const failed = await failInbound(contactId, claim.messageId, {
+      agentId: claim.agentId, channel, claimToken: claim.claimToken,
+      error: `${error.code}: ${error.message}`
+    })
+    if (!failed.failed) return false
+    await persistRerun(getRunKey(contactId, channel), pendingEntry, { database, throwOnError: true })
+    return true
+  })
+  if (!committed) return { queued: false }
+  scheduleRerun({ contactId, phone, latestMessage: { id: claim.messageId, phone }, channel,
+    reason: 'reconexión de WhatsApp antes del envío', scheduledFor: plan.scheduledFor, pendingEntry })
+  return { queued: true, pendingEntry }
+}
+
 export async function loadToolCallingV2RuntimeDefaultsAfterInboundClaim({
   inboundClaim = null,
   mandatoryHandoffPolicyConfigured = false
@@ -7951,6 +8005,15 @@ async function sendConversationalChannelTextMessage({
     text,
     externalId,
     agentId
+  })
+}
+
+async function prepareConversationalTextDelivery({ contactId, latest, phone, channel, forceHighLevel }) {
+  if (channel !== 'whatsapp' || forceHighLevel || shouldSendConversationalReplyThroughHighLevel({ channel, latest })) return
+  const { prepareWhatsAppApiTextDelivery } = await import('../../services/whatsappApiService.js')
+  await prepareWhatsAppApiTextDelivery({
+    contactId, to: phone || latest.phone, from: latest.business_phone || undefined,
+    phoneNumberId: latest.business_phone_number_id || undefined
   })
 }
 
@@ -8335,6 +8398,7 @@ export async function sendReplyParts({
   const {
     splitter = splitMessageIntoBubbles,
     sendTextMessage = null,
+    prepareDelivery = sendTextMessage ? async () => {} : prepareConversationalTextDelivery,
     wait = sleep,
     loadNewerInbound = null,
     beforeSendFence = null,
@@ -8613,6 +8677,10 @@ export async function sendReplyParts({
         return { parts, sentParts, interruptedBy: newerInbound, delaySchedule, durableStatus: 'interrupted' }
       }
 
+      // Reconnection may take seconds and writes QR auth/lease state. Keep it
+      // outside both database fences; authority is still rechecked before send.
+      await prepareDelivery({ contactId, latest, phone, channel: normalizedDeliveryChannel, forceHighLevel })
+
       const deliveryAttempt = await withSafetyDeliveryLock(async () => {
         // La cuarentena y la entrega comparten el mismo fence distribuido. Se
         // vuelve a consultar dentro del candado justo antes de CADA globo para
@@ -8638,17 +8706,27 @@ export async function sendReplyParts({
         }
 
         const performProviderSend = async () => {
+          const previouslyAttempted = providerSendAttempted
           providerSendAttempted = true
           providerSendUncheckpointed = true
-          const sendResult = await sendMessage({
-            channel: normalizedDeliveryChannel,
-            to: phone || latest.phone,
-            from: deliveryFromNumber || latest.business_phone || undefined,
-            phoneNumberId: latest.business_phone_number_id || undefined,
-            text: parts[index],
-            externalId: durablePart?.externalId || `${externalIdPrefix}_${latest.id}_${index + 1}`.slice(0, 120),
-            agentId: agentConfig.id || null
-          })
+          let sendResult
+          try {
+            sendResult = await sendMessage({
+              channel: normalizedDeliveryChannel,
+              to: phone || latest.phone,
+              from: deliveryFromNumber || latest.business_phone || undefined,
+              phoneNumberId: latest.business_phone_number_id || undefined,
+              text: parts[index],
+              externalId: durablePart?.externalId || `${externalIdPrefix}_${latest.id}_${index + 1}`.slice(0, 120),
+              agentId: agentConfig.id || null
+            })
+          } catch (error) {
+            if (error?.code === 'WHATSAPP_QR_CONNECTION_NOT_READY' && error.providerSendAttempted === false) {
+              providerSendAttempted = previouslyAttempted
+              providerSendUncheckpointed = false
+            }
+            throw error
+          }
           providerSendReturned = true
           return sendResult
         }
@@ -8780,6 +8858,7 @@ export async function sendReplyParts({
       sentParts,
       durableStatus: String(failedSettlement?.status || '').trim() || null,
       planId: String(durablePlan?.id || '').trim() || null,
+      attemptCount: Math.max(1, Number(durablePlan?.attempts) || 1),
       providerSendAttempted,
       providerSendReturned,
       providerSendUncheckpointed
@@ -12181,8 +12260,6 @@ export async function handleInboundConversationalMessage({
 
 	      // Claim recuperable: el lease bloquea ejecuciones concurrentes, pero un
 	      // error deja el mismo mensaje en estado failed para que pueda reintentarse.
-	      const pendingMandatoryHandoffEscalation =
-	        getPendingMandatoryHandoffEscalationReason(agentState)
 	      const claim = await claimConversationInboundMessage(contactId, latest.id, {
 	        agentId: agentConfig.id,
 	        channel: normalizedChannel
@@ -12195,6 +12272,11 @@ export async function handleInboundConversationalMessage({
 	        }).catch(() => {})
 	        return
 	      }
+	      const pendingMandatoryHandoffEscalation = getInboundMandatoryHandoffEscalationReason({
+	        state: agentState,
+	        attemptCount: claim.state?.inboundProcessingAttemptCount || 1,
+	        policyConfigured: mandatoryHandoffPolicyConfiguredForRun
+	      })
 	      activeClaim = {
 	        messageId: latest.id,
 	        agentId: agentConfig.id,
@@ -12204,26 +12286,8 @@ export async function handleInboundConversationalMessage({
 	          1,
 	          Number(claim.state?.inboundProcessingAttemptCount) || 1
 	        ),
-	        mandatoryHandoffEscalationRequired: Boolean(
-	          pendingMandatoryHandoffEscalation ||
-	          Math.max(
-	            1,
-	            Number(claim.state?.inboundProcessingAttemptCount) || 1
-	          ) >= MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS
-	        ),
-	        mandatoryHandoffEscalationReason:
-	          pendingMandatoryHandoffEscalation ||
-	          (
-	            Math.max(
-	              1,
-	              Number(claim.state?.inboundProcessingAttemptCount) || 1
-	            ) >= MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS
-	              ? {
-	                  marker: 'mandatory_handoff_attempt_threshold',
-	                  errorCode: 'mandatory_handoff_gate_attempts_exhausted'
-	                }
-	              : null
-	          )
+	        mandatoryHandoffEscalationRequired: Boolean(pendingMandatoryHandoffEscalation),
+	        mandatoryHandoffEscalationReason: pendingMandatoryHandoffEscalation
 	      }
 	      agentState = claim.state || agentState
 	      // El rerun durable ya tiene un nuevo lease/claim recuperable. A partir
@@ -12386,6 +12450,16 @@ export async function handleInboundConversationalMessage({
       return
     }
     const failedClaim = activeClaim
+    const transportRetry = buildConversationalTransportRetryPlan(error)
+    if (failedClaim && transportRetry) {
+      const queued = await failInboundAndQueueTransportRetry({ contactId, phone, claim: failedClaim, error, plan: transportRetry }).catch(() => null)
+      if (queued?.queued) {
+        activeClaim = null
+        await recordConversationalAgentEvent({ contactId, eventType: 'reply_transport_retry_queued',
+          detail: { messageId: failedClaim.messageId, channel: normalizedChannel, ...transportRetry } }).catch(() => {})
+        return
+      }
+    }
     const retryableError = (
       failedClaim &&
       mandatoryHandoffPolicyConfiguredForRun &&

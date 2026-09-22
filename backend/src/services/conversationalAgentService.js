@@ -17047,6 +17047,28 @@ function terminalConversationalReplyDeliveryClaim(plan) {
   }
 }
 
+export function recoverUnsentLegacyQrReplyPlan(detail = {}, recoveredAt) {
+  // These two exact errors were thrown locally by ensureOpenSocket, before
+  // Baileys.sendMessage. Older runners incorrectly called them ambiguous.
+  // A network/provider error, an accepted part, or a crash is never replayable.
+  const knownErrors = new Set([
+    'provider_send_attempted_before_failure:El QR no está conectado. Abre Configuración > WhatsApp y escanea el código.',
+    'provider_send_attempted_before_failure:El QR se está reconectando. Espera unos segundos e intenta mandar otra vez.'
+  ])
+  const parts = Array.isArray(detail.parts) ? detail.parts : []
+  if (detail.channel !== 'whatsapp' || detail.status !== 'ambiguous' || !knownErrors.has(detail.ambiguousReason) ||
+    !parts.some(part => part.status === 'ambiguous') ||
+    parts.some(part => part.status === 'sending' || (part.status === 'ambiguous' &&
+      (part.providerMessageId || part.sentAt || !knownErrors.has(part.lastError))))) return null
+  return {
+    ...detail, status: 'pending', claimToken: null, leaseUntilAt: null,
+    ambiguousAt: null, ambiguousReason: null, lastError: null,
+    recoveredPreSendFailureAt: recoveredAt,
+    parts: parts.map(part => part.status === 'ambiguous'
+      ? { ...part, status: 'pending', sendingAt: null, lastError: null } : part)
+  }
+}
+
 /**
  * Reclama el envío con CAS. Si el lease expiró después de marcar una parte como
  * `sending`, falla cerrado: el proveedor pudo aceptarla antes del crash y no se
@@ -17070,6 +17092,11 @@ export async function claimConversationalReplyDelivery(planId, {
     assertConversationalReplyDeliveryPlanRow(row)
     const detail = parseJsonField(row.detail_json, {})
     const plan = mapConversationalReplyDeliveryPlan(row)
+    const recoveredPreSend = recoverUnsentLegacyQrReplyPlan(detail, lease.nowIso)
+    if (recoveredPreSend) {
+      await compareAndSetConversationalReplyDeliveryPlan(row, recoveredPreSend)
+      continue
+    }
     const terminal = terminalConversationalReplyDeliveryClaim(plan)
     if (terminal) return terminal
 

@@ -53,14 +53,22 @@ jobs:
           cache-dependency-path: backend/package-lock.json
 
       - name: Instalar backend
-        # Esta compuerta sólo importa el esquema PostgreSQL. Evita descargar el
-        # binario de ffmpeg, que no participa en la prueba y puede fallar por red.
+        # Evita descargar ffmpeg, que no participa en estas pruebas. El paso
+        # de historial reconstruye únicamente el módulo nativo SQLite que usa.
         run: npm ci --prefix backend --ignore-scripts
 
       - name: Verificar arranque en PostgreSQL limpio
         env:
           TEST_POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/ristak_bootstrap
         run: npm --prefix backend run test:postgres-bootstrap
+
+      - name: Verificar historial del chatbot con PostgreSQL real
+        env:
+          TEST_POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/ristak_bootstrap
+          TZ: UTC
+        run: |
+          npm rebuild --prefix backend sqlite3
+          node --test --test-concurrency=1 backend/test/conversationalHistoryBoundary.test.mjs backend/test/conversationalQrDeliveryRecovery.test.mjs
 
   build-and-push:
     needs: verify-fresh-postgres

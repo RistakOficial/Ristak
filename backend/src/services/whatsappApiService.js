@@ -28,6 +28,7 @@ import {
   sendWhatsAppQrReactionMessage,
   sendWhatsAppQrVideoMessage,
   sendWhatsAppQrTextMessage,
+  prepareWhatsAppQrTextDelivery,
   startWhatsAppQrConnection,
   warmWhatsAppQrProfilePictures
 } from './whatsappQrService.js'
@@ -15200,6 +15201,20 @@ async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioD
   } catch (fallbackError) {
     if (originalError) throw buildQrFallbackError(originalError, fallbackError)
     throw fallbackError
+  }
+}
+
+/** Resolve the same default text route without sending anything. */
+export async function prepareWhatsAppApiTextDelivery({ to, from, phoneNumberId, contactId } = {}) {
+  const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
+  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const decision = await getOfficialApiFallbackDecision({
+    config, fromPhone, phoneNumberId: phoneNumberId || config.phoneNumberId,
+    toPhone, contactId, checkReplyWindow: true
+  })
+  if (decision.shouldFallback) {
+    await prepareWhatsAppQrTextDelivery({ phoneNumberId: decision.fallbackPhoneRow.id, from: fromPhone })
   }
 }
 
