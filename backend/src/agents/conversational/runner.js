@@ -4,7 +4,7 @@ import { DateTime } from 'luxon'
 import { z } from 'zod'
 import { db } from '../../config/database.js'
 import { logger } from '../../utils/logger.js'
-import { DEFAULT_TIMEZONE, getAccountTimezone, normalizeToUtcIso } from '../../utils/dateUtils.js'
+import { DEFAULT_TIMEZONE, getAccountTimezone, normalizeToUtcIso, parseStoredUtcDateTime } from '../../utils/dateUtils.js'
 import { getAccountLocaleSettings } from '../../utils/accountLocale.js'
 import {
   getAIRuntimeConfig,
@@ -1141,15 +1141,7 @@ async function loadConversationRows(contactId, channel = 'whatsapp', {
   const boundedLimit = Math.max(1, Math.trunc(Number(limit) || HISTORY_LIMIT))
   const boundedOffset = Math.max(0, Math.trunc(Number(offset) || 0))
   const boundary = buildHistorySearchBoundary(throughMessage || {})
-  const boundarySql = boundary
-    ? `AND (
-        COALESCE(message_timestamp, created_at) < ? OR
-        (COALESCE(message_timestamp, created_at) = ? AND id <= ?)
-      )`
-    : ''
-  const boundaryParams = boundary
-    ? [boundary.timestamp, boundary.timestamp, boundary.id]
-    : []
+  const { sql: boundarySql, params: boundaryParams } = conversationHistoryBoundarySql(contactId, normalizedChannel, boundary)
   const substantiveSql = substantiveOnly ? "AND LOWER(COALESCE(message_type, '')) NOT IN ('reaction', 'sticker')" : ''
   if (COMMENT_CHAT_CHANNELS.has(normalizedChannel)) {
     const platform = commentChannelToPlatform(normalizedChannel)
@@ -1226,15 +1218,7 @@ async function countConversationRows(contactId, channel = 'whatsapp', {
 } = {}) {
   const normalizedChannel = normalizeConversationalChannel(channel)
   const boundary = buildHistorySearchBoundary(throughMessage || {})
-  const boundarySql = boundary
-    ? `AND (
-        COALESCE(message_timestamp, created_at) < ? OR
-        (COALESCE(message_timestamp, created_at) = ? AND id <= ?)
-      )`
-    : ''
-  const boundaryParams = boundary
-    ? [boundary.timestamp, boundary.timestamp, boundary.id]
-    : []
+  const { sql: boundarySql, params: boundaryParams } = conversationHistoryBoundarySql(contactId, normalizedChannel, boundary)
   if (COMMENT_CHAT_CHANNELS.has(normalizedChannel)) {
     const platform = commentChannelToPlatform(normalizedChannel)
     const row = await db.get(`
@@ -1285,15 +1269,44 @@ function escapeHistoryLikeQuery(value) {
 }
 
 function buildHistorySearchBoundary(beforeMessage = {}) {
-  const timestamp = String(
+  const value = (
     beforeMessage.messageTimestamp ||
     beforeMessage.message_timestamp ||
     beforeMessage.createdAt ||
     beforeMessage.created_at ||
     ''
-  ).trim()
+  )
   const id = String(beforeMessage.id || '').trim()
-  return timestamp && id ? { timestamp, id } : null
+  if (!value || !id) return null
+  const instant = parseStoredUtcDateTime(value)
+  if (!instant) {
+    throw Object.assign(new Error('La fecha del mensaje límite del historial no es válida.'), {
+      code: 'conversational_history_timestamp_invalid'
+    })
+  }
+  return { timestamp: instant.toISO(), id }
+}
+
+function conversationHistoryBoundarySql(contactId, channel, boundary, { inclusive = true } = {}) {
+  if (!boundary) return { sql: '', params: [] }
+  const isComment = COMMENT_CHAT_CHANNELS.has(channel)
+  const isSocial = SOCIAL_CHAT_CHANNELS.has(channel)
+  const table = isComment || isSocial ? 'meta_social_messages'
+    : channel === EMAIL_CONVERSATIONAL_CHANNEL ? 'email_messages' : 'whatsapp_api_messages'
+  const channelFilter = isComment || isSocial
+    ? `AND platform = '${isComment ? commentChannelToPlatform(channel) : channel}'
+       AND message_type ${isComment ? 'IN' : 'NOT IN'} ('comment', 'comment_reply_public', 'comment_reply_private')`
+    : channel === EMAIL_CONVERSATIONAL_CHANNEL ? '' : phoneMessageTransportFilter(channel)
+  // Compare against the canonical row inside SQL. A PostgreSQL Date loses
+  // microseconds, and Date.toString() is not a valid PostgreSQL timestamp.
+  // Keeping the boundary in the database preserves precision on both engines.
+  return {
+    sql: `AND (COALESCE(message_timestamp, created_at), id) ${inclusive ? '<=' : '<'} (
+      SELECT COALESCE(message_timestamp, created_at), id FROM ${table}
+      WHERE contact_id = ? AND id = ? ${channelFilter}
+    )`,
+    params: [contactId, boundary.id]
+  }
 }
 
 /**
@@ -1315,11 +1328,7 @@ async function searchConversationRows(contactId, channel = 'whatsapp', {
   const boundedOffset = Math.max(0, Math.trunc(Number(offset) || 0))
   const boundary = buildHistorySearchBoundary(beforeMessage)
   if (!boundary) return []
-  const boundarySql = `AND (
-    COALESCE(message_timestamp, created_at) < ? OR
-    (COALESCE(message_timestamp, created_at) = ? AND id < ?)
-  )`
-  const boundaryParams = [boundary.timestamp, boundary.timestamp, boundary.id]
+  const { sql: boundarySql, params: boundaryParams } = conversationHistoryBoundarySql(contactId, normalizedChannel, boundary, { inclusive: false })
 
   if (COMMENT_CHAT_CHANNELS.has(normalizedChannel)) {
     const platform = commentChannelToPlatform(normalizedChannel)
@@ -1590,8 +1599,8 @@ export async function loadToolCallingV2ConversationEnvelopeThroughMessage({
   const boundary = buildHistorySearchBoundary(boundaryMessage || {})
   if (
     !boundaryMessage ||
-    boundary.id !== cleanBoundaryId ||
-    !boundary.timestamp
+    boundary?.id !== cleanBoundaryId ||
+    !boundary?.timestamp
   ) {
     throw Object.assign(
       new Error('El mensaje que originó la terminal no apareció en el historial canónico.'),
@@ -5478,6 +5487,13 @@ export function getPendingMandatoryHandoffEscalationReason(state = {}) {
     marker: prefix.slice(0, -1),
     errorCode: lastError.slice(prefix.length).trim() || 'mandatory_handoff_gate_failed'
   }
+}
+
+export function getInboundMandatoryHandoffEscalationReason({ state, attemptCount, policyConfigured = false } = {}) {
+  const pending = getPendingMandatoryHandoffEscalationReason(state)
+  if (pending) return pending
+  if (!policyConfigured || Math.max(1, Number(attemptCount) || 1) < MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS) return null
+  return { marker: 'mandatory_handoff_attempt_threshold', errorCode: 'mandatory_handoff_gate_attempts_exhausted' }
 }
 
 function shouldEscalateMandatoryHandoffGate({
@@ -12181,8 +12197,6 @@ export async function handleInboundConversationalMessage({
 
 	      // Claim recuperable: el lease bloquea ejecuciones concurrentes, pero un
 	      // error deja el mismo mensaje en estado failed para que pueda reintentarse.
-	      const pendingMandatoryHandoffEscalation =
-	        getPendingMandatoryHandoffEscalationReason(agentState)
 	      const claim = await claimConversationInboundMessage(contactId, latest.id, {
 	        agentId: agentConfig.id,
 	        channel: normalizedChannel
@@ -12195,6 +12209,11 @@ export async function handleInboundConversationalMessage({
 	        }).catch(() => {})
 	        return
 	      }
+	      const pendingMandatoryHandoffEscalation = getInboundMandatoryHandoffEscalationReason({
+	        state: agentState,
+	        attemptCount: claim.state?.inboundProcessingAttemptCount || 1,
+	        policyConfigured: mandatoryHandoffPolicyConfiguredForRun
+	      })
 	      activeClaim = {
 	        messageId: latest.id,
 	        agentId: agentConfig.id,
@@ -12204,26 +12223,8 @@ export async function handleInboundConversationalMessage({
 	          1,
 	          Number(claim.state?.inboundProcessingAttemptCount) || 1
 	        ),
-	        mandatoryHandoffEscalationRequired: Boolean(
-	          pendingMandatoryHandoffEscalation ||
-	          Math.max(
-	            1,
-	            Number(claim.state?.inboundProcessingAttemptCount) || 1
-	          ) >= MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS
-	        ),
-	        mandatoryHandoffEscalationReason:
-	          pendingMandatoryHandoffEscalation ||
-	          (
-	            Math.max(
-	              1,
-	              Number(claim.state?.inboundProcessingAttemptCount) || 1
-	            ) >= MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS
-	              ? {
-	                  marker: 'mandatory_handoff_attempt_threshold',
-	                  errorCode: 'mandatory_handoff_gate_attempts_exhausted'
-	                }
-	              : null
-	          )
+	        mandatoryHandoffEscalationRequired: Boolean(pendingMandatoryHandoffEscalation),
+	        mandatoryHandoffEscalationReason: pendingMandatoryHandoffEscalation
 	      }
 	      agentState = claim.state || agentState
 	      // El rerun durable ya tiene un nuevo lease/claim recuperable. A partir

@@ -9765,6 +9765,16 @@ reacciones y stickers no cancelan una respuesta sustantiva. La separación
 opcional de una respuesta larga en globos sigue siendo una preferencia distinta
 de generar varias respuestas independientes para una misma ráfaga.
 
+La frontera del historial se compara dentro de SQL contra el mensaje canónico
+del mismo contacto y canal. No se envía `String(Date)` como timestamp ni se
+redondean los microsegundos de PostgreSQL: el último mensaje del lote debe quedar
+incluido aun cuando el driver entregue un `Date`. Los timestamps de metadata se
+leen con `parseStoredUtcDateTime()`. La publicación comprueba este recorrido
+(pendientes, conteo y búsqueda) con PostgreSQL real antes de construir la imagen.
+Un tercer intento por un error general no fuerza un traspaso humano cuando no
+hay una política de handoff habilitada; las obligaciones explícitas ya
+persistidas conservan su recuperación independiente.
+
 Activar, reanudar o limpiar la señal manualmente despierta el último inbound
 pendiente del canal, aunque antes atendiera una persona y todavía no exista un
 estado de IA en ese canal. Se conserva el historial humano como contexto y se
