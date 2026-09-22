@@ -5492,6 +5492,8 @@ export function getPendingMandatoryHandoffEscalationReason(state = {}) {
 export function getInboundMandatoryHandoffEscalationReason({ state, attemptCount, policyConfigured = false } = {}) {
   const pending = getPendingMandatoryHandoffEscalationReason(state)
   if (pending) return pending
+  const lastError = String(state?.inboundProcessingLastError || state?.inbound_processing_last_error || '')
+  if (lastError.startsWith('WHATSAPP_QR_CONNECTION_NOT_READY:')) return null
   if (!policyConfigured || Math.max(1, Number(attemptCount) || 1) < MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS) return null
   return { marker: 'mandatory_handoff_attempt_threshold', errorCode: 'mandatory_handoff_gate_attempts_exhausted' }
 }
@@ -7703,6 +7705,42 @@ export async function failInboundAndQueueMandatoryHandoffRetry({
   return { queued: true, pendingEntry }
 }
 
+export function buildConversationalTransportRetryPlan(error, { nowMs = Date.now() } = {}) {
+  const delivery = error?.conversationalReplyDelivery
+  if (error?.code !== 'WHATSAPP_QR_CONNECTION_NOT_READY' || error.providerSendAttempted !== false ||
+    !delivery || delivery.providerSendUncheckpointed || delivery.durableStatus !== 'pending') return null
+  const attemptCount = Math.max(1, Number(delivery.attemptCount) || 1)
+  if (attemptCount >= 6) return null
+  const delayMs = Math.min(300_000, 30_000 * 2 ** (attemptCount - 1))
+  return { attemptCount, delayMs, scheduledFor: normalizeToUtcIso(new Date(nowMs + delayMs), 'UTC') }
+}
+
+export async function failInboundAndQueueTransportRetry({ contactId, phone, claim, error, plan } = {}, dependencies = {}) {
+  if (!claim?.messageId || !claim?.claimToken || !plan?.scheduledFor) return { queued: false }
+  const database = dependencies.database || db
+  const failInbound = dependencies.failInbound || failConversationInboundMessage
+  const persistRerun = dependencies.persistRerun || persistPendingRerun
+  const scheduleRerun = dependencies.scheduleRerun || scheduleConversationalAgentRerun
+  const channel = normalizeConversationalChannel(claim.channel)
+  const pendingEntry = {
+    contactId, phone, messageId: claim.messageId, channel, scheduledFor: plan.scheduledFor,
+    transportRetry: { code: error.code, attemptCount: plan.attemptCount }
+  }
+  const committed = await database.transaction(async () => {
+    const failed = await failInbound(contactId, claim.messageId, {
+      agentId: claim.agentId, channel, claimToken: claim.claimToken,
+      error: `${error.code}: ${error.message}`
+    })
+    if (!failed.failed) return false
+    await persistRerun(getRunKey(contactId, channel), pendingEntry, { database, throwOnError: true })
+    return true
+  })
+  if (!committed) return { queued: false }
+  scheduleRerun({ contactId, phone, latestMessage: { id: claim.messageId, phone }, channel,
+    reason: 'reconexión de WhatsApp antes del envío', scheduledFor: plan.scheduledFor, pendingEntry })
+  return { queued: true, pendingEntry }
+}
+
 export async function loadToolCallingV2RuntimeDefaultsAfterInboundClaim({
   inboundClaim = null,
   mandatoryHandoffPolicyConfigured = false
@@ -7967,6 +8005,15 @@ async function sendConversationalChannelTextMessage({
     text,
     externalId,
     agentId
+  })
+}
+
+async function prepareConversationalTextDelivery({ contactId, latest, phone, channel, forceHighLevel }) {
+  if (channel !== 'whatsapp' || forceHighLevel || shouldSendConversationalReplyThroughHighLevel({ channel, latest })) return
+  const { prepareWhatsAppApiTextDelivery } = await import('../../services/whatsappApiService.js')
+  await prepareWhatsAppApiTextDelivery({
+    contactId, to: phone || latest.phone, from: latest.business_phone || undefined,
+    phoneNumberId: latest.business_phone_number_id || undefined
   })
 }
 
@@ -8351,6 +8398,7 @@ export async function sendReplyParts({
   const {
     splitter = splitMessageIntoBubbles,
     sendTextMessage = null,
+    prepareDelivery = sendTextMessage ? async () => {} : prepareConversationalTextDelivery,
     wait = sleep,
     loadNewerInbound = null,
     beforeSendFence = null,
@@ -8629,6 +8677,10 @@ export async function sendReplyParts({
         return { parts, sentParts, interruptedBy: newerInbound, delaySchedule, durableStatus: 'interrupted' }
       }
 
+      // Reconnection may take seconds and writes QR auth/lease state. Keep it
+      // outside both database fences; authority is still rechecked before send.
+      await prepareDelivery({ contactId, latest, phone, channel: normalizedDeliveryChannel, forceHighLevel })
+
       const deliveryAttempt = await withSafetyDeliveryLock(async () => {
         // La cuarentena y la entrega comparten el mismo fence distribuido. Se
         // vuelve a consultar dentro del candado justo antes de CADA globo para
@@ -8654,17 +8706,27 @@ export async function sendReplyParts({
         }
 
         const performProviderSend = async () => {
+          const previouslyAttempted = providerSendAttempted
           providerSendAttempted = true
           providerSendUncheckpointed = true
-          const sendResult = await sendMessage({
-            channel: normalizedDeliveryChannel,
-            to: phone || latest.phone,
-            from: deliveryFromNumber || latest.business_phone || undefined,
-            phoneNumberId: latest.business_phone_number_id || undefined,
-            text: parts[index],
-            externalId: durablePart?.externalId || `${externalIdPrefix}_${latest.id}_${index + 1}`.slice(0, 120),
-            agentId: agentConfig.id || null
-          })
+          let sendResult
+          try {
+            sendResult = await sendMessage({
+              channel: normalizedDeliveryChannel,
+              to: phone || latest.phone,
+              from: deliveryFromNumber || latest.business_phone || undefined,
+              phoneNumberId: latest.business_phone_number_id || undefined,
+              text: parts[index],
+              externalId: durablePart?.externalId || `${externalIdPrefix}_${latest.id}_${index + 1}`.slice(0, 120),
+              agentId: agentConfig.id || null
+            })
+          } catch (error) {
+            if (error?.code === 'WHATSAPP_QR_CONNECTION_NOT_READY' && error.providerSendAttempted === false) {
+              providerSendAttempted = previouslyAttempted
+              providerSendUncheckpointed = false
+            }
+            throw error
+          }
           providerSendReturned = true
           return sendResult
         }
@@ -8796,6 +8858,7 @@ export async function sendReplyParts({
       sentParts,
       durableStatus: String(failedSettlement?.status || '').trim() || null,
       planId: String(durablePlan?.id || '').trim() || null,
+      attemptCount: Math.max(1, Number(durablePlan?.attempts) || 1),
       providerSendAttempted,
       providerSendReturned,
       providerSendUncheckpointed
@@ -12387,6 +12450,16 @@ export async function handleInboundConversationalMessage({
       return
     }
     const failedClaim = activeClaim
+    const transportRetry = buildConversationalTransportRetryPlan(error)
+    if (failedClaim && transportRetry) {
+      const queued = await failInboundAndQueueTransportRetry({ contactId, phone, claim: failedClaim, error, plan: transportRetry }).catch(() => null)
+      if (queued?.queued) {
+        activeClaim = null
+        await recordConversationalAgentEvent({ contactId, eventType: 'reply_transport_retry_queued',
+          detail: { messageId: failedClaim.messageId, channel: normalizedChannel, ...transportRetry } }).catch(() => {})
+        return
+      }
+    }
     const retryableError = (
       failedClaim &&
       mandatoryHandoffPolicyConfiguredForRun &&

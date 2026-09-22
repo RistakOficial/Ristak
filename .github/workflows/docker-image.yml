@@ -68,7 +68,7 @@ jobs:
           TZ: UTC
         run: |
           npm rebuild --prefix backend sqlite3
-          node --test --test-concurrency=1 backend/test/conversationalHistoryBoundary.test.mjs
+          node --test --test-concurrency=1 backend/test/conversationalHistoryBoundary.test.mjs backend/test/conversationalQrDeliveryRecovery.test.mjs
 
   build-and-push:
     needs: verify-fresh-postgres

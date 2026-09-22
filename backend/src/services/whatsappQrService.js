@@ -3360,21 +3360,35 @@ async function sendProtectedQrMessage({ sock, phone, recipient, type, payload, o
   return sock.sendMessage(recipient.jid, payload, options)
 }
 
-export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text, externalId, replyToMessageId = '', replyToProviderMessageId = '', skipQrSendProtection = false } = {}) {
+// Open/recover the socket before a caller takes its final database delivery
+// fence. QR auth callbacks and lease heartbeats need their own committed writes.
+export async function prepareWhatsAppQrTextDelivery({ phoneNumberId, from } = {}) {
   const phone = await resolveQrPhone({ phoneNumberId, from })
-  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
-  const body = cleanString(text)
-
   if (await markMissingAuthStateIfNeeded(phone)) {
     throw new Error('El QR necesita reconectarse. Abre Configuración > WhatsApp y genera un QR nuevo.')
   }
   if (Number(phone.qr_send_enabled || 0) !== 1) {
     throw new Error('Ese número no tiene el envío por QR activado')
   }
+  try {
+    const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de texto' })
+    return { phone, sock }
+  } catch (error) {
+    // No sendMessage call has happened. Never use this marker for a failure
+    // after handing the message to Baileys/WhatsApp.
+    throw Object.assign(new Error(error?.message || 'WhatsApp QR todavía no está conectado', { cause: error }), {
+      code: 'WHATSAPP_QR_CONNECTION_NOT_READY',
+      providerSendAttempted: false
+    })
+  }
+}
+
+export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text, externalId, replyToMessageId = '', replyToProviderMessageId = '', skipQrSendProtection = false } = {}) {
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const body = cleanString(text)
   if (!toPhone) throw new Error('Falta el número destino')
   if (!body) throw new Error('Falta el texto del mensaje')
-
-  const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de texto' })
+  const { phone, sock } = await prepareWhatsAppQrTextDelivery({ phoneNumberId, from })
   const recipient = await resolveRecipientJid(sock, toPhone)
   const quoted = await resolveQrMessageReference({
     messageId: replyToMessageId,

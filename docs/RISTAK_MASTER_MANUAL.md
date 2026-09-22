@@ -9775,6 +9775,17 @@ Un tercer intento por un error general no fuerza un traspaso humano cuando no
 hay una política de handoff habilitada; las obligaciones explícitas ya
 persistidas conservan su recuperación independiente.
 
+WhatsApp QR prepara la conexión antes de tomar los candados de entrega del
+chatbot; así su autenticación y heartbeat pueden guardar sus cambios durante
+una reconexión. Si la conexión falla antes de invocar al proveedor, la respuesta
+conserva sus partes pendientes y programa un reintento durable (30 segundos,
+backoff hasta 5 minutos, máximo 6 intentos), sin fabricar un handoff ni marcarla
+como contestada. El reintento sigue verificando mensajes nuevos, pausas y permisos
+antes de enviar. Una entrega aceptada o incierta no se repite. Los planes legacy
+marcados por los dos timeouts locales exactos de conexión QR se recuperan con CAS
+sólo cuando no contienen evidencia de aceptación en la parte afectada; se
+conservan las partes ya entregadas y sus identificadores.
+
 Activar, reanudar o limpiar la señal manualmente despierta el último inbound
 pendiente del canal, aunque antes atendiera una persona y todavía no exista un
 estado de IA en ese canal. Se conserva el historial humano como contexto y se
