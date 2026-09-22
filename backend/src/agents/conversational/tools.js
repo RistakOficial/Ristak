@@ -1,4 +1,5 @@
 import { tool } from '@openai/agents'
+import { assertCurrentConversationalTurn } from './turnFreshness.js'
 import { z } from 'zod'
 import { createHash } from 'node:crypto'
 import { DateTime } from 'luxon'
@@ -1012,6 +1013,7 @@ function wrapMutableToolWithPreventiveFence(toolDefinition, ctx = {}) {
     ...toolDefinition,
     invoke: async (...args) => {
       if (ctx.dryRun) return invoke(...args)
+      await assertCurrentConversationalTurn()
       if (toolDefinition.name === 'send_to_human') {
         // Una solicitud explícita de persona manda sobre una salida automática.
         // Se marca antes del fence para que un fallo transitorio no libere el
@@ -1043,6 +1045,7 @@ function wrapMutableToolWithPreventiveFence(toolDefinition, ctx = {}) {
               channel: String(ctx.channel || 'whatsapp').trim().toLowerCase()
             })
           }
+          await assertCurrentConversationalTurn()
           return invoke(...args)
         })
       } catch (error) {

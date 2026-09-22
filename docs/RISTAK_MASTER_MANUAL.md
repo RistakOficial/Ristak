@@ -9667,11 +9667,20 @@ pendientes, sin volver a pedir cortes ni duplicar lo ya confirmado. Cada parte
 pasa por `sending` y `sent` con compare-and-swap y lease. Si el proceso muere
 despues de iniciar un envio pero antes de confirmar su resultado, el plan queda
 `ambiguous` y no se reenvia a ciegas porque Meta no ofrece idempotencia real en
-ese punto. Una respuesta principal que ya terminó de generarse queda
-**comprometida**: se entrega completa con su mismo plan aunque entre otro mensaje
-mientras se divide o durante las pausas entre globos. Ese inbound nuevo se
-encola de forma durable y comienza otra vuelta después de la entrega, por lo que
-Ristak no tira una generación ya cobrada para pedirle otra al modelo. Una
+ese punto. Una respuesta generada todavía es un borrador: si entra un mensaje
+sustantivo nuevo antes de enviarla, se descarta y se vuelve a preparar con todo
+lo pendiente. Haber consumido tokens no autoriza entregar una respuesta vieja.
+La llamada al modelo recibe una señal de cancelación; un watcher consulta la
+autoridad canónica durante la generación, incluso si el nuevo inbound fue
+recibido por otra instancia. Antes de cada tool se vuelve a comprobar esa
+autoridad. La entrega final comparte el lock de persistencia inbound, revalida
+el claim, el agente publicado, el estado del chat y el último mensaje antes de
+invocar al proveedor. El cursor `last_answered_inbound_message_id` sólo avanza
+cuando la entrega se confirma; descartar un borrador no consume lo pendiente.
+Una acción terminal ya confirmada es un hecho irreversible del turno: conserva
+su confirmación factual y su idempotencia, sin volver a ejecutarse. Un mensaje
+que llega después de comenzar el envío externo tampoco puede retirar ese envío;
+se procesa como un nuevo turno si el estado de la conversación lo permite. Una
 cuarentena preventiva, toma humana o canal inválido todavía puede bloquear la
 salida por seguridad; no dispara por sí misma otra generación. Entregas
 automáticas que todavía no responden a un inbound, como un seguimiento ya
@@ -9746,6 +9755,25 @@ error o lease vencido permite reintentar el mismo mensaje. La recuperacion de
 pendientes pagina todos los claims fallidos/vencidos, sin un tope global que
 abandone conversaciones viejas.
 
+Los mensajes entrantes esperan como mínimo 60 segundos desde la última
+recepción local antes de iniciar la IA. Cada nuevo mensaje reinicia la ventana;
+si el dueño configuró una espera mayor, se respeta esa duración. El vencimiento
+se conserva en `ai_agent_pending_reruns` antes de esperar y se recupera al
+reiniciar. Las ráfagas forman un solo turno; la carga de mensajes pendientes
+pagina hasta el último inbound contestado, sin el antiguo tope de ocho. Las
+reacciones y stickers no cancelan una respuesta sustantiva. La separación
+opcional de una respuesta larga en globos sigue siendo una preferencia distinta
+de generar varias respuestas independientes para una misma ráfaga.
+
+Activar, reanudar o limpiar la señal manualmente despierta el último inbound
+pendiente del canal, aunque antes atendiera una persona y todavía no exista un
+estado de IA en ese canal. Se conserva el historial humano como contexto y se
+usa el mismo sobre paginado del runtime; no se inventa un mensaje del cliente.
+Si la última intervención ya fue una respuesta humana, o el bot ya contestó ese
+inbound, la activación no genera otra respuesta. Un inbound consumido sin
+respuesta durante modo humano puede reabrirse con la activación explícita;
+nunca se libera por ello un lease de ejecución vigente.
+
 El contrato de asignacion visible es mas estricto que el historial: solo
 `active` y `paused` significan que el agente sigue asignado al chat. `human`,
 `skipped`, `completed` y `discarded` conservan trazabilidad para metricas y
@@ -9806,10 +9834,12 @@ estrategia ni una decision de silencio. `responseDelayMs` es cero
 en preview; la previsualizacion y el chat publicado comparten la misma mini-IA
 de globos cuando el switch esta activo. El chat publicado conserva su espera. Si
 entran mensajes durante esa espera previa, el runtime recarga contexto y agrupa
-el último inbound **antes** de llamar al modelo principal. Una vez generada la
-respuesta, no se descarta ni se vuelve a generar: se entrega completa, y
-cualquier inbound que llegue mientras se calculan los cortes o entre globos
-queda en cola para el siguiente turno con el historial ya actualizado.
+todo lo pendiente **antes** de llamar al modelo principal, después de un minuto
+completo de silencio desde la última recepción. Un mensaje nuevo durante la
+generación cancela el borrador y conserva el lote para recalcularlo tras la nueva
+espera. La entrega también comprueba mensajes nuevos mientras se calculan los
+cortes o entre globos; las partes ya enviadas no se repiten. Preview conserva su
+respuesta inmediata para probar la estrategia, sin simular la espera real.
 
 El tester usa por defecto la identidad estable `test@ristaktests.com`.
 `get_contact_profile` la reconoce como la identidad del hilo, sin inventar que

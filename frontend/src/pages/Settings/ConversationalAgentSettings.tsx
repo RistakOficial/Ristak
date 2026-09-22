@@ -104,7 +104,7 @@ const attendedChatActionOptions = [
 type AttendedChatActionValue = (typeof attendedChatActionOptions)[number]['value']
 
 const responseDelayModeOptions: Array<{ value: AgentResponseDelayMode; label: string }> = [
-  { value: 'none', label: 'No esperar' },
+  { value: 'none', label: 'Espera mínima: 1 minuto' },
   { value: 'fixed', label: 'Esperar tiempo fijo' },
   { value: 'random', label: 'Aleatorio en un rango' }
 ]
@@ -986,23 +986,29 @@ function getDelayUnitLabel(unit: AgentResponseDelayUnit, value: number) {
 }
 
 function getResponseDelaySummary(delay: AgentResponseDelayConfig) {
+  const duration = (value: number, unit: AgentResponseDelayUnit) => {
+    const seconds = Math.max(60, value * (unit === 'minutes' ? 60 : 1))
+    return seconds % 60 === 0
+      ? `${seconds / 60} ${getDelayUnitLabel('minutes', seconds / 60)}`
+      : `${seconds} segundos`
+  }
   if (delay.mode === 'fixed') {
-    return `${delay.fixedValue} ${getDelayUnitLabel(delay.fixedUnit, delay.fixedValue)}`
+    return duration(delay.fixedValue, delay.fixedUnit)
   }
   if (delay.mode === 'random') {
-    return `${delay.minValue} a ${delay.maxValue} ${getDelayUnitLabel(delay.rangeUnit, delay.maxValue)}`
+    return `${duration(delay.minValue, delay.rangeUnit)} a ${duration(delay.maxValue, delay.rangeUnit)}`
   }
-  return ''
+  return '1 minuto'
 }
 
 function getResponseDelayHelp(delay: AgentResponseDelayConfig) {
   if (delay.mode === 'fixed') {
-    return `Espera ${getResponseDelaySummary(delay)} antes de contestar. Ejemplo: la persona escribe y el agente responde después de esa pausa.`
+    return `Espera ${getResponseDelaySummary(delay)} desde el último mensaje. Cada mensaje nuevo reinicia la espera para responder a todo junto.`
   }
   if (delay.mode === 'random') {
-    return `Escoge un tiempo entre ${getResponseDelaySummary(delay)}. Ejemplo: a veces contesta en 3 minutos y a veces en 7.`
+    return `Escoge un tiempo entre ${getResponseDelaySummary(delay)}, con un mínimo de 1 minuto desde el último mensaje. Si llega otro, reinicia la espera.`
   }
-  return 'Contesta en cuanto tiene lista la respuesta. Ejemplo: no espera minutos extra.'
+  return 'Espera 1 minuto desde el último mensaje y responde a todo junto. Si llega otro mientras prepara la respuesta, descarta el borrador y vuelve a esperar.'
 }
 
 function getReplyDeliveryHelp(delivery: AgentReplyDeliveryConfig) {

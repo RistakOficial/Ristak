@@ -108,6 +108,13 @@ import {
 } from '../../services/conversationalAgentTestContactService.js'
 import { resolveHighLevelConversationalPhoneRoute } from '../../services/highLevelConversationalChannelRoutingService.js'
 import { findNewerSubstantiveConversationalInbound } from '../../services/conversationalInboundAuthorityService.js'
+import {
+  assertCurrentConversationalTurn,
+  currentConversationalTurnSignal,
+  interruptSupersededConversationalTurn,
+  rememberConversationalTurnContext,
+  withCurrentConversationalTurn
+} from './turnFreshness.js'
 import { acquireConversationalInboundCommitLock } from '../../services/conversationalInboundCommitLockService.js'
 import {
   CONVERSATIONAL_HANDOFF_RULE_EVENT_TYPE,
@@ -151,9 +158,7 @@ const REQUIRED_DATA_STALE_DELIVERY_INTERRUPTION_ID =
   'required_data_prompt_stale'
 const DEFAULT_MODEL = process.env.OPENAI_CONVERSATIONAL_AGENT_MODEL || DEFAULT_OPENAI_MODEL
 const MAX_REPLY_CHARS = 1000
-const DEBOUNCE_MS = 4000
-const PENDING_INBOUND_LIMIT = 8
-const PENDING_INBOUND_SCAN_LIMIT = 30
+export const CONVERSATIONAL_INBOUND_QUIET_WINDOW_MS = 60_000
 const PENDING_RECOVERY_PAGE_SIZE = 80
 const PENDING_RECOVERY_MAX_AGE_MS = Number(process.env.CONVERSATIONAL_AGENT_PENDING_RECOVERY_MAX_AGE_MS || 60 * 60 * 1000)
 export const MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS = 3
@@ -420,7 +425,7 @@ function sleep(ms) {
 // (AI-009) Helpers de persistencia del debounce/delay de reruns. pendingContactReruns
 // es un Map volátil: si el proceso reinicia mientras hay un rerun encolado se perdía.
 // Reflejamos cada alta/baja en la tabla ai_agent_pending_reruns (migración 012) para
-// reconstruirlo al boot. Tolerante a fallos: nunca tumba el flujo principal del agente.
+// reconstruirlo al boot. Las esperas entrantes requieren persistencia confirmada.
 function nowSqlTimestamp() {
   return new Date().toISOString()
 }
@@ -625,7 +630,9 @@ export async function waitForConversationalResponseWindow({
   wait = sleep,
   loadLatest = loadLatestInboundMessage,
   recordEvent = recordConversationalAgentEvent,
-  onNewerInbound = null
+  onNewerInbound = null,
+  onDeadline = null,
+  now = Date.now
 } = {}) {
   const normalizedChannel = normalizeConversationalChannel(channel || latest?.channel)
   const ms = Math.max(0, Number(delayMs || 0))
@@ -644,29 +651,35 @@ export async function waitForConversationalResponseWindow({
       phase: 'before_agent_run'
     }
   })
-  await wait(ms)
-
-  const nextLatest = await loadLatest(contactId, normalizedChannel)
-  if (!nextLatest) return { latest: null, delayed: true, absorbedNewerInbound: false }
-  if (nextLatest.id === latest.id) {
-    return { latest, delayed: true, absorbedNewerInbound: false }
+  let current = latest
+  let absorbedNewerInbound = false
+  // Use local receipt/persistence, never the sender's clock. If there is no
+  // trustworthy receipt timestamp, wait a full window after observing it.
+  const deadlineFor = (message) => {
+    const receivedAt = toTimestampMs(message.created_at || message.createdAt)
+    return (receivedAt > 0 ? Math.min(receivedAt, now()) : now()) + ms
   }
-
-  if (typeof onNewerInbound === 'function') {
-    await onNewerInbound(nextLatest)
-  }
-  await recordEvent({
-    contactId,
-    eventType: 'reply_wait_collected_inbound',
-    detail: {
-      originalMessageId: latest.id,
-      messageId: nextLatest.id,
-      agentId: agentConfig?.id || null,
-      channel: normalizedChannel,
-      delayMs: ms
+  let deadline = deadlineFor(current)
+  while (true) {
+    await onDeadline?.(current, new Date(deadline).toISOString())
+    const remaining = Math.max(0, deadline - now())
+    if (remaining > 0) await wait(remaining)
+    const nextLatest = await loadLatest(contactId, normalizedChannel)
+    if (!nextLatest) return { latest: null, delayed: true, absorbedNewerInbound }
+    if (nextLatest.id === current.id) {
+      return { latest: current, delayed: true, absorbedNewerInbound }
     }
-  })
-  return { latest: nextLatest, delayed: true, absorbedNewerInbound: true }
+    const originalMessageId = current.id
+    current = nextLatest
+    deadline = deadlineFor(current)
+    absorbedNewerInbound = true
+    await onNewerInbound?.(current)
+    await recordEvent({
+      contactId,
+      eventType: 'reply_wait_collected_inbound',
+      detail: { originalMessageId, messageId: current.id, agentId: agentConfig?.id || null, channel: normalizedChannel, delayMs: ms }
+    })
+  }
 }
 
 function cleanMessageText(row) {
@@ -1121,6 +1134,7 @@ async function loadConversationRows(contactId, channel = 'whatsapp', {
   limit = HISTORY_LIMIT,
   offset = 0,
   contentOnly = false,
+  substantiveOnly = false,
   throughMessage = null
 } = {}) {
   const normalizedChannel = normalizeConversationalChannel(channel)
@@ -1136,6 +1150,7 @@ async function loadConversationRows(contactId, channel = 'whatsapp', {
   const boundaryParams = boundary
     ? [boundary.timestamp, boundary.timestamp, boundary.id]
     : []
+  const substantiveSql = substantiveOnly ? "AND LOWER(COALESCE(message_type, '')) NOT IN ('reaction', 'sticker')" : ''
   if (COMMENT_CHAT_CHANNELS.has(normalizedChannel)) {
     const platform = commentChannelToPlatform(normalizedChannel)
     const rows = await db.all(`
@@ -1146,6 +1161,7 @@ async function loadConversationRows(contactId, channel = 'whatsapp', {
       WHERE contact_id = ? AND platform = ?
         AND message_type IN ('comment', 'comment_reply_public', 'comment_reply_private')
         ${inboundOnly ? "AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'" : ''}
+        ${substantiveSql}
         ${contentOnly ? "AND (TRIM(COALESCE(message_text, '')) <> '' OR TRIM(COALESCE(media_url, '')) <> '')" : ''}
         ${boundarySql}
       ORDER BY COALESCE(message_timestamp, created_at) DESC, id DESC
@@ -1162,6 +1178,7 @@ async function loadConversationRows(contactId, channel = 'whatsapp', {
       WHERE contact_id = ? AND platform = ?
         AND message_type NOT IN ('comment', 'comment_reply_public', 'comment_reply_private')
         ${inboundOnly ? "AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'" : ''}
+        ${substantiveSql}
         ${contentOnly ? "AND (TRIM(COALESCE(message_text, '')) <> '' OR TRIM(COALESCE(media_url, '')) <> '')" : ''}
         ${boundarySql}
       ORDER BY COALESCE(message_timestamp, created_at) DESC, id DESC
@@ -1194,6 +1211,7 @@ async function loadConversationRows(contactId, channel = 'whatsapp', {
     WHERE contact_id = ?
       ${inboundOnly ? "AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'" : ''}
       ${phoneMessageTransportFilter(normalizedChannel)}
+      ${substantiveSql}
       ${contentOnly ? "AND (TRIM(COALESCE(message_text, '')) <> '' OR TRIM(COALESCE(media_url, '')) <> '')" : ''}
       ${boundarySql}
     ORDER BY COALESCE(message_timestamp, created_at) DESC, id DESC
@@ -1616,32 +1634,30 @@ export async function loadToolCallingV2ConversationEnvelopeThroughMessage({
   }
 }
 
-async function loadPendingInboundMessages(contactId, state = {}, channel = 'whatsapp') {
-  const rows = await loadConversationRows(contactId, channel, {
-    inboundOnly: true,
-    limit: PENDING_INBOUND_SCAN_LIMIT
-  })
-
-  const ordered = rows
-  const answeredIndex = state?.lastAnsweredInboundMessageId
-    ? ordered.findIndex((row) => row.id === state.lastAnsweredInboundMessageId)
-    : -1
-
-  let pending = answeredIndex >= 0 ? ordered.slice(answeredIndex + 1) : ordered
-  if (answeredIndex < 0 && state?.lastReplyAt) {
-    pending = ordered.filter((row) => {
-      const messageTime = row.message_timestamp || row.created_at || ''
-      const createdTime = row.created_at || ''
-      return messageTime > state.lastReplyAt || createdTime > state.lastReplyAt
+export async function loadPendingInboundMessages(contactId, state = {}, channel = 'whatsapp', throughMessage = null, {
+  loadRows = loadConversationRows
+} = {}) {
+  const newestFirst = []
+  let offset = 0
+  while (true) {
+    const rows = await loadRows(contactId, channel, {
+      inboundOnly: Boolean(state.lastAnsweredInboundMessageId),
+      limit: TOOL_CALLING_V2_HISTORY_PAGE_SIZE, offset, throughMessage
     })
+    for (const row of [...rows].reverse()) {
+      if (row.id === state.lastAnsweredInboundMessageId ||
+        (!state.lastAnsweredInboundMessageId && row.role === 'assistant')) return newestFirst.reverse()
+      if (row.role === 'user' && isSubstantiveInboundMessage(row)) newestFirst.push(row)
+    }
+    if (rows.length < TOOL_CALLING_V2_HISTORY_PAGE_SIZE) return newestFirst.reverse()
+    offset += rows.length
   }
-
-  return pending.slice(-PENDING_INBOUND_LIMIT)
 }
 
 async function loadLatestInboundMessage(contactId, channel = 'whatsapp') {
   const rows = await loadConversationRows(contactId, channel, {
     inboundOnly: true,
+    substantiveOnly: true,
     limit: 1
   })
   return rows[0] || null
@@ -3025,7 +3041,7 @@ export async function validateToolCallingV2PreservedOfferReplySemantics({
     }], { preserveAll: true }),
     {
       maxTurns: APPOINTMENT_OFFER_REPLY_CLASSIFIER_MAX_TURNS,
-      signal: AbortSignal.timeout(APPOINTMENT_OFFER_REPLY_CLASSIFIER_TIMEOUT_MS),
+      signal: currentConversationalTurnSignal(APPOINTMENT_OFFER_REPLY_CLASSIFIER_TIMEOUT_MS),
       context: { category: 'appointment_offer_reply_safety' }
     }
   )
@@ -3268,7 +3284,7 @@ export async function adjudicateToolCallingV2HandoffRules({
     }], { preserveAll: true }),
     {
       maxTurns: HANDOFF_RULE_CLASSIFIER_MAX_TURNS,
-      signal: AbortSignal.timeout(HANDOFF_RULE_CLASSIFIER_TIMEOUT_MS),
+      signal: currentConversationalTurnSignal(HANDOFF_RULE_CLASSIFIER_TIMEOUT_MS),
       context: { category: 'configured_handoff_rule_adjudication' }
     }
   )
@@ -3494,7 +3510,7 @@ export async function auditToolCallingV2HandoffNoMatch({
     }], { preserveAll: true }),
     {
       maxTurns: HANDOFF_NO_MATCH_AUDIT_MAX_TURNS,
-      signal: AbortSignal.timeout(HANDOFF_NO_MATCH_AUDIT_TIMEOUT_MS),
+      signal: currentConversationalTurnSignal(HANDOFF_NO_MATCH_AUDIT_TIMEOUT_MS),
       context: { category: 'configured_handoff_no_match_audit' }
     }
   )
@@ -3580,7 +3596,7 @@ export async function adjudicateToolCallingV2MandatoryHandoffSafety({
     }], { preserveAll: true }),
     {
       maxTurns: HANDOFF_SAFETY_PREFLIGHT_MAX_TURNS,
-      signal: AbortSignal.timeout(HANDOFF_SAFETY_PREFLIGHT_TIMEOUT_MS),
+      signal: currentConversationalTurnSignal(HANDOFF_SAFETY_PREFLIGHT_TIMEOUT_MS),
       context: { category: 'mandatory_handoff_preventive_safety' }
     }
   )
@@ -4162,7 +4178,7 @@ export async function extractToolCallingV2RequiredHandoffData({
     }], { preserveAll: true }),
     {
       maxTurns: HANDOFF_REQUIRED_DATA_EXTRACTOR_MAX_TURNS,
-      signal: AbortSignal.timeout(HANDOFF_REQUIRED_DATA_EXTRACTOR_TIMEOUT_MS),
+      signal: currentConversationalTurnSignal(HANDOFF_REQUIRED_DATA_EXTRACTOR_TIMEOUT_MS),
       context: { category: 'configured_handoff_required_data' }
     }
   )
@@ -4561,7 +4577,13 @@ export function createToolCallingV2Agent({
       ...(toolChoice ? { toolChoice } : {})
     },
     instructions,
-    tools,
+    tools: tools.map((item) => item.type === 'function' ? {
+      ...item,
+      invoke: async (...args) => {
+        await assertCurrentConversationalTurn()
+        return item.invoke(...args)
+      }
+    } : item),
     resetToolChoice: !requireTool || resetRequiredToolChoice === true,
     toolUseBehavior: stopAfterCommittedLiveMutation
   })
@@ -6840,6 +6862,8 @@ export async function runToolCallingV2Turn({
   })
 
   const { agent, ctx, model, aiProvider } = built
+  rememberConversationalTurnContext(ctx)
+  await assertCurrentConversationalTurn()
   ctx.runtimeMode = TOOL_CALLING_V2_RUNTIME_MODE
   ctx.aiRuntime = runtime
   ctx.model = model
@@ -7342,6 +7366,7 @@ async function executeAgent({
   }
 
   try {
+    await assertCurrentConversationalTurn()
     const runner = new Runner({
       modelProvider,
       tracingDisabled: true
@@ -7351,6 +7376,7 @@ async function executeAgent({
       buildConversationalInputItems(messages, { preserveAll: true }),
       {
         maxTurns: MAX_TURNS,
+        signal: currentConversationalTurnSignal(),
         context: { category: 'conversacional', contactId, runtimeMode }
       }
     )
@@ -7594,7 +7620,7 @@ async function queuePendingConversationalAgentRerun({
     scheduledFor: nowSqlTimestamp()
   }
   pendingContactReruns.set(runKey, pendingEntry)
-  await persistPendingRerun(runKey, pendingEntry)
+  await persistPendingRerun(runKey, pendingEntry, { throwOnError: true })
   return pendingEntry
 }
 
@@ -7705,18 +7731,10 @@ function isSubstantiveInboundMessage(message) {
 }
 
 async function loadNewerInboundMessage(contactId, handledMessageId, channel = 'whatsapp') {
-  // Cargamos una ventana corta de entrantes (viejo -> nuevo) y devolvemos el más reciente
-  // que sea SUSTANTIVO (texto, imagen, audio, documento...). Así una reacción/sticker que
-  // llega mientras el bot responde ya no cancela el envío.
-  const rows = await loadConversationRows(contactId, channel, { inboundOnly: true, limit: 8 })
-  const handledIdx = rows.findIndex((row) => row.id === handledMessageId)
-  const newerRows = handledIdx >= 0
-    ? rows.slice(handledIdx + 1)
-    : rows.filter((row) => row.id !== handledMessageId)
-  for (let i = newerRows.length - 1; i >= 0; i--) {
-    if (isSubstantiveInboundMessage(newerRows[i])) return newerRows[i]
-  }
-  return null
+  const authority = await findNewerSubstantiveConversationalInbound({ contactId, handledMessageId, channel })
+  return authority.newerMessage
+    ? loadInboundMessageById(contactId, authority.newerMessage.id, channel)
+    : null
 }
 
 function clearFollowUpTimer(contactId) {
@@ -8686,7 +8704,7 @@ export async function sendReplyParts({
             status: 'interrupted',
             interruptedByMessageId: deliveryAttempt.preventiveMeasure
               ? PREVENTIVE_DELIVERY_INTERRUPTION_ID
-              : REQUIRED_DATA_STALE_DELIVERY_INTERRUPTION_ID,
+              : (deliveryAttempt.suppressionDetail?.newerMessage?.id || REQUIRED_DATA_STALE_DELIVERY_INTERRUPTION_ID),
             interruptionReason:
               deliveryAttempt.suppressionReason || null,
             providerAttempted: providerSendUncheckpointed
@@ -8715,7 +8733,6 @@ export async function sendReplyParts({
         return {
           parts,
           sentParts,
-          interruptedBy: null,
           delaySchedule,
           durableStatus: 'interrupted',
           suppressedByPreventiveMeasure:
@@ -8726,7 +8743,8 @@ export async function sendReplyParts({
           suppressionReason:
             deliveryAttempt.suppressionReason || null,
           suppressionDetail:
-            deliveryAttempt.suppressionDetail || null
+            deliveryAttempt.suppressionDetail || null,
+          interruptedBy: deliveryAttempt.suppressionDetail?.newerMessage || null
         }
       }
       sentParts += 1
@@ -8800,6 +8818,34 @@ function toolCallingV2OwnsTerminalState(actions = []) {
   ))
 }
 
+export function toolCallingV2HasCommittedEffect(ctx) {
+  return ctx?.verifiedHandoffRequiredDataPromptDelivery?.settled === true ||
+    toolCallingV2OwnsTerminalState(ctx?.actions)
+}
+
+export async function sendCurrentConversationalReply({
+  contactId, agentId, channel, sourceMessageId, inboundClaim, ownsTerminalState = false, send
+}, dependencies = {}) {
+  const database = dependencies.database || db
+  return database.transaction(async (tx) => {
+    await (dependencies.acquireLock || acquireConversationalInboundCommitLock)({ contactId, channel, database: tx })
+    const state = await (dependencies.getState || getConversationState)(contactId, { agentId, channel })
+    if (!state || state.agentId !== agentId ||
+      (!ownsTerminalState && (state.status !== 'active' || state.signal)) ||
+      state.inboundProcessingClaimToken !== inboundClaim?.claimToken ||
+      state.inboundProcessingMessageId !== sourceMessageId) {
+      return { allowed: false, reason: 'conversation_state_changed' }
+    }
+    const agent = await (dependencies.getAgent || getConversationalAgent)(agentId)
+    if (!agent?.enabled) return { allowed: false, reason: 'agent_paused' }
+    const authority = await (dependencies.findNewer || findNewerSubstantiveConversationalInbound)({ contactId, handledMessageId: sourceMessageId, channel })
+    if (!authority.checked || (authority.newerMessage && !ownsTerminalState)) {
+      return { allowed: false, reason: 'newer_inbound_before_send', newerMessage: authority.newerMessage || null }
+    }
+    return { allowed: true, sent: true, deliveryResult: await send() }
+  })
+}
+
 async function handleToolCallingV2InboundTurn({
   contactId,
   contact,
@@ -8821,7 +8867,7 @@ async function handleToolCallingV2InboundTurn({
   settleActiveClaim
 }) {
   const normalizedChannel = normalizeConversationalChannel(channel)
-  const turn = await runToolCallingV2Turn({
+  const turn = await withCurrentConversationalTurn({ contactId, messageId: latest.id, channel: normalizedChannel }, () => runToolCallingV2Turn({
     config: agentConfig,
     runtime,
     messages,
@@ -8835,7 +8881,28 @@ async function handleToolCallingV2InboundTurn({
     deferredAutomaticRelease,
     applyDeferredAutomaticRelease,
     conversationModel: agentConfig.model,
-    historyEnvelope: { ...historyEnvelope, messages }
+    historyEnvelope: { ...historyEnvelope, messages },
+    runtimeEventContext: 'Responde en una sola intervención a todos los mensajes pendientes desde la última respuesta. Usa también la conversación previa con el equipo humano como contexto; no vuelvas a preguntar datos que ya estén en el chat.'
+  }), { hasCommittedEffect: toolCallingV2HasCommittedEffect }).catch(async (error) => {
+    const ctx = error?.conversationalContext
+    if (error?.code === 'conversational_turn_superseded' && toolCallingV2HasCommittedEffect(ctx)) {
+      // An already committed terminal is a fact, not a disposable draft. Use
+      // only its server-confirmed reply; never replay its mutation.
+      return {
+        ctx, model: ctx.model, reply: ensureToolCallingV2VisibleReply('', ctx.actions),
+        runtimeMode: TOOL_CALLING_V2_RUNTIME_MODE, modelCallCount: null,
+        capabilityManifest: [], historyTelemetry: historyEnvelope?.telemetry
+      }
+    }
+    if (error?.code === 'conversational_turn_superseded' && error.conversationalContext &&
+      await canDeclareConversationalReplyUndeliveredBeforeSend({ contactId, agentId: agentConfig.id, channel: normalizedChannel, sourceMessageId: latest.id })) {
+      await supersedeUndeliveredConversationalAppointmentOffer({
+        ctx: error.conversationalContext,
+        config: agentConfig,
+        reason: 'offer_generation_superseded_by_newer_inbound'
+      })
+    }
+    throw error
   })
   const { ctx, model } = turn
   let reply = turn.reply
@@ -9117,10 +9184,12 @@ async function handleToolCallingV2InboundTurn({
     completionEffect: replyCompletionEffect,
     dependencies: {
       splitter: splitMessageIntoBubbles,
-      // Desde que terminó la llamada principal, esta respuesta ya consumió
-      // tokens y queda comprometida. Los inbounds posteriores se encolan para
-      // otra vuelta; jamás desechan el texto pagado ni cortan sus globos.
-      loadNewerInbound: async () => null,
+      ...(ownTerminalState ? { loadNewerInbound: async () => null } : {}),
+      beforeSendFence: ({ send }) => sendCurrentConversationalReply({
+        contactId, agentId: agentConfig.id, channel: normalizedChannel,
+        sourceMessageId: latest.id, inboundClaim,
+        ownsTerminalState: ownTerminalState, send
+      }),
       forceSingleMessage: replyGuardResult?.prevented === true ||
         repetitionGuardResult?.prevented === true ||
         hasServerVisibleAppointmentAvailability(ctx.actions),
@@ -9164,6 +9233,12 @@ async function handleToolCallingV2InboundTurn({
     return { sent: false, reason: 'preventive_measure_before_delivery', turn, delivery }
   }
 
+  if (delivery.suppressedByDeliveryFence && !delivery.interruptedBy) {
+    if (Number(delivery.sentParts || 0) === 0) await closeUndeliveredAppointmentOffer('offer_reply_fenced_before_send')
+    await settleActiveClaim({ status: 'completed', answered: false })
+    return { sent: false, reason: delivery.suppressionReason, turn, delivery }
+  }
+
   if (delivery.interruptedBy) {
     if (Number(delivery.sentParts || 0) === 0) {
       await closeUndeliveredAppointmentOffer('offer_reply_preempted_during_send')
@@ -9182,13 +9257,7 @@ async function handleToolCallingV2InboundTurn({
         partCount: delivery.parts.length
       }
     })
-    scheduleConversationalAgentRerun({
-      contactId,
-      phone,
-      latestMessage: delivery.interruptedBy,
-      channel: normalizedChannel,
-      reason: 'envío en partes'
-    })
+    await queuePendingConversationalAgentRerun({ contactId, phone, messageId: delivery.interruptedBy.id, channel: normalizedChannel })
     await settleActiveClaim({ status: 'completed', answered: false })
     return { sent: false, reason: 'newer_inbound_during_split_reply', turn }
   }
@@ -11770,6 +11839,7 @@ export async function handleInboundConversationalMessage({
     dependencies.queueUnclaimedRetry ||
     queueUnclaimedMandatoryHandoffRetry
   let activeClaim = null
+  let ownsRun = false
   let mandatoryHandoffPolicyConfiguredForRun = false
   let mandatoryHandoffRuntimeInfrastructureReady = false
   const settleActiveClaim = async ({ status, answered = false, error = '' } = {}) => {
@@ -11908,6 +11978,7 @@ export async function handleInboundConversationalMessage({
         messageId,
         channel: normalizedChannel
       })
+      await interruptSupersededConversationalTurn(contactId, normalizedChannel)
       await recordConversationalAgentEvent({
         contactId,
         eventType: 'run_rerun_queued',
@@ -11916,11 +11987,9 @@ export async function handleInboundConversationalMessage({
       return
     }
     runningContacts.add(runKey)
+    ownsRun = true
 
     try {
-      // Pequeña espera técnica para agrupar ráfagas inmediatas de webhooks.
-      await sleep(DEBOUNCE_MS)
-
       let latest = await loadLatestInboundMessage(contactId, normalizedChannel)
       if (!latest) {
         await deleteCurrentPendingRerun(runKey)
@@ -12005,20 +12074,22 @@ export async function handleInboundConversationalMessage({
 	      if (!agentState || agentState.status !== 'active' || agentState.signal) return
 	      if (agentState.lastInboundMessageId === latest.id && agentState.lastAnsweredInboundMessageId === latest.id) return
 
-      // La espera configurada simula tiempo humano ANTES de llamar a OpenAI.
-      // Si el contacto manda más mensajes durante esa ventana, esta misma corrida
-      // absorbe el último inbound y arma el contexto completo; no genera una
-      // respuesta vieja para luego cancelarla.
-      const responseDelayMs = getAgentResponseDelayMs(agentConfig)
+      // Esperar desde la última recepción agrupa la ráfaga antes de llamar a IA.
+      // Si llega otro mensaje, esta corrida reinicia el plazo y recarga el lote.
+      const responseDelayMs = Math.max(CONVERSATIONAL_INBOUND_QUIET_WINDOW_MS, getAgentResponseDelayMs(agentConfig))
       const waitResult = await waitForConversationalResponseWindow({
         contactId,
         latest,
         agentConfig,
         channel: normalizedChannel,
         delayMs: responseDelayMs,
-        onNewerInbound: async () => {
-          pendingContactReruns.delete(runKey)
-          await deletePendingRerun(runKey).catch(() => {})
+        onDeadline: async (message, scheduledFor) => {
+          await persistPendingRerun(runKey, {
+            contactId, phone, messageId: message.id, channel: normalizedChannel, scheduledFor
+          }, { throwOnError: true })
+        },
+        onNewerInbound: async (message) => {
+          if (pendingContactReruns.get(runKey)?.messageId === message.id) pendingContactReruns.delete(runKey)
         }
       })
       if (!waitResult.latest) {
@@ -12193,6 +12264,9 @@ export async function handleInboundConversationalMessage({
       const runtime = await resolveConversationalAIRuntime(aiProvider)
       agentConfig = { ...agentConfig, aiProvider }
       const contact = await db.get('SELECT id, full_name, phone, email FROM contacts WHERE id = ?', [contactId]).catch(() => null)
+      // Include replies persisted after this inbound (for example, an outbound
+      // already in flight when it arrived). They must not be repeated. The
+      // freshness guard rejects any newer inbound before the model runs.
       const historyEnvelope = await loadToolCallingV2ConversationEnvelope({ contactId, channel: normalizedChannel })
       const rawMessages = historyEnvelope.messages
       const openAIFallbackApiKey = aiProvider === 'openai'
@@ -12222,7 +12296,7 @@ export async function handleInboundConversationalMessage({
         await settleActiveClaim({ status: 'failed', error: 'conversation_history_empty' })
         return
       }
-	      const pendingMessages = await loadPendingInboundMessages(contactId, agentState, normalizedChannel)
+	      const pendingMessages = await loadPendingInboundMessages(contactId, agentState, normalizedChannel, latest)
       const traceMessage = cleanMessageText(pendingMessages[pendingMessages.length - 1] || latest)
       mandatoryHandoffRuntimeInfrastructureReady = true
       await handleToolCallingV2InboundTurn({
@@ -12283,6 +12357,7 @@ export async function handleInboundConversationalMessage({
       return
     } finally {
       runningContacts.delete(runKey)
+      ownsRun = false
       const pending = pendingContactReruns.get(runKey)
       if (pending) {
         pendingContactReruns.delete(runKey)
@@ -12296,7 +12371,20 @@ export async function handleInboundConversationalMessage({
       }
     }
   } catch (error) {
-    runningContacts.delete(runKey)
+    if (ownsRun) runningContacts.delete(runKey)
+    if (error?.code === 'conversational_turn_superseded' && error.newerMessage?.id) {
+      await settleActiveClaim({ status: 'completed', answered: false })
+      const pending = await queuePendingConversationalAgentRerun({
+        contactId, phone, messageId: error.newerMessage.id, channel: normalizedChannel
+      })
+      await schedulePendingContactRerun(contactId, phone, 'respuesta descartada por mensaje nuevo', normalizedChannel, pending)
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'reply_generation_superseded',
+        detail: { messageId, newerMessageId: error.newerMessage.id, channel: normalizedChannel }
+      }).catch(() => {})
+      return
+    }
     const failedClaim = activeClaim
     const retryableError = (
       failedClaim &&
@@ -12425,6 +12513,45 @@ export async function handleInboundConversationalMessage({
 
 export async function handleInboundConversationalChatMessage({ contactId, phone, messageId, channel = 'whatsapp', postContext = null }) {
   return handleInboundConversationalMessage({ contactId, phone, messageId, channel, postContext })
+}
+
+export async function queueManuallyActivatedConversation({ contactId, agentId, channel = null }, dependencies = {}) {
+  const loadRows = dependencies.loadRows || loadConversationRows
+  const getState = dependencies.getState || getConversationState
+  const database = dependencies.database || db
+  const queue = dependencies.queue || queuePendingConversationalAgentRerun
+  const schedule = dependencies.schedule || scheduleConversationalAgentRerun
+  const channels = channel ? [normalizeConversationalChannel(channel)] : RECOVERABLE_CONVERSATIONAL_CHANNELS
+  let queued = 0
+  for (const currentChannel of channels) {
+    const rows = await loadRows(contactId, currentChannel, { limit: 1, contentOnly: true, substantiveOnly: true })
+    const latest = rows[0]
+    // A human's last reply is already an answer, not a new instruction for AI.
+    if (!latest?.id || latest.role !== 'user') continue
+    let state = await getState(contactId, { agentId, channel: currentChannel })
+    if (!state) {
+      state = await (dependencies.assign || assignAgentToConversation)(contactId, agentId, {
+        channel: currentChannel, activationSource: 'manual', assignmentSource: 'manual', updatedBy: 'user', activationMessageId: latest.id
+      })
+    }
+    if (!isRunnableConversationState(state) || state.agentId !== agentId || state.lastAnsweredInboundMessageId === latest.id) continue
+    // Human mode can consume an inbound without answering it. Explicit manual
+    // activation may reopen that unresponded message, never a running lease.
+    await database.run(`
+      UPDATE conversational_agent_state
+      SET inbound_processing_status = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE contact_id = ? AND agent_id = ?
+        AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+        AND status = 'active' AND inbound_processing_status = 'completed'
+        AND inbound_processing_message_id = ?
+        AND (last_answered_inbound_message_id IS NULL OR last_answered_inbound_message_id <> ?)
+    `, [contactId, agentId, currentChannel, latest.id, latest.id])
+    const pending = await queue({ contactId, phone: latest.phone, messageId: latest.id, channel: currentChannel })
+    schedule({ contactId, phone: latest.phone, latestMessage: latest, channel: currentChannel,
+      reason: 'activación manual con mensaje pendiente', pendingEntry: pending })
+    queued += 1
+  }
+  return { queued }
 }
 
 export async function handleInboundConversationalEmailMessage({ contactId, messageId }) {

@@ -27,7 +27,8 @@ import {
 } from '../services/conversationalAIProviderService.js'
 import {
   didConversationalPreviewEndConversation,
-  runConversationalAgentPreview
+  runConversationalAgentPreview,
+  queueManuallyActivatedConversation
 } from '../agents/conversational/runner.js'
 import {
   buildConversationalAgentTestRuntimeEventContext,
@@ -315,6 +316,9 @@ export async function updateState(req, res) {
 
     if (action === 'clear_signal') {
       const state = await clearConversationSignal(contactId, { updatedBy: 'user', agentId: req.body?.agentId || null })
+      if (state?.agentId && state.status === 'active' && !state.signal) {
+        await queueManuallyActivatedConversation({ contactId, agentId: state.agentId, channel: req.body?.channel || null })
+      }
       return res.json({ success: true, data: state })
     }
 
@@ -352,6 +356,7 @@ export async function updateState(req, res) {
         channel: req.body?.channel || null,
         updatedBy: 'user'
       })
+      await queueManuallyActivatedConversation({ contactId, agentId, channel: req.body?.channel || null })
       return res.json({ success: true, data: state })
     }
 
@@ -378,6 +383,9 @@ export async function updateState(req, res) {
       })
     }
 
+    if (mapped.status === 'active' && state?.agentId && !state.signal) {
+      await queueManuallyActivatedConversation({ contactId, agentId: state.agentId, channel: req.body?.channel || null })
+    }
     res.json({ success: true, data: state })
   } catch (error) {
     logger.error('Error actualizando estado de conversación:', error)
