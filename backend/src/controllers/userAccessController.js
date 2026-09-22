@@ -9,9 +9,8 @@ import {
   serializeAccessConfig
 } from '../utils/userAccess.js'
 import { logger } from '../utils/logger.js'
-import { requestPortalUserRefresh } from '../services/licenseService.js'
-import { sendEmail } from '../services/emailService.js'
-import { getRequestBaseUrl, normalizeBaseUrl } from '../utils/publicUrl.js'
+import { getLicenseState, requestPortalUserInvitation, requestPortalUserRefresh } from '../services/licenseService.js'
+import { constrainUserAccessToLicense } from '../services/userPermissionService.js'
 
 const USER_INVITATION_TTL_MS = 48 * 60 * 60 * 1000
 
@@ -225,36 +224,6 @@ async function expirePendingInvitations() {
   )
 }
 
-function invitationBaseUrl(req) {
-  return normalizeBaseUrl(
-    process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || getRequestBaseUrl(req)
-  )
-}
-
-async function deliverUserInvitation(req, invitation, rawToken) {
-  const baseUrl = invitationBaseUrl(req)
-  if (!baseUrl) {
-    throw invitationError(
-      'No se pudo resolver la URL pública de Ristak para enviar la invitación.',
-      503,
-      'user_invitation_public_url_unavailable'
-    )
-  }
-  const invitationUrl = `${baseUrl}/accept-invitation?token=${encodeURIComponent(rawToken)}`
-  const text = `Te invitaron a Ristak.\n\nAbre este enlace para crear tu contraseña y activar tu acceso (vence en 48 horas):\n${invitationUrl}\n\nSi no esperabas esta invitación, ignora este correo.`
-  const html = `<p>Te invitaron a Ristak.</p>
-<p><a href="${invitationUrl}">Crear contraseña y activar acceso</a> (el enlace vence en 48 horas).</p>
-<p>Si no esperabas esta invitación, ignora este correo.</p>`
-
-  await sendEmail({
-    to: invitation.email,
-    subject: 'Activa tu acceso a Ristak',
-    text,
-    html,
-    includeSignature: false
-  })
-}
-
 export async function listUsers(req, res) {
   try {
     const rows = await db.all(
@@ -291,6 +260,7 @@ export async function listUserInvitations(req, res) {
 
 export async function createUserInvitation(req, res) {
   let invitationId = null
+  let emailSent = false
   try {
     const member = normalizeMemberInput(req.body, { requirePassword: false })
     if (!member.email) {
@@ -301,6 +271,7 @@ export async function createUserInvitation(req, res) {
       )
     }
 
+    member.accessConfig = await constrainUserAccessToLicense(member.accessConfig, member.role, req.license)
     await expirePendingInvitations()
     await assertUniqueMember({ email: member.email, phone: member.phone, username: member.email })
 
@@ -348,7 +319,8 @@ export async function createUserInvitation(req, res) {
     )
 
     const invitation = await db.get('SELECT * FROM user_invitations WHERE id = ?', [invitationId])
-    await deliverUserInvitation(req, invitation, rawToken)
+    await requestPortalUserInvitation({ invitationId, email: invitation.email, token: rawToken })
+    emailSent = true
     await db.run(
       `UPDATE user_invitations
        SET delivered_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
@@ -365,6 +337,19 @@ export async function createUserInvitation(req, res) {
       message: 'La invitación se envió por correo. Ristak no expuso el enlace ni la contraseña al cliente MCP.'
     })
   } catch (error) {
+    // A lost delivery response must not invalidate a link that may already be in the inbox.
+    if (invitationId && (emailSent || error.deliveryUncertain)) {
+      const pending = await db.get('SELECT * FROM user_invitations WHERE id = ?', [invitationId]).catch(() => null)
+      if (pending) {
+        return res.status(202).json({
+          success: true,
+          invitation: serializeInvitation(pending),
+          delivery: 'pending',
+          message: 'La invitación quedó pendiente. Revisa si llegó el correo; si no llegó, revócala antes de crear otra.'
+        })
+      }
+      return res.status(503).json({ success: false, error: 'No se pudo confirmar la entrega. Revisa las invitaciones pendientes antes de intentar otra vez.' })
+    }
     if (invitationId) {
       await db.run('DELETE FROM user_invitations WHERE id = ? AND status = ?', [invitationId, 'pending']).catch(() => undefined)
     }
@@ -439,6 +424,7 @@ export async function acceptUserInvitation(req, res) {
     const passwordHash = hashPassword(password)
     const nowIso = new Date().toISOString()
     const tokenHash = invitationTokenHash(rawToken)
+    const licenseState = await getLicenseState()
 
     const accepted = await db.transaction(async transaction => {
       const invitation = await transaction.get(
@@ -493,7 +479,7 @@ export async function acceptUserInvitation(req, res) {
           invitation.first_name || null,
           invitation.last_name || null,
           normalizeUserRole(invitation.role),
-          invitation.access_config
+          JSON.stringify(await constrainUserAccessToLicense(invitation.access_config, invitation.role, licenseState))
         ]
       )
       const createdUser = created?.lastID
@@ -526,6 +512,7 @@ export async function acceptUserInvitation(req, res) {
 export async function createUser(req, res) {
   try {
     const member = normalizeMemberInput(req.body, { requirePassword: true })
+    member.accessConfig = await constrainUserAccessToLicense(member.accessConfig, member.role, req.license)
     // El login usa correo. Aceptar sólo un teléfono creaba accesos inutilizables.
     if (!member.email) {
       const error = new Error('Agrega el correo que la persona usará para iniciar sesión. No necesitas conectar una cuenta de correo.')
@@ -591,6 +578,7 @@ export async function updateUser(req, res) {
 
     const canKeepLegacyUsername = Boolean(existing.username && !existing.email && !existing.phone)
     const member = normalizeMemberInput(req.body, { requireContact: !canKeepLegacyUsername })
+    member.accessConfig = await constrainUserAccessToLicense(member.accessConfig, member.role, req.license)
 
     if (targetId === currentUserId && existing.role === 'admin' && member.role !== 'admin') {
       return res.status(400).json({

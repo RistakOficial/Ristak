@@ -64,7 +64,7 @@ interface InvitationsResponse {
 interface InvitationResponse {
   success: boolean
   invitation: TeamUserInvitation
-  delivery?: 'email'
+  delivery?: 'email' | 'pending'
   message?: string
 }
 

@@ -148,6 +148,7 @@ const LICENSE_FEATURES_BY_MODULE = {
   settings_domains: { primary: 'sites', legacy: ['settings_domains'] },
   settings_costs: { primary: 'reports', legacy: ['advanced_reports', 'settings_costs'] },
   settings_media: { primary: 'sites', legacy: ['settings_media'] },
+  settings_custom_fields: { primary: 'contacts', legacy: ['settings_custom_fields', 'variable_fields'] },
   settings_api_access: { primary: 'developers', legacy: ['settings_api_access'] },
   settings_users: { primary: 'team_access', legacy: ['settings_users'] }
 }
@@ -580,6 +581,26 @@ async function callLicenseServer(path, body = {}, {
   }
 
   return data || {}
+}
+
+/** Envía accesos con el correo transaccional central, independiente del módulo Correo. */
+export async function requestPortalUserInvitation({ invitationId, email, token } = {}) {
+  try {
+    const result = await callLicenseServer('/api/license/users/invite', {
+      invitation_id: invitationId,
+      email,
+      invitation_token: token
+    }, { connectionMode: 'broker', timeoutMs: 45_000 })
+    if (result.sent !== true) {
+      throw Object.assign(new Error('No se pudo confirmar la entrega de la invitación.'), { deliveryUncertain: true })
+    }
+  } catch (error) {
+    if (error.retryable || error.code === 'team_invitation_delivery_unknown' ||
+        (error.status >= 500 && error.code !== 'team_invitation_mail_unavailable')) {
+      error.deliveryUncertain = true
+    }
+    throw error
+  }
 }
 
 /**

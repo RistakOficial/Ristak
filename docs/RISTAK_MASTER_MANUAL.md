@@ -2066,11 +2066,26 @@ hash en `users.password_hash`, con la política de seguridad existente. El
 administrador comparte las credenciales por un medio privado y la persona puede
 cambiar su contraseña desde el perfil. No se agregan secrets de arranque.
 
-**Invitar por correo** sigue siendo una alternativa: necesita correo saliente
-conectado en **Configuración > Correos** y activa el acceso cuando la persona
-acepta el enlace y elige su contraseña. Si no hay correo conectado, se usa
-**Crear usuario**. Ninguna de las dos opciones exige ser contacto del CRM; ambas
-conservan el control administrativo, los roles y los permisos del negocio.
+**Invitar por correo** está incluido en todos los planes. Usa el correo
+transaccional de Ristak Installer mediante `POST /api/license/users/invite`;
+no depende del módulo comercial Correo ni de conectar SMTP en la cuenta.
+La persona recibe un enlace privado de un solo uso, vigente durante 48 horas,
+y activa su acceso al elegir una contraseña. Ninguna de las dos opciones exige
+ser contacto del CRM. Sólo los administradores pueden gestionar el equipo.
+
+La matriz de permisos muestra únicamente módulos disponibles en la licencia.
+El administrador puede asignar lectura/escritura a todos o a un subconjunto;
+el rol Administrador conserva acceso completo **dentro del plan**. El backend
+vuelve a limitar los permisos al crear, editar y aceptar invitaciones, incluso
+si cambió el plan o se intentó enviar un módulo ajeno desde la API.
+
+El token sólo se guarda como hash en la instalación. Installer valida la
+licencia e instalación, fija el dominio del enlace desde su registro y usa una
+plantilla transaccional, sin aceptar contenido arbitrario. Si se pierde la
+confirmación del envío, responde `202` con `delivery: pending`: el enlace sigue
+vigente y la interfaz pide revisar el correo antes de revocar y volver a invitar.
+No se reenvía automáticamente un correo de entrega incierta. El correo central
+reutiliza la configuración cifrada del Installer; no se agregan secrets al CRM.
 
 Hay tres capas distintas:
 
@@ -10923,7 +10938,8 @@ recordatorios de citas y sincronización de Google Calendar; carpetas, catálogo
 pruebas de automatizaciones; submissions y video analytics de Sites; carpetas y
 assets de Media; tracking; configuración de cuenta/notificaciones y administración
 seleccionada de usuarios. Las altas mediante MCP usan invitaciones sin contraseña:
-Ristak envía por el correo conectado un enlace de 48 horas, la persona crea su
+Ristak envía por el correo transaccional central un enlace de 48 horas, disponible
+en todos los planes sin requerir conexión comercial de correo. La persona crea su
 propia contraseña y el cliente MCP nunca recibe token, enlace ni password. El
 administrador puede listar o revocar pendientes desde Ristak o mediante tools
 dedicadas.

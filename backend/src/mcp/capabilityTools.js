@@ -1121,8 +1121,6 @@ const settingsTools = [
     name: 'settings_user_invite',
     description: 'Invita a una persona por correo para que cree su propia contraseña; el enlace se envía directamente y nunca se entrega al cliente MCP.',
     module: 'settings_users',
-    additionalModules: [{ module: 'settings_email', access: 'write' }],
-    connectionPrerequisites: ['email'],
     adminOnly: true,
     handler: userAccessController.createUserInvitation,
     inputSchema: schema({

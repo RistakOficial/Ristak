@@ -32,10 +32,13 @@ import {
   ACCESS_MODULES,
   ADMIN_ACCESS,
   DEFAULT_EMPLOYEE_ACCESS,
+  constrainAccessConfigToLicense,
+  hasLicenseFeatureAccess,
   normalizeAccessConfig,
   normalizeRole,
   type AccessConfig,
   type AccessLevel,
+  type AccessControlledUser,
   type PermissionGroup,
   type PermissionKey,
   type UserRole
@@ -79,7 +82,7 @@ const roleOptions: Array<{
   {
     value: 'admin',
     title: 'Administrador',
-    description: 'Tiene acceso completo y puede gestionar otras personas del CRM.',
+    description: 'Accede a los módulos incluidos en el plan y puede gestionar al equipo.',
     badge: 'Completo'
   }
 ]
@@ -170,8 +173,8 @@ type AccessPreset = 'default' | 'read' | 'full' | 'custom'
 
 const accessPresets: Array<{ id: AccessPreset; title: string; description: string; icon: React.ReactNode }> = [
   { id: 'default', title: 'Predeterminado', description: 'Solo lo esencial. Tú activas lo demás.', icon: <Sparkles size={14} /> },
-  { id: 'read', title: 'Solo lectura', description: 'Ve todo el CRM, sin editar.', icon: <Eye size={14} /> },
-  { id: 'full', title: 'Acceso total', description: 'Ve y edita todo (sin gestionar usuarios).', icon: <Zap size={14} /> },
+  { id: 'read', title: 'Solo lectura', description: 'Ve los módulos del plan, sin editar.', icon: <Eye size={14} /> },
+  { id: 'full', title: 'Acceso total', description: 'Ve y edita los módulos del plan.', icon: <Zap size={14} /> },
   { id: 'custom', title: 'Personalizado', description: 'Ajusta módulo por módulo.', icon: <SlidersHorizontal size={14} /> }
 ]
 
@@ -282,9 +285,9 @@ const getAccessStats = (role: UserRole, accessConfig: AccessConfig, keys: Permis
   })
 }
 
-const getAccessSummaryLabel = (role: UserRole, accessConfig: AccessConfig) => {
-  if (role === 'admin') return 'Acceso completo'
-  const stats = getAccessStats(role, accessConfig)
+const getAccessSummaryLabel = (role: UserRole, accessConfig: AccessConfig, keys: PermissionKey[]) => {
+  if (role === 'admin') return 'Acceso completo al plan'
+  const stats = getAccessStats(role, accessConfig, keys)
   const active = stats.read + stats.write
   if (active === 0) return 'Sin módulos activos'
   return `${active}/${stats.total} activos · ${stats.write} editar`
@@ -304,7 +307,7 @@ const getLevelLabel = (level: AccessLevel) => {
   return 'Sin acceso'
 }
 
-function getDraftPayload(draft: Draft): SaveTeamUserInput {
+function getDraftPayload(draft: Draft, account: AccessControlledUser | null): SaveTeamUserInput {
   const role = normalizeRole(draft.role)
   return {
     firstName: draft.firstName.trim(),
@@ -313,7 +316,7 @@ function getDraftPayload(draft: Draft): SaveTeamUserInput {
     phone: draft.phone.trim(),
     role,
     password: draft.password || undefined,
-    accessConfig: normalizeAccessConfig(draft.accessConfig, role)
+    accessConfig: constrainAccessConfigToLicense(account, draft.accessConfig, role)
   }
 }
 
@@ -363,20 +366,28 @@ interface AccessMatrixProps {
 }
 
 const AccessMatrix: React.FC<AccessMatrixProps> = ({ role, accessConfig, disabled = false, onChange }) => {
+  const { user } = useAuth()
   const [openGroups, setOpenGroups] = useState<Record<PermissionGroup, boolean>>(() => getDefaultOpenGroups())
   const isAdmin = role === 'admin'
+  const availableCategories = permissionCategories.map((category) => ({
+    ...category,
+    sections: category.sections.map((section) => ({
+      ...section,
+      keys: section.keys.filter((key) => hasLicenseFeatureAccess(user, key))
+    })).filter((section) => section.keys.length > 0)
+  })).filter((category) => category.sections.length > 0)
 
   if (isAdmin) {
     return (
       <div className={styles.adminAccessSummary}>
         <div className={styles.adminNote}>
           <ShieldCheck size={16} />
-          <span>El administrador siempre puede ver, editar, crear y borrar dentro del CRM.</span>
+          <span>El administrador puede gestionar todos los módulos incluidos en el plan de esta cuenta.</span>
         </div>
         <div className={styles.roleCapabilityList}>
           <div className={styles.roleCapabilityRow}>
             <ShieldCheck size={15} />
-            <span>Control completo de módulos, ajustes y reportes.</span>
+            <span>Control completo de los módulos, ajustes y reportes disponibles en el plan.</span>
           </div>
           <div className={styles.roleCapabilityRow}>
             <Users size={15} />
@@ -384,7 +395,7 @@ const AccessMatrix: React.FC<AccessMatrixProps> = ({ role, accessConfig, disable
           </div>
           <div className={styles.roleCapabilityRow}>
             <LockKeyhole size={15} />
-            <span>Su acceso no se limita por categorías individuales.</span>
+            <span>Para limitar módulos individuales, elige el rol Empleado.</span>
           </div>
         </div>
       </div>
@@ -393,7 +404,7 @@ const AccessMatrix: React.FC<AccessMatrixProps> = ({ role, accessConfig, disable
 
   return (
     <div className={styles.permissionAccordionList}>
-      {permissionCategories.map((category) => {
+      {availableCategories.map((category) => {
         const categoryKeys = category.sections.flatMap((section) => section.keys)
         const isOpen = openGroups[category.group]
 
@@ -488,6 +499,7 @@ const AccessMatrix: React.FC<AccessMatrixProps> = ({ role, accessConfig, disable
 
 export const UserAccessSettings: React.FC = () => {
   const { user } = useAuth()
+  const availableModuleKeys = permissionModuleKeys.filter((key) => hasLicenseFeatureAccess(user, key))
   const { showToast, showConfirm } = useNotification()
   const [members, setMembers] = useState<TeamUser[]>([])
   const [invitations, setInvitations] = useState<TeamUserInvitation[]>([])
@@ -624,7 +636,7 @@ export const UserAccessSettings: React.FC = () => {
 
   const handleCreate = async (event: React.FormEvent) => {
     event.preventDefault()
-    const payload = getDraftPayload(createDraft)
+    const payload = getDraftPayload(createDraft, user)
 
     if (!payload.email) {
       showToast('warning', 'Falta correo', 'Agrega el correo que la persona usará para iniciar sesión. No necesitas conectarlo a Ristak.')
@@ -653,7 +665,9 @@ export const UserAccessSettings: React.FC = () => {
           accessConfig: payload.accessConfig
         })
         setInvitations((current) => [response.invitation, ...current])
-        showToast('success', 'Invitación enviada', 'La persona recibirá un enlace privado para crear su contraseña y activar el acceso.')
+        showToast(response.delivery === 'pending' ? 'warning' : 'success',
+          response.delivery === 'pending' ? 'Entrega por confirmar' : 'Invitación enviada',
+          response.delivery === 'pending' ? response.message : 'La persona recibirá un enlace privado para crear su contraseña y activar el acceso.')
       }
       setCreateDraft(blankDraft())
       setCreatePasswordVisible(false)
@@ -667,7 +681,7 @@ export const UserAccessSettings: React.FC = () => {
 
   const handleSaveEdit = async () => {
     if (!editDraft?.id) return
-    const payload = getDraftPayload(editDraft)
+    const payload = getDraftPayload(editDraft, user)
 
     if (!payload.email && !payload.phone) {
       showToast('warning', 'Faltan datos de acceso', 'Debe quedar correo o teléfono.')
@@ -817,7 +831,7 @@ export const UserAccessSettings: React.FC = () => {
                   <p className={styles.blockDescription}>
                     {createMode === 'direct'
                       ? 'Asigna una contraseña y activa su acceso al guardar. No necesitas conectar el correo del negocio.'
-                      : 'Le enviaremos un enlace privado para crear su contraseña. Esta opción requiere correo saliente conectado en Configuración > Correos.'}
+                      : 'Ristak le enviará un enlace privado para crear su contraseña. Está incluido en todos los planes y no requiere conectar el correo del negocio.'}
                   </p>
                 </div>
               </div>
@@ -894,7 +908,7 @@ export const UserAccessSettings: React.FC = () => {
                   <p className={styles.helperText}>
                     {createMode === 'direct'
                       ? 'El correo identifica al usuario al iniciar sesión. No se enviará una invitación ni se creará un contacto del CRM.'
-                      : 'No necesita ser contacto ni tener una cuenta previa. Si no tienes correo conectado, elige Crear usuario.'}
+                      : 'No necesita ser contacto ni tener una cuenta previa. El acceso se activará cuando acepte la invitación.'}
                   </p>
                 </div>
               </div>
@@ -942,7 +956,7 @@ export const UserAccessSettings: React.FC = () => {
                   ) : (
                     <div className={styles.permissionsHint}>
                       <Info size={15} />
-                      <span>Esta plantilla se aplica a todos los módulos. Elige «Personalizado» para ajustar cada uno por separado.</span>
+                      <span>Esta plantilla se aplica a los módulos incluidos en tu plan. Elige «Personalizado» para ajustar cada uno por separado.</span>
                     </div>
                   )}
                 </>
@@ -1061,7 +1075,7 @@ export const UserAccessSettings: React.FC = () => {
                           </Badge>
                         </span>
                         <span className={styles.memberAccessCell}>
-                          {member.isActive ? getAccessSummaryLabel(member.role, memberAccess) : 'Desactivado'}
+                          {member.isActive ? getAccessSummaryLabel(member.role, memberAccess, availableModuleKeys) : 'Desactivado'}
                         </span>
                       </button>
                     )
@@ -1082,7 +1096,7 @@ export const UserAccessSettings: React.FC = () => {
                       <span className={styles.avatar}>{getInitials(selectedMember)}</span>
                       <div>
                         <strong>{selectedMember.fullName || selectedMember.email || selectedMember.phone}</strong>
-                        <span>{getRoleLabel(editDraft.role)} · {getAccessSummaryLabel(editDraft.role, editDraft.accessConfig)}</span>
+                        <span>{getRoleLabel(editDraft.role)} · {getAccessSummaryLabel(editDraft.role, editDraft.accessConfig, availableModuleKeys)}</span>
                       </div>
                     </div>
                     <div className={styles.actions}>

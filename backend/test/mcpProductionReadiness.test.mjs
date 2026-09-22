@@ -140,6 +140,8 @@ test('el catálogo completa lotes e invitaciones sin herramientas de aprobación
   ]) assert.ok(specs.has(name), `falta ${name}`)
 
   assert.equal(specs.get('settings_user_invite').inputSchema.properties.password, undefined)
+  assert.deepEqual(specs.get('settings_user_invite').connectionPrerequisites, [])
+  assert.equal(specs.get('settings_user_invite').additionalModules.some(entry => entry.module === 'settings_email'), false)
   assert.equal(specs.has('mcp_prepare_action_confirmation'), false)
   assert.equal(specs.has('mcp_action_confirmation_status'), false)
   for (const spec of specs.values()) {

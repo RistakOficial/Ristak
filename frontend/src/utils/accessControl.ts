@@ -235,6 +235,7 @@ const LICENSE_FEATURES_BY_MODULE: Partial<Record<PermissionKey, LicenseFeatureRu
   settings_domains: { primary: 'sites', legacy: ['settings_domains'] },
   settings_costs: { primary: 'reports', legacy: ['advanced_reports', 'settings_costs'] },
   settings_media: { primary: 'sites', legacy: ['settings_media'] },
+  settings_custom_fields: { primary: 'contacts', legacy: ['settings_custom_fields', 'variable_fields'] },
   settings_api_access: { primary: 'developers', legacy: ['settings_api_access'] },
   settings_users: { primary: 'team_access', legacy: ['settings_users'] }
 }
@@ -427,6 +428,18 @@ export function hasLicenseFeatureAccess(
   }
 
   return false
+}
+
+export function constrainAccessConfigToLicense(
+  user: AccessControlledUser | null | undefined,
+  value: Partial<AccessConfig>,
+  role: UserRole
+): AccessConfig {
+  const access = normalizeAccessConfig(value, role)
+  for (const { key } of ACCESS_MODULES) {
+    if (!hasLicenseFeatureAccess(user, key)) access[key] = 'none'
+  }
+  return access
 }
 
 export function getLicenseFeatureLabel(feature: unknown) {
