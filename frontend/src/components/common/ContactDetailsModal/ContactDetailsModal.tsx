@@ -2631,6 +2631,11 @@ export function ContactDetailsModal({
                             </Badge>
                           ) : null
                         })()}
+                        {(contact.referredByContactId || contact.referred_by_contact_id || contact.referredByContact?.id) && (
+                          <Badge variant="info" className={styles.contactBadge}>
+                            Recomendación
+                          </Badge>
+                        )}
                       </div>
                     </div>
                   ))}

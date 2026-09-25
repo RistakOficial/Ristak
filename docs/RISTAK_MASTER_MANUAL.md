@@ -2700,6 +2700,11 @@ analítica. No admite correo, teléfono, IDs ni otros datos personales.
   `referred_by_contact_id`; `null`/cadena vacia elimina la relacion. Las fusiones
   de identidad repuntan a los recomendados hacia el contacto sobreviviente y
   cortan cualquier borde que pudiera convertirse en autorreferencia.
+- En la lista del modal compartido de contactos de Reportes y Publicidad, las
+  personas con **Recomendado por** muestran una etiqueta **Recomendación** debajo
+  de su estado (por ejemplo, **Cliente**), sin tener que abrir su ficha. La marca
+  depende del vinculo con el recomendador, incluso si tienen anuncio propio;
+  no depende de que hayan heredado atribucion publicitaria.
 - Reportes en vista `Identificados de anuncios` y Publicidad resuelven primero
   `contact_effective_ad_attribution`: la atribucion propia del contacto gana si
   tiene `attribution_ad_id`; si no la tiene, se recorre **Recomendado por** hasta
