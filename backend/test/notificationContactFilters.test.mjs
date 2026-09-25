@@ -15,7 +15,7 @@ before(async () => {
   }
   userId = (await db.get('SELECT id FROM users WHERE username = ?', [`${prefix}-a`])).id
   otherUserId = (await db.get('SELECT id FROM users WHERE username = ?', [`${prefix}-b`])).id
-  await db.run(`INSERT INTO contacts (id, email, first_name, tags, assigned_user_id, custom_fields, created_at) VALUES (?, ?, 'Ana', ?, ?, ?, ?)`, [prefix, 'ana@example.test', JSON.stringify(['vip', 'active']), String(userId), JSON.stringify([{ key: 'plan', value: 'Premium' }, { key: 'score', value: 25 }, { key: 'accepts', value: true }, { key: 'day', value: '2026-09-25' }]), '2026-09-25T05:00:00.000Z'])
+  await db.run(`INSERT INTO contacts (id, email, first_name, tags, assigned_user_id, custom_fields, created_at) VALUES (?, ?, 'Ana', ?, ?, ?, ?)`, [prefix, 'ana@example.test', JSON.stringify(['vip', 'active']), String(userId), JSON.stringify([{ key: 'plan', value: 'Premium' }, { key: 'interests', value: ['Consultoría', 'Curso'] }, { key: 'empty_selection', value: [] }, { key: 'score', value: 25 }, { key: 'accepts', value: true }, { key: 'day', value: '2026-09-25' }]), '2026-09-25T05:00:00.000Z'])
   await db.run(`INSERT INTO contacts (id, email, tags, custom_fields) VALUES (?, ?, ?, '[]')`, [`${prefix}-other`, 'other@elsewhere.test', JSON.stringify(['vip_gold'])])
 })
 after(async () => {
@@ -55,7 +55,7 @@ test('text conditions, all/any blocks and exclusion', async () => {
   assert.equal(await match([`${prefix}-other`])(userId), false)
 })
 test('custom form values, numeric/date/boolean and absent fields', async () => {
-  for (const [customKey, valueType, operator, value, expected] of [['plan', 'select', 'is', 'Premium', true], ['score', 'number', 'gte', 25, true], ['score', 'number', 'lt', 20, false], ['accepts', 'boolean', 'yes', undefined, true], ['accepts', 'boolean', 'no', undefined, false], ['missing', 'text', 'empty', undefined, true], ['missing', 'text', 'not_empty', undefined, false], ['day', 'date', 'on', '2026-09-25', true]]) {
+  for (const [customKey, valueType, operator, value, expected] of [['plan', 'select', 'is', 'Premium', true], ['interests', 'select', 'is', 'Curso', true], ['interests', 'select', 'is', 'Cursos', false], ['interests', 'select', 'is_not', 'Curso', false], ['interests', 'select', 'is_not', 'Otro', true], ['empty_selection', 'select', 'empty', undefined, true], ['empty_selection', 'select', 'not_empty', undefined, false], ['score', 'number', 'gte', 25, true], ['score', 'number', 'lt', 20, false], ['accepts', 'boolean', 'yes', undefined, true], ['accepts', 'boolean', 'no', undefined, false], ['missing', 'text', 'empty', undefined, true], ['missing', 'text', 'not_empty', undefined, false], ['day', 'date', 'on', '2026-09-25', true]]) {
     const rule = { field: 'custom_field', customKey, valueType, operator, value }
     validateNotificationContactFilter(config([rule]))
     await write([rule])

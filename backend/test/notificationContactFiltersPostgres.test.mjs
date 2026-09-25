@@ -24,7 +24,7 @@ test('notification contact conditions execute against real PostgreSQL JSON and c
     for (const [id, tags] of [['a', ['vip', 'active']], ['b', ['vip_gold']], ['c', [{ id: 'vip', name: 'VIP' }]]]) {
       await database.run('INSERT INTO contacts (id, email, tags, custom_fields, assigned_user_id, created_at) VALUES (?, ?, ?, ?::jsonb, ?, ?)', [
         id, `${id}@example.test`, JSON.stringify(tags), JSON.stringify([
-          { key: 'plan', value: 'Premium' }, { key: 'score', value: 25.5 },
+          { key: 'plan', value: 'Premium' }, { key: 'interests', value: ['Consultoría', 'Curso'] }, { key: 'empty_selection', value: [] }, { key: 'score', value: 25.5 },
           { key: 'accepts', value: true }, { key: 'day', value: '2026-09-25' }
         ]), 'owner', '2026-09-25 05:00:00'
       ])
@@ -40,10 +40,11 @@ test('notification contact conditions execute against real PostgreSQL JSON and c
     assert.deepEqual(await ids([{ field: 'tags', operator: 'any', value: ['v%'] }]), [])
     assert.deepEqual(await ids([{ field: 'assigned_user_id', operator: 'is', value: 'owner' }, { field: 'email', operator: 'contains', value: 'a@' }]), ['a'])
     for (const [customKey, valueType, operator, value] of [
-      ['plan', 'select', 'is', 'Premium'], ['score', 'number', 'gte', 25.4],
+      ['plan', 'select', 'is', 'Premium'], ['interests', 'select', 'is', 'Curso'], ['interests', 'select', 'is_not', 'Otro'], ['empty_selection', 'select', 'empty', undefined], ['score', 'number', 'gte', 25.4],
       ['accepts', 'boolean', 'yes', undefined], ['day', 'date', 'on', '2026-09-25'],
       ['missing', 'text', 'empty', undefined]
     ]) assert.deepEqual(await ids([{ field: 'custom_field', customKey, valueType, operator, value }]), ['a', 'b', 'c'], `${customKey} ${operator}`)
+    assert.deepEqual(await ids([{ field: 'custom_field', customKey: 'interests', valueType: 'select', operator: 'is_not', value: 'Curso' }]), [])
     assert.deepEqual(await ids([{ field: 'appointment_calendar', operator: 'is', value: 'calendar' }]), ['a'])
     await database.run("UPDATE contacts SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'a'")
     assert.deepEqual(await ids([{ field: 'tags', operator: 'all', value: ['vip', 'active'] }]), [])

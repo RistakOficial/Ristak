@@ -734,6 +734,27 @@ const buildCustomFieldCondition = (rule, contactAlias = 'c') => {
   const valueType = lowerValue(rule.valueType)
   const hasMatchingField = `${rows.keyExpression} IN (${placeholderList(keyValues)})`
 
+  // A form selection can be a scalar or an array (multiselect/checkboxes).
+  // Compare actual options rather than the JSON serialization of the array.
+  if (valueType === 'select') {
+    const selectedRows = isPostgresDatabase
+      ? `jsonb_array_elements_text(CASE WHEN jsonb_typeof(cf.value->'value') = 'array' THEN cf.value->'value' ELSE jsonb_build_array(cf.value->'value') END) AS cf_option(value)`
+      : `json_each(CASE WHEN json_type(cf.value, '$.value') = 'array' THEN json_extract(cf.value, '$.value') ELSE json_array(json_extract(cf.value, '$.value')) END) AS cf_option`
+    const hasValue = `EXISTS (SELECT 1 FROM ${selectedRows} WHERE NULLIF(TRIM(CAST(cf_option.value AS TEXT)), '') IS NOT NULL)`
+    if (operator === 'empty' || operator === 'not_empty') {
+      return {
+        condition: `${operator === 'empty' ? 'NOT ' : ''}EXISTS (SELECT 1 FROM ${rows.from} WHERE ${hasMatchingField} AND ${hasValue})`,
+        params: keyValues
+      }
+    }
+    const valueCondition = buildTextMatchCondition('CAST(cf_option.value AS TEXT)', operator === 'is_not' ? 'is' : operator, rule.value)
+    if (!valueCondition) return null
+    return {
+      condition: `EXISTS (SELECT 1 FROM ${rows.from} WHERE ${hasMatchingField} AND ${operator === 'is_not' ? 'NOT ' : ''}EXISTS (SELECT 1 FROM ${selectedRows} WHERE ${valueCondition.condition}))`,
+      params: [...keyValues, ...valueCondition.params]
+    }
+  }
+
   if (operator === 'empty') {
     return {
       condition: `NOT EXISTS (

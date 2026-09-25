@@ -991,6 +991,8 @@ operadores compatibles (igual/distinto, contiene/no contiene, vacío/no vacío,
 sí/no, rangos y fechas). Los usuarios, etiquetas, calendarios y opciones de
 formulario muestran sus nombres actuales; usuarios y calendarios usan
 comparaciones exactas, sin coincidencias parciales de identificadores.
+En formularios con selección múltiple, elegir una opción exige que esté dentro
+de las opciones seleccionadas; una lista vacía cuenta como campo vacío.
 No existe un pipeline local de
 «oportunidades»; no se presentan etapas externas de HighLevel como si fueran
 filtros locales disponibles. La condición comercial y campos personalizados sí
