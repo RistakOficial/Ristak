@@ -64,6 +64,9 @@
         }
       ],
       "expo-web-browser"
-    ]
+    ],
+    "experiments": {
+      "onDemandFilesystem": false
+    }
   }
 }

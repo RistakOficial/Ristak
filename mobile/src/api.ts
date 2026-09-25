@@ -1,3 +1,4 @@
+import type { NotificationFilterCatalog } from '../../shared/notificationContactFilters';
 import type {
   BankClabeAccount,
   CalendarEventItem,
@@ -386,6 +387,10 @@ export class RistakApiClient {
       }
     });
     return url.toString();
+  }
+
+  getNotificationContactFilterCatalog() {
+    return this.request<NotificationFilterCatalog>('/user-config/notification-filters/catalog');
   }
 
   private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {

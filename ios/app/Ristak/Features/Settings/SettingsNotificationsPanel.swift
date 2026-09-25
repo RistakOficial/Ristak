@@ -77,6 +77,19 @@ struct SettingsNotificationsPanel: View {
                 }
             }
 
+            SectionCard(title: "Filtros por contacto") {
+                VStack(alignment: .leading, spacing: RistakTheme.Spacing.sm) {
+                    Text("Elige de quién quieres recibir avisos. Los filtros son personales y se conservan al cambiar de celular.")
+                        .font(.footnote).foregroundStyle(RistakTheme.textDim)
+                    ForEach(NotificationContactFilter.targets, id: \.key) { target in
+                        NavigationLink(target.title) {
+                            NotificationContactFilterEditor(configKey: target.key, title: target.title)
+                        }
+                        Divider()
+                    }
+                }
+            }
+
             SectionCard(title: "Sonido y vibración") {
                 VStack(alignment: .leading, spacing: RistakTheme.Spacing.sm) {
                     Text("Controla cómo se sienten las alertas en este celular.")

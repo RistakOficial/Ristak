@@ -615,8 +615,15 @@ const buildTagCondition = (rule, contactAlias = 'c') => {
   if (operator === 'not_empty') return { condition: notEmptyCondition, params: [] }
   if (!values.length) return null
 
-  const valueClauses = values.map(() => `${tagExpression} LIKE ?`)
-  const params = values.map(value => `%${lowerValue(value)}%`)
+  // IDs are exact JSON members: "vip" must not match "vip_gold" or a wildcard.
+  const tagRows = isPostgresDatabase
+    ? `jsonb_array_elements(COALESCE(NULLIF(${contactAlias}.tags::text, ''), '[]')::jsonb) AS tag_filter(value)`
+    : `json_each(COALESCE(NULLIF(${contactAlias}.tags, ''), '[]')) AS tag_filter`
+  const tagValue = isPostgresDatabase
+    ? `COALESCE(tag_filter.value->>'id', tag_filter.value->>'name', tag_filter.value #>> '{}')`
+    : `CASE WHEN tag_filter.type = 'object' THEN COALESCE(json_extract(tag_filter.value, '$.id'), json_extract(tag_filter.value, '$.name')) ELSE CAST(tag_filter.value AS TEXT) END`
+  const valueClauses = values.map(() => `EXISTS (SELECT 1 FROM ${tagRows} WHERE LOWER(${tagValue}) = ?)`)
+  const params = values.map(value => lowerValue(value))
 
   if (operator === 'all') return { condition: `(${valueClauses.join(' AND ')})`, params }
   if (operator === 'none') return { condition: `(NOT (${valueClauses.join(' OR ')}))`, params }
@@ -1312,7 +1319,7 @@ const buildAutomationExistsRule = (rule, contactAlias = 'c') => {
   return null
 }
 
-const buildAdvancedRuleCondition = (rule, contactAlias = 'c', timezone) => {
+export const buildAdvancedRuleCondition = (rule, contactAlias = 'c', timezone) => {
   const normalizedRule = { ...rule, timezone }
   const field = normalizedRule.field
   const operator = normalizedRule.operator

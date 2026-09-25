@@ -605,6 +605,14 @@ test('IDs iguales en web y mobile conservan namespace y no reenvían el éxito m
       ) VALUES (?, ?, 'android', ?, '[]', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `, [sharedId, userId, `shared-mobile-token-${suffix}`])
 
+    await db.run('INSERT INTO contacts (id, email) VALUES (?, ?)', [sharedId, 'excluded@example.test'])
+    await databaseModule.setAppConfig('chat_push_contact_filter', { version: 1, groupMode: 'all', groups: [{ mode: 'all', rules: [{ field: 'email', operator: 'contains', value: 'allowed@' }] }] })
+    const excluded = await pushService.sendAppNotificationPayload({ title: 'Excluded contact', category: 'chat', contactId: sharedId }, { userIds: [userId] })
+    assert.equal(excluded.sent, 0)
+    assert.equal(webCalls, 0, 'el filtro se aplica antes de Web Push')
+    assert.equal(central.requests.filter(request => request.url === '/api/license/mobile-push/send').length, 0, 'el filtro se aplica antes del broker nativo')
+    await db.run("DELETE FROM app_config WHERE config_key = 'chat_push_contact_filter'")
+
     const first = await pushService.sendAppNotificationPayload({
       title: 'Targets namespaced',
       body: 'Primer intento',
@@ -643,6 +651,8 @@ test('IDs iguales en web y mobile conservan namespace y no reenvían el éxito m
     )
   } finally {
     if (db) {
+      await db.run("DELETE FROM app_config WHERE config_key = 'chat_push_contact_filter'").catch(() => {})
+      await db.run('DELETE FROM contacts WHERE id = ?', [sharedId]).catch(() => {})
       await db.run('DELETE FROM push_subscriptions WHERE id = ?', [sharedId]).catch(() => {})
       await db.run('DELETE FROM mobile_push_devices WHERE id = ?', [sharedId]).catch(() => {})
     }

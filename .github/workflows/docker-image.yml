@@ -70,6 +70,11 @@ jobs:
           npm rebuild --prefix backend sqlite3
           node --test --test-concurrency=1 backend/test/conversationalHistoryBoundary.test.mjs backend/test/conversationalQrDeliveryRecovery.test.mjs
 
+      - name: Verificar filtros de notificaciones con PostgreSQL real
+        env:
+          TEST_POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/ristak_bootstrap
+        run: node --test --test-concurrency=1 backend/test/notificationContactFilters.test.mjs backend/test/notificationContactFiltersPostgres.test.mjs
+
   build-and-push:
     needs: verify-fresh-postgres
     if: github.event_name != 'pull_request'

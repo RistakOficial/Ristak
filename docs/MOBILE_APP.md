@@ -976,6 +976,50 @@ se acepta como entrega. Si falla la comprobacion de contactos ocultos, la ruta
 durable reintenta; las llamadas best-effort conservan el fail-closed para no
 filtrar contenido sensible.
 
+### Filtros personales de notificaciones por contacto
+
+En Ajustes → Notificaciones → Filtros por contacto, `/movil`, Android e iOS
+permiten guardar condiciones para todos los avisos de contactos, mensajes,
+citas/recordatorios, citas confirmadas y pagos. Cada filtro combina bloques
+con Todas/Cualquiera; cada bloque combina condiciones con Todas/Cualquiera y
+puede invertir su resultado con «Excluir si coincide este bloque».
+
+El catálogo reutiliza los campos y operadores de Contactos: etiquetas exactas,
+propietario, correo/teléfono, condición comercial, citas, pagos, atribución,
+automatizaciones y campos personalizados/formularios. Cada tipo ofrece sus
+operadores compatibles (igual/distinto, contiene/no contiene, vacío/no vacío,
+sí/no, rangos y fechas). Los usuarios, etiquetas, calendarios y opciones de
+formulario muestran sus nombres actuales. No existe un pipeline local de
+«oportunidades»; no se presentan etapas externas de HighLevel como si fueran
+filtros locales disponibles. La condición comercial y campos personalizados sí
+se pueden usar.
+
+`GET /api/user-config/notification-filters/catalog` devuelve el catálogo para
+el usuario autenticado. `POST /api/user-config` guarda las claves
+`contact_push_notification_filter`, `chat_push_contact_filter`,
+`calendar_push_contact_filter`, `appointment_confirmation_push_contact_filter`
+y `payment_push_contact_filter` en `user_app_config`; heredan `app_config` si
+no hay override. No se agregan secrets, variables de entorno ni migraciones.
+Se valida el lote completo antes de escribir: versión 1, máximo 10 bloques,
+50 condiciones y 32 KB. Una condición incompleta se rechaza, nunca se ignora.
+
+Antes de Web Push o del transporte nativo, el backend combina el filtro general
+con el del evento y conserva destinatarios, permisos, contactos ocultos,
+interruptores, presencia y calendarios existentes. Evalúa los valores actuales
+del contacto en la base, con fechas en la zona del negocio. Un aviso agrupado
+requiere que todos sus contactos coincidan. Si el evento exige contacto pero no
+trae su ID, un filtro activo lo excluye; los avisos de sistema sin contacto no
+se filtran. Vaciar y guardar un filtro permite todos los contactos en ese nivel.
+Una preferencia corrupta excluye solo a su dueño; errores de base de datos
+propagan el fallo para que la entrega durable pueda reintentar.
+
+El catálogo de Contactos vive en `shared/contactAdvancedFilterCatalog.js` y los
+helpers de edición móvil en `shared/notificationContactFilters.ts`. Android
+incluye `../shared` en Metro y desactiva `experiments.onDemandFilesystem` de
+Expo 57 porque su exportación recorta los watchFolders al directorio móvil.
+La validación cubre filtros reales en SQLite, transporte web/nativo excluido y
+PostgreSQL real en `docker-image` antes de publicar la imagen.
+
 Meta Direct encola `push` y `meta_enrichment` como trabajos independientes con
 unicidad `(job_kind, message_id)`, lease, heartbeat y backoff. Push y
 `meta_enrichment` tienen lanes/locks separados, por lo que Graph, descarga o

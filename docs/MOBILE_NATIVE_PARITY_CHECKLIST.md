@@ -50,6 +50,15 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 
 ## Estado general
 
+- [x] Notificaciones: filtros personales por contacto en `/movil`, Android e iOS.
+  Catálogo compartido con Contactos, etiquetas/usuarios/campos de formulario,
+  operadores por tipo, bloques Todas/Cualquiera y exclusión; carga fresca,
+  validación del servidor y guardado antes de cerrar. Filtro general más filtros
+  de mensajes, citas/recordatorios, confirmaciones y pagos. Contrato y límites
+  en `MOBILE_APP.md`, sección «Filtros personales de notificaciones por contacto».
+  Android valida TypeScript y exportación del bundle; iOS requiere el build
+  firmado del workflow oficial para validar SwiftUI en Xcode.
+
 - [x] Crear app React Native/Expo en `mobile/`.
 - [x] Separar rutas moviles: `/movil` para web, `mobile/` para Android/Google y
       `ios/app` para la app nativa Apple de iPhone/iPad.

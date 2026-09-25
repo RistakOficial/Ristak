@@ -12,12 +12,14 @@ import {
   getUserAppConfigOverrideFlags,
   db
 } from '../config/database.js'
+import { NOTIFICATION_CONTACT_FILTER_KEYS, validateNotificationContactFilter } from '../services/notificationContactFiltersService.js'
 import { logger } from '../utils/logger.js'
 import { recordAudit } from '../utils/auditLog.js'
 
 // Claves móviles que SÍ se pueden personalizar por usuario.
 // Cualquier otra clave queda fuera (no se lee ni se escribe por este endpoint).
 const USER_CONFIG_WHITELIST = [
+  ...NOTIFICATION_CONTACT_FILTER_KEYS,
   'calendar_push_notifications_enabled',
   'appointment_confirmation_push_notifications_enabled',
   'chat_push_notifications_enabled',
@@ -33,6 +35,7 @@ const USER_CONFIG_WHITELIST_SET = new Set(USER_CONFIG_WHITELIST)
 // como array parseado para pintarla cómodamente.
 const CALENDAR_IDS_KEY = 'calendar_push_notification_calendar_ids'
 const USER_CONFIG_DEFAULTS = {
+  ...Object.fromEntries(NOTIFICATION_CONTACT_FILTER_KEYS.map(key => [key, JSON.stringify({ version: 1, groupMode: 'all', groups: [] })])),
   calendar_push_notifications_enabled: 'false',
   appointment_confirmation_push_notifications_enabled: 'true',
   chat_push_notifications_enabled: 'true',
@@ -114,13 +117,14 @@ export async function getUserConfig(req, res) {
 export async function saveUserConfig(req, res) {
   try {
     const userId = req.user.userId
-    const { key, value, config } = req.body
+    let { key, value, config } = req.body
 
     // Modo 1: una sola clave
     if (key && value !== undefined) {
       if (!isWhitelistedKey(key)) {
         return res.status(400).json({ success: false, error: `Clave no permitida: ${key}` })
       }
+      if (NOTIFICATION_CONTACT_FILTER_KEYS.includes(key)) value = validateNotificationContactFilter(value)
       const previousValue = effectiveUserConfigValue(key, await getUserAppConfig(userId, key))
       await setUserAppConfig(userId, key, value)
       await recordAudit({
@@ -135,8 +139,9 @@ export async function saveUserConfig(req, res) {
 
     // Modo 2: varias claves
     if (config && typeof config === 'object') {
-      const entries = Object.entries(config)
-      for (const [k] of entries) {
+      const entries = Object.entries(config).map(([k, v]) => [k, NOTIFICATION_CONTACT_FILTER_KEYS.includes(k) && v !== null ? validateNotificationContactFilter(v) : v])
+      for (const [k, v] of entries) {
+        if (NOTIFICATION_CONTACT_FILTER_KEYS.includes(k) && v === null) return res.status(400).json({ success: false, error: 'Usa un filtro sin condiciones para quitarlo.' })
         if (!isWhitelistedKey(k)) {
           return res.status(400).json({ success: false, error: `Clave no permitida: ${k}` })
         }
@@ -166,7 +171,7 @@ export async function saveUserConfig(req, res) {
     })
   } catch (error) {
     logger.error('Error guardando configuración por usuario:', error)
-    res.status(500).json({ success: false, error: 'Error al guardar configuración' })
+    res.status(error.statusCode || 500).json({ success: false, error: error.statusCode === 400 ? error.message : 'Error al guardar configuración' })
   }
 }
 
@@ -263,7 +268,7 @@ export async function patchUserConfigAdmin(req, res) {
       return res.status(400).json({ success: false, error: 'Se requiere "config" con un objeto' })
     }
 
-    const entries = Object.entries(config)
+    const entries = Object.entries(config).map(([k, v]) => [k, NOTIFICATION_CONTACT_FILTER_KEYS.includes(k) && v !== null ? validateNotificationContactFilter(v) : v])
     for (const [k] of entries) {
       if (!isWhitelistedKey(k)) {
         return res.status(400).json({ success: false, error: `Clave no permitida: ${k}` })
@@ -298,6 +303,6 @@ export async function patchUserConfigAdmin(req, res) {
     res.json({ success: true, config: resultConfig })
   } catch (error) {
     logger.error('Error ajustando configuración por usuario (admin):', error)
-    res.status(500).json({ success: false, error: 'Error al ajustar configuración del usuario' })
+    res.status(error.statusCode || 500).json({ success: false, error: error.statusCode === 400 ? error.message : 'Error al ajustar configuración del usuario' })
   }
 }

@@ -1,3 +1,4 @@
+import { createNotificationContactFilterResolver } from './notificationContactFiltersService.js'
 import crypto from 'crypto'
 import fs from 'fs/promises'
 import http2 from 'http2'
@@ -2376,10 +2377,11 @@ async function sendMobileNotificationRows(rows = [], payload = {}, experience = 
 // (a) on/off del evento (enabledKey) y (b) override de calendarios cuando aplica.
 // Mantiene las filas sin user_id (no se puede resolver -> se respeta el comportamiento
 // previo, que ya las dejaba pasar tras el filtro por matrix/calendario).
-async function filterRowsByUserPreference(rows, { enabledKey = '', calendarId = '' } = {}) {
-  if (!enabledKey && !calendarId) return rows
+async function filterRowsByUserPreference(rows, { enabledKey = '', calendarId = '', contactFilter } = {}) {
+  if (!enabledKey && !calendarId && !contactFilter) return rows
   const results = await Promise.all(rows.map(async (row) => {
     const userId = String(row.user_id || '').trim()
+    if (contactFilter && !(await contactFilter(userId))) return null
     if (!userId) {
       // (MOB-006) Una suscripción sin user_id no tiene preferencia por-usuario, pero debe
       // seguir respetando el apagado GLOBAL (preserva el kill-switch previo): si la clave
@@ -2492,9 +2494,12 @@ export async function sendAppNotificationPayload(payload = {}, {
   // un device del user U solo si (matrix permite a U) AND (preferencia de U on/off true,
   // con fallback global) AND (calendario permitido para U). Sin override => hereda global
   // => idéntico al comportamiento previo (no se silencia a nadie que ya recibía).
+  const contactFilter = createNotificationContactFilterResolver({
+    contactIds: normalizePayloadContactIds(normalizedPayload), enabledKey, category: String(normalizedPayload.category || '')
+  })
   const [filteredWebRows, filteredNativeRows] = await Promise.all([
-    filterRowsByUserPreference(matrixWebRows, { enabledKey, calendarId }),
-    filterRowsByUserPreference(matrixNativeRows, { enabledKey, calendarId })
+    filterRowsByUserPreference(matrixWebRows, { enabledKey, calendarId, contactFilter }),
+    filterRowsByUserPreference(matrixNativeRows, { enabledKey, calendarId, contactFilter })
   ])
 
   if (filteredWebRows.length === 0 && filteredNativeRows.length === 0) {

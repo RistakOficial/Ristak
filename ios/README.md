@@ -199,7 +199,11 @@ solo en capa flotante; copy en español.
   (sistema/claro/oscuro/auto), privacidad (confirmaciones de lectura),
   notificaciones (switch OFF solo cuando están apagadas, permiso nativo bajo
   toque explícito, apertura de Ajustes si ya fue negado, toggles por tipo y
-  calendarios con alerta), versión y cierre de sesión. Con push activo no queda
+  calendarios con alerta), filtros personales por contacto con bloques
+  Todas/Cualquiera, exclusiones, etiquetas, propietarios y campos de formulario
+  para mensajes/citas/confirmaciones/pagos, versión y cierre de sesión.
+  `NotificationContactFilterEditor` carga el catálogo compartido desde el backend
+  y guarda por usuario; el filtro se evalúa antes del envío push. Con push activo no queda
   una tarjeta permanente del dispositivo.
 - **Push y realtime**: registro del token APNs en `/api/push/mobile-devices`,
   sin pedir permiso automáticamente durante login o foreground (solo renueva si

@@ -1,3 +1,4 @@
+import { PhoneNotificationContactFilters } from './PhoneNotificationContactFilters'
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
@@ -18842,6 +18843,7 @@ export const PhoneChat: React.FC = () => {
     if (activeSettingsSection === 'notifications') {
       return renderSettingsDetail('Notificaciones', (
         <>
+          <PhoneNotificationContactFilters />
           {showPushActivation && <label className={styles.toggleRow}>
             <span>
               <strong>Notificaciones apagadas</strong>

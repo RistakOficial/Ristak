@@ -77,7 +77,7 @@ test('buildContactListWhere combina filtros rapidos, tracking y condiciones avan
   assert.match(where.whereClause, /SUM\(p_num\.amount\)/)
   assert.ok(where.params.includes('2026-07-01T06:00:00.000Z'))
   assert.ok(where.params.includes('2026-07-05T05:59:59.999Z'))
-  assert.ok(where.params.includes('%tag_vip%'))
+  assert.ok(where.params.includes('tag_vip'))
   assert.ok(where.params.includes('city'))
   assert.ok(where.params.includes('%juarez%'))
   assert.ok(where.params.includes(100))

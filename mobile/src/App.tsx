@@ -1,3 +1,5 @@
+import { NOTIFICATION_FILTER_TARGETS, emptyNotificationFilter, notificationRule, notificationRuleField, type NotificationFilterCatalog } from '../../shared/notificationContactFilters';
+import type { ContactAdvancedFilterConfig as NotificationContactFilterConfig, ContactAdvancedRule as NotificationContactRule } from '../../shared/contactAdvancedFilterTypes';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -14664,6 +14666,7 @@ function SettingsScreen({
 
   const renderNotifications = () => (
     <>
+      <NativeNotificationContactFilters api={api} />
       {!nativePushReady && pushRegistrationStatus !== 'checking' ? (
         <SettingsToggleRow
           title="Notificaciones apagadas"
@@ -14762,6 +14765,109 @@ function SettingsScreen({
       {footer}
     </AppFrame>
   );
+}
+
+function NativeNotificationContactFilters({ api }: { api: RistakApiClient }) {
+  const [target, setTarget] = useState<typeof NOTIFICATION_FILTER_TARGETS[number] | null>(null);
+  return <View style={styles.settingsContent}>
+    <Text style={styles.settingsFieldTitle}>Filtros por contacto</Text>
+    <Text style={styles.settingsHeaderSubtitle}>Elige de quién quieres recibir avisos. Los filtros son personales y se conservan al cambiar de celular.</Text>
+    {NOTIFICATION_FILTER_TARGETS.map(item => <SheetActionRow key={item.key} Icon={Bell} title={item.label} subtitle="Elegir condiciones" onPress={() => setTarget(item)} />)}
+    {target ? <NativeNotificationFilterEditor key={target.key} api={api} target={target} onClose={() => setTarget(null)} /> : null}
+  </View>;
+}
+
+function NativeNotificationFilterEditor({ api, target, onClose }: { api: RistakApiClient; target: typeof NOTIFICATION_FILTER_TARGETS[number]; onClose: () => void }) {
+  const [catalog, setCatalog] = useState<NotificationFilterCatalog | null>(null);
+  const [draft, setDraft] = useState<NotificationContactFilterConfig>(emptyNotificationFilter);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const [closing, setClosing] = useState(false);
+  const [picker, setPicker] = useState<{ title: string; options: { value: string; label: string }[]; select: (value: string) => void } | null>(null);
+  const [search, setSearch] = useState('');
+  const mounted = useRef(true);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; if (closeTimer.current) clearTimeout(closeTimer.current); }; }, []);
+  const close = () => {
+    if (saving || closing) return;
+    if (picker) { setPicker(null); return; }
+    setClosing(true);
+    closeTimer.current = setTimeout(onClose, CHAT_SHEET_CLOSE_DURATION_MS);
+  };
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setError('');
+    Promise.all([api.getNotificationContactFilterCatalog(), api.getUserConfig([target.key])]).then(([fields, response]) => {
+      if (!active) return;
+      const raw = unwrapConfigResponse(response)[target.key];
+      const config = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : emptyNotificationFilter();
+      if (config.version !== 1 || !Array.isArray(config.groups)) throw new Error('El filtro guardado no es válido.');
+      setDraft(config); setCatalog(fields);
+    }).catch(err => { if (active) setError(err.message); }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [api, target.key, attempt]);
+  const patchRule = (gi: number, ri: number, patch: Partial<NotificationContactRule>) => setDraft(d => ({ ...d, groups: d.groups.map((g, i) => i === gi ? { ...g, rules: g.rules.map((r, j) => j === ri ? { ...r, ...patch } : r) } : g) }));
+  const choose = (title: string, options: { value: string; label: string }[], select: (value: string) => void) => { setSearch(''); setPicker({ title, options, select }); };
+  const addRule = (gi: number | 'new') => choose('Elegir campo', catalog!.groups.flatMap(g => g.fields.map(f => ({ value: f.key, label: `${g.label} · ${f.label}` }))), key => {
+    const field = catalog!.groups.flatMap(g => g.fields).find(f => f.key === key)!;
+    const rule = notificationRule(field);
+    setDraft(d => ({ ...d, groups: gi === 'new' ? [...d.groups, { id: Math.random().toString(36).slice(2), mode: 'all', negate: false, rules: [rule] }] : d.groups.map((g, i) => i === gi ? { ...g, rules: [...g.rules, rule] } : g) }));
+  });
+  const modeButtons = (value: string, change: (v: 'all' | 'any') => void) => <View style={styles.filterEditorMatchButtons}>{(['all', 'any'] as const).map(mode => <Pressable key={mode} accessibilityRole="button" accessibilityState={{ selected: value === mode }} onPress={() => change(mode)} style={[styles.filterEditorMatchButton, value === mode && styles.filterEditorMatchButtonActive]}><Text style={[styles.filterEditorMatchText, value === mode && styles.filterEditorMatchTextActive]}>{mode === 'all' ? 'Todas' : 'Cualquiera'}</Text></Pressable>)}</View>;
+  const action = (title: string, onPress: () => void) => <Pressable accessibilityRole="button" onPress={onPress} disabled={saving} style={styles.filterEditorAddRule}><Text style={styles.filterEditorAddRuleText}>{title}</Text></Pressable>;
+  const save = async () => {
+    setSaving(true); setError('');
+    try {
+      await api.setUserConfig(target.key, JSON.stringify(draft));
+      if (!mounted.current) return;
+      setSaving(false); setClosing(true);
+      closeTimer.current = setTimeout(onClose, CHAT_SHEET_CLOSE_DURATION_MS);
+    } catch (err) { if (mounted.current) { setError(err instanceof Error ? err.message : 'No se guardó el filtro.'); setSaving(false); } }
+  };
+  return <BottomActionSheet open closing={closing} title={picker?.title || target.label} onClose={close}>
+    <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.settingsContent, styles.sheetScrollableContentSafeEnd]}>
+      {picker ? <>
+        {action('Volver a las condiciones', () => setPicker(null))}
+        <TextInput accessibilityLabel="Buscar opción" placeholder="Buscar" placeholderTextColor={COLORS.muted} value={search} onChangeText={setSearch} style={styles.filterEditorInput} />
+        {picker.options.filter(o => o.label.toLocaleLowerCase().includes(search.toLocaleLowerCase())).map(option => <Pressable key={option.value} accessibilityRole="button" onPress={() => { picker.select(option.value); setPicker(null); }} style={styles.filterManagerRow}><Text style={styles.filterManagerTitle}>{option.label}</Text></Pressable>)}
+        {!picker.options.length && <Text style={styles.filterEditorEmptyValue}>No hay opciones disponibles.</Text>}
+      </> : <>
+        <Text style={styles.settingsHeaderSubtitle}>Solo recibirás avisos de contactos que cumplan las condiciones. Se combinan con tus interruptores y calendarios.</Text>
+        {target.key !== 'contact_push_notification_filter' && <Text style={styles.settingsHeaderSubtitle}>También se aplica el filtro de Todos los avisos de contactos.</Text>}
+        <SectionState loading={loading} error={error} onRetry={() => setAttempt(n => n + 1)} />
+        {catalog && !loading ? <View pointerEvents={saving ? 'none' : 'auto'} style={styles.settingsContent}>
+          {!draft.groups.length ? <Text style={styles.filterEditorEmptyValue}>Sin condiciones: este filtro permite todos los contactos.</Text> : <><Text style={styles.filterEditorLabel}>Coincidencia de bloques</Text>{modeButtons(draft.groupMode || 'all', mode => setDraft(d => ({ ...d, groupMode: mode })))}</>}
+          {draft.groups.map((group, gi) => <View key={group.id} style={styles.settingsContent}>
+            <Text style={styles.filterEditorRuleTitle}>Bloque {gi + 1}</Text>
+            {modeButtons(group.mode, mode => setDraft(d => ({ ...d, groups: d.groups.map((g, i) => i === gi ? { ...g, mode } : g) })))}
+            <SettingsToggleRow title="Excluir si coincide este bloque" description="Invierte el resultado de estas condiciones." checked={!!group.negate} onChange={negate => setDraft(d => ({ ...d, groups: d.groups.map((g, i) => i === gi ? { ...g, negate } : g) }))} />
+            {group.rules.map((rule, ri) => {
+              const field = notificationRuleField(rule, catalog);
+              const needsValue = !['empty', 'not_empty', 'yes', 'no'].includes(rule.operator);
+              const values = Array.isArray(rule.value) ? rule.value : rule.value ? [String(rule.value)] : [];
+              return <View key={rule.id} style={styles.filterEditorFieldBlock}>
+                <Text style={styles.filterEditorLabel}>{field?.label || 'Campo no disponible'}</Text>
+                {action(field?.operators.find(o => o.value === rule.operator)?.label || 'Elegir condición', () => choose('Condición', field?.operators || [], operator => patchRule(gi, ri, { operator: operator as NotificationContactRule['operator'] })))}
+                {needsValue && (field?.type === 'tags' ? <>
+                  {action(`Elegir etiquetas (${values.length})`, () => choose('Agregar etiqueta', (field.options || []).filter(o => !values.includes(o.value)), value => patchRule(gi, ri, { value: [...values, value] })))}
+                  {values.map(value => <View key={value}>{action(`Quitar ${field.options?.find(o => o.value === value)?.label || value}`, () => patchRule(gi, ri, { value: values.filter(v => v !== value) }))}</View>)}
+                </> : field?.options?.length ? action(field.options.find(o => o.value === String(rule.value ?? ''))?.label || 'Elegir valor', () => choose('Valor', field.options || [], value => patchRule(gi, ri, { value }))) : <TextInput accessibilityLabel={`Valor de ${field?.label}`} placeholder={field?.type === 'date' && !['last_days', 'older_days'].includes(rule.operator) ? 'AAAA-MM-DD' : 'Valor'} placeholderTextColor={COLORS.muted} value={String(rule.value ?? '')} onChangeText={value => patchRule(gi, ri, { value })} maxLength={500} autoCapitalize="none" style={styles.filterEditorInput} />)}
+                {needsValue && rule.operator === 'between' && <TextInput accessibilityLabel="Hasta" placeholder={field?.type === 'date' ? 'Hasta AAAA-MM-DD' : 'Hasta'} placeholderTextColor={COLORS.muted} value={String(rule.valueTo ?? '')} onChangeText={valueTo => patchRule(gi, ri, { valueTo })} maxLength={500} style={styles.filterEditorInput} />}
+                {action('Quitar condición', () => setDraft(d => ({ ...d, groups: d.groups.map((g, i) => i === gi ? { ...g, rules: g.rules.filter((_, j) => j !== ri) } : g) })))}
+              </View>;
+            })}
+            {action('Agregar condición', () => addRule(gi))}
+            {action('Eliminar bloque', () => setDraft(d => ({ ...d, groups: d.groups.filter((_, i) => i !== gi) })))}
+          </View>)}
+          {draft.groups.length < 10 && action('Agregar bloque', () => addRule('new'))}
+          {action('Quitar todos los filtros', () => setDraft(emptyNotificationFilter()))}
+          <Pressable accessibilityRole="button" disabled={saving} onPress={() => void save()} style={styles.settingsActionButton}><Text style={styles.settingsActionButtonText}>{saving ? 'Guardando…' : 'Guardar filtros'}</Text></Pressable>
+        </View> : null}
+      </>}
+    </ScrollView>
+  </BottomActionSheet>;
 }
 
 function SettingsActionCard({
