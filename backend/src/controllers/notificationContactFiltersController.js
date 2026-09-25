@@ -20,7 +20,8 @@ export async function getNotificationContactFilterCatalog(req, res) {
       fields: group.fields.filter(f => f.type !== 'custom_field').map(field => ({
         ...field, field: field.key,
         options: field.key === 'tags' ? tags.map(t => ({ value: t.id, label: t.name })) : catalogs[field.catalog] || field.options || [],
-        operators: getContactAdvancedOperators(field)
+        // Named entities are selected by exact ID, never by an ID substring.
+        operators: getContactAdvancedOperators(catalogs[field.catalog] ? { ...field, type: 'select' } : field)
       }))
     }))
     groups.push({ label: 'Campos personalizados y formularios', fields: definitions.map(definition => {

@@ -114,6 +114,7 @@ test('catalog is available to employees with real local labels', async () => {
   const fields = res.body.data.groups.flatMap(g => g.fields)
   assert.ok(fields.some(f => f.key === 'tags'))
   assert.ok(fields.find(f => f.key === 'assigned_user_id').options.some(o => o.value === String(userId)))
+  assert.deepEqual(fields.find(f => f.key === 'assigned_user_id').operators.map(o => o.value), ['is', 'is_not', 'empty', 'not_empty'])
   assert.deepEqual(fields.find(f => f.key === 'priority').operators.map(o => o.value), ['is', 'is_not'])
 })
 test('event routing includes reminders, confirmations, payments and agent priority', () => {
