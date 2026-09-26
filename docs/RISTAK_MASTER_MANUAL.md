@@ -792,6 +792,18 @@ agenda backfills y no cae al historial crudo. Si la proyeccion aun calienta, el
 panel secundario conserva el ultimo dato util y reintenta en una recarga o rango
 posterior sin bloquear el resto de Analiticas.
 
+En Contactos, el checkbox del encabezado selecciona la pagina visible. Al marcarla
+completa, si hay mas paginas aparece **Seleccionar todos los contactos**. Ese boton
+recorre por cursor todos los resultados de la misma busqueda, filtros y rango;
+publica la seleccion completa solo al terminar y muestra su cantidad en la barra.
+Etiquetas, campos personalizados, WhatsApp, automatizaciones y eliminacion reciben
+todos los contactos seleccionados, incluidos los de otras paginas. La seleccion
+se conserva al paginar y permite desmarcar contactos individuales. Cambiar la
+busqueda, filtros, rango u orden limpia la seleccion y cancela cualquier carga
+pendiente; limpiar la seleccion tambien cancela la carga. Un fallo conserva la
+seleccion anterior sin aplicar resultados parciales. La carga completa ocurre
+solo por peticion explicita, nunca al abrir la lista.
+
 Contactos confia en los flags de cita/asistencia calculados por su endpoint
 paginado; no descarga anos de calendarios para pintar veinte filas. Chat
 escritorio pide directamente al backend su primera pagina y pagina resultados

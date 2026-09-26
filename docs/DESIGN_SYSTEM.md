@@ -376,6 +376,11 @@ la ventana se muestran puntos suspensivos. Las listas keyset/cursor conservan su
 lectura escalable: un salto numérico hacia adelante recorre secuencialmente los
 cursores necesarios y no debe degradarse a paginación offset para pintar el pie.
 
+La barra `<TableSelectionToolbar>` alinea sus acciones al final cuando caben;
+si desbordan, conserva accesible el inicio del carril desplazable con
+`justify-content: safe flex-end`. La primera accion nunca debe quedar recortada
+fuera del alcance del scroll, incluso en Brut o ventanas chicas.
+
 Durante una búsqueda remota, `<Table>` muestra un solo indicador de carga dentro
 de su `<SearchField>`. El indicador independiente del toolbar se reserva para
 actualizaciones sin un término de búsqueda activo; nunca deben aparecer ambos a

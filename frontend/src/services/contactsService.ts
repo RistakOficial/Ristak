@@ -4,6 +4,7 @@ import { formatName } from '@/utils/format'
 import { apiUrl } from './apiBaseUrl'
 import apiClient from './apiClient'
 import { withRequestTimeout } from './requestTimeout'
+import { collectContactSelection } from './collectContactSelection'
 
 const CONTACTS_VIEW_REQUEST_TIMEOUT_MS = 20_000
 
@@ -489,6 +490,16 @@ const requestContactsPage = async ({
 export const contactsService = {
   getContactsPage(params: ContactsPageParams = {}): Promise<ContactsPageResult> {
     return requestContactsPage(params)
+  },
+
+  getContactsForSelection(params: Omit<ContactsPageParams, 'page' | 'limit' | 'pagination' | 'cursor'>): Promise<Contact[]> {
+    return collectContactSelection((page, cursor) => requestContactsPage({
+      ...params,
+      page,
+      cursor,
+      limit: 250,
+      pagination: 'cursor'
+    }), params.signal)
   },
 
   async getContacts(startDate?: string, endDate?: string): Promise<Contact[]> {

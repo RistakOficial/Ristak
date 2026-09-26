@@ -27,6 +27,7 @@ import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useAccountCurrency, useUrlDateRangeSync } from '@/hooks'
+import { useContactListSelection } from '@/hooks/useContactListSelection'
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString } from '@/utils/format'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import { contactsService, type Contact, type ContactsPagination, type ContactStats, type TrashedContact } from '@/services/contactsService'
@@ -537,7 +538,6 @@ const ContactsTable: React.FC = () => {
   const [editingContact, setEditingContact] = useState<Contact | null>(null)
   const [newContactReferrer, setNewContactReferrer] = useState<ContactReferralSummary | null>(null)
   const [editingContactReferrer, setEditingContactReferrer] = useState<ContactReferralSummary | null>(null)
-  const [selectedContactIds, setSelectedContactIds] = useState<string[]>([])
   const [contactsPendingDeletion, setContactsPendingDeletion] = useState<Contact[]>([])
   const [whatsappPhoneNumbers, setWhatsappPhoneNumbers] = useState<WhatsAppApiPhoneNumber[]>([])
   const [contactDeleteConfirmation, setContactDeleteConfirmation] = useState('')
@@ -635,6 +635,36 @@ const ContactsTable: React.FC = () => {
     tableSort.order,
     viewMode
   ])
+  const {
+    selectedContacts, selectedContactIds, setSelectedContactIds,
+    selectAll, selectingAll, allSelected, allPageSelected
+  } = useContactListSelection(contacts, JSON.stringify([contactsQueryKey, contactSearchTerm.trim()]))
+
+  // The table and cross-page selection must use exactly the same query.
+  const contactsListQuery = useMemo(() => {
+    const activeAdvancedFilters = serializedAdvancedFilters
+      ? normalizeContactAdvancedConfig(advancedFilterConfig)
+      : undefined
+    const activeSort = activeAdvancedFilters?.sort
+    return {
+      filter,
+      advancedFilters: activeAdvancedFilters,
+      search: debouncedContactSearch.trim() || undefined,
+      startDate: viewMode === 'by-date' ? formatDateToISO(dateRange.start) : undefined,
+      endDate: viewMode === 'by-date' ? formatEndDateToISO(dateRange.end) : undefined,
+      sortBy: activeSort?.by || CONTACT_TABLE_SORT_FIELDS[tableSort.key] || 'created_at',
+      sortOrder: (activeSort?.order || (tableSort.order === 'asc' ? 'ASC' : 'DESC')) as 'ASC' | 'DESC'
+    }
+  }, [filter, serializedAdvancedFilters, advancedFilterConfig, debouncedContactSearch, viewMode, dateRange.start, dateRange.end, tableSort])
+
+  const handleSelectAllContacts = async () => {
+    try {
+      await selectAll(signal => contactsService.getContactsForSelection({ ...contactsListQuery, signal }))
+    } catch (error) {
+      showToast('error', 'No se pudo completar la selección', error instanceof Error ? error.message : 'Intenta nuevamente.')
+    }
+  }
+
   const contactsStatsQueryKey = useMemo(() => {
     const normalizedAdvancedFilters = serializedAdvancedFilters
       ? normalizeContactAdvancedConfig(advancedFilterConfig)
@@ -961,17 +991,6 @@ const ContactsTable: React.FC = () => {
   }, [])
 
   useEffect(() => {
-    if (selectedContactIds.length === 0) return
-
-    const availableIds = new Set(contacts.map(contact => contact.id))
-    const nextSelectedIds = selectedContactIds.filter(id => availableIds.has(id))
-
-    if (nextSelectedIds.length !== selectedContactIds.length) {
-      setSelectedContactIds(nextSelectedIds)
-    }
-  }, [contacts, selectedContactIds])
-
-  useEffect(() => {
     if (!selectedContactId) return
 
     contactDetailsAbortRef.current?.abort()
@@ -1264,41 +1283,15 @@ const ContactsTable: React.FC = () => {
     contactsAbortRef.current = controller
     const requestId = fetchRequestRef.current + 1
     fetchRequestRef.current = requestId
-    const normalizedSearch = debouncedContactSearch.trim()
-    const activeAdvancedFilters = serializedAdvancedFilters
-      ? normalizeContactAdvancedConfig(advancedFilterConfig)
-      : undefined
-    const activeSort = activeAdvancedFilters?.sort || null
-    const tableSortBy = CONTACT_TABLE_SORT_FIELDS[tableSort.key] || 'created_at'
-    const tableSortOrder = tableSort.order === 'asc' ? 'ASC' : 'DESC'
-    const contactsQueryOptions = {
-      filter,
-      advancedFilters: activeAdvancedFilters,
-      sortBy: activeSort?.by || tableSortBy,
-      sortOrder: (activeSort?.order || tableSortOrder) as 'ASC' | 'DESC'
-    }
     setLoading(true)
     try {
-      let startDate: string | undefined
-      let endDate: string | undefined
-
-      // Solo usar fechas si está en modo 'by-date'
-      if (viewMode === 'by-date') {
-        startDate = formatDateToISO(dateRange.start)
-        endDate = formatEndDateToISO(dateRange.end) // Incluir día completo
-      }
-      // Si viewMode === 'all', no enviamos fechas para obtener TODOS los contactos
-
       const contactsPageResult = await contactsService.getContactsPage({
-        startDate,
-        endDate,
+        ...contactsListQuery,
         page: pageToLoad,
         limit: CONTACTS_PAGE_SIZE,
         pagination: 'cursor',
         cursor: pageCursor ?? null,
-        signal: controller.signal,
-        ...contactsQueryOptions,
-        ...(normalizedSearch ? { search: normalizedSearch } : {})
+        signal: controller.signal
       })
 
       if (controller.signal.aborted || fetchRequestRef.current !== requestId) {
@@ -1373,13 +1366,6 @@ const ContactsTable: React.FC = () => {
   const filteredContacts = useMemo(() => {
     return contacts
   }, [contacts])
-
-  const selectedContacts = useMemo(() => {
-    if (selectedContactIds.length === 0) return []
-
-    const selectedIds = new Set(selectedContactIds)
-    return contacts.filter(contact => selectedIds.has(contact.id))
-  }, [contacts, selectedContactIds])
 
   const filterOptions = [
     { label: 'Todos', value: 'all' },
@@ -1859,10 +1845,25 @@ const ContactsTable: React.FC = () => {
       count={selectedContacts.length}
       onClearSelection={() => setSelectedContactIds([])}
     >
+      {allPageSelected && !allSelected && (
+        contactsPagination.hasNext || contactsPage > 1 || (contactsPagination.total ?? 0) > contacts.length
+      ) && (
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          loading={selectingAll}
+          disabled={loading || contactSearchTerm.trim() !== debouncedContactSearch.trim()}
+          onClick={handleSelectAllContacts}
+        >
+          Seleccionar todos los contactos
+        </Button>
+      )}
       <Button
         type="button"
         variant="secondary"
         size="sm"
+        disabled={selectingAll}
         onClick={() => setShowBulkTagsModal(true)}
       >
         <Tags size={16} />
@@ -1872,6 +1873,7 @@ const ContactsTable: React.FC = () => {
         type="button"
         variant="secondary"
         size="sm"
+        disabled={selectingAll}
         onClick={() => setShowBulkCustomFieldsModal(true)}
       >
         <ListPlus size={16} />
@@ -1882,6 +1884,7 @@ const ContactsTable: React.FC = () => {
         type="button"
         variant="secondary"
         size="sm"
+        disabled={selectingAll}
         onClick={() => setShowBulkWhatsAppModal(true)}
       >
         <MessageSquare size={16} />
@@ -1893,6 +1896,7 @@ const ContactsTable: React.FC = () => {
         type="button"
         variant="secondary"
         size="sm"
+        disabled={selectingAll}
         onClick={() => setShowBulkAutomationModal(true)}
       >
         <Workflow size={16} />
@@ -1903,6 +1907,7 @@ const ContactsTable: React.FC = () => {
         type="button"
         variant="danger"
         size="sm"
+        disabled={selectingAll}
         onClick={() => openContactDeleteModal(selectedContacts)}
       >
         <Trash2 size={16} />
@@ -2098,6 +2103,7 @@ const ContactsTable: React.FC = () => {
           rowSelection={{
             selectedKeys: selectedContactIds,
             onChange: setSelectedContactIds,
+            isRowDisabled: () => selectingAll || loading || contactSearchTerm.trim() !== debouncedContactSearch.trim(),
             getRowLabel: (item) => item.name || item.email || item.phone || 'contacto',
             selectAllLabel: 'Seleccionar contactos de esta página'
           }}
