@@ -623,9 +623,8 @@ export function conditionSummary(condition: AgentCondition, calendars: Calendar[
     adName: (id) => options?.ads.find((item) => item.id === id)?.name || id || '…',
     phoneLabel: (id) => options?.businessPhones.find((item) => item.id === id)?.label || id || '…',
     tagName: (id) => {
-      const tag = (contactTagsService.getCachedTags({ includeSystem: true }) || contactTagsService.getCachedTags() || [])
-        .find((item) => item.id === id)
-      return tag?.name || id || '…'
+      const tag = contactTagsService.getCachedTagByValue(id || '')
+      return tag?.name || id || 'sin seleccionar'
     },
     customFieldLabel: (key) => options?.customFields?.find((item) => item.key === key)?.label || key || 'el campo'
   }
@@ -782,7 +781,7 @@ interface ConditionBuilderProps {
 
 export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, calendars, options, emptyText, onChange }) => {
   // Carga el catálogo de etiquetas para mostrar nombres y no IDs
-  useContactTags()
+  useContactTags(true)
   const { labels } = useLabels()
   const lifecycleStageOptions = useMemo(
     () => getContactLifecycleStageOptions(labels),
@@ -819,6 +818,9 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
     const handlePointerDown = (event: Event) => {
       const target = event.target as Node | null
       if (!editingKeysRef.current.size || !conditionBuilderRef.current || !target) return
+      // Los selectores usan portales: siguen siendo parte de la edición aunque
+      // su panel esté fuera del constructor en el DOM. No desmontarlos antes del click.
+      if (target instanceof Element && target.closest('[data-ristak-dropdown-panel]')) return
       if (!conditionBuilderRef.current.contains(target)) {
         stopEditingAll()
       }

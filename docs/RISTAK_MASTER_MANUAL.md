@@ -9084,6 +9084,13 @@ La API conserva:
 
 ### Configuracion y experiencia del usuario
 
+Las condiciones de entrada y salida del chatbot muestran el nombre de las
+etiquetas seleccionadas, incluidas las internas del sistema, al volver a abrir
+la configuracion. Los menus desplegables forman parte de la edicion aunque se
+dibujen fuera de la fila: seleccionar, buscar o crear una etiqueta no debe cerrar
+la condicion antes de registrar el valor. Una etiqueta individual sin valor se
+identifica como `sin seleccionar`, en lugar de mostrar puntos suspensivos.
+
 Todos los agentes conversacionales usan un solo runtime nativo de tool calling.
 No existe selector, fallback ni ruta de ejecucion del motor anterior. El editor
 deja plantillas utiles por defecto y separa las piezas que el dueño sí controla:
