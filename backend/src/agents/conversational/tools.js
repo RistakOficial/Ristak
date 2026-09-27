@@ -103,7 +103,9 @@ import {
   CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT,
   buildConversationalAppointmentPreviewAuthorityEventId,
   buildConversationalAppointmentPreviewOfferEventId,
-  isConversationalAppointmentPreviewScopeId
+  isConversationalAppointmentPreviewScopeId,
+  loadConversationalPreviewContactData,
+  saveConversationalPreviewContactData
 } from '../../services/conversationalAppointmentPreviewOfferService.js'
 import { findNewerSubstantiveConversationalInbound } from '../../services/conversationalInboundAuthorityService.js'
 import { acquireConversationalInboundCommitLock } from '../../services/conversationalInboundCommitLockService.js'
@@ -424,7 +426,20 @@ function applyActionScopedContactData(ctx = {}, contact = null) {
   }
 }
 
+export async function restoreConversationalPreviewContactData(ctx = {}) {
+  if (!ctx.dryRun || ctx.previewContactDataLoaded) return
+  const data = sanitizeConversationalActionScopedContactData(await loadConversationalPreviewContactData({
+    previewScopeId: ctx.previewScopeId,
+    agentId: ctx.config?.id || ctx.agentId,
+    contactId: ctx.contactId
+  }))
+  if (!data) throw new Error('Los datos guardados de esta prueba no son válidos. Reinicia la prueba.')
+  ctx.actionScopedContactData = { ...data, ...(ctx.actionScopedContactData || {}) }
+  ctx.previewContactDataLoaded = true
+}
+
 async function getThreadContact(ctx = {}, { lock = false } = {}) {
+  await restoreConversationalPreviewContactData(ctx)
   const contactId = String(ctx.contactId || '').trim()
   if (ctx.virtualContact && typeof ctx.virtualContact === 'object') {
     return applyActionScopedContactData(ctx, getVirtualThreadContact(ctx))
@@ -8491,7 +8506,7 @@ export function createConversationalTools(ctx) {
           })
         }
       }
-      const retainConfirmedDataForCurrentAction = () => {
+      const retainConfirmedDataForCurrentAction = async () => {
         const previous = (
           ctx.actionScopedContactData &&
           typeof ctx.actionScopedContactData === 'object' &&
@@ -8499,30 +8514,46 @@ export function createConversationalTools(ctx) {
         )
           ? ctx.actionScopedContactData
           : {}
-        ctx.actionScopedContactData = {
-          ...previous,
+        const patch = {
           ...(cleanFullName ? { full_name: cleanFullName } : {}),
           ...(cleanPhone ? { phone: cleanPhone } : {}),
           ...(cleanEmail ? { email: cleanEmail } : {}),
           ...(confirmedActionScopedCustomUpdates.length
             ? {
                 custom_fields: serializeContactCustomFieldsForDb(
-                  mergeContactCustomFields(
-                    parseContactCustomFields(previous.custom_fields),
-                    confirmedActionScopedCustomUpdates
-                  )
+                  confirmedActionScopedCustomUpdates
                 )
               }
             : {})
         }
+        const sanitizedPatch = ctx.dryRun ? sanitizeConversationalActionScopedContactData(patch) : patch
+        if (!sanitizedPatch) throw new Error('Los datos confirmados exceden los límites permitidos.')
+        const persisted = ctx.dryRun
+          ? await saveConversationalPreviewContactData({
+              previewScopeId: ctx.previewScopeId,
+              agentId: config.id || ctx.agentId,
+              contactId: ctx.contactId
+            }, sanitizedPatch)
+          : null
+        ctx.actionScopedContactData = persisted || {
+          ...previous,
+          ...patch,
+          ...(patch.custom_fields ? {
+            custom_fields: serializeContactCustomFieldsForDb(mergeContactCustomFields(
+              parseContactCustomFields(previous.custom_fields), parseContactCustomFields(patch.custom_fields)
+            ))
+          } : {})
+        }
       }
       if (dataRequirements?.updateContact?.enabled !== true) {
-        retainConfirmedDataForCurrentAction()
+        await retainConfirmedDataForCurrentAction()
         return {
           ok: true,
           actionCompleted: false,
           retainedForCurrentAction: true,
-          note: 'Los datos quedaron disponibles únicamente para completar la acción de esta vuelta; la ficha no se modificó.'
+          note: ctx.dryRun && isConversationalAppointmentPreviewScopeId(ctx.previewScopeId)
+            ? 'Los datos quedaron disponibles para esta sesión de prueba; la ficha no se modificó.'
+            : 'Los datos quedaron disponibles únicamente para completar la acción de esta vuelta; la ficha no se modificó.'
         }
       }
       const action = pushAction(ctx, 'save_contact_data', {
@@ -8538,7 +8569,7 @@ export function createConversationalTools(ctx) {
       })
       if (ctx.dryRun || contact.virtual) {
         if (ctx.dryRun && !contact.virtual) {
-          retainConfirmedDataForCurrentAction()
+          await retainConfirmedDataForCurrentAction()
         }
         if (contact.virtual) {
           const virtualCustomFields = parseContactCustomFields(ctx.virtualContact?.custom_fields)
@@ -8561,7 +8592,7 @@ export function createConversationalTools(ctx) {
               ? { custom_fields: serializeContactCustomFieldsForDb(mergeContactCustomFields(virtualCustomFields, virtualUpdates)) }
               : {})
           }
-          retainConfirmedDataForCurrentAction()
+          await retainConfirmedDataForCurrentAction()
         }
         settleAction(action, 'simulated', { actionCompleted: false, wouldUpdateThreadContact: true })
         return { ok: true, simulated: true, wouldUpdateThreadContact: true }

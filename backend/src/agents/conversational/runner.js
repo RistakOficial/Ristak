@@ -74,6 +74,7 @@ import {
   loadConversationalAppointmentSelectionProgressContext,
   loadConversationalVerifiedAppointmentContext,
   requiredDataVisibleReply,
+  restoreConversationalPreviewContactData,
   supersedeUndeliveredConversationalAppointmentOffer
 } from './tools.js'
 import {
@@ -4681,6 +4682,7 @@ async function buildToolCallingV2AgentForRun({
     loadConversationHistoryPage: historyContext?.loadOlderPage || null,
     actions: [],
   }
+  await restoreConversationalPreviewContactData(ctx)
   const previewAppointmentPaymentResume = Boolean(
     dryRun &&
     ctx.testVerifiedPaymentEvidence &&

@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto'
 import { db } from '../config/database.js'
+import { mergeContactCustomFields, parseContactCustomFields, serializeContactCustomFieldsForDb } from '../utils/contactCustomFields.js'
 
 export const CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT = 'appointment_slot_preview_offer_created'
 export const CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT = 'appointment_selection_progress'
 export const CONVERSATIONAL_APPOINTMENT_PREVIEW_AUTHORITY_EVENT = 'appointment_preview_authority_lock'
+export const CONVERSATIONAL_PREVIEW_CONTACT_DATA_EVENT = 'preview_contact_data'
 
 const TEST_SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{12,160}$/
 const TEST_MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{8,160}$/
@@ -53,6 +55,61 @@ export function buildConversationalAppointmentPreviewExecutionId({
   return `preview:${createHash('sha256').update([scopeId, messageId].join('\u0000')).digest('hex').slice(0, 48)}`
 }
 
+function previewContactDataIdentity({ previewScopeId, agentId, contactId } = {}) {
+  if (!isConversationalAppointmentPreviewScopeId(previewScopeId) || !agentId || !contactId) return null
+  return { id: `cae_contact_${previewScopeId}`, previewScopeId, agentId, contactId }
+}
+
+function readPreviewContactData(row, identity) {
+  if (!row) return {}
+  const detail = JSON.parse(row.detail_json)
+  if (row.agent_id !== identity.agentId || row.contact_id !== identity.contactId ||
+      row.event_type !== CONVERSATIONAL_PREVIEW_CONTACT_DATA_EVENT ||
+      detail.previewScopeId !== identity.previewScopeId) {
+    throw new Error('Los datos de prueba no pertenecen a esta sesión y contacto.')
+  }
+  if (!(Date.parse(detail.expiresAt) > Date.now())) return {}
+  return detail.contactData || {}
+}
+
+export async function loadConversationalPreviewContactData(scope = {}) {
+  const identity = previewContactDataIdentity(scope)
+  if (!identity) return {}
+  const row = await db.get('SELECT * FROM conversational_agent_events WHERE id = ?', [identity.id])
+  return readPreviewContactData(row, identity)
+}
+
+// Sólo recibe campos ya validados por save_contact_data. Se conserva una ficha
+// privada por usuario/agente/sesión, nunca se edita el contacto técnico compartido.
+export async function saveConversationalPreviewContactData(scope = {}, patch = {}) {
+  const identity = previewContactDataIdentity(scope)
+  if (!identity) return null
+  return db.transaction(async (tx) => {
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    await tx.run(
+      `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+       VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
+      [identity.id, identity.contactId, identity.agentId, CONVERSATIONAL_PREVIEW_CONTACT_DATA_EVENT,
+        JSON.stringify({ previewScopeId: identity.previewScopeId, expiresAt, contactData: {} })]
+    )
+    const row = await tx.get(
+      `SELECT * FROM conversational_agent_events WHERE id = ?${process.env.DATABASE_URL ? ' FOR UPDATE' : ''}`,
+      [identity.id]
+    )
+    const previous = readPreviewContactData(row, identity)
+    const contactData = {
+      ...previous,
+      ...patch,
+      custom_fields: serializeContactCustomFieldsForDb(mergeContactCustomFields(
+        parseContactCustomFields(previous.custom_fields), parseContactCustomFields(patch.custom_fields)
+      ))
+    }
+    await tx.run('UPDATE conversational_agent_events SET detail_json = ?, created_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [JSON.stringify({ previewScopeId: identity.previewScopeId, expiresAt, contactData }), identity.id])
+    return contactData
+  })
+}
+
 export async function cleanupConversationalAppointmentPreviewOffers({
   previewScopeId = '',
   agentId = ''
@@ -71,6 +128,11 @@ export async function cleanupConversationalAppointmentPreviewOffers({
     [authorityEventId, cleanAgentId, CONVERSATIONAL_APPOINTMENT_PREVIEW_AUTHORITY_EVENT]
   )
   deleted += Number(authorityResult?.changes ?? authorityResult?.rowCount ?? 0)
+  const contactResult = await db.run(
+    'DELETE FROM conversational_agent_events WHERE id = ? AND agent_id = ? AND event_type = ?',
+    [`cae_contact_${previewScopeId}`, cleanAgentId, CONVERSATIONAL_PREVIEW_CONTACT_DATA_EVENT]
+  )
+  deleted += Number(contactResult?.changes ?? contactResult?.rowCount ?? 0)
   const progressRows = await db.all(
     `SELECT id, detail_json FROM conversational_agent_events
      WHERE agent_id = ? AND event_type = ?`,
@@ -131,6 +193,12 @@ export async function cleanupExpiredConversationalAppointmentPreviewOffers({
     ...(progressRows || []).map((row) => ({ ...row, eventType: CONVERSATIONAL_APPOINTMENT_SELECTION_PROGRESS_EVENT })),
     ...(authorityRows || []).map((row) => ({ ...row, eventType: CONVERSATIONAL_APPOINTMENT_PREVIEW_AUTHORITY_EVENT }))
   ]
+  const contactRows = await db.all(
+    `SELECT id, detail_json FROM conversational_agent_events WHERE event_type = ?
+     ORDER BY created_at ASC, id ASC LIMIT ?`,
+    [CONVERSATIONAL_PREVIEW_CONTACT_DATA_EVENT, safeLimit]
+  )
+  rows.push(...contactRows.map((row) => ({ ...row, eventType: CONVERSATIONAL_PREVIEW_CONTACT_DATA_EVENT })))
   let deleted = 0
   for (const row of rows || []) {
     let detail = {}

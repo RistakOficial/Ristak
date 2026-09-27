@@ -9945,6 +9945,20 @@ reactiva la fila si fue enviada a la papelera y devuelve su ID al tester para
 continuaciones por webhook. El usuario no selecciona contacto ni el frontend
 envia una identidad elegida desde el modal.
 
+Los datos confirmados mediante `save_contact_data` se conservan entre vueltas
+del tester en `conversational_agent_events`, evento `preview_contact_data`,
+ligados al `previewScopeId` del usuario, agente y sesión y al contacto del hilo.
+Nombre, teléfono y demás campos autorizados se cargan antes de resolver una
+confirmación de cita; no hace falta volver a capturarlos al responder «sí».
+Esta memoria funciona tanto con contacto virtual como con efectos de prueba,
+sin modificar la ficha técnica compartida ni reutilizar datos de otra sesión.
+También conserva datos para la acción si está desactivada la actualización de
+la ficha. Las correcciones sólo reemplazan los campos confirmados; reiniciar
+abre una identidad nueva sin datos anteriores, la limpieza de la corrida elimina
+su memoria, y una sesión abandonada expira
+tras 24 horas sin guardar datos. No se aceptan datos de contacto enviados como
+estado por el navegador: sólo los validados por la herramienta del servidor.
+
 Cada burbuja de usuario o asistente del tester conserva un ID de transcript
 estable tanto en el editor como en el wizard. El backend lo valida y lo aisla
 dentro del `previewScopeId`; para clientes anteriores que todavía no mandan IDs,
