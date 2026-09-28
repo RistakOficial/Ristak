@@ -506,3 +506,25 @@ test('el binario declara la capacidad headless y actualiza inbox mas hilos recie
   assert.doesNotMatch(appSource, /onNotificationHandled\?\.\(\);\s+\n\s+const openNotificationContact/);
   assert.match(appSource, /resolveNotificationChatContact\(\s*contactId,\s*chatsRef\.current/);
 });
+
+test('anular mensaje retira adjunto, ubicación y preview optimistas de Android', () => {
+  const local = {
+    id: 'local-send-deleted', optimisticId: 'local-send-deleted', serverMessageId: 'server-deleted',
+    date: '2026-07-13T18:10:00.000Z', direction: 'outbound', status: 'sent',
+    text: 'Privado', attachment: { type: 'image', dataUrl: 'data:image/png;base64,AQ==' },
+    location: { latitude: 1, longitude: 2 }, presentation: { body: 'Privado' },
+  };
+  const server = {
+    id: 'server-deleted', date: local.date, direction: 'outbound', status: 'removed', text: 'Mensaje anulado',
+  };
+  const [result] = mergeNativeChatMessagesAuthoritatively(false, [local], [server]);
+  assert.equal(result.id, local.id);
+  assert.equal(result.text, 'Mensaje anulado');
+  assert.equal(result.attachment, undefined);
+  assert.equal(result.location, undefined);
+  assert.equal(result.presentation, undefined);
+  assert.equal(result.pending, false);
+  const [sameId] = mergeNativeChatMessagesAuthoritatively(false, [{ ...local, id: server.id, optimisticId: undefined }], [server]);
+  assert.equal(sameId.status, 'removed');
+  assert.equal(sameId.attachment, undefined);
+});

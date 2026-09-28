@@ -43,6 +43,18 @@ function isScheduledMessage(message: ChatMessage) {
 }
 
 function mergeNativeServerMessageIntoOptimistic(localRow: ChatMessage, serverRow: ChatMessage): ChatMessage {
+  if (['removed', 'deleted'].includes(String(serverRow.status || '').toLowerCase())) {
+    return {
+      ...serverRow,
+      id: localRow.id,
+      optimisticId: localRow.optimisticId || localRow.id,
+      serverMessageId: serverRow.serverMessageId || localRow.serverMessageId || serverRow.id,
+      providerMessageId: serverRow.providerMessageId || localRow.providerMessageId,
+      date: localRow.date || serverRow.date,
+      pending: false,
+      failed: false,
+    };
+  }
   const localAttachment = localRow.attachment;
   const serverAttachment = serverRow.attachment;
   const attachment: ChatAttachment | undefined = serverAttachment
@@ -148,7 +160,9 @@ function mergeNativeChatMessageGroups(groups: ChatMessage[][], includeUnsettledL
         return;
       }
       if (existing === message) return;
-      const merged = { ...existing, ...message };
+      const merged = ['removed', 'deleted'].includes(String(message.status || '').toLowerCase())
+        ? { ...message }
+        : { ...existing, ...message };
       byId.set(message.id, isSameNativeChatMessage(existing, merged) ? existing : merged);
     });
   });

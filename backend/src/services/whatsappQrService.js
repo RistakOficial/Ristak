@@ -612,7 +612,7 @@ function getStoredStatusPriority(status) {
 
 function shouldUpdateStoredStatus(currentStatus, nextStatus) {
   const next = cleanString(nextStatus).toLowerCase()
-  if (!next) return false
+  if (!next || cleanString(currentStatus).toLowerCase() === 'removed') return false
   if (next === 'failed') return true
   return getStoredStatusPriority(next) >= getStoredStatusPriority(currentStatus)
 }
@@ -786,7 +786,7 @@ async function updateStoredQrMessageAck(ack, retryAttempt = 0) {
           error_code = CASE WHEN ? != '' THEN ? ELSE error_code END,
           error_message = CASE WHEN ? != '' THEN ? ELSE error_message END,
           updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
+      WHERE id = ? AND COALESCE(status, '') != 'removed'
     `, [
       ack.status,
       ack.errorCode || '',
@@ -797,14 +797,30 @@ async function updateStoredQrMessageAck(ack, retryAttempt = 0) {
     ])))
 }
 
-async function handleQrMessageUpdates(phone, updates = []) {
+export async function handleQrMessageUpdates(phone, updates = [], sock = null) {
   const list = Array.isArray(updates) ? updates : []
   for (const update of list) {
+    // Baileys emite REVOKE=1 con key.id del mensaje original. messages.delete
+    // también se usa para borrados locales y no autoriza retirar el contenido.
+    if (update?.update?.messageStubType === 1 || update?.update?.messageStubType === 'REVOKE') {
+      await captureQrMessageDeletion(phone, update.key, sock)
+      continue
+    }
     const ack = buildQrAckFromMessageUpdate(update)
     if (!ack) continue
 
     processQrAck(phone, ack)
   }
+}
+
+async function captureQrMessageDeletion(phone, key = {}, sock = null) {
+  const contactPhone = await getQrChatContactPhone(sock, { key })
+  const { captureWhatsAppMessageDeletion } = await loadWhatsAppApiService()
+  return captureWhatsAppMessageDeletion({
+    provider: 'qr', transport: 'qr', providerMessageId: key?.id,
+    businessPhone: phone.expectedPhone, phoneNumberId: phone.id,
+    contactPhone, direction: key?.fromMe ? 'outbound' : 'inbound'
+  })
 }
 
 async function handleQrMessageReceipts(phone, updates = []) {
@@ -1341,6 +1357,15 @@ async function handleQrIncomingMessages(phone, upsert = {}, sock = null, { histo
   for (const message of messages) {
     try {
       const key = message?.key || {}
+      const protocol = unwrapBaileysMessageContent(message?.message).protocolMessage
+      if (protocol?.type === 0 || protocol?.type === 'REVOKE') {
+        await captureQrMessageDeletion(phone, { ...key, ...protocol.key }, sock)
+        continue
+      }
+      if (message?.messageStubType === 1 || message?.messageStubType === 'REVOKE') {
+        await captureQrMessageDeletion(phone, key, sock)
+        continue
+      }
       const wamid = cleanString(key.id)
       const contactPhone = await getQrChatContactPhone(sock, message)
       if (!wamid || !contactPhone) continue
@@ -2615,7 +2640,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
     )
   })
   sock.ev.on('messages.update', (updates) => {
-    handleQrMessageUpdates(phone, updates).catch(error => {
+    return handleQrMessageUpdates(phone, updates, sock).catch(error => {
       logger.warn(`[WhatsApp QR] No se pudieron procesar actualizaciones de mensajes ${phone.id}: ${error.message}`)
     })
   })

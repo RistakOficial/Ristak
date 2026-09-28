@@ -465,6 +465,34 @@ Meta entrega el envelope `object=whatsapp_business_account` con
   desde la app WhatsApp Business durante Coexistence.
 - `value.history[]`: lotes históricos aceptados durante onboarding.
 
+#### Anulación de mensajes
+
+`value.messages[].type=revoke` identifica un aviso de anulación, no una burbuja
+nueva. El destino es `revoke.original_message_id`, nunca el `id` del aviso.
+Meta documenta este webhook sólo para números de WhatsApp Business en
+Coexistence. Si un eco entrega la misma estructura se procesa igual, conservando
+la dirección del mensaje existente; la disponibilidad de ese eco depende de
+Meta y no se presume para Cloud API sin Coexistence.
+
+`captureWhatsAppMessageDeletion` verifica número de negocio y participante,
+resuelve WAMID/ID del proveedor o llave de protocolo exacta y cambia las filas
+correspondientes a `status=removed`, `message_type=text`, `Mensaje anulado`.
+Retira media, texto original, contexto, referral y payload del mensaje; conserva
+ID, contacto, dirección y fecha. Las respuestas de conversación filtran además
+representaciones enriquecidas que pudieran reconstruir el adjunto o texto.
+
+Si aún no existe el original, se registra una marca mínima sin contacto. Los
+acuses, el historial, los ecos y el enriquecimiento posterior respetan ese
+estado terminal. Un aviso repetido es idempotente. Se publica un refresh live
+con `isNew=false`, sin nuevos no leídos, automatizaciones ni agente. Los trabajos
+pendientes de entrega/enriquecimiento de ese mensaje se completan sin contenido,
+y el worker comprueba el estado antes de enviar una notificación pendiente.
+No se puede retirar una notificación que ya fue entregada al dispositivo.
+
+No se agregan secrets, permisos, tablas ni crons para este flujo: utiliza la
+integración conectada y sus webhooks actuales. No se deduce anulación a partir
+de un acuse de entrega, un payload vacío ni un borrado local para uno mismo.
+
 Un mensaje multimedia puede llegar con su ID y además con una URL firmada de
 `lookaside.fbsbx.com`/CDN de Meta. Esa URL no cuenta como media persistida: es
 temporal, requiere autorización fuera del navegador y debe resolverse de nuevo
@@ -587,6 +615,12 @@ Es transporte QR y fallback; no es un proveedor de Cloud API, no usa las
 credenciales de Meta/YCloud y no debe consumir sus webhooks. Mientras la API
 oficial del mismo número esté operativa, `captureQrChatMessage` omite todo el
 tráfico vivo inbound/outbound. Sólo HistorySync puede importarse en paralelo.
+La excepción de control es una anulación explícita: `messages.update` con
+`messageStubType=REVOKE` o un `protocolMessage` de tipo `REVOKE` retira el mensaje
+identificado por la llave original. Puede actualizar su copia API por identidad
+exacta sin crear otra burbuja ni cambiar su proveedor. `messages.delete` no se usa
+para esto porque también representa eliminaciones locales. Un ACK posterior no
+restaura un mensaje anulado.
 La disponibilidad oficial se resuelve con el contrato neutral de la fila
 seleccionada: YCloud exige su API key y Meta directo exige su conexión/token
 propios. Nunca se puede declarar Meta directo inactivo por no tener una API key
@@ -985,6 +1019,7 @@ No borrar ni “reparar” IDs específicos sin contestar esas preguntas.
 
 ## Fuentes externas
 
+- [Meta: webhook de anulación de mensajes (Coexistence)](https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/revoke/)
 - [Meta: WhatsApp Cloud API](https://developers.facebook.com/docs/whatsapp/cloud-api/overview)
 - [Meta: colección oficial de WhatsApp Business Platform](https://www.postman.com/meta/whatsapp-business-platform/overview)
 - [Meta: tipos MIME oficiales para documentos de WhatsApp](https://www.postman.com/meta/whatsapp-business-platform/folder/13382743-ecb27be5-4d27-4763-bbee-6a8002c04bf3)

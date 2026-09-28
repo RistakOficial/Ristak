@@ -1,3 +1,4 @@
+import { redactRemovedChatMessage } from '../utils/chatMessageDeletion.js'
 import { db, getAppConfig } from '../config/database.js'
 import { getMetaSocialConfig } from '../services/metaAdsService.js'
 import { logger } from '../utils/logger.js'
@@ -7333,11 +7334,11 @@ export const getContactJourney = async (req, res) => {
           'whatsapp_api',
           msg.journey_mirror_cursor_message_id || msg.whatsapp_api_message_id
         ),
-        data: {
+        data: redactRemovedChatMessage({
           ...data,
           is_ad_attributed: isAdAttributed,
           ad_platform: isAdAttributed ? detectWhatsAppAdPlatform(data) : null
-        }
+        })
       })
     })
 
@@ -7442,7 +7443,7 @@ export const getContactJourney = async (req, res) => {
         date: msg.message_timestamp || msg.created_at,
         cursorDate: msg.journey_message_cursor_date,
         cursorKey: buildJourneyMessageCursorKey('meta_social', msg.meta_social_message_id),
-        data: {
+        data: redactRemovedChatMessage({
           source,
           social_platform: platform,
           sender_id: msg.sender_id,
@@ -7492,7 +7493,7 @@ export const getContactJourney = async (req, res) => {
           post_permalink: refreshedPost?.permalink || msg.post_permalink || msg.permalink || null,
           post_type: msg.post_type || null,
           post_deleted: postDeleted ? 1 : 0
-        }
+        })
       })
 	    })
 

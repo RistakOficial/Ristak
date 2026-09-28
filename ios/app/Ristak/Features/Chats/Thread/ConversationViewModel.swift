@@ -888,7 +888,8 @@ final class ConversationViewModel {
             }
             stable.attachment = Self.reconciledAttachment(
                 server: server.attachment,
-                optimistic: optimistic.attachment
+                optimistic: optimistic.attachment,
+                status: server.status
             )
             optimisticMessages[optimisticIndex] = stable
 
@@ -912,8 +913,10 @@ final class ConversationViewModel {
     /// inflada en vez del preview local.
     nonisolated static func reconciledAttachment(
         server: ChatAttachment?,
-        optimistic: ChatAttachment?
+        optimistic: ChatAttachment?,
+        status: String? = nil
     ) -> ChatAttachment? {
+        if ["removed", "deleted"].contains(status?.lowercased() ?? "") { return nil }
         guard var merged = server else { return optimistic }
         guard let optimistic else { return merged }
 

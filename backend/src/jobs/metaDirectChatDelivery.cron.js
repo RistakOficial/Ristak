@@ -1,3 +1,4 @@
+import { db } from '../config/database.js'
 import crypto from 'crypto'
 import {
   sendChatMessageNotification,
@@ -49,6 +50,10 @@ async function cleanupChatDeliveryOutboxIfDue() {
 }
 
 async function runPushJob(job) {
+  if (job?.provider === 'meta_direct') {
+    const message = await db.get('SELECT status FROM whatsapp_api_messages WHERE id = ?', [job.message_id])
+    if (message?.status === 'removed') return { skipped: true, reason: 'message_removed' }
+  }
   const sender = pushSenderForTest || (
     job?.provider === 'conversational_agent_priority' ||
     job?.payload?.notificationType === 'agent_priority'

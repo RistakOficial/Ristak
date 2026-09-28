@@ -211,6 +211,15 @@ final class ChatMediaUploadTests: XCTestCase {
         XCTAssertEqual(reconciled?.name, optimistic.name)
     }
 
+    func testRemovedMessageDiscardsOptimisticMedia() {
+        let optimistic = ChatAttachment(type: .image, localPreviewData: Data([0x01]))
+        for status in ["removed", "deleted"] {
+            XCTAssertNil(ConversationViewModel.reconciledAttachment(
+                server: nil, optimistic: optimistic, status: status
+            ))
+        }
+    }
+
     func testOptimisticPreviewSurvivesUntilRemoteSourceExists() {
         let preview = Data([0x01, 0x02, 0x03])
         let optimistic = ChatAttachment(type: .image, localPreviewData: preview)

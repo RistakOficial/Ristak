@@ -146,6 +146,14 @@ callbacks de identidad estable. Cada intento conserva un `externalId` estable
 al reintentar despues de timeout/ACK perdido. Los adjuntos se leen y envian uno
 por uno; si falla solo una parte, no se reenvian los archivos ya confirmados.
 
+La excepción es un mensaje anulado: `removed`/`deleted` reemplaza el contenido
+local y descarta adjuntos, previews, ubicación y presentación anteriores. Android
+no debe fusionar esos campos desde la copia optimista; iOS tampoco debe recuperar
+el adjunto local cuando el servidor ya envía **Mensaje anulado**. `/movil` y el
+escritorio siguen la misma regla en su reconciliador compartido. La identidad de
+la burbuja permanece estable. El origen y los límites de los avisos de Meta/QR
+están descritos en [Chat y mensajería](./RISTAK_MASTER_MANUAL.md#chat-y-mensajeria).
+
 La unica excepcion de apertura es un gate de una sola ejecucion: cuando aparecen
 las primeras filas reales, `onContentSizeChange` lleva el offset invertido a
 cero exactamente una vez. Ese gate no vuelve a reaccionar a imagenes, prepends o

@@ -3106,6 +3106,38 @@ test('un webhook echo que llega antes de guardar se fusiona con la reserva local
   })
 })
 
+test('anular antes de la respuesta de envío conserva removed al fusionar la reserva', async () => {
+  await withMetaMediaSendHarness({
+    platform: 'messenger',
+    testId: 'delete-before-save',
+    beforeMessageResponse: async () => {
+      await processMetaSocialWebhook({
+        payload: { object: 'page', entry: [{ id: 'page-send-test', messaging: [{
+          sender: { id: 'page-send-test' }, recipient: { id: 'psid-send-test' },
+          message: { mid: 'mid-messenger-send-test', is_deleted: true }
+        }] }] }
+      })
+    }
+  }, async ({ contactId }) => {
+    const result = await sendMetaSocialAttachmentMessage({
+      contactId, platform: 'messenger', attachmentType: 'image',
+      attachmentDataUrl: ONE_PIXEL_PNG_DATA_URL, mimeType: 'image/png', filename: 'removed.png',
+      externalId: 'meta-delete-before-save-test', publicBaseUrl: 'https://ristak.test'
+    })
+    const rows = await db.all('SELECT * FROM meta_social_messages WHERE contact_id = ? AND meta_message_id = ?',
+      [contactId, result.remoteMessageId])
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].status, 'removed')
+    assert.equal(rows[0].media_url, null)
+    assert.equal(rows[0].message_text, 'Mensaje anulado')
+    assert.equal(rows[0].raw_payload_json.includes('attachment'), false)
+    assert.equal(result.attachment, undefined)
+    assert.equal(result.localMedia, undefined)
+    assert.equal(result.status, 'removed')
+    assert.equal(result.isNew, false)
+  })
+})
+
 test('sendMetaSocialAttachmentMessage descarga URL externa con transporte inyectado antes de mandar a Meta', async () => {
   const downloads = []
   const png = Buffer.from(ONE_PIXEL_PNG_DATA_URL.split(',')[1], 'base64')

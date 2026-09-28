@@ -9,6 +9,7 @@ export type ReconciliableChatMessage = {
   serverMessageId?: string
   providerMessageId?: string
   text?: string
+  status?: string
   date?: string
   attachment?: ReconciliableAttachment
 }
@@ -53,6 +54,18 @@ export function reconcileServerMessageIntoOptimistic<T extends ReconciliableChat
   serverMessage: T,
   optimisticMessage: T
 ): T {
+  if (['removed', 'deleted'].includes(String(serverMessage.status || '').toLowerCase())) {
+    // La copia canónica anulada reemplaza todo el contenido local, incluyendo
+    // data URLs, ubicaciones, citas y previews. Sólo conservamos la identidad UI.
+    return {
+      ...serverMessage,
+      id: optimisticMessage.id,
+      optimisticId: optimisticMessage.optimisticId || optimisticMessage.id,
+      serverMessageId: serverMessage.serverMessageId || optimisticMessage.serverMessageId || serverMessage.id,
+      providerMessageId: serverMessage.providerMessageId || optimisticMessage.providerMessageId,
+      date: optimisticMessage.date || serverMessage.date
+    } as T
+  }
   const localAttachment = optimisticMessage.attachment
   const serverAttachment = serverMessage.attachment
   const attachment = localAttachment || serverAttachment

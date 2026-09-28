@@ -514,6 +514,9 @@ function inferDirection({ platform, entry, messaging, config }) {
   if (messaging.message?.is_echo === true) return 'outbound'
 
   const senderId = cleanString(messaging.sender?.id)
+  // Los avisos de anulación salientes no siempre incluyen is_echo.
+  if ((messaging.message?.is_deleted === true || messaging.is_deleted === true) &&
+      senderId && senderId === cleanString(entry.id)) return 'outbound'
   const businessId = getBusinessId(platform, entry, messaging, config)
 
   if (senderId && businessId && senderId === businessId) return 'outbound'
@@ -632,8 +635,9 @@ function extractSocialMessage({ objectType, entry, messaging, config }) {
   }
 
   if (messaging.message) {
-    const attachment = extractAttachment(messaging.message)
     const isDeleted = messaging.message.is_deleted === true || messaging.is_deleted === true
+    if (isDeleted && !cleanString(messaging.message.mid)) return null
+    const attachment = isDeleted ? {} : extractAttachment(messaging.message)
     const text = isDeleted ? 'Mensaje anulado' : cleanString(messaging.message.text)
     return {
       platform,
@@ -648,12 +652,12 @@ function extractSocialMessage({ objectType, entry, messaging, config }) {
       mediaUrl: attachment.mediaUrl || '',
       mediaMimeType: attachment.mediaMimeType || '',
       postbackPayload: '',
-      referral: messaging.message.referral || messaging.referral || null,
+      referral: isDeleted ? null : (messaging.message.referral || messaging.referral || null),
       messageTimestamp,
       status: isDeleted ? 'removed' : (direction === 'outbound' ? 'sent' : 'received'),
       isMutation: isDeleted,
       mutationType: isDeleted ? 'delete' : '',
-      raw: messaging
+      raw: isDeleted ? { message: { mid: cleanString(messaging.message.mid), is_deleted: true } } : messaging
     }
   }
 
@@ -3020,12 +3024,13 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
   })
   const existing = await db.get('SELECT id, status FROM meta_social_messages WHERE id = ?', [localMessageId]).catch(() => null)
 
+  let removedDuringSend = false
   const persist = async (database) => {
     // Si el webhook echo ganó la carrera contra la respuesta HTTP de Graph,
     // fusionamos esa fila temporal en la reserva idempotente antes de publicar.
     if (remoteMessageId) {
       const duplicateRows = await database.all(`
-        SELECT id
+        SELECT id, status
         FROM meta_social_messages
         WHERE platform = ?
           AND meta_message_id = ?
@@ -3033,6 +3038,7 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
           AND id != ?
       `, [cleanPlatform, remoteMessageId, localMessageId])
       for (const duplicate of duplicateRows) {
+        if (duplicate.status === 'removed') removedDuringSend = true
         await database.run('DELETE FROM meta_social_messages WHERE id = ?', [duplicate.id])
       }
     }
@@ -3066,6 +3072,7 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
       post_id = COALESCE(NULLIF(excluded.post_id, ''), meta_social_messages.post_id),
       parent_comment_id = COALESCE(NULLIF(excluded.parent_comment_id, ''), meta_social_messages.parent_comment_id),
       updated_at = CURRENT_TIMESTAMP
+    WHERE COALESCE(meta_social_messages.status, '') != 'removed'
   `, [
     localMessageId,
     cleanPlatform,
@@ -3092,7 +3099,12 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
     ])
   }
 
-  await db.transaction(persist)
+  await db.transaction(async database => {
+    await persist(database)
+    if (removedDuringSend) await redactMetaSocialMessageRow(database, localMessageId)
+  })
+  const persistedState = await db.get('SELECT status FROM meta_social_messages WHERE id = ?', [localMessageId])
+  const removed = persistedState?.status === 'removed'
 
   publishChatMessageEvent({
     contactId,
@@ -3103,16 +3115,16 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
     direction: 'outbound',
     messageType: cleanMessageType,
     messageTimestamp: now,
-    isNew: !existing || ['pending', 'sending', 'accepted'].includes(cleanString(existing.status))
+    isNew: !removed && (!existing || ['pending', 'sending', 'accepted'].includes(cleanString(existing.status)))
   })
 
   return {
     localMessageId,
-    status: 'sent',
+    status: removed ? 'removed' : 'sent',
     transport: cleanPlatform,
     channel: cleanPlatform,
     remoteMessageId: remoteMessageId || null,
-    isNew: !existing || ['pending', 'sending', 'accepted'].includes(cleanString(existing.status))
+    isNew: !removed && (!existing || ['pending', 'sending', 'accepted'].includes(cleanString(existing.status)))
   }
 }
 
@@ -3164,11 +3176,12 @@ async function reconcileAcceptedMetaSocialDispatch(row) {
   if (!row?.id || !cleanString(row.meta_message_id)) return row
   await db.transaction(async (database) => {
     const duplicates = await database.all(`
-      SELECT id
+      SELECT id, status
       FROM meta_social_messages
       WHERE platform = ? AND meta_message_id = ? AND direction = 'outbound' AND id != ?
     `, [row.platform, row.meta_message_id, row.id])
     for (const duplicate of duplicates) {
+      if (duplicate.status === 'removed') await redactMetaSocialMessageRow(database, row.id)
       await database.run('DELETE FROM meta_social_messages WHERE id = ?', [duplicate.id])
     }
     await database.run(`
@@ -3292,7 +3305,7 @@ async function markMetaSocialOutboundDispatchAccepted({ reservationId, remoteMes
         media_url = COALESCE(NULLIF(?, ''), media_url),
         media_mime_type = COALESCE(NULLIF(?, ''), media_mime_type),
         raw_payload_json = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
+    WHERE id = ? AND COALESCE(status, '') != 'removed'
   `, [
     cleanString(remoteMessageId) || null,
     cleanString(mediaUrl),
@@ -3677,6 +3690,10 @@ export async function sendMetaSocialAudioMessage({
     reservationId: dispatch.reservationId
   })
 
+  if (sent.status === 'removed') {
+    return { ...sent, id: sent.remoteMessageId || sent.localMessageId, platform: cleanPlatform, provider: 'meta', data: sent }
+  }
+
   return {
     ...sent,
     id: sent.remoteMessageId || sent.localMessageId,
@@ -3877,6 +3894,10 @@ export async function sendMetaSocialAttachmentMessage({
     reservationId: dispatch.reservationId
   })
 
+  if (sent.status === 'removed') {
+    return { ...sent, id: sent.remoteMessageId || sent.localMessageId, platform: cleanPlatform, provider: 'meta', data: sent }
+  }
+
   return {
     ...sent,
     id: sent.remoteMessageId || sent.localMessageId,
@@ -4069,7 +4090,7 @@ export async function markLatestMetaSocialMessageReadForContact({ contactId, pla
         UPDATE meta_social_messages
         SET status = 'read',
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        WHERE id = ? AND COALESCE(status, '') != 'removed'
       `, [row.id]).catch(() => undefined)
 
       results.push({
@@ -4735,26 +4756,73 @@ function getMetaSocialMessageLocalId(socialMessage = {}) {
   )
 }
 
+async function redactMetaSocialMessageRow(database, id) {
+  await database.run(`
+    UPDATE meta_social_messages SET status = 'removed', message_type = 'text',
+      message_text = 'Mensaje anulado', media_url = NULL, media_mime_type = NULL,
+      postback_payload = NULL, referral_json = NULL, raw_payload_json = '{"message_deleted":true}',
+      updated_at = CURRENT_TIMESTAMP WHERE id = ?
+  `, [id])
+}
+
+async function findStoredSocialMessages(socialMessage, database = db) {
+  if (!cleanString(socialMessage.metaMessageId)) return []
+  // Los IDs locales importados/enviados no siempre son el hash del MID. La
+  // identidad remota y la conversación mandan también para mensajes entrantes.
+  return database.all(`
+    SELECT * FROM meta_social_messages
+    WHERE platform = ? AND meta_message_id = ?
+      AND ((sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?))
+    ORDER BY CASE WHEN status = 'removed' THEN 0 ELSE 1 END, updated_at DESC
+  `, [socialMessage.platform, socialMessage.metaMessageId, socialMessage.senderId, socialMessage.recipientId,
+    socialMessage.recipientId, socialMessage.senderId])
+}
+
+async function findStoredSocialMessage(socialMessage) {
+  return (await findStoredSocialMessages(socialMessage))[0] || null
+}
+
+async function removeMetaSocialMessage(socialMessage) {
+  const changed = await db.transaction(async database => {
+    const existing = await findStoredSocialMessages(socialMessage, database)
+    if (!existing.length) {
+      // Si el aviso ganó al mensaje original, conservar su identidad impide que
+      // un eco o una importación posteriores vuelvan a mostrar el contenido.
+      await database.run(`
+        INSERT INTO meta_social_messages (
+          id, platform, meta_message_id, sender_id, recipient_id, page_id, instagram_account_id,
+          direction, status, message_type, message_text, message_timestamp, raw_payload_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'removed', 'text', 'Mensaje anulado', ?, '{"message_deleted":true}')
+        ON CONFLICT DO NOTHING
+      `, [getMetaSocialMessageLocalId(socialMessage), socialMessage.platform, socialMessage.metaMessageId,
+        socialMessage.senderId, socialMessage.recipientId, socialMessage.pageId || null,
+        socialMessage.instagramAccountId || null, socialMessage.direction, socialMessage.messageTimestamp])
+    }
+    const rows = await findStoredSocialMessages(socialMessage, database)
+    // Cubrir también copias heredadas del mismo MID, sin tocar otra conversación.
+    for (const row of rows) await redactMetaSocialMessageRow(database, row.id)
+    return rows
+  })
+  const results = changed.map(row => ({
+    messageId: row.id, contactId: row.contact_id || null, platform: socialMessage.platform,
+    direction: row.direction, messageType: 'text', messageText: 'Mensaje anulado',
+    status: 'removed', isNew: false, timestamp: row.message_timestamp
+  }))
+  for (const result of results) {
+    publishChatMessageEvent({ ...result, channel: result.platform, provider: 'meta',
+      transport: result.platform, messageTimestamp: result.timestamp })
+  }
+  return results[0] || { ignored: true, isNew: false }
+}
+
 // La identidad remota deduplica la burbuja, pero nunca autoriza cambiarla de
 // contacto. Un contact_id existente sólo se mueve mediante mergeContactIds,
 // bajo locks de origen y destino.
 export async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessage, config = null, historyImport = false }) {
-  let messageId = getMetaSocialMessageLocalId(socialMessage)
-  const remoteMessageId = cleanString(socialMessage.metaMessageId)
-  if (remoteMessageId && cleanString(socialMessage.direction).toLowerCase() === 'outbound') {
-    const acceptedLocalSend = await db.get(`
-      SELECT id
-      FROM meta_social_messages
-      WHERE platform = ? AND meta_message_id = ? AND direction = 'outbound'
-      ORDER BY updated_at DESC
-      LIMIT 1
-    `, [socialMessage.platform, remoteMessageId]).catch(() => null)
-    if (acceptedLocalSend?.id) messageId = acceptedLocalSend.id
-  }
-  const existing = await db.get(
-    'SELECT id, media_url, status FROM meta_social_messages WHERE id = ?',
-    [messageId]
-  ).catch(() => null)
+  const canonical = await findStoredSocialMessage(socialMessage)
+  const messageId = canonical?.id || getMetaSocialMessageLocalId(socialMessage)
+  const existing = canonical || await db.get('SELECT id, media_url, status FROM meta_social_messages WHERE id = ?', [messageId])
+  if (existing?.status === 'removed') return { messageId, isNew: false, mediaUrl: '', mediaMimeType: '' }
 
   // Rehospeda la media temporal de Meta en nuestro storage para que el historial no
   // caduque. Falla suave: si no se puede, conservamos la URL de Meta (comportamiento previo).
@@ -4841,6 +4909,7 @@ export async function upsertMetaSocialMessage({ socialContactId, contactId, soci
         media_id = COALESCE(NULLIF(excluded.media_id, ''), meta_social_messages.media_id),
         permalink = COALESCE(NULLIF(excluded.permalink, ''), meta_social_messages.permalink),
         updated_at = CURRENT_TIMESTAMP
+      WHERE COALESCE(meta_social_messages.status, '') != 'removed'
     `, [
       messageId,
       socialMessage.platform,
@@ -4869,7 +4938,8 @@ export async function upsertMetaSocialMessage({ socialContactId, contactId, soci
       socialMessage.isMutation ? 1 : 0
     ])
 
-    const inboundClaim = socialMessage.direction === 'inbound' && !socialMessage.isMutation
+    const persisted = await transactionDatabase.get('SELECT status FROM meta_social_messages WHERE id = ?', [messageId])
+    const inboundClaim = persisted?.status !== 'removed' && socialMessage.direction === 'inbound' && !socialMessage.isMutation
       ? await claimInboundChatMessage({
         channel: socialMessage.platform,
         messageId,
@@ -4879,7 +4949,7 @@ export async function upsertMetaSocialMessage({ socialContactId, contactId, soci
         database: transactionDatabase
       })
       : null
-    return { existingAtCommit, inboundClaim }
+    return { existingAtCommit, inboundClaim, removed: persisted?.status === 'removed' }
   }
   const messageType = cleanString(socialMessage.messageType).toLowerCase()
   const isSubstantiveInbound = socialMessage.direction === 'inbound' &&
@@ -4891,6 +4961,7 @@ export async function upsertMetaSocialMessage({ socialContactId, contactId, soci
     ? await withConversationalInboundCommitLock({ contactId, channel: commentChannel }, persistMessageAndClaim)
     : await persistMessageAndClaim()
   const { existingAtCommit, inboundClaim } = persistence
+  if (persistence.removed) return { messageId, isNew: false, mediaUrl: '', mediaMimeType: '' }
 
   return {
     messageId,
@@ -5073,6 +5144,12 @@ export async function processMetaSocialWebhook({
           logger.info(`DM de ${getPlatformLabel(socialMessage.platform)} ignorado porque la mensajería Meta está apagada`)
           continue
         }
+
+        if (socialMessage.mutationType === 'delete') {
+          results.push(await removeMetaSocialMessage(socialMessage))
+          continue
+        }
+        if ((await findStoredSocialMessage(socialMessage))?.status === 'removed') continue
 
         const profileCredentials = await resolveMetaSocialGraphCredentials(socialMessage.platform, config, { safe: true })
         const profileBusinessId = getMetaSocialBusinessId(socialMessage.platform, config, {

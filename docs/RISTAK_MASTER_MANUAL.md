@@ -2815,6 +2815,33 @@ Ristak maneja varias superficies de comunicacion:
 La mensajeria usa servicios especializados para plantillas, media, atribucion,
 sincronizacion de conversaciones, read states, presencia y eventos.
 
+Cuando el proveedor avisa que se anuló un mensaje de WhatsApp, Instagram DM o
+Messenger, la misma burbuja queda como **Mensaje anulado** y deja de mostrar el
+texto, foto, audio, video, archivo, ubicación o vista previa originales. El aviso
+refresca el chat abierto sin crear otro mensaje, aumentar no leídos ni disparar
+una nueva notificación o respuesta automática. Conserva la fecha, dirección e
+identidad del mensaje original. También se retira la vista previa local del
+adjunto que el usuario acaba de enviar.
+
+La anulación se reconoce por la identidad remota y la conversación, incluidos
+mensajes importados con otro ID local. Es definitiva para esa identidad: un eco,
+acuse, reintento o historial tardío no recupera el contenido. Si el aviso llega
+antes que el original, se guarda una marca mínima sin crear un contacto ni abrir
+una conversación. Esto sincroniza **anular envío/eliminar para todos** cuando el
+proveedor lo notifica; eliminar sólo para uno mismo no es una anulación remota.
+
+WhatsApp Meta directo usa `type=revoke` y `revoke.original_message_id`; Meta
+[documenta ese webhook para Coexistence](https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/revoke/).
+QR/Baileys usa el aviso explícito `REVOKE`. Instagram y Messenger usan
+`message.is_deleted=true` cuando la integración recibe ese evento. La referencia
+oficial de [Instagram](https://developers.facebook.com/documentation/business-messaging/instagram-messaging/webhooks/)
+describe `is_deleted`; la referencia actual de
+[Messenger](https://developers.facebook.com/documentation/business-messaging/messenger-platform/reference/webhook-events/messages/)
+no garantiza avisos de anulación para todos los casos. Ristak no puede inferir una
+eliminación que el canal no comunique ni reconstruir anulaciones anteriores sin
+su evento. Esta sincronización no agrega un botón para anular mensajes mediante
+una API que el proveedor no ofrece.
+
 La bandeja de chats debe resolver primero los mensajes de WhatsApp que ya tienen
 `contact_id` directo y reservar la búsqueda por teléfono exclusivamente para
 filas heredadas sin identidad. Una cuenta con historial grande no debe
@@ -6696,9 +6723,12 @@ Ristak usa Meta en varias areas:
   Las mutaciones notificadas por Meta se reconcilian sobre ese mismo
   `meta_message_id`: `message_edit` reemplaza el texto sin crear otro globo ni
   incrementar no leidos, y `message.is_deleted=true` conserva una marca
-  `Mensaje anulado` mientras elimina texto, adjunto y payload original. Aplica a
-  mensajes entrantes y a ecos salientes de Instagram o Messenger cuando Meta
-  entregue ese webhook. Una mutacion no dispara automatizaciones, agente,
+  `Mensaje anulado` mientras elimina texto, adjunto y payload original. La
+  reconciliación reconoce IDs locales importados, limpia copias heredadas del
+  mismo MID dentro de la conversación y mantiene `removed` aunque el aviso llegue
+  antes que el original o antes de terminar el envío. Aplica a mensajes entrantes
+  y salientes de Instagram o Messenger cuando Meta entregue ese webhook, incluso
+  si una anulación saliente no trae `is_echo`. Una mutacion no dispara automatizaciones, agente,
   confirmaciones ni notificaciones nuevas. La API publica de Meta no expone una
   operacion para editar desde Ristak un mensaje que ya fue enviado; por eso la
   interfaz no debe fingir una edicion local que el destinatario no veria.

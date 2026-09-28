@@ -500,6 +500,8 @@ function normalizeMessageDeliveryStatus(status = '') {
 
 function getMessageDeliveryStatusPriority(status = '') {
   switch (normalizeMessageDeliveryStatus(status)) {
+    case 'removed':
+      return 1000
     case 'read':
     case 'played':
       return 90
@@ -4963,6 +4965,7 @@ async function maybeFallbackFailedReplyWindowTextViaQr({
         WHERE id = ?
           AND LOWER(COALESCE(direction, '')) = 'outbound'
           AND LOWER(COALESCE(message_type, '')) = 'text'
+          AND COALESCE(status, '') != 'removed'
       `, [
         qrMessageId || null,
         qrWamid || null,
@@ -5198,6 +5201,7 @@ async function maybeFallbackRejectedTemplateViaQr({
         WHERE id = ?
           AND LOWER(COALESCE(direction, '')) = 'outbound'
           AND LOWER(COALESCE(message_type, '')) = 'template'
+          AND COALESCE(status, '') != 'removed'
       `, [
         qrMessageId || null,
         qrWamid || null,
@@ -6925,7 +6929,7 @@ export async function markLatestInboundWhatsAppApiMessageReadForContact({ contac
     WHERE contact_id = ?
       AND LOWER(COALESCE(direction, '')) = 'inbound'
       AND LOWER(COALESCE(transport, 'api')) != 'qr'
-      AND LOWER(COALESCE(status, '')) NOT IN ('read', 'failed')
+      AND LOWER(COALESCE(status, '')) NOT IN ('read', 'failed', 'removed')
     ORDER BY COALESCE(message_timestamp, updated_at, created_at) DESC
     LIMIT 1
   `, [cleanContactId]).catch(() => null)
@@ -6982,7 +6986,7 @@ export async function markLatestInboundWhatsAppApiMessageReadForContact({ contac
     UPDATE whatsapp_api_messages
     SET status = 'read',
         updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
+    WHERE id = ? AND COALESCE(status, '') != 'removed'
   `, [row.id]).catch(() => undefined)
 
   return {
@@ -8961,6 +8965,12 @@ async function mergeExactWhatsAppMessageRows({ canonicalId, duplicateId }) {
       duplicate.detected_ctwa_payload,
       cleanCanonicalId
     ])
+    if (bestStatus === 'removed') {
+      await tx.run(`UPDATE whatsapp_api_messages SET message_type = 'text', message_text = 'Mensaje anulado',
+        media_url = NULL, media_mime_type = NULL, media_filename = NULL, media_duration_ms = NULL,
+        raw_payload_json = '{"message_deleted":true}', context_json = NULL, referral_json = NULL,
+        error_code = NULL, error_message = NULL WHERE id = ?`, [cleanCanonicalId])
+    }
     return tx.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [cleanCanonicalId])
   })
 }
@@ -9344,6 +9354,98 @@ async function persistWhatsAppAttributionRow({
   return attributionId
 }
 
+// Una anulación es terminal y conserva sólo la identidad del mensaje. También
+// guardamos una fila sin contacto si el aviso llega antes que el mensaje original.
+function removedWhatsAppMessageResult(row = {}) {
+  return {
+    messageId: row.id, contactId: row.contact_id || null,
+    direction: row.direction, provider: row.provider, transport: row.transport,
+    businessPhoneNumberId: row.business_phone_number_id,
+    messageTimestamp: row.message_timestamp, messageType: 'text',
+    messageText: 'Mensaje anulado', status: 'removed', isNew: false,
+    isMutation: true, shouldTriggerInboundSideEffects: false
+  }
+}
+
+export async function captureWhatsAppMessageDeletion({
+  provider = META_DIRECT_PROVIDER_NAME, transport = 'api', providerMessageId,
+  businessPhone, phoneNumberId, contactPhone, direction = 'inbound', timestamp
+} = {}) {
+  const targetId = cleanString(providerMessageId)
+  const business = normalizePhoneForStorage(businessPhone) || cleanString(businessPhone)
+  const customer = normalizePhoneForStorage(contactPhone) || cleanString(contactPhone)
+  if (!targetId || !business || !customer) return { ignored: true, reason: 'missing_deletion_identity', isNew: false }
+  if (transport === 'qr' && !(await canRunBackgroundJob('whatsapp'))) {
+    return { ignored: true, reason: 'license_blocked', isNew: false }
+  }
+  const identifiers = resolveWhatsAppMessageIdentifiers({
+    provider, transport, messageId: transport === 'qr' ? '' : targetId, wamid: targetId
+  })
+  const protocolKey = resolveWhatsAppProtocolMessageKey({ transport, wamid: targetId })
+  const localPhoneId = await findBusinessPhoneNumberId(business, { phoneNumberId, provider, transport })
+  const readCandidates = database => database.all(`
+    SELECT * FROM whatsapp_api_messages
+    WHERE wamid = ? OR meta_message_id = ?
+       OR (provider = ? AND provider_message_id = ?)
+       OR (? != '' AND protocol_message_key_id = ?)
+  `, [targetId, targetId, identifiers.provider, targetId, protocolKey, protocolKey])
+  const belongsToConversation = row => {
+    const sameBusiness = (normalizePhoneForStorage(row.business_phone) || cleanString(row.business_phone)) === business ||
+      (localPhoneId && row.business_phone_number_id === localPhoneId)
+    const sameCustomer = (normalizePhoneForStorage(row.phone) || cleanString(row.phone)) === customer
+    return sameBusiness && sameCustomer
+  }
+  const tombstoneId = hashId('waapi_msg', targetId)
+  const removedPayload = safeJson({ message_deleted: true, providerMessageId: targetId })
+  const changed = await db.transaction(async transaction => {
+    const candidates = await readCandidates(transaction)
+    let matching = candidates.filter(belongsToConversation)
+    if (candidates.length && !matching.length) return []
+    if (!matching.length) {
+      await transaction.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, source_adapter, provider_message_id, meta_message_id, ycloud_message_id,
+          wamid, protocol_message_key_id, business_phone_number_id, business_phone, phone,
+          from_phone, to_phone, transport, direction, message_type, message_text, status,
+          message_timestamp, raw_payload_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'text', 'Mensaje anulado', 'removed', ?, ?)
+        ON CONFLICT DO NOTHING
+      `, [tombstoneId, identifiers.provider, identifiers.sourceAdapter,
+        identifiers.providerMessageId || null, identifiers.metaMessageId || null, identifiers.ycloudMessageId || null,
+        targetId, protocolKey || null, localPhoneId, business, customer,
+        direction === 'inbound' ? customer : business, direction === 'inbound' ? business : customer,
+        transport, direction, toDateTime(timestamp) || nowIso(), removedPayload])
+    }
+    // Releer después del INSERT: otro adaptador pudo ganar por protocolo/WAMID.
+    matching = (await readCandidates(transaction)).filter(belongsToConversation)
+    const ids = matching.map(row => row.id)
+    const rows = []
+    for (const id of ids) {
+      await transaction.run(`
+        UPDATE whatsapp_api_messages SET
+          status = 'removed', message_type = 'text', message_text = 'Mensaje anulado',
+          media_url = NULL, media_mime_type = NULL, media_filename = NULL, media_duration_ms = NULL,
+          raw_payload_json = ?, context_json = NULL, referral_json = NULL,
+          error_code = NULL, error_message = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [removedPayload, id])
+      // No enviar una notificación pendiente con el contenido que acaban de retirar.
+      await transaction.run(`
+        UPDATE chat_delivery_outbox SET status = 'completed', payload_json = '{}',
+          completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE message_id = ? AND status IN ('pending', 'processing', 'failed')
+      `, [id])
+      const row = await transaction.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [id])
+      if (row?.status === 'removed') rows.push(row)
+    }
+    return rows
+  })
+  for (const row of changed) {
+    publishChatMessageEvent({ ...removedWhatsAppMessageResult(row), channel: 'whatsapp' })
+  }
+  return changed.length ? removedWhatsAppMessageResult(changed[0]) : { ignored: true, isNew: false }
+}
+
 async function upsertMessage({
   payload,
   message,
@@ -9394,6 +9496,43 @@ async function upsertMessage({
       ? getAppliedQrFallbackReason(normalizedMessage.fallbackReason || payload.fallbackReason)
       : normalizedMessage.routingReason || payload.routingReason
   )
+  const identifiers = resolveWhatsAppMessageIdentifiers({
+    provider: incomingProvider,
+    transport: cleanTransport,
+    messageId: cleanString(normalizedMessage.id),
+    wamid: cleanString(normalizedMessage.wamid || normalizedMessage.context?.id)
+  })
+  const provider = identifiers.provider
+  const sourceAdapter = identifiers.sourceAdapter
+  const origin = cleanString(normalizedMessage.origin || payload.origin || payload.field || payload.type)
+  const providerMessageId = identifiers.providerMessageId
+  const metaMessageId = identifiers.metaMessageId
+  const ycloudMessageId = identifiers.ycloudMessageId
+  const wamid = identifiers.wamid
+  const protocolMessageKeyId = resolveWhatsAppProtocolMessageKey({
+    transport: cleanTransport,
+    wamid
+  })
+  const computedMessageId = hashId('waapi_msg', providerMessageId || wamid || `${provider}|${payload.id}|${identity.direction}|${identity.phone}`)
+  let existingMessage = await resolveWhatsAppCanonicalMessage({
+    messageId: computedMessageId,
+    provider,
+    providerMessageId,
+    ycloudMessageId,
+    metaMessageId,
+    wamid,
+    protocolMessageKeyId
+  })
+  if (cleanString(normalizedMessage.type).toLowerCase() === 'revoke') {
+    return captureWhatsAppMessageDeletion({
+      provider: incomingProvider, transport: cleanTransport,
+      providerMessageId: normalizedMessage.revoke?.original_message_id,
+      businessPhone: identity.businessPhone, phoneNumberId: businessPhoneNumberId,
+      contactPhone: identity.phone, direction: identity.direction,
+      timestamp: normalizedMessage.sendTime || normalizedMessage.timestamp
+    })
+  }
+  if (existingMessage?.status === 'removed') return removedWhatsAppMessageResult(existingMessage)
   // Plantillas API (YCloud / Meta): el echo y los eventos de estado no incluyen el
   // cuerpo renderizado, solo el nombre interno de la plantilla. Reconstruimos el texto
   // real desde el snapshot aprobado para que el chat muestre el mensaje enviado y no un
@@ -9455,33 +9594,6 @@ async function upsertMessage({
     deferProfilePicture: identity.direction === 'inbound' && deferInboundProfilePicture === true
   })
 
-  const identifiers = resolveWhatsAppMessageIdentifiers({
-    provider: incomingProvider,
-    transport: cleanTransport,
-    messageId: cleanString(normalizedMessage.id),
-    wamid: cleanString(normalizedMessage.wamid || normalizedMessage.context?.id)
-  })
-  const provider = identifiers.provider
-  const sourceAdapter = identifiers.sourceAdapter
-  const origin = cleanString(normalizedMessage.origin || payload.origin || payload.field || payload.type)
-  const providerMessageId = identifiers.providerMessageId
-  const metaMessageId = identifiers.metaMessageId
-  const ycloudMessageId = identifiers.ycloudMessageId
-  const wamid = identifiers.wamid
-  const protocolMessageKeyId = resolveWhatsAppProtocolMessageKey({
-    transport: cleanTransport,
-    wamid
-  })
-  const computedMessageId = hashId('waapi_msg', providerMessageId || wamid || `${provider}|${payload.id}|${identity.direction}|${identity.phone}`)
-  let existingMessage = await resolveWhatsAppCanonicalMessage({
-    messageId: computedMessageId,
-    provider,
-    providerMessageId,
-    ycloudMessageId,
-    metaMessageId,
-    wamid,
-    protocolMessageKeyId
-  })
   const existingMessageBeforePersistence = existingMessage
     ? { ...existingMessage }
     : null
@@ -9676,6 +9788,7 @@ async function upsertMessage({
       detected_conversion_data = COALESCE(NULLIF(excluded.detected_conversion_data, ''), whatsapp_api_messages.detected_conversion_data),
       detected_ctwa_payload = COALESCE(NULLIF(excluded.detected_ctwa_payload, ''), whatsapp_api_messages.detected_ctwa_payload),
       updated_at = CURRENT_TIMESTAMP
+      WHERE COALESCE(whatsapp_api_messages.status, '') != 'removed'
     ` : ''}
   `, [
     targetMessageId,
@@ -9781,6 +9894,8 @@ async function upsertMessage({
       existingMessage = canonicalMessage || existingMessage
     }
 
+    if (canonicalMessage?.status === 'removed') return
+
     inboundClaim = identity.direction === 'inbound'
       ? await claimInboundChatMessage({
         channel: 'whatsapp',
@@ -9865,6 +9980,8 @@ async function upsertMessage({
   } else {
     await persistCanonicalMessageAndClaim()
   }
+
+  if (canonicalMessage?.status === 'removed') return removedWhatsAppMessageResult(canonicalMessage)
 
   const hasDurableInboundIdentity = Boolean(providerMessageId || wamid || protocolMessageKeyId)
   if (
@@ -10116,6 +10233,7 @@ export async function processMetaDirectInboundEnrichmentJob({ messageId = '', pa
     LIMIT 1
   `, [cleanMessageId])
   if (!stored) return { skipped: true, reason: 'message_missing' }
+  if (stored.status === 'removed') return { skipped: true, reason: 'message_removed' }
   if (
     cleanString(stored.provider) !== META_DIRECT_PROVIDER_NAME ||
     cleanString(stored.direction).toLowerCase() !== 'inbound'
@@ -10148,7 +10266,7 @@ export async function processMetaDirectInboundEnrichmentJob({ messageId = '', pa
       const referralJson = safeJson(attribution.referral || null)
       await db.transaction(async transactionDatabase => {
         await transactionDatabase.run(
-          'UPDATE whatsapp_api_messages SET referral_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          "UPDATE whatsapp_api_messages SET referral_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND COALESCE(status, '') != 'removed'",
           [referralJson, cleanMessageId]
         )
         await transactionDatabase.run(
@@ -10184,7 +10302,7 @@ export async function processMetaDirectInboundEnrichmentJob({ messageId = '', pa
             media_duration_ms = COALESCE(?, media_duration_ms),
             raw_payload_json = ?,
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND COALESCE(media_url, '') = ?
+        WHERE id = ? AND COALESCE(media_url, '') = ? AND COALESCE(status, '') != 'removed'
       `, [
         hydratedMedia.mediaUrl,
         hydratedMedia.mediaMimeType || '',
@@ -12573,6 +12691,7 @@ async function reconcileMetaDirectMessageStatus({ item } = {}) {
     ORDER BY updated_at DESC
     LIMIT 1
   `, [META_DIRECT_PROVIDER_NAME, wamid, wamid, wamid]).catch(() => null)
+  if (existing?.status === 'removed') return removedWhatsAppMessageResult(existing)
   const status = pickBestMessageDeliveryStatus(existing?.status, incomingStatus)
   const existingRaw = parseJsonValue(existing?.raw_payload_json, {}) || {}
   const rawPayload = safeJson({
@@ -12624,7 +12743,7 @@ async function reconcileMetaDirectMessageStatus({ item } = {}) {
           error_message = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(NULLIF(?, ''), error_message) END,
           raw_payload_json = ?,
           updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
+      WHERE id = ? AND COALESCE(status, '') != 'removed'
     `, [status, successfulStatus ? 1 : 0, errorCode, successfulStatus ? 1 : 0, errorMessage, rawPayload, existing.id])
 
     if (renderable && existing.contact_id) {
@@ -12682,6 +12801,7 @@ async function reconcileMetaDirectMessageStatus({ item } = {}) {
       error_message = COALESCE(NULLIF(excluded.error_message, ''), whatsapp_api_messages.error_message),
       raw_payload_json = excluded.raw_payload_json,
       updated_at = CURRENT_TIMESTAMP
+    WHERE COALESCE(whatsapp_api_messages.status, '') != 'removed'
   `, [
     messageId,
     META_DIRECT_PROVIDER_NAME,

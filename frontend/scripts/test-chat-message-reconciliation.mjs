@@ -71,4 +71,15 @@ assert.deepEqual(getChatSendResponseIds({
   providerMessageId: 'ghl-provider-message'
 })
 
+const removed = reconcileServerMessageIntoOptimistic({
+  id: server.id, providerMessageId: server.providerMessageId,
+  status: 'removed', text: 'Mensaje anulado', date: server.date
+}, { ...optimistic, location: { latitude: 1, longitude: 2 }, presentation: { body: 'privado' } })
+assert.equal(removed.id, optimistic.id)
+assert.equal(removed.text, 'Mensaje anulado')
+assert.equal(removed.status, 'removed')
+assert.equal(removed.attachment, undefined, 'anular retira incluso el data URL optimista')
+assert.equal(removed.location, undefined)
+assert.equal(removed.presentation, undefined)
+
 console.log(`chat reconciliation OK (${pathToFileURL(sourceUrl.pathname).pathname})`)
