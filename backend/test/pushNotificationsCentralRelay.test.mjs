@@ -696,3 +696,71 @@ test('timeout del Installer central cubre headers y body de la respuesta', async
     await new Promise(resolve => central.server.close(resolve))
   }
 })
+
+test('event conditions replace stale calendar filters for web, Android and iPhone without bypassing switches', async () => {
+  const envSnapshot = snapshotEnv()
+  const central = await startCentralPushServer()
+  const suffix = randomUUID()
+  let db, pushService, licenseService, userId
+  let webCalls = 0
+  try {
+    for (const key of ENV_KEYS) delete process.env[key]
+    process.env.LICENSE_SERVER_URL = central.baseUrl
+    process.env.CLIENT_ID = 'cli_filter_transport_test'
+    process.env.LICENSE_KEY = 'local_test_transport'
+    process.env.INSTALLATION_ID = 'inst_filter_transport_test'
+    process.env.APP_URL = 'https://app.ristak.test'
+    const database = await import('../src/config/database.js')
+    db = database.db
+    pushService = await import('../src/services/pushNotificationsService.js')
+    licenseService = await import('../src/services/licenseService.js')
+    licenseService.setVerifiedAppBaseUrlResolverForTests(async () => 'https://app.ristak.test')
+    pushService.resetCentralMobilePushStatusCacheForTest()
+    pushService.setPushProviderTransportForTest({ webPushImpl: async () => { webCalls += 1 } })
+    await db.run("INSERT INTO users (username, email, password_hash, role, is_active) VALUES (?, ?, 'unused-in-transport-test', 'employee', 1)", [suffix, `${suffix}@example.test`])
+    userId = (await db.get('SELECT id FROM users WHERE username = ?', [suffix])).id
+    await db.run("INSERT INTO contacts (id, first_name, tags) VALUES (?, 'Ana', ?)", [suffix, JSON.stringify(['vip'])])
+    const endpoint = `https://push.example.test/${suffix}`
+    await db.run("INSERT INTO push_subscriptions (id, user_id, endpoint, subscription_json, calendar_ids_json, enabled) VALUES (?, ?, ?, ?, ?, 1)", [suffix, String(userId), endpoint, JSON.stringify({ endpoint }), JSON.stringify(['old-calendar'])])
+    for (const platform of ['ios', 'android']) {
+      await db.run("INSERT INTO mobile_push_devices (id, user_id, platform, token, calendar_ids_json, enabled) VALUES (?, ?, ?, ?, ?, 1)", [`${suffix}-${platform}`, String(userId), platform, `${suffix}-${platform}`, JSON.stringify(['old-calendar'])])
+    }
+    await database.setAppConfig('calendar_push_notification_calendar_ids', ['old-calendar'])
+    await database.setUserAppConfig(userId, 'calendar_push_notification_calendar_ids', ['old-calendar'])
+    await database.setUserAppConfig(userId, 'calendar_push_notifications_enabled', true)
+    const clause = { version: 1, groupMode: 'all', groups: [{ mode: 'all', rules: [
+      { field: 'notification_calendar_id', operator: 'is', value: 'new-calendar' },
+      { field: 'tags', operator: 'any', value: ['vip'] }
+    ] }] }
+    await database.setUserAppConfig(userId, 'calendar_push_contact_filter', { version: 2, clauses: [clause] })
+    const appointment = { id: suffix, calendarId: 'new-calendar', contactId: suffix, contactName: 'Ana', startTime: '2026-10-01T15:00:00Z' }
+    const sent = await pushService.sendCalendarAppointmentNotification(appointment)
+    assert.equal(sent.webSent, 1)
+    assert.equal(sent.nativeSent, 2)
+    assert.equal(webCalls, 1)
+    const request = central.requests.find(entry => entry.url === '/api/license/mobile-push/send')
+    assert.deepEqual(request.body.devices.map(device => device.platform).sort(), ['android', 'ios'])
+    assert.equal((await pushService.sendCalendarAppointmentNotification({ ...appointment, calendarId: 'different-calendar' })).sent, 0)
+    await database.setUserAppConfig(userId, 'calendar_push_notifications_enabled', false)
+    assert.equal((await pushService.sendCalendarAppointmentNotification(appointment)).sent, 0)
+    assert.equal(webCalls, 1)
+    assert.equal(central.requests.filter(entry => entry.url === '/api/license/mobile-push/send').length, 1)
+    assert.equal((await pushService.sendAppointmentStatusNotification(appointment, { eventType: 'confirmed' })).sent, 0, 'unedited confirmations retain legacy calendars')
+  } finally {
+    if (db) {
+      await db.run("DELETE FROM app_config WHERE config_key = 'calendar_push_notification_calendar_ids'")
+      await db.run('DELETE FROM push_subscriptions WHERE id = ?', [suffix])
+      await db.run('DELETE FROM mobile_push_devices WHERE user_id = ?', [String(userId)])
+      if (userId) {
+        await db.run('DELETE FROM user_app_config WHERE user_id = ?', [userId])
+        await db.run('DELETE FROM users WHERE id = ?', [userId])
+      }
+      await db.run('DELETE FROM contacts WHERE id = ?', [suffix])
+    }
+    pushService?.resetPushProviderTransportForTest?.()
+    pushService?.resetCentralMobilePushStatusCacheForTest?.()
+    licenseService?.setVerifiedAppBaseUrlResolverForTests()
+    restoreEnv(envSnapshot)
+    await new Promise(resolve => central.server.close(resolve))
+  }
+})

@@ -1,4 +1,4 @@
-import { NOTIFICATION_FILTER_TARGETS, emptyNotificationFilter, notificationRule, notificationRuleField, type NotificationFilterCatalog } from '../../shared/notificationContactFilters';
+import { NOTIFICATION_FILTER_TARGETS, emptyNotificationEventFilter, notificationConditionCount, notificationFilterCatalogForTarget, removeNotificationRule, type NotificationEventFilter, notificationRule, notificationRuleField, type NotificationFilterCatalog } from '../../shared/notificationContactFilters';
 import type { ContactAdvancedFilterConfig as NotificationContactFilterConfig, ContactAdvancedRule as NotificationContactRule } from '../../shared/contactAdvancedFilterTypes';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -1114,6 +1114,7 @@ const SETTINGS_APP_CONFIG_KEYS = [
   CHAT_SEND_READ_RECEIPTS_CONFIG_KEY,
 ];
 const SETTINGS_USER_CONFIG_KEYS = [
+  ...NOTIFICATION_FILTER_TARGETS.map(target => target.key),
   'chat_push_notifications_enabled',
   'calendar_push_notifications_enabled',
   'appointment_confirmation_push_notifications_enabled',
@@ -14183,7 +14184,6 @@ function SettingsScreen({
     : pushRegistrationStatus === 'checking'
       ? 'Revisando'
       : 'Apagadas';
-  const selectedCalendarCount = pushCalendarIds.length || calendars.length;
   const customFieldGroups = useMemo(() => {
     const groups = new Map<string, ContactCustomFieldDefinition[]>();
     customFields.forEach((definition) => {
@@ -14205,23 +14205,6 @@ function SettingsScreen({
         { text: 'Cerrar sesión', style: 'destructive', onPress: () => void onLogout() },
       ],
     );
-  };
-
-  const togglePushCalendar = (calendarId: string) => {
-    const next = pushCalendarIds.includes(calendarId)
-      ? pushCalendarIds.filter((id) => id !== calendarId)
-      : [...pushCalendarIds, calendarId];
-    void saveUserPreference('calendar_push_notification_calendar_ids', next);
-  };
-
-  const handleCalendarPushToggle = (checked: boolean) => {
-    void saveUserPreference('calendar_push_notifications_enabled', checked);
-    // Enabling with exactly one calendar and no explicit selection: target it,
-    // so the alert clearly points at that calendar (matches /movil).
-    if (checked && calendars.length === 1 && pushCalendarIds.length === 0) {
-      const onlyId = String(calendars[0]?.id || calendars[0]?._id || '');
-      if (onlyId) void saveUserPreference('calendar_push_notification_calendar_ids', [onlyId]);
-    }
   };
 
   const selectWhatsAppNumbersMode = (mode: 'together' | 'separate') => {
@@ -14666,7 +14649,6 @@ function SettingsScreen({
 
   const renderNotifications = () => (
     <>
-      <NativeNotificationContactFilters api={api} />
       {!nativePushReady && pushRegistrationStatus !== 'checking' ? (
         <SettingsToggleRow
           title="Notificaciones apagadas"
@@ -14680,43 +14662,17 @@ function SettingsScreen({
           onChange={(checked) => { if (checked) void handleEnableNativePush(); }}
         />
       ) : null}
-      <SettingsToggleRow title="Mensajes del chat" description="Avísame cuando llegue un WhatsApp nuevo." checked={chatPushEnabled} disabled={savingKey === 'chat_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('chat_push_notifications_enabled', checked)} />
-      <SettingsToggleRow title="Citas agendadas" description="Avísame cuando alguien reserve una cita nueva." checked={calendarPushEnabled} disabled={savingKey === 'calendar_push_notifications_enabled'} onChange={handleCalendarPushToggle} />
-      {calendarPushEnabled ? (
-        <View style={styles.settingsCard}>
-          <View style={styles.calendarPickerHeader}>
-            <Text style={styles.settingsFieldTitle}>Calendarios con alertas</Text>
-            <Text style={styles.calendarPickerCount}>{pushCalendarIds.length ? `${selectedCalendarCount} seleccionados` : 'Todos'}</Text>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => void saveUserPreference('calendar_push_notification_calendar_ids', [])}
-            style={[styles.calendarChip, pushCalendarIds.length === 0 && styles.calendarChipActive]}
-          >
-            <LiquidControlBackground selected={pushCalendarIds.length === 0} />
-            <Text style={[styles.calendarChipText, pushCalendarIds.length === 0 && styles.calendarChipTextActive]}>Todos los calendarios</Text>
-          </Pressable>
-          {calendarsLoading ? <SettingsInlineLoading label="Cargando calendarios..." /> : null}
-          {!calendarsLoading && calendars.length ? (
-            <View style={styles.calendarChipGrid}>
-              {calendars.map((calendar, index) => {
-                const id = calendar.id || calendar._id || `calendar-${index}`;
-                const active = pushCalendarIds.includes(id);
-                return (
-                  <Pressable key={id} accessibilityRole="button" onPress={() => togglePushCalendar(id)} style={[styles.calendarChip, active && styles.calendarChipActive]}>
-                    <LiquidControlBackground selected={active} />
-                    <View style={[styles.calendarColorDot, { backgroundColor: calendar.eventColor || calendar.color || COLORS.accent }]} />
-                    <Text numberOfLines={1} style={[styles.calendarChipText, active && styles.calendarChipTextActive]}>{calendar.name || calendar.title || 'Calendario'}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ) : null}
-          {!calendarsLoading && !calendars.length ? <Text style={styles.settingsHint}>No hay calendarios activos para elegir.</Text> : null}
-        </View>
-      ) : null}
-      <SettingsToggleRow title="Citas confirmadas" description={`Avísame cuando un ${customerLowerLabel} confirme que sí asistirá.`} checked={appointmentConfirmationPushEnabled} disabled={savingKey === 'appointment_confirmation_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('appointment_confirmation_push_notifications_enabled', checked)} />
-      <SettingsToggleRow title="Pagos" description="Avísame cuando se registre un pago." checked={paymentPushEnabled} disabled={savingKey === 'payment_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('payment_push_notifications_enabled', checked)} />
+      <View style={styles.settingsCard}>
+        <Text style={styles.settingsCardTitle}>Avisos</Text>
+      <SettingsToggleRow embedded title="Mensajes del chat" description="Avísame cuando llegue un WhatsApp nuevo." checked={chatPushEnabled} disabled={savingKey === 'chat_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('chat_push_notifications_enabled', checked)} />
+      {chatPushEnabled && <NativeNotificationContactFilters api={api} target={NOTIFICATION_FILTER_TARGETS[0]} savedValue={userConfig[NOTIFICATION_FILTER_TARGETS[0].key]} onSaved={value => setUserConfigState(current => ({ ...current, [NOTIFICATION_FILTER_TARGETS[0].key]: JSON.stringify(value) }))} />}
+      <SettingsToggleRow embedded title="Citas agendadas" description="Avísame cuando alguien reserve una cita nueva." checked={calendarPushEnabled} disabled={savingKey === 'calendar_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('calendar_push_notifications_enabled', checked)} />
+      {calendarPushEnabled && <NativeNotificationContactFilters api={api} target={NOTIFICATION_FILTER_TARGETS[1]} savedValue={userConfig[NOTIFICATION_FILTER_TARGETS[1].key]} onSaved={value => setUserConfigState(current => ({ ...current, [NOTIFICATION_FILTER_TARGETS[1].key]: JSON.stringify(value) }))} />}
+      <SettingsToggleRow embedded title="Citas confirmadas" description={`Avísame cuando un ${customerLowerLabel} confirme que sí asistirá.`} checked={appointmentConfirmationPushEnabled} disabled={savingKey === 'appointment_confirmation_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('appointment_confirmation_push_notifications_enabled', checked)} />
+      {appointmentConfirmationPushEnabled && <NativeNotificationContactFilters api={api} target={NOTIFICATION_FILTER_TARGETS[2]} savedValue={userConfig[NOTIFICATION_FILTER_TARGETS[2].key]} onSaved={value => setUserConfigState(current => ({ ...current, [NOTIFICATION_FILTER_TARGETS[2].key]: JSON.stringify(value) }))} />}
+      <SettingsToggleRow embedded title="Pagos" description="Avísame cuando se registre un pago." checked={paymentPushEnabled} disabled={savingKey === 'payment_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('payment_push_notifications_enabled', checked)} />
+      {paymentPushEnabled && <NativeNotificationContactFilters api={api} target={NOTIFICATION_FILTER_TARGETS[3]} savedValue={userConfig[NOTIFICATION_FILTER_TARGETS[3].key]} onSaved={value => setUserConfigState(current => ({ ...current, [NOTIFICATION_FILTER_TARGETS[3].key]: JSON.stringify(value) }))} />}
+      </View>
       <View style={styles.settingsCard}>
         <View style={styles.settingsCardHeader}>
           <View style={styles.settingsCardHeaderIcon}><BellRing size={18} color={getSettingsHeaderIconColor()} strokeWidth={2.3} /></View>
@@ -14767,19 +14723,22 @@ function SettingsScreen({
   );
 }
 
-function NativeNotificationContactFilters({ api }: { api: RistakApiClient }) {
-  const [target, setTarget] = useState<typeof NOTIFICATION_FILTER_TARGETS[number] | null>(null);
-  return <View style={styles.settingsContent}>
-    <Text style={styles.settingsFieldTitle}>Filtros por contacto</Text>
-    <Text style={styles.settingsHeaderSubtitle}>Elige de quién quieres recibir avisos. Los filtros son personales y se conservan al cambiar de celular.</Text>
-    {NOTIFICATION_FILTER_TARGETS.map(item => <SheetActionRow key={item.key} Icon={Bell} title={item.label} subtitle="Elegir condiciones" onPress={() => setTarget(item)} />)}
-    {target ? <NativeNotificationFilterEditor key={target.key} api={api} target={target} onClose={() => setTarget(null)} /> : null}
+function NativeNotificationContactFilters({ api, target, savedValue, onSaved }: { api: RistakApiClient; target: typeof NOTIFICATION_FILTER_TARGETS[number]; savedValue: unknown; onSaved: (value: NotificationEventFilter) => void }) {
+  const [open, setOpen] = useState(false);
+  const count = notificationConditionCount(savedValue);
+  return <View>
+    <SheetActionRow Icon={Plus} title="Agregar filtro" subtitle={count ? `${count} ${count === 1 ? 'condición guardada' : 'condiciones guardadas'} · Editar filtros` : 'Recibir todos o elegir condiciones'} onPress={() => setOpen(true)} />
+    {open ? <NativeNotificationFilterEditor api={api} target={target} onSaved={onSaved} onClose={() => setOpen(false)} /> : null}
   </View>;
 }
 
-function NativeNotificationFilterEditor({ api, target, onClose }: { api: RistakApiClient; target: typeof NOTIFICATION_FILTER_TARGETS[number]; onClose: () => void }) {
+function NativeNotificationFilterEditor({ api, target, onClose, onSaved }: { api: RistakApiClient; target: typeof NOTIFICATION_FILTER_TARGETS[number]; onClose: () => void; onSaved: (value: NotificationEventFilter) => void }) {
   const [catalog, setCatalog] = useState<NotificationFilterCatalog | null>(null);
-  const [draft, setDraft] = useState<NotificationContactFilterConfig>(emptyNotificationFilter);
+  const [eventDraft, setEventDraft] = useState<NotificationEventFilter>(emptyNotificationEventFilter);
+  const [clauseIndex, setClauseIndex] = useState(0);
+  const draft = eventDraft.clauses[clauseIndex];
+  const setDraft = (update: (value: NotificationContactFilterConfig) => NotificationContactFilterConfig) => setEventDraft(current => ({ ...current, clauses: current.clauses.map((clause, i) => i === clauseIndex ? update(clause) : clause) }));
+  const savingRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -14799,32 +14758,33 @@ function NativeNotificationFilterEditor({ api, target, onClose }: { api: RistakA
   useEffect(() => {
     let active = true;
     setLoading(true); setError('');
-    Promise.all([api.getNotificationContactFilterCatalog(), api.getUserConfig([target.key])]).then(([fields, response]) => {
+    Promise.all([api.getNotificationContactFilterCatalog(), api.getNotificationEventFilter(target.key)]).then(([fields, config]) => {
       if (!active) return;
-      const raw = unwrapConfigResponse(response)[target.key];
-      const config = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : emptyNotificationFilter();
-      if (config.version !== 1 || !Array.isArray(config.groups)) throw new Error('El filtro guardado no es válido.');
-      setDraft(config); setCatalog(fields);
+      if (config.version !== 2 || !config.clauses?.length) throw new Error('Actualiza Ristak para editar estos filtros.');
+      const available = notificationFilterCatalogForTarget(fields, target.key);
+      setEventDraft(config); setClauseIndex(0); setCatalog(available);
+      if (!notificationConditionCount(config)) addRule('new', available);
     }).catch(err => { if (active) setError(err.message); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [api, target.key, attempt]);
   const patchRule = (gi: number, ri: number, patch: Partial<NotificationContactRule>) => setDraft(d => ({ ...d, groups: d.groups.map((g, i) => i === gi ? { ...g, rules: g.rules.map((r, j) => j === ri ? { ...r, ...patch } : r) } : g) }));
   const choose = (title: string, options: { value: string; label: string }[], select: (value: string) => void) => { setSearch(''); setPicker({ title, options, select }); };
-  const addRule = (gi: number | 'new') => choose('Elegir campo', catalog!.groups.flatMap(g => g.fields.map(f => ({ value: f.key, label: `${g.label} · ${f.label}` }))), key => {
-    const field = catalog!.groups.flatMap(g => g.fields).find(f => f.key === key)!;
+  const addRule = (gi: number | 'new', fields = catalog!) => choose('Agregar filtro', fields.groups.flatMap(g => g.fields.map(f => ({ value: f.key, label: `${g.label} · ${f.label}` }))), key => {
+    const field = fields.groups.flatMap(g => g.fields).find(f => f.key === key)!;
     const rule = notificationRule(field);
     setDraft(d => ({ ...d, groups: gi === 'new' ? [...d.groups, { id: Math.random().toString(36).slice(2), mode: 'all', negate: false, rules: [rule] }] : d.groups.map((g, i) => i === gi ? { ...g, rules: [...g.rules, rule] } : g) }));
   });
-  const modeButtons = (value: string, change: (v: 'all' | 'any') => void) => <View style={styles.filterEditorMatchButtons}>{(['all', 'any'] as const).map(mode => <Pressable key={mode} accessibilityRole="button" accessibilityState={{ selected: value === mode }} onPress={() => change(mode)} style={[styles.filterEditorMatchButton, value === mode && styles.filterEditorMatchButtonActive]}><Text style={[styles.filterEditorMatchText, value === mode && styles.filterEditorMatchTextActive]}>{mode === 'all' ? 'Todas' : 'Cualquiera'}</Text></Pressable>)}</View>;
+  const modeButtons = (value: string, change: (v: 'all' | 'any') => void) => <View style={styles.filterEditorMatchButtons}>{(['all', 'any'] as const).map(mode => <Pressable key={mode} accessibilityRole="button" accessibilityState={{ selected: value === mode }} onPress={() => change(mode)} style={[styles.filterEditorMatchButton, value === mode && styles.filterEditorMatchButtonActive]}><Text style={[styles.filterEditorMatchText, value === mode && styles.filterEditorMatchTextActive]}>{mode === 'all' ? 'Y · Todas' : 'O · Cualquiera'}</Text></Pressable>)}</View>;
   const action = (title: string, onPress: () => void) => <Pressable accessibilityRole="button" onPress={onPress} disabled={saving} style={styles.filterEditorAddRule}><Text style={styles.filterEditorAddRuleText}>{title}</Text></Pressable>;
   const save = async () => {
-    setSaving(true); setError('');
+    if (savingRef.current) return;
+    savingRef.current = true; setSaving(true); setError('');
     try {
-      await api.setUserConfig(target.key, JSON.stringify(draft));
+      await api.setUserConfig(target.key, JSON.stringify(eventDraft));
       if (!mounted.current) return;
-      setSaving(false); setClosing(true);
+      onSaved(eventDraft); setSaving(false); setClosing(true);
       closeTimer.current = setTimeout(onClose, CHAT_SHEET_CLOSE_DURATION_MS);
-    } catch (err) { if (mounted.current) { setError(err instanceof Error ? err.message : 'No se guardó el filtro.'); setSaving(false); } }
+    } catch (err) { savingRef.current = false; if (mounted.current) { setError(err instanceof Error ? err.message : 'No se guardó el filtro.'); setSaving(false); } }
   };
   return <BottomActionSheet open closing={closing} title={picker?.title || target.label} onClose={close}>
     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.settingsContent, styles.sheetScrollableContentSafeEnd]}>
@@ -14834,13 +14794,14 @@ function NativeNotificationFilterEditor({ api, target, onClose }: { api: RistakA
         {picker.options.filter(o => o.label.toLocaleLowerCase().includes(search.toLocaleLowerCase())).map(option => <Pressable key={option.value} accessibilityRole="button" onPress={() => { picker.select(option.value); setPicker(null); }} style={styles.filterManagerRow}><Text style={styles.filterManagerTitle}>{option.label}</Text></Pressable>)}
         {!picker.options.length && <Text style={styles.filterEditorEmptyValue}>No hay opciones disponibles.</Text>}
       </> : <>
-        <Text style={styles.settingsHeaderSubtitle}>Solo recibirás avisos de contactos que cumplan las condiciones. Se combinan con tus interruptores y calendarios.</Text>
-        {target.key !== 'contact_push_notification_filter' && <Text style={styles.settingsHeaderSubtitle}>También se aplica el filtro de Todos los avisos de contactos.</Text>}
-        <SectionState loading={loading} error={error} onRetry={() => setAttempt(n => n + 1)} />
+        <Text style={styles.settingsHeaderSubtitle}>Estas condiciones solo afectan este tipo de aviso. Combina filtros con Y, O o exclusiones.</Text>
+        <SectionState loading={loading} error={catalog ? '' : error} onRetry={() => setAttempt(n => n + 1)} />
+        {catalog && error ? <SettingsAlert message={error} /> : null}
         {catalog && !loading ? <View pointerEvents={saving ? 'none' : 'auto'} style={styles.settingsContent}>
-          {!draft.groups.length ? <Text style={styles.filterEditorEmptyValue}>Sin condiciones: este filtro permite todos los contactos.</Text> : <><Text style={styles.filterEditorLabel}>Coincidencia de bloques</Text>{modeButtons(draft.groupMode || 'all', mode => setDraft(d => ({ ...d, groupMode: mode })))}</>}
+          {eventDraft.clauses.length > 1 && <><Text style={styles.settingsHint}>Tus filtros anteriores se conservan aquí. Deben cumplirse todos estos conjuntos; puedes editar o quitar cada uno.</Text>{eventDraft.clauses.map((_, index) => <View key={index}>{action(`Condiciones ${index + 1}${index === clauseIndex ? ' · Abiertas' : ''}`, () => setClauseIndex(index))}</View>)}{action('Quitar este conjunto', () => { setEventDraft(current => ({ ...current, clauses: current.clauses.filter((_, i) => i !== clauseIndex) })); setClauseIndex(0); })}</>}
+          {!draft.groups.length ? <Text style={styles.filterEditorEmptyValue}>Sin filtros: recibirás todos los avisos de este tipo.</Text> : <><Text style={styles.filterEditorLabel}>Combinar grupos de condiciones</Text>{modeButtons(draft.groupMode || 'all', mode => setDraft(d => ({ ...d, groupMode: mode })))}</>}
           {draft.groups.map((group, gi) => <View key={group.id} style={styles.settingsContent}>
-            <Text style={styles.filterEditorRuleTitle}>Bloque {gi + 1}</Text>
+            <Text style={styles.filterEditorRuleTitle}>Grupo {gi + 1}</Text>
             {modeButtons(group.mode, mode => setDraft(d => ({ ...d, groups: d.groups.map((g, i) => i === gi ? { ...g, mode } : g) })))}
             <SettingsToggleRow title="Excluir si coincide este bloque" description="Invierte el resultado de estas condiciones." checked={!!group.negate} onChange={negate => setDraft(d => ({ ...d, groups: d.groups.map((g, i) => i === gi ? { ...g, negate } : g) }))} />
             {group.rules.map((rule, ri) => {
@@ -14855,14 +14816,14 @@ function NativeNotificationFilterEditor({ api, target, onClose }: { api: RistakA
                   {values.map(value => <View key={value}>{action(`Quitar ${field.options?.find(o => o.value === value)?.label || value}`, () => patchRule(gi, ri, { value: values.filter(v => v !== value) }))}</View>)}
                 </> : field?.options?.length ? action(field.options.find(o => o.value === String(rule.value ?? ''))?.label || 'Elegir valor', () => choose('Valor', field.options || [], value => patchRule(gi, ri, { value }))) : <TextInput accessibilityLabel={`Valor de ${field?.label}`} placeholder={field?.type === 'date' && !['last_days', 'older_days'].includes(rule.operator) ? 'AAAA-MM-DD' : 'Valor'} placeholderTextColor={COLORS.muted} value={String(rule.value ?? '')} onChangeText={value => patchRule(gi, ri, { value })} maxLength={500} autoCapitalize="none" style={styles.filterEditorInput} />)}
                 {needsValue && rule.operator === 'between' && <TextInput accessibilityLabel="Hasta" placeholder={field?.type === 'date' ? 'Hasta AAAA-MM-DD' : 'Hasta'} placeholderTextColor={COLORS.muted} value={String(rule.valueTo ?? '')} onChangeText={valueTo => patchRule(gi, ri, { valueTo })} maxLength={500} style={styles.filterEditorInput} />}
-                {action('Quitar condición', () => setDraft(d => ({ ...d, groups: d.groups.map((g, i) => i === gi ? { ...g, rules: g.rules.filter((_, j) => j !== ri) } : g) })))}
+                {action('Quitar condición', () => setDraft(d => removeNotificationRule(d, gi, ri)))}
               </View>;
             })}
             {action('Agregar condición', () => addRule(gi))}
             {action('Eliminar bloque', () => setDraft(d => ({ ...d, groups: d.groups.filter((_, i) => i !== gi) })))}
           </View>)}
-          {draft.groups.length < 10 && action('Agregar bloque', () => addRule('new'))}
-          {action('Quitar todos los filtros', () => setDraft(emptyNotificationFilter()))}
+          {draft.groups.length < 10 && action('Agregar grupo de condiciones', () => addRule('new'))}
+          {action('Quitar todos los filtros', () => { setEventDraft(emptyNotificationEventFilter()); setClauseIndex(0); })}
           <Pressable accessibilityRole="button" disabled={saving} onPress={() => void save()} style={styles.settingsActionButton}><Text style={styles.settingsActionButtonText}>{saving ? 'Guardando…' : 'Guardar filtros'}</Text></Pressable>
         </View> : null}
       </>}

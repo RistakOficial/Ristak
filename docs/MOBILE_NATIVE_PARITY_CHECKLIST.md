@@ -53,8 +53,11 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [x] Notificaciones: filtros personales por contacto en `/movil`, Android e iOS.
   Catálogo compartido con Contactos, etiquetas/usuarios/campos de formulario,
   operadores por tipo, bloques Todas/Cualquiera y exclusión; carga fresca,
-  validación del servidor y guardado antes de cerrar. Filtro general más filtros
-  de mensajes, citas/recordatorios, confirmaciones y pagos. Contrato y límites
+  validación del servidor y guardado antes de cerrar. «+ Agregar filtro» debajo
+  de cada aviso activado; calendario como condición del aviso, sin selector
+  duplicado. Reglas independientes para mensajes, citas/recordatorios,
+  confirmaciones y pagos; conserva reglas anteriores al editarlas y el borrador
+  al volver de los selectores de iOS. Contrato y límites
   en `MOBILE_APP.md`, sección «Filtros personales de notificaciones por contacto».
   Android valida TypeScript y exportación del bundle; iOS requiere el build
   firmado del workflow oficial para validar SwiftUI en Xcode.

@@ -1858,41 +1858,15 @@ export async function disableMobilePushDevice(token = '') {
   )
 }
 
-async function getSubscriptionsForCalendar(calendarId) {
-  const rows = await db.all(`
-    SELECT id, user_id, endpoint, subscription_json, calendar_ids_json
-    FROM push_subscriptions
-    WHERE enabled = 1
-  `)
-
-  return rows.filter((row) => {
-    const calendarIds = normalizeCalendarIds(safeJsonParse(row.calendar_ids_json || '[]', []))
-    return calendarIds.length === 0 || calendarIds.includes(calendarId)
-  })
-}
-
 async function getEnabledSubscriptions(userIds = null) {
   const normalizedUserIds = Array.isArray(userIds) ? normalizeUserIds(userIds) : null
   if (normalizedUserIds && normalizedUserIds.length === 0) return []
   return db.all(`
-    SELECT id, user_id, endpoint, subscription_json
+    SELECT id, user_id, endpoint, subscription_json, calendar_ids_json
     FROM push_subscriptions
     WHERE enabled = 1
       ${normalizedUserIds ? `AND user_id IN (${normalizedUserIds.map(() => '?').join(', ')})` : ''}
   `, normalizedUserIds || [])
-}
-
-async function getMobileDevicesForCalendar(calendarId) {
-  const rows = await db.all(`
-    SELECT id, user_id, platform, token, client_type, app_package, calendar_ids_json
-    FROM mobile_push_devices
-    WHERE enabled = 1
-  `)
-
-  return rows.filter((row) => {
-    const calendarIds = normalizeCalendarIds(safeJsonParse(row.calendar_ids_json || '[]', []))
-    return calendarIds.length === 0 || calendarIds.includes(calendarId)
-  })
 }
 
 async function getEnabledMobileDevices(userIds = null) {
@@ -2374,14 +2348,22 @@ async function sendMobileNotificationRows(rows = [], payload = {}, experience = 
 }
 
 // (MOB-006) Filtra filas (web + nativas) por la preferencia del USUARIO destinatario:
-// (a) on/off del evento (enabledKey) y (b) override de calendarios cuando aplica.
-// Mantiene las filas sin user_id (no se puede resolver -> se respeta el comportamiento
-// previo, que ya las dejaba pasar tras el filtro por matrix/calendario).
+// Aplica on/off y condiciones del evento. Las listas anteriores de calendarios
+// solo restringen avisos que todavía no se hayan guardado con el editor nuevo.
+// Sin user_id se conservan las preferencias globales.
 async function filterRowsByUserPreference(rows, { enabledKey = '', calendarId = '', contactFilter } = {}) {
   if (!enabledKey && !calendarId && !contactFilter) return rows
+  const globalCalendarConfig = calendarId ? await getGlobalCalendarPushConfig() : null
   const results = await Promise.all(rows.map(async (row) => {
     const userId = String(row.user_id || '').trim()
     if (contactFilter && !(await contactFilter(userId))) return null
+    const independent = contactFilter && await contactFilter.isIndependent(userId)
+    if (calendarId && !independent) {
+      const deviceIds = normalizeCalendarIds(safeJsonParse(row.calendar_ids_json || '[]', []))
+      if (deviceIds.length && !deviceIds.includes(calendarId)) return null
+      if (globalCalendarConfig.calendarIds.length && !globalCalendarConfig.calendarIds.includes(calendarId)) return null
+      if (userId && !(await isCalendarAllowedForUser(userId, calendarId))) return null
+    }
     if (!userId) {
       // (MOB-006) Una suscripción sin user_id no tiene preferencia por-usuario, pero debe
       // seguir respetando el apagado GLOBAL (preserva el kill-switch previo): si la clave
@@ -2390,7 +2372,6 @@ async function filterRowsByUserPreference(rows, { enabledKey = '', calendarId = 
       return row
     }
     if (enabledKey && !(await isEventEnabledForUser(userId, enabledKey))) return null
-    if (calendarId && !(await isCalendarAllowedForUser(userId, calendarId))) return null
     return row
   }))
   return results.filter(Boolean)
@@ -2446,10 +2427,10 @@ export async function sendAppNotificationPayload(payload = {}, {
 
   const [webRows, nativeRows] = await Promise.all([
     pushConfigured
-      ? (calendarId ? getSubscriptionsForCalendar(calendarId) : getEnabledSubscriptions(normalizedUserIds))
+      ? getEnabledSubscriptions(normalizedUserIds)
       : Promise.resolve([]),
     (transport.nativeConfigured || probeUnknownCentralTargets)
-      ? (calendarId ? getMobileDevicesForCalendar(calendarId) : getEnabledMobileDevices(normalizedUserIds))
+      ? getEnabledMobileDevices(normalizedUserIds)
       : Promise.resolve([])
   ])
 
@@ -2492,10 +2473,10 @@ export async function sendAppNotificationPayload(payload = {}, {
 
   // (MOB-006) Tercer eje: override por-usuario de las 7 claves. La entrega final llega a
   // un device del user U solo si (matrix permite a U) AND (preferencia de U on/off true,
-  // con fallback global) AND (calendario permitido para U). Sin override => hereda global
-  // => idéntico al comportamiento previo (no se silencia a nadie que ya recibía).
+  // con fallback global) AND (condiciones del aviso para U). Sin formato V2 se
+  // conservan además el filtro general y las restricciones de calendario anteriores.
   const contactFilter = createNotificationContactFilterResolver({
-    contactIds: normalizePayloadContactIds(normalizedPayload), enabledKey, category: String(normalizedPayload.category || '')
+    contactIds: normalizePayloadContactIds(normalizedPayload), enabledKey, calendarId, category: String(normalizedPayload.category || '')
   })
   const [filteredWebRows, filteredNativeRows] = await Promise.all([
     filterRowsByUserPreference(matrixWebRows, { enabledKey, calendarId, contactFilter }),
@@ -2553,14 +2534,8 @@ export async function sendCalendarAppointmentNotification(appointment = {}, opti
   const calendarId = String(options.calendarId || appointment.calendarId || appointment.calendar_id || '').trim()
   if (!calendarId) return { sent: 0, skipped: true, reason: 'missing_calendar' }
 
-  // (MOB-006) El on/off de calendario ahora se resuelve POR usuario destinatario en el
-  // dispatcher (enabledKey), con fallback al global. Aquí solo se aplica el filtro GLOBAL
-  // de calendarios (mismo comportamiento que antes); el override por-usuario de
-  // calendar_ids se aplica adicionalmente por fila vía el calendarId que pasamos abajo.
-  const config = await getGlobalCalendarPushConfig()
-  if (config.calendarIds.length > 0 && !config.calendarIds.includes(calendarId)) {
-    return { sent: 0, skipped: true, reason: 'calendar_filtered' }
-  }
+  // The dispatcher resolves calendars per recipient: V2 event conditions are the
+  // single source of truth; unedited legacy preferences retain their old scope.
   const preferenceTarget = await getPushPreferenceTarget('appointment_booked')
   if (isPushPreferenceDisabled(preferenceTarget)) {
     return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
@@ -2601,11 +2576,6 @@ export async function sendAppointmentStatusNotification(appointment = {}, option
   const eventType = normalizeAppointmentEventType(options.eventType || options.status || appointment.appointmentStatus || appointment.appointment_status || appointment.status || 'booked')
   const calendarId = String(options.calendarId || appointment.calendarId || appointment.calendar_id || '').trim()
   if (!calendarId) return { sent: 0, skipped: true, reason: 'missing_calendar' }
-
-  const config = await getGlobalCalendarPushConfig()
-  if (config.calendarIds.length > 0 && !config.calendarIds.includes(calendarId)) {
-    return { sent: 0, skipped: true, reason: 'calendar_filtered' }
-  }
 
   const preferenceEvent = eventType === 'confirmed' ? 'appointment_confirmed' : 'appointment_booked'
   const enabledKey = eventType === 'confirmed'

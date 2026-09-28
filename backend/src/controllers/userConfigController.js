@@ -12,7 +12,7 @@ import {
   getUserAppConfigOverrideFlags,
   db
 } from '../config/database.js'
-import { NOTIFICATION_CONTACT_FILTER_KEYS, validateNotificationContactFilter } from '../services/notificationContactFiltersService.js'
+import { NOTIFICATION_CONTACT_FILTER_KEYS, validateNotificationFilterPreference } from '../services/notificationContactFiltersService.js'
 import { logger } from '../utils/logger.js'
 import { recordAudit } from '../utils/auditLog.js'
 
@@ -124,7 +124,7 @@ export async function saveUserConfig(req, res) {
       if (!isWhitelistedKey(key)) {
         return res.status(400).json({ success: false, error: `Clave no permitida: ${key}` })
       }
-      if (NOTIFICATION_CONTACT_FILTER_KEYS.includes(key)) value = validateNotificationContactFilter(value)
+      if (NOTIFICATION_CONTACT_FILTER_KEYS.includes(key)) value = validateNotificationFilterPreference(key, value)
       const previousValue = effectiveUserConfigValue(key, await getUserAppConfig(userId, key))
       await setUserAppConfig(userId, key, value)
       await recordAudit({
@@ -139,7 +139,7 @@ export async function saveUserConfig(req, res) {
 
     // Modo 2: varias claves
     if (config && typeof config === 'object') {
-      const entries = Object.entries(config).map(([k, v]) => [k, NOTIFICATION_CONTACT_FILTER_KEYS.includes(k) && v !== null ? validateNotificationContactFilter(v) : v])
+      const entries = Object.entries(config).map(([k, v]) => [k, NOTIFICATION_CONTACT_FILTER_KEYS.includes(k) && v !== null ? validateNotificationFilterPreference(k, v) : v])
       for (const [k, v] of entries) {
         if (NOTIFICATION_CONTACT_FILTER_KEYS.includes(k) && v === null) return res.status(400).json({ success: false, error: 'Usa un filtro sin condiciones para quitarlo.' })
         if (!isWhitelistedKey(k)) {
@@ -268,7 +268,7 @@ export async function patchUserConfigAdmin(req, res) {
       return res.status(400).json({ success: false, error: 'Se requiere "config" con un objeto' })
     }
 
-    const entries = Object.entries(config).map(([k, v]) => [k, NOTIFICATION_CONTACT_FILTER_KEYS.includes(k) && v !== null ? validateNotificationContactFilter(v) : v])
+    const entries = Object.entries(config).map(([k, v]) => [k, NOTIFICATION_CONTACT_FILTER_KEYS.includes(k) && v !== null ? validateNotificationFilterPreference(k, v) : v])
     for (const [k] of entries) {
       if (!isWhitelistedKey(k)) {
         return res.status(400).json({ success: false, error: `Clave no permitida: ${k}` })

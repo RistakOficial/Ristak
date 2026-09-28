@@ -198,12 +198,17 @@ solo en capa flotante; copy en español.
   eliminación, apariencia
   (sistema/claro/oscuro/auto), privacidad (confirmaciones de lectura),
   notificaciones (switch OFF solo cuando están apagadas, permiso nativo bajo
-  toque explícito, apertura de Ajustes si ya fue negado, toggles por tipo y
-  calendarios con alerta), filtros personales por contacto con bloques
-  Todas/Cualquiera, exclusiones, etiquetas, propietarios y campos de formulario
-  para mensajes/citas/confirmaciones/pagos, versión y cierre de sesión.
+  toque explícito, apertura de Ajustes si ya fue negado y toggles por tipo).
+  Cada aviso activado muestra «+ Agregar filtro» debajo: Y/Todas, O/Cualquiera,
+  exclusiones, etiquetas, propietarios y campos de formulario para mensajes,
+  citas, confirmaciones y pagos. Calendario del aviso es una condición elegible
+  para citas, sin selector separado. También incluye versión y cierre de sesión.
   `NotificationContactFilterEditor` carga el catálogo compartido desde el backend
-  y guarda por usuario; el filtro se evalúa antes del envío push. Con push activo no queda
+  y las condiciones efectivas del aviso desde `/api/user-config/notification-filters/:key`;
+  conserva el borrador al volver de un selector y guarda por usuario en formato
+  versión 2. El filtro se evalúa antes del envío push; la compatibilidad con las
+  preferencias anteriores se documenta en `docs/MOBILE_APP.md` desde la raíz.
+  Con push activo no queda
   una tarjeta permanente del dispositivo.
 - **Push y realtime**: registro del token APNs en `/api/push/mobile-devices`,
   sin pedir permiso automáticamente durante login o foreground (solo renueva si

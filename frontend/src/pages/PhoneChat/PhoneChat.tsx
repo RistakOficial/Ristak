@@ -18843,7 +18843,6 @@ export const PhoneChat: React.FC = () => {
     if (activeSettingsSection === 'notifications') {
       return renderSettingsDetail('Notificaciones', (
         <>
-          <PhoneNotificationContactFilters />
           {showPushActivation && <label className={styles.toggleRow}>
             <span>
               <strong>Notificaciones apagadas</strong>
@@ -18860,6 +18859,8 @@ export const PhoneChat: React.FC = () => {
               onChange={(event) => { if (event.target.checked) void handleRequestPush() }}
             />
           </label>}
+          <section className={styles.settingsSection}>
+            <h3>Avisos</h3>
           <label className={styles.toggleRow}>
             <span>
               <strong>Mensajes del chat</strong>
@@ -18871,6 +18872,7 @@ export const PhoneChat: React.FC = () => {
               onChange={(event) => saveConfigPreference(setChatPushEnabled, event.target.checked)}
             />
           </label>
+          {chatPushEnabled && <PhoneNotificationContactFilters targetKey="chat_push_contact_filter" />}
           <label className={styles.toggleRow}>
             <span>
               <strong>Citas agendadas</strong>
@@ -18882,6 +18884,7 @@ export const PhoneChat: React.FC = () => {
               onChange={(event) => saveConfigPreference(setCalendarPushEnabled, event.target.checked)}
             />
           </label>
+          {calendarPushEnabled && <PhoneNotificationContactFilters targetKey="calendar_push_contact_filter" />}
           <label className={styles.toggleRow}>
             <span>
               <strong>Citas confirmadas</strong>
@@ -18893,6 +18896,7 @@ export const PhoneChat: React.FC = () => {
               onChange={(event) => saveConfigPreference(setAppointmentConfirmationPushEnabled, event.target.checked)}
             />
           </label>
+          {appointmentConfirmationPushEnabled && <PhoneNotificationContactFilters targetKey="appointment_confirmation_push_contact_filter" />}
           <label className={styles.toggleRow}>
             <span>
               <strong>Pagos</strong>
@@ -18904,6 +18908,8 @@ export const PhoneChat: React.FC = () => {
               onChange={(event) => saveConfigPreference(setPaymentPushEnabled, event.target.checked)}
             />
           </label>
+          {paymentPushEnabled && <PhoneNotificationContactFilters targetKey="payment_push_contact_filter" />}
+          </section>
           <label className={styles.toggleRow}>
             <span>
               <strong>Timbre de notificación</strong>

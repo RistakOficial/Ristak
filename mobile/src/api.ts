@@ -1,4 +1,4 @@
-import type { NotificationFilterCatalog } from '../../shared/notificationContactFilters';
+import type { NotificationFilterCatalog, NotificationEventFilter } from '../../shared/notificationContactFilters';
 import type {
   BankClabeAccount,
   CalendarEventItem,
@@ -387,6 +387,10 @@ export class RistakApiClient {
       }
     });
     return url.toString();
+  }
+
+  getNotificationEventFilter(key: string) {
+    return this.request<NotificationEventFilter>(`/user-config/notification-filters/${encodeURIComponent(key)}`);
   }
 
   getNotificationContactFilterCatalog() {

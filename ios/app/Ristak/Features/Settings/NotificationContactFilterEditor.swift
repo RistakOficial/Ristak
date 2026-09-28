@@ -67,13 +67,12 @@ struct NotificationContactFilter: Codable {
     var version = 1
     var groupMode = "all"
     var groups: [Group] = []
-    static let targets: [(key: String, title: String)] = [
-        ("contact_push_notification_filter", "Todos los avisos de contactos"),
-        ("chat_push_contact_filter", "Mensajes del chat"),
-        ("calendar_push_contact_filter", "Citas y recordatorios"),
-        ("appointment_confirmation_push_contact_filter", "Citas confirmadas"),
-        ("payment_push_contact_filter", "Pagos")
-    ]
+}
+
+struct NotificationEventFilter: Codable {
+    var version = 2
+    var clauses: [NotificationContactFilter] = [.init()]
+    var conditionCount: Int { clauses.reduce(0) { $0 + $1.groups.reduce(0) { $0 + $1.rules.count } } }
 }
 
 struct NotificationContactFilterEditor: View {
@@ -81,7 +80,14 @@ struct NotificationContactFilterEditor: View {
     let title: String
     @Environment(AppConfigStore.self) private var appConfig
     @Environment(\.dismiss) private var dismiss
-    @State private var draft = NotificationContactFilter()
+    @State private var eventDraft = NotificationEventFilter()
+    @State private var clauseIndex = 0
+    @State private var didLoad = false
+    @State private var choosingFirstField = false
+    private var draft: NotificationContactFilter {
+        get { eventDraft.clauses[clauseIndex] }
+        nonmutating set { eventDraft.clauses[clauseIndex] = newValue }
+    }
     @State private var catalog: NotificationFilterCatalog?
     @State private var loading = true
     @State private var saving = false
@@ -90,10 +96,7 @@ struct NotificationContactFilterEditor: View {
     var body: some View {
         Form {
             Section {
-                Text("Solo recibirás avisos de contactos que cumplan estas condiciones. Se combinan con tus interruptores y calendarios elegidos.")
-                if configKey != "contact_push_notification_filter" {
-                    Text("También se aplica el filtro de Todos los avisos de contactos.")
-                }
+                Text("Estas condiciones solo afectan este tipo de aviso. Combina filtros con Y, O o exclusiones.")
             }
             if loading { ProgressView("Cargando filtros…") }
             if let error {
@@ -103,24 +106,39 @@ struct NotificationContactFilterEditor: View {
                 }
             }
             if catalog != nil && !loading {
-                if draft.groups.isEmpty {
-                    Text("Sin condiciones: este filtro permite todos los contactos.")
-                } else {
-                    Picker("Coincidencia de bloques", selection: $draft.groupMode) {
-                        Text("Todos los bloques").tag("all")
-                        Text("Cualquier bloque").tag("any")
+                if eventDraft.clauses.count > 1 {
+                    Section("Condiciones conservadas") {
+                        Text("Tus filtros anteriores se conservan aquí. Deben cumplirse todos estos conjuntos; puedes editar o quitar cada uno.")
+                        Picker("Conjunto", selection: $clauseIndex) {
+                            ForEach(eventDraft.clauses.indices, id: \.self) { index in Text("Condiciones \(index + 1)").tag(index) }
+                        }
+                        Button("Quitar este conjunto", role: .destructive) {
+                            eventDraft.clauses.remove(at: clauseIndex)
+                            clauseIndex = 0
+                        }
                     }
                 }
-                ForEach($draft.groups) { $group in
+                if draft.groups.isEmpty {
+                    Text("Sin filtros: recibirás todos los avisos de este tipo.")
+                } else {
+                    Picker("Combinar grupos de condiciones", selection: $eventDraft.clauses[clauseIndex].groupMode) {
+                        Text("Y · Todos los grupos").tag("all")
+                        Text("O · Cualquier grupo").tag("any")
+                    }
+                }
+                ForEach($eventDraft.clauses[clauseIndex].groups) { $group in
                     Section {
                         Picker("Condiciones del bloque", selection: $group.mode) {
-                            Text("Todas").tag("all")
-                            Text("Cualquiera").tag("any")
+                            Text("Y · Todas").tag("all")
+                            Text("O · Cualquiera").tag("any")
                         }
                         Toggle("Excluir si coincide este bloque", isOn: $group.negate)
                         ForEach($group.rules) { $rule in
                             ruleRow($rule)
-                            Button("Quitar condición", role: .destructive) { group.rules.removeAll { $0.id == rule.id } }
+                            Button("Quitar condición", role: .destructive) {
+                                group.rules.removeAll { $0.id == rule.id }
+                                draft.groups.removeAll { $0.rules.isEmpty }
+                            }
                         }
                         NavigationLink("Agregar condición") {
                             NotificationFilterFieldPicker(catalog: catalog!) { field in
@@ -131,14 +149,14 @@ struct NotificationContactFilterEditor: View {
                     }
                 }
                 Section {
-                    NavigationLink("Agregar bloque") {
+                    NavigationLink(draft.groups.isEmpty ? "Agregar filtro" : "Agregar grupo de condiciones") {
                         NotificationFilterFieldPicker(catalog: catalog!) { field in
                             var group = NotificationContactFilter.Group()
                             group.rules = [.init(field: field)]
                             draft.groups.append(group)
                         }
                     }.disabled(draft.groups.count >= 10)
-                    Button("Quitar todos los filtros", role: .destructive) { draft = .init() }
+                    Button("Quitar todos los filtros", role: .destructive) { clauseIndex = 0; eventDraft = .init() }
                 }
             }
         }
@@ -151,7 +169,17 @@ struct NotificationContactFilterEditor: View {
                     .disabled(loading || saving || catalog == nil)
             }
         }
-        .task { await load() }
+        .navigationDestination(isPresented: $choosingFirstField) {
+            if let catalog {
+                NotificationFilterFieldPicker(catalog: catalog) { field in
+                    var group = NotificationContactFilter.Group()
+                    group.rules = [.init(field: field)]
+                    draft.groups.append(group)
+                }
+            }
+        }
+        // Navigating back from a field/tag picker must not fetch over this draft.
+        .task { if !didLoad { await load() } }
     }
 
     @ViewBuilder private func ruleRow(_ rule: Binding<NotificationContactFilter.Rule>) -> some View {
@@ -163,7 +191,7 @@ struct NotificationContactFilterEditor: View {
             }
             if !["empty", "not_empty", "yes", "no"].contains(rule.wrappedValue.operator) {
                 if field.type == "tags" {
-                    NavigationLink("Etiquetas: \(rule.wrappedValue.value?.values.count ?? 0)") {
+                    NavigationLink(tagSelectionLabel(rule.wrappedValue, field: field)) {
                         List(field.options) { option in
                             Button {
                                 var values = rule.wrappedValue.value?.values ?? []
@@ -193,26 +221,41 @@ struct NotificationContactFilterEditor: View {
         } else { Text("Campo no disponible. Quita esta condición o vuelve a cargar.").foregroundStyle(RistakTheme.neg) }
     }
 
+    private func tagSelectionLabel(_ rule: NotificationContactFilter.Rule, field: NotificationFilterField) -> String {
+        let values = rule.value?.values ?? []
+        return values.isEmpty ? "Elegir etiquetas" : values.map { value in field.options.first { $0.value == value }?.label ?? value }.joined(separator: ", ")
+    }
+
     private func load() async {
         loading = true
         error = nil
         do {
             async let fields: NotificationFilterCatalog = APIClient.shared.get("/api/user-config/notification-filters/catalog")
-            async let values: RistakKeyedConfigPayload = APIClient.shared.get("/api/user-config", query: ["keys": configKey])
-            let (loaded, config) = try await (fields, values)
-            let raw = config.config[configKey] ?? nil
-            let parsed = try raw.map { try JSONDecoder().decode(NotificationContactFilter.self, from: Data($0.utf8)) } ?? .init()
+            async let filter: NotificationEventFilter = APIClient.shared.get("/api/user-config/notification-filters/\(configKey)")
+            let (loaded, parsed) = try await (fields, filter)
             guard !Task.isCancelled else { return }
-            draft = parsed
-            catalog = loaded
+            guard parsed.version == 2, !parsed.clauses.isEmpty else { throw NSError(domain: "NotificationFilter", code: 1, userInfo: [NSLocalizedDescriptionKey: "Actualiza Ristak para editar estos filtros."]) }
+            let hasCalendar = ["calendar_push_contact_filter", "appointment_confirmation_push_contact_filter"].contains(configKey)
+            var available = loaded
+            available.groups = loaded.groups.compactMap { group in
+                var group = group
+                group.fields = group.fields.filter { hasCalendar || $0.field != "notification_calendar_id" }
+                return group.fields.isEmpty ? nil : group
+            }
+            eventDraft = parsed
+            clauseIndex = 0
+            catalog = available
+            didLoad = true
+            choosingFirstField = parsed.conditionCount == 0
         } catch { self.error = error.localizedDescription }
         loading = false
     }
     private func save() async {
+        guard !saving else { return }
         saving = true
         error = nil
         do {
-            let raw = String(decoding: try JSONEncoder().encode(draft), as: UTF8.self)
+            let raw = String(decoding: try JSONEncoder().encode(eventDraft), as: UTF8.self)
             try await appConfig.setUserConfigValue(raw, forKey: configKey)
             dismiss()
         } catch { self.error = error.localizedDescription }
@@ -234,6 +277,6 @@ private struct NotificationFilterFieldPicker: View {
                     }
                 }
             }
-        }.navigationTitle("Elegir campo").searchable(text: $search, prompt: "Buscar campo")
+        }.navigationTitle("Agregar filtro").searchable(text: $search, prompt: "Buscar filtro")
     }
 }

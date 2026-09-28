@@ -3,7 +3,7 @@
 // settings_account de /api/config para que los EMPLEADOS puedan guardar SUS
 // propias preferencias. Las rutas /admin sí exigen requireAdmin.
 import express from 'express'
-import { getNotificationContactFilterCatalog } from '../controllers/notificationContactFiltersController.js'
+import { getNotificationContactFilterCatalog, getNotificationEventFilter } from '../controllers/notificationContactFiltersController.js'
 import {
   getUserConfig,
   saveUserConfig,
@@ -19,6 +19,7 @@ router.use(requireAuth)
 
 // Self: el usuario lee/escribe SU propia configuración (usa req.user.userId).
 router.get('/notification-filters/catalog', getNotificationContactFilterCatalog)
+router.get('/notification-filters/:key', getNotificationEventFilter)
 router.get('/', getUserConfig)
 router.post('/', saveUserConfig)
 

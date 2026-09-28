@@ -115,6 +115,10 @@ enum RistakUserConfigKey {
         pushVibrationEnabled,
         calendarPushCalendarIDs,
         appointmentEntryMode,
+        "chat_push_contact_filter",
+        "calendar_push_contact_filter",
+        "appointment_confirmation_push_contact_filter",
+        "payment_push_contact_filter",
     ]
 }
 

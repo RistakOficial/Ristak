@@ -1,8 +1,8 @@
 import { DateTime } from 'luxon'
 import { logger } from '../utils/logger.js'
-import { db, getUserAppConfig } from '../config/database.js'
+import { db, getUserAppConfig, getAppConfig } from '../config/database.js'
 import { getAccountTimezone } from '../utils/dateUtils.js'
-import { buildAdvancedRuleCondition, buildContactListWhere } from './contactListFilterService.js'
+import { buildAdvancedRuleCondition } from './contactListFilterService.js'
 import { CONTACT_ADVANCED_FIELD_GROUPS, getContactAdvancedOperators } from '../../../shared/contactAdvancedFilterCatalog.js'
 
 export const NOTIFICATION_CONTACT_FILTER_KEYS = [
@@ -13,6 +13,8 @@ export const NOTIFICATION_CONTACT_FILTER_KEYS = [
   'payment_push_contact_filter'
 ]
 const fieldMap = new Map(CONTACT_ADVANCED_FIELD_GROUPS.flatMap(group => group.fields.map(field => [field.key, field])))
+export const NOTIFICATION_CALENDAR_FIELD = { key: 'notification_calendar_id', field: 'notification_calendar_id', label: 'Calendario del aviso', type: 'select', catalog: 'calendars' }
+fieldMap.set(NOTIFICATION_CALENDAR_FIELD.key, NOTIFICATION_CALENDAR_FIELD)
 const noValue = new Set(['empty', 'not_empty', 'yes', 'no'])
 const invalid = message => Object.assign(new Error(message), { statusCode: 400 })
 
@@ -20,8 +22,15 @@ const invalid = message => Object.assign(new Error(message), { statusCode: 400 }
 export function validateNotificationContactFilter(raw, timezone = 'UTC') {
   let config = raw
   if (typeof raw === 'string') {
-    if (raw.length > 32000) throw invalid('El filtro es demasiado grande.')
+    if (raw.length > 128000) throw invalid('El filtro es demasiado grande.')
     try { config = JSON.parse(raw) } catch { throw invalid('El filtro no tiene un formato válido.') }
+  }
+  if (config?.version === 2) {
+    if (!Array.isArray(config.clauses) || !config.clauses.length || config.clauses.length > 4 || JSON.stringify(config).length > 128000) throw invalid('El filtro de este aviso no es válido.')
+    return { version: 2, clauses: config.clauses.map(clause => {
+      if (clause?.version !== 1) throw invalid('Las condiciones del aviso no son válidas.')
+      return validateNotificationContactFilter(clause, timezone)
+    }) }
   }
   if (!config || config.version !== 1 || !Array.isArray(config.groups) || config.groups.length > 10 || !['all', 'any'].includes(config.groupMode)) {
     throw invalid('El filtro debe tener bloques válidos de condiciones.')
@@ -53,7 +62,7 @@ export function validateNotificationContactFilter(raw, timezone = 'UTC') {
         }
       }
       const normalized = { id: `rule_${gi}_${ri}`, field: field.key, operator: rule.operator, ...(rule.value !== undefined ? { value: rule.value } : {}), ...(rule.valueTo !== undefined ? { valueTo: rule.valueTo } : {}), ...(field.type === 'custom_field' ? { customKey: rule.customKey, valueType: type } : {}) }
-      if (!buildAdvancedRuleCondition(normalized, 'c', timezone)?.condition) throw invalid(`No se pudo interpretar la condición de ${field.label}.`)
+      if (field.key !== NOTIFICATION_CALENDAR_FIELD.key && !buildAdvancedRuleCondition(normalized, 'c', timezone)?.condition) throw invalid(`No se pudo interpretar la condición de ${field.label}.`)
       return normalized
     })
     return { id: `group_${gi}`, mode: group.mode, negate: Boolean(group.negate), rules }
@@ -76,31 +85,100 @@ export function notificationFilterKeyForEvent(enabledKey = '', category = '') {
   return null
 }
 
+const emptyFilter = () => ({ version: 1, groupMode: 'all', groups: [] })
+const readFilter = (raw, timezone) => raw === null || raw === undefined || raw === '' ? emptyFilter() : validateNotificationContactFilter(raw, timezone)
+const calendarKeys = new Set(['calendar_push_contact_filter', 'appointment_confirmation_push_contact_filter'])
+
+export function validateNotificationFilterPreference(key, raw) {
+  const filter = validateNotificationContactFilter(raw)
+  if (key === NOTIFICATION_CONTACT_FILTER_KEYS[0] && filter.version !== 1) throw invalid('El filtro compartido requiere el formato anterior.')
+  const clauses = filter.version === 2 ? filter.clauses : [filter]
+  if (!calendarKeys.has(key) && clauses.some(clause => clause.groups.some(group => group.rules.some(rule => rule.field === NOTIFICATION_CALENDAR_FIELD.key)))) throw invalid('El calendario del aviso solo aplica a citas.')
+  return filter
+}
+
+// Read-only upgrade preview. The first explicit save replaces this event's legacy
+// restrictions without changing any other event or silently widening its scope.
+export async function getEditableNotificationEventFilter(userId, key) {
+  if (!NOTIFICATION_CONTACT_FILTER_KEYS.slice(1).includes(key)) throw invalid('Elige un tipo de aviso válido.')
+  const timezone = await getAccountTimezone({ throwOnError: true })
+  const event = readFilter(await getUserAppConfig(userId, key), timezone)
+  if (event.version === 2) return event
+  const general = readFilter(await getUserAppConfig(userId, NOTIFICATION_CONTACT_FILTER_KEYS[0]), timezone)
+  if (general.version !== 1) throw invalid('El filtro compartido anterior no es válido.')
+  const clauses = [general, event].filter(filter => filter.groups.length)
+  if (calendarKeys.has(key)) {
+    const calendarValues = await Promise.all([
+      getAppConfig('calendar_push_notification_calendar_ids'),
+      getUserAppConfig(userId, 'calendar_push_notification_calendar_ids')
+    ])
+    for (const raw of calendarValues) {
+      let ids
+      try { ids = typeof raw === 'string' ? JSON.parse(raw || '[]') : raw || [] } catch { throw invalid('La selección anterior de calendarios no es válida.') }
+      if (!Array.isArray(ids)) throw invalid('La selección anterior de calendarios no es válida.')
+      ids = [...new Set(ids.map(id => String(id).trim()).filter(Boolean))]
+      if (ids.length) clauses.push(validateNotificationContactFilter({ ...emptyFilter(), groups: [{ mode: 'any', rules: ids.map(value => ({ field: NOTIFICATION_CALENDAR_FIELD.key, operator: 'is', value })) }] }, timezone))
+    }
+  }
+  const unique = [...new Map(clauses.map(clause => [JSON.stringify(clause), clause])).values()]
+  return validateNotificationContactFilter({ version: 2, clauses: unique.length ? unique : [emptyFilter()] }, timezone)
+}
+
+export function buildNotificationFilterCondition(filter, timezone, calendarId) {
+  const params = []
+  const groups = filter.groups.map(group => {
+    const rules = group.rules.map(rule => {
+      if (rule.field === NOTIFICATION_CALENDAR_FIELD.key) {
+        const target = String(calendarId || '')
+        const met = rule.operator === 'empty' ? !target : rule.operator === 'not_empty' ? !!target
+          : rule.operator === 'is' ? target === String(rule.value) : !!target && target !== String(rule.value)
+        return met ? '1 = 1' : '1 = 0'
+      }
+      const built = buildAdvancedRuleCondition(rule, 'c', timezone)
+      params.push(...(built.params || []))
+      return built.condition
+    })
+    const condition = `(${rules.join(group.mode === 'any' ? ' OR ' : ' AND ')})`
+    return group.negate ? `(NOT ${condition})` : condition
+  })
+  return { condition: groups.length ? `(${groups.join(filter.groupMode === 'any' ? ' OR ' : ' AND ')})` : '1 = 1', params }
+}
+
 // One resolver per delivery, shared by web + native devices. No stale cross-event cache.
-export function createNotificationContactFilterResolver({ contactIds = [], enabledKey = '', category = '' } = {}) {
+export function createNotificationContactFilterResolver({ contactIds = [], enabledKey = '', category = '', calendarId = '' } = {}) {
   const results = new Map()
+  const preferences = new Map()
   const matches = new Map()
   let timezonePromise
   const eventKey = notificationFilterKeyForEvent(enabledKey, category)
-  return userId => {
+  const load = userId => {
+    if (!preferences.has(userId)) preferences.set(userId, (async () => {
+      timezonePromise ||= getAccountTimezone({ throwOnError: true })
+      const timezone = await timezonePromise
+      const event = readFilter(eventKey ? await getUserAppConfig(userId, eventKey) : null, timezone)
+      if (event.version === 2) return { independent: true, filters: event.clauses, timezone }
+      const general = readFilter(await getUserAppConfig(userId, NOTIFICATION_CONTACT_FILTER_KEYS[0]), timezone)
+      if (general.version !== 1) throw invalid('El filtro compartido no es válido.')
+      return { independent: false, filters: [general, event], timezone }
+    })())
+    return preferences.get(userId)
+  }
+  const resolve = userId => {
     if (!eventKey && !contactIds.length) return Promise.resolve(true)
     const id = String(userId || '')
     if (!results.has(id)) results.set(id, (async () => {
-      const keys = [NOTIFICATION_CONTACT_FILTER_KEYS[0], ...(eventKey ? [eventKey] : [])]
-      const rawFilters = await Promise.all(keys.map(key => getUserAppConfig(id, key)))
-      for (const raw of rawFilters) {
-        if (raw === null || raw === undefined || raw === '') continue
-        timezonePromise ||= getAccountTimezone({ throwOnError: true })
-        const timezone = await timezonePromise
-        const filter = validateNotificationContactFilter(raw, timezone)
+      const { filters, timezone } = await load(id)
+      for (const filter of filters) {
         if (!filter.groups.length) continue
-        if (!contactIds.length) return false
+        const needsContact = filter.groups.some(group => group.rules.some(rule => rule.field !== NOTIFICATION_CALENDAR_FIELD.key))
+        if (needsContact && !contactIds.length) return false
         const signature = JSON.stringify(filter)
         if (!matches.has(signature)) matches.set(signature, (async () => {
-          const { whereClause, params } = buildContactListWhere({ alias: 'c', advancedFilters: filter, timezone })
+          const { condition, params } = buildNotificationFilterCondition(filter, timezone, calendarId)
+          if (!needsContact) return Boolean(await db.get(`SELECT 1 AS allowed WHERE ${condition}`, params))
           // Every contact included in a combined alert must pass; never leak an excluded contact.
           for (const contactId of contactIds) {
-            const row = await db.get(`SELECT c.id FROM contacts c ${whereClause} AND c.id = ?`, [...params, contactId])
+            const row = await db.get(`SELECT c.id FROM contacts c WHERE c.deleted_at IS NULL AND (${condition}) AND c.id = ?`, [...params, contactId])
             if (!row) return false
           }
           return true
@@ -117,4 +195,6 @@ export function createNotificationContactFilterResolver({ contactIds = [], enabl
     }))
     return results.get(id)
   }
+  resolve.isIndependent = async userId => eventKey ? (await load(String(userId || ''))).independent : false
+  return resolve
 }

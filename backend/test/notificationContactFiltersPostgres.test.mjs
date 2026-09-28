@@ -13,6 +13,7 @@ test('notification contact conditions execute against real PostgreSQL JSON and c
   try {
     process.env.DATABASE_URL = process.env.TEST_POSTGRES_URL
     const { buildContactListWhere } = await import('../src/services/contactListFilterService.js?notification-postgres')
+    const { buildNotificationFilterCondition } = await import('../src/services/notificationContactFiltersService.js')
     if (previousUrl === undefined) delete process.env.DATABASE_URL
     else process.env.DATABASE_URL = previousUrl
     // Connection-local fixtures never touch customer or shared test tables.
@@ -46,6 +47,17 @@ test('notification contact conditions execute against real PostgreSQL JSON and c
     ]) assert.deepEqual(await ids([{ field: 'custom_field', customKey, valueType, operator, value }]), ['a', 'b', 'c'], `${customKey} ${operator}`)
     assert.deepEqual(await ids([{ field: 'custom_field', customKey: 'interests', valueType: 'select', operator: 'is_not', value: 'Curso' }]), [])
     assert.deepEqual(await ids([{ field: 'appointment_calendar', operator: 'is', value: 'calendar' }]), ['a'])
+    const eventIds = async (calendarId, mode, negate = false) => {
+      const { condition, params } = buildNotificationFilterCondition({ groupMode: 'all', groups: [{ mode, negate, rules: [
+        { field: 'notification_calendar_id', operator: 'is', value: 'event-calendar' },
+        { field: 'tags', operator: 'any', value: ['vip'] }
+      ] }] }, 'America/Ciudad_Juarez', calendarId)
+      return (await database.all(`SELECT c.id FROM contacts c WHERE ${condition} ORDER BY c.id`, params)).map(row => row.id)
+    }
+    assert.deepEqual(await eventIds('event-calendar', 'all'), ['a', 'c'])
+    assert.deepEqual(await eventIds('other-calendar', 'all'), [])
+    assert.deepEqual(await eventIds('event-calendar', 'any'), ['a', 'b', 'c'])
+    assert.deepEqual(await eventIds('event-calendar', 'all', true), ['b'])
     await database.run("UPDATE contacts SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'a'")
     assert.deepEqual(await ids([{ field: 'tags', operator: 'all', value: ['vip', 'active'] }]), [])
   } finally {

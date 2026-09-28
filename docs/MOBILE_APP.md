@@ -978,11 +978,21 @@ filtrar contenido sensible.
 
 ### Filtros personales de notificaciones por contacto
 
-En Ajustes → Notificaciones → Filtros por contacto, `/movil`, Android e iOS
-permiten guardar condiciones para todos los avisos de contactos, mensajes,
-citas/recordatorios, citas confirmadas y pagos. Cada filtro combina bloques
-con Todas/Cualquiera; cada bloque combina condiciones con Todas/Cualquiera y
-puede invertir su resultado con «Excluir si coincide este bloque».
+En Ajustes → Notificaciones → Avisos, `/movil`, Android e iOS muestran
+«+ Agregar filtro» debajo de cada tipo de aviso activado: mensajes del chat,
+citas agendadas/recordatorios, citas confirmadas y pagos. No hay una categoría
+separada de filtros ni un selector adicional de «Calendarios con alertas».
+Al agregar el primer filtro se abre el catálogo de campos; después se eligen
+el operador y sus valores reales. Cada filtro combina grupos con Y/Todas u
+O/Cualquiera; cada grupo combina condiciones del mismo modo y puede invertir
+su resultado con «Excluir si coincide este bloque». Apagar un aviso conserva
+sus condiciones para cuando se vuelva a activar.
+
+Los filtros se guardan por usuario y tipo de aviso. El editor espera la
+confirmación del servidor antes de cerrar; una condición incompleta conserva
+el borrador y muestra el error. En iOS, volver desde los selectores de campos
+o etiquetas no vuelve a cargar las preferencias sobre el borrador. Al abrir
+nuevamente el editor sí se recupera lo guardado en la base.
 
 El catálogo reutiliza los campos y operadores de Contactos: etiquetas exactas,
 propietario, correo/teléfono, condición comercial, citas, pagos, atribución,
@@ -991,6 +1001,10 @@ operadores compatibles (igual/distinto, contiene/no contiene, vacío/no vacío,
 sí/no, rangos y fechas). Los usuarios, etiquetas, calendarios y opciones de
 formulario muestran sus nombres actuales; usuarios y calendarios usan
 comparaciones exactas, sin coincidencias parciales de identificadores.
+Para citas, «Calendario del aviso» compara el calendario del evento que
+disparó la notificación y se puede combinar con etiquetas u otras condiciones.
+«Contacto con citas en calendario» consulta el historial del contacto y es un
+criterio distinto; no reemplaza al calendario del aviso.
 En formularios con selección múltiple, elegir una opción exige que esté dentro
 de las opciones seleccionadas; una lista vacía cuenta como campo vacío.
 No existe un pipeline local de
@@ -999,21 +1013,38 @@ filtros locales disponibles. La condición comercial y campos personalizados sí
 se pueden usar.
 
 `GET /api/user-config/notification-filters/catalog` devuelve el catálogo para
-el usuario autenticado. `POST /api/user-config` guarda las claves
-`contact_push_notification_filter`, `chat_push_contact_filter`,
+el usuario autenticado. `GET /api/user-config/notification-filters/:key`
+devuelve las condiciones efectivas editables de ese aviso, sin escribir datos.
+`POST /api/user-config` guarda `chat_push_contact_filter`,
 `calendar_push_contact_filter`, `appointment_confirmation_push_contact_filter`
-y `payment_push_contact_filter` en `user_app_config`; heredan `app_config` si
-no hay override. No se agregan secrets, variables de entorno ni migraciones.
-Se valida el lote completo antes de escribir: versión 1, máximo 10 bloques,
+o `payment_push_contact_filter` en `user_app_config`; heredan `app_config` si
+no hay override. El formato actual es `{ version: 2, clauses: [...] }`: cada
+cláusula contiene un filtro versión 1 y todas las cláusulas deben cumplirse.
+Un filtro nuevo inicia con una sola cláusula. Se valida el lote completo antes
+de escribir: hasta 4 cláusulas y 128 KB; cada cláusula admite 10 grupos,
 50 condiciones y 32 KB. Una condición incompleta se rechaza, nunca se ignora.
+«Calendario del aviso» solo se admite en los dos tipos de citas. No se agregan
+secrets, variables de entorno ni migraciones.
 
-Antes de Web Push o del transporte nativo, el backend combina el filtro general
-con el del evento y conserva destinatarios, permisos, contactos ocultos,
-interruptores, presencia y calendarios existentes. Evalúa los valores actuales
-del contacto en la base, con fechas en la zona del negocio. Un aviso agrupado
-requiere que todos sus contactos coincidan. Si el evento exige contacto pero no
-trae su ID, un filtro activo lo excluye; los avisos de sistema sin contacto no
-se filtran. Vaciar y guardar un filtro permite todos los contactos en ese nivel.
+Compatibilidad: mientras un aviso conserve su formato anterior, siguen vigentes
+el filtro general `contact_push_notification_filter`, el específico y las
+restricciones de calendario anteriores. Al abrirlo, el servidor presenta esas
+condiciones generales, específicas y de calendarios globales/personales como
+conjuntos editables unidos con Y, conservando sus grupos O y exclusiones.
+La primera vez que se guarda en versión 2, ese aviso usa exclusivamente sus
+condiciones visibles: no aplica además el filtro general ni las listas de
+calendarios guardadas en preferencias o dispositivos. Las listas propias de
+cada dispositivo no se copian al filtro personal. Los otros tipos de aviso
+conservan su configuración hasta que se editen. «Quitar todos los filtros» y
+guardar elimina todas las restricciones de condiciones de ese tipo de aviso.
+
+Antes de Web Push o del transporte nativo, el backend evalúa las condiciones
+y conserva destinatarios, permisos, contactos ocultos, interruptores y presencia.
+Consulta los valores actuales del contacto en la base, con fechas en la zona
+del negocio. Un aviso agrupado requiere que todos sus contactos coincidan.
+Si hay condiciones de contacto y no llega su ID, el filtro lo excluye; un
+filtro solo de calendario sí puede evaluar un evento sin contacto. Los avisos
+de sistema sin contacto ni tipo filtrable no se filtran.
 Una preferencia corrupta excluye solo a su dueño; errores de base de datos
 propagan el fallo para que la entrega durable pueda reintentar.
 

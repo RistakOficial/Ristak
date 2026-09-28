@@ -6,10 +6,8 @@ import UIKit
 ///   toque abre el permiso nativo y, si ya fue negado, abre Ajustes de iOS.
 /// - Toggles por usuario (`/api/user-config`): chat, citas, confirmaciones,
 ///   pagos, sonido y vibración (esta última sin efecto en iOS — paridad UI).
-/// - «Calendarios con alertas»: multiselección → re-registro del token con los
-///   `calendarIds` nuevos.
+/// - Cada aviso activo ofrece sus propias condiciones, incluido Calendario del aviso.
 struct SettingsNotificationsPanel: View {
-    @Environment(SettingsModel.self) private var model
     @Environment(AppConfigStore.self) private var appConfig
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
@@ -37,6 +35,7 @@ struct SettingsNotificationsPanel: View {
                     ) { newValue in
                         writeUserBool(newValue, key: RistakUserConfigKey.chatPushEnabled)
                     }
+                    if appConfig.chatPushEnabled { filterLink("chat_push_contact_filter", title: "Mensajes del chat") }
 
                     Divider()
 
@@ -46,12 +45,10 @@ struct SettingsNotificationsPanel: View {
                         isOn: appConfig.calendarPushEnabled,
                         isSaving: appConfig.savingKeys.contains(RistakUserConfigKey.calendarPushEnabled)
                     ) { newValue in
-                        toggleCalendarPush(newValue)
+                        writeUserBool(newValue, key: RistakUserConfigKey.calendarPushEnabled)
                     }
 
-                    if appConfig.calendarPushEnabled {
-                        calendarsCard
-                    }
+                    if appConfig.calendarPushEnabled { filterLink("calendar_push_contact_filter", title: "Citas agendadas") }
 
                     Divider()
 
@@ -63,6 +60,7 @@ struct SettingsNotificationsPanel: View {
                     ) { newValue in
                         writeUserBool(newValue, key: RistakUserConfigKey.appointmentConfirmationPushEnabled)
                     }
+                    if appConfig.appointmentConfirmationPushEnabled { filterLink("appointment_confirmation_push_contact_filter", title: "Citas confirmadas") }
 
                     Divider()
 
@@ -74,19 +72,7 @@ struct SettingsNotificationsPanel: View {
                     ) { newValue in
                         writeUserBool(newValue, key: RistakUserConfigKey.paymentPushEnabled)
                     }
-                }
-            }
-
-            SectionCard(title: "Filtros por contacto") {
-                VStack(alignment: .leading, spacing: RistakTheme.Spacing.sm) {
-                    Text("Elige de quién quieres recibir avisos. Los filtros son personales y se conservan al cambiar de celular.")
-                        .font(.footnote).foregroundStyle(RistakTheme.textDim)
-                    ForEach(NotificationContactFilter.targets, id: \.key) { target in
-                        NavigationLink(target.title) {
-                            NotificationContactFilterEditor(configKey: target.key, title: target.title)
-                        }
-                        Divider()
-                    }
+                    if appConfig.paymentPushEnabled { filterLink("payment_push_contact_filter", title: "Pagos") }
                 }
             }
 
@@ -216,176 +202,27 @@ struct SettingsNotificationsPanel: View {
         }
     }
 
-    // MARK: - Calendarios con alertas
-
-    private var calendarsCard: some View {
-        let selectedIDs = appConfig.calendarPushCalendarIDs
-        let isSavingIDs = appConfig.savingKeys.contains(RistakUserConfigKey.calendarPushCalendarIDs)
-
-        return VStack(alignment: .leading, spacing: RistakTheme.Spacing.sm) {
+    private func filterLink(_ key: String, title: String) -> some View {
+        let raw = appConfig.userConfig[key] ?? ""
+        let count = (try? JSONDecoder().decode(NotificationEventFilter.self, from: Data(raw.utf8)))?.conditionCount ?? 0
+        return NavigationLink {
+            NotificationContactFilterEditor(configKey: key, title: title)
+        } label: {
             HStack {
-                Text("Calendarios con alertas")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(RistakTheme.textPrimary)
-
-                Spacer(minLength: RistakTheme.Spacing.xs)
-
-                Text(selectedIDs.isEmpty ? "Todos" : "\(selectedIDs.count) seleccionados")
-                    .font(.footnote)
-                    .foregroundStyle(RistakTheme.textDim)
+                Label("Agregar filtro", systemImage: "plus")
+                Spacer()
+                if count > 0 { Text("\(count) \(count == 1 ? "condición" : "condiciones")").font(.caption).foregroundStyle(RistakTheme.textDim) }
+                Image(systemName: "chevron.right").font(.caption)
             }
-
-            switch model.calendars {
-            case .idle, .loading:
-                Text("Cargando calendarios...")
-                    .font(.footnote)
-                    .foregroundStyle(RistakTheme.textDim)
-            case .failed(let message), .accessDenied(let message), .featureBlocked(let message):
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(RistakTheme.textDim)
-            case .loaded(let calendars):
-                if calendars.isEmpty {
-                    Text("No hay calendarios activos para elegir.")
-                        .font(.footnote)
-                        .foregroundStyle(RistakTheme.textDim)
-                } else {
-                    calendarChips(calendars: calendars, selectedIDs: selectedIDs, isSaving: isSavingIDs)
-                }
-            }
-        }
-        .padding(RistakTheme.Spacing.sm)
-        .background(
-            RoundedRectangle(cornerRadius: RistakTheme.Radius.control, style: .continuous)
-                .fill(RistakTheme.surface2)
-        )
-    }
-
-    private func calendarChips(calendars: [RistakCalendar], selectedIDs: [String], isSaving: Bool) -> some View {
-        LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 150), spacing: RistakTheme.Spacing.xs)],
-            alignment: .leading,
-            spacing: RistakTheme.Spacing.xs
-        ) {
-            calendarChip(
-                title: "Todos los calendarios",
-                dotColor: nil,
-                isSelected: selectedIDs.isEmpty,
-                isDisabled: isSaving
-            ) {
-                writeCalendarIDs([])
-            }
-
-            ForEach(calendars) { calendar in
-                calendarChip(
-                    title: calendar.name,
-                    dotColor: calendarDotColor(calendar),
-                    isSelected: selectedIDs.contains(calendar.id),
-                    isDisabled: isSaving
-                ) {
-                    var ids = selectedIDs
-                    if let index = ids.firstIndex(of: calendar.id) {
-                        ids.remove(at: index)
-                    } else {
-                        ids.append(calendar.id)
-                    }
-                    writeCalendarIDs(ids)
-                }
-            }
-        }
-    }
-
-    /// Chip de calendario: seleccionado = relleno sólido de acento + texto
-    /// blanco (regla de selección de ARCHITECTURE.md).
-    private func calendarChip(
-        title: String,
-        dotColor: Color?,
-        isSelected: Bool,
-        isDisabled: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                if let dotColor {
-                    Circle()
-                        .fill(isSelected ? RistakTheme.onAccent : dotColor)
-                        .frame(width: 8, height: 8)
-                }
-                Text(title)
-                    .font(.footnote.weight(.medium))
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity)
-            .foregroundStyle(isSelected ? RistakTheme.onAccent : RistakTheme.textPrimary)
-            .background(
-                Capsule().fill(isSelected ? AnyShapeStyle(RistakTheme.accent) : AnyShapeStyle(RistakTheme.controlRest))
-            )
-            .contentShape(Capsule())
+            .font(.subheadline)
+            .padding(.vertical, RistakTheme.Spacing.xs)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(isDisabled)
-        .sensoryFeedback(.selection, trigger: isSelected)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityLabel("Filtros de \(title)")
     }
-
-    private func calendarDotColor(_ calendar: RistakCalendar) -> Color {
-        let hex = calendar.eventColor.trimmingCharacters(in: .whitespacesAndNewlines)
-        return Self.color(fromHex: hex) ?? RistakTheme.accent
-    }
-
-    /// Parseo mínimo de `#rrggbb` (color del calendario; fallback acento).
-    private static func color(fromHex raw: String) -> Color? {
-        var hex = raw
-        if hex.hasPrefix("#") { hex.removeFirst() }
-        guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return nil }
-        let red = Double((value >> 16) & 0xFF) / 255
-        let green = Double((value >> 8) & 0xFF) / 255
-        let blue = Double(value & 0xFF) / 255
-        return Color(red: red, green: green, blue: blue)
-    }
-
-    // MARK: - Escrituras
 
     private func writeUserBool(_ value: Bool, key: String) {
-        saveError.run {
-            try await appConfig.setUserConfigBool(value, forKey: key)
-        }
-    }
-
-    /// «Citas agendadas»: al encender, si hay exactamente 1 calendario activo
-    /// y la selección está vacía, se auto-selecciona (doc 10 §4.7). Luego se
-    /// re-registra el token con los `calendarIds` vigentes.
-    private func toggleCalendarPush(_ enabled: Bool) {
-        saveError.run {
-            try await appConfig.setUserConfigBool(enabled, forKey: RistakUserConfigKey.calendarPushEnabled)
-
-            if enabled,
-               let calendars = model.calendars.value,
-               calendars.count == 1,
-               appConfig.calendarPushCalendarIDs.isEmpty,
-               let only = calendars.first {
-                try await appConfig.setUserConfigStringArray([only.id], forKey: RistakUserConfigKey.calendarPushCalendarIDs)
-            }
-
-            await reRegisterTokenIfGranted()
-        }
-    }
-
-    private func writeCalendarIDs(_ ids: [String]) {
-        saveError.run {
-            try await appConfig.setUserConfigStringArray(ids, forKey: RistakUserConfigKey.calendarPushCalendarIDs)
-            await reRegisterTokenIfGranted()
-        }
-    }
-
-    /// Re-registro silencioso del device con los `calendarIds` nuevos (solo si
-    /// el permiso ya está concedido — nunca disparar el prompt desde un chip).
-    private func reRegisterTokenIfGranted() async {
-        await push.refreshPermissionState()
-        guard push.permissionState == .granted else { return }
-        let ids = appConfig.calendarPushEnabled ? appConfig.calendarPushCalendarIDs : []
-        _ = await push.activate(calendarIDs: ids)
+        saveError.run { try await appConfig.setUserConfigBool(value, forKey: key) }
     }
 }

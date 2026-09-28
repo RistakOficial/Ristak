@@ -1,7 +1,7 @@
 import test, { before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { db, setUserAppConfig, setAppConfig } from '../src/config/database.js'
-import { validateNotificationContactFilter, createNotificationContactFilterResolver, notificationFilterKeyForEvent, NOTIFICATION_CONTACT_FILTER_KEYS } from '../src/services/notificationContactFiltersService.js'
+import { validateNotificationContactFilter, validateNotificationFilterPreference, getEditableNotificationEventFilter, createNotificationContactFilterResolver, notificationFilterKeyForEvent, NOTIFICATION_CONTACT_FILTER_KEYS } from '../src/services/notificationContactFiltersService.js'
 import { saveUserConfig, patchUserConfigAdmin } from '../src/controllers/userConfigController.js'
 import { getNotificationContactFilterCatalog } from '../src/controllers/notificationContactFiltersController.js'
 
@@ -119,4 +119,75 @@ test('catalog is available to employees with real local labels', async () => {
 })
 test('event routing includes reminders, confirmations, payments and agent priority', () => {
   for (const [category, key] of [['chat', 'chat'], ['agent_priority', 'chat'], ['appointment_reminders', 'calendar'], ['appointment_confirmed', 'appointment_confirmation'], ['payment', 'payment']]) assert.equal(notificationFilterKeyForEvent('', category), `${key}_push_contact_filter`)
+})
+
+test('editing an event preserves legacy AND/OR/exclusion, then isolates it from other alerts', async () => {
+  const general = config([], { groupMode: 'any', groups: [
+    { mode: 'all', negate: true, rules: [email('contains', 'elsewhere')] },
+    { mode: 'all', rules: [{ field: 'tags', operator: 'all', value: ['vip', 'active'] }] }
+  ] })
+  await setUserAppConfig(userId, 'contact_push_notification_filter', general)
+  await write([email('contains', 'example')])
+  const migrated = await getEditableNotificationEventFilter(userId, 'chat_push_contact_filter')
+  assert.equal(migrated.version, 2)
+  assert.equal(migrated.clauses.length, 2)
+  const saved = response()
+  await saveUserConfig({ user: { userId }, body: { key: 'chat_push_contact_filter', value: migrated } }, saved)
+  assert.equal(saved.code, 200)
+  assert.equal(await match()(userId), true)
+  assert.equal(await match([`${prefix}-other`])(userId), false)
+  await setUserAppConfig(userId, 'contact_push_notification_filter', config([email('is', 'nobody')]))
+  assert.equal(await match()(userId), true, 'edited chat must not have a hidden shared restriction')
+  assert.equal(await match([prefix], 'payment_push_notifications_enabled')(userId), false, 'unedited payments still respect legacy preferences')
+  assert.deepEqual(await getEditableNotificationEventFilter(userId, 'chat_push_contact_filter'), migrated)
+  await setUserAppConfig(userId, 'contact_push_notification_filter', { version: 1, groupMode: 'all', groups: [] })
+})
+
+test('event calendars use the triggering calendar and participate in AND, OR and exclusion', async () => {
+  const calendar = value => ({ field: 'notification_calendar_id', operator: 'is', value })
+  const allowed = calendarId => createNotificationContactFilterResolver({ contactIds: [prefix], calendarId, enabledKey: 'calendar_push_notifications_enabled' })(userId)
+  await setAppConfig('calendar_push_notification_calendar_ids', ['a', 'b'])
+  await setUserAppConfig(userId, 'calendar_push_notification_calendar_ids', ['b', 'c'])
+  const migrated = await getEditableNotificationEventFilter(userId, 'calendar_push_contact_filter')
+  assert.equal(migrated.clauses.length, 2)
+  await setUserAppConfig(userId, 'calendar_push_contact_filter', migrated)
+  assert.equal(await allowed('a'), false)
+  assert.equal(await allowed('b'), true)
+  assert.equal(await allowed('c'), false)
+  const event = { version: 2, clauses: [config([calendar('c'), { field: 'tags', operator: 'any', value: ['vip'] }])] }
+  await setUserAppConfig(userId, 'calendar_push_contact_filter', event)
+  assert.equal(await allowed('c'), true)
+  assert.equal(await allowed('b'), false)
+  event.clauses[0].groups[0].mode = 'any'
+  await setUserAppConfig(userId, 'calendar_push_contact_filter', event)
+  assert.equal(await allowed('b'), true)
+  event.clauses[0].groups[0].negate = true
+  await setUserAppConfig(userId, 'calendar_push_contact_filter', event)
+  assert.equal(await allowed('c'), false)
+  await setUserAppConfig(userId, 'calendar_push_contact_filter', { version: 2, clauses: [config([calendar('c')])] })
+  assert.equal(await createNotificationContactFilterResolver({ calendarId: 'c', category: 'appointment_booked' })(userId), true, 'calendar-only conditions do not require a contact')
+  await db.run("DELETE FROM app_config WHERE config_key = 'calendar_push_notification_calendar_ids'")
+  await db.run("DELETE FROM user_app_config WHERE user_id = ? AND config_key = 'calendar_push_notification_calendar_ids'", [userId])
+})
+
+test('incomplete event filters reject the entire batch and cannot become shared or payment calendar filters', async () => {
+  const incomplete = { version: 2, clauses: [config([{ field: 'tags', operator: 'any', value: [] }])] }
+  const res = response()
+  await saveUserConfig({ user: { userId }, body: { config: { payment_push_notifications_enabled: false, payment_push_contact_filter: incomplete } } }, res)
+  assert.equal(res.code, 400)
+  assert.equal(await db.get("SELECT 1 FROM user_app_config WHERE user_id = ? AND config_key = 'payment_push_notifications_enabled'", [userId]), null)
+  assert.throws(() => validateNotificationContactFilter({ version: 2, clauses: [] }), { statusCode: 400 })
+  assert.throws(() => validateNotificationContactFilter({ version: 2, clauses: [incomplete] }), { statusCode: 400 })
+  assert.throws(() => validateNotificationFilterPreference('contact_push_notification_filter', { version: 2, clauses: [{ version: 1, groupMode: 'all', groups: [] }] }), { statusCode: 400 })
+  assert.throws(() => validateNotificationFilterPreference('payment_push_contact_filter', { version: 2, clauses: [config([{ field: 'notification_calendar_id', operator: 'is', value: 'a' }])] }), { statusCode: 400 })
+})
+
+test('removing all conditions really clears that event and an active contact filter excludes archived contacts', async () => {
+  await setUserAppConfig(userId, 'contact_push_notification_filter', config([email('is', 'none')]))
+  await setUserAppConfig(userId, 'chat_push_contact_filter', { version: 2, clauses: [{ version: 1, groupMode: 'all', groups: [] }] })
+  assert.equal(await match()(userId), true)
+  await setUserAppConfig(userId, 'chat_push_contact_filter', { version: 2, clauses: [config([email('contains', 'example')])] })
+  await db.run('UPDATE contacts SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?', [prefix])
+  assert.equal(await match()(userId), false)
+  await db.run('UPDATE contacts SET deleted_at = NULL WHERE id = ?', [prefix])
 })
