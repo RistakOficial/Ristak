@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Adjunto de Ristak</title>
+  <style>
+    :root { color-scheme: light dark; font-family: var(--font-sans, system-ui, sans-serif); color: var(--color-text-primary, CanvasText); background: var(--color-background-primary, Canvas); }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 20px; }
+    header { display: flex; align-items: start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    h1 { font-size: 16px; line-height: 1.4; margin: 0; overflow-wrap: anywhere; }
+    p { font-size: 13px; line-height: 1.6; color: var(--color-text-secondary, GrayText); margin: 6px 0 14px; overflow-wrap: anywhere; }
+    nav { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+    button, a { font: inherit; font-size: 13px; color: inherit; background: transparent; border: 1px solid var(--color-border-secondary, ButtonBorder); border-radius: 8px; padding: 8px 12px; text-decoration: none; cursor: pointer; }
+    button:disabled { opacity: .45; cursor: default; }
+    button:focus-visible, a:focus-visible { outline: 2px solid Highlight; outline-offset: 3px; }
+    main { margin-top: 16px; max-height: 640px; overflow: auto; }
+    figure { margin: 0 0 18px; }
+    img, video { display: block; width: auto; max-width: 100%; max-height: 600px; margin: auto; object-fit: contain; }
+    audio { width: 100%; }
+    figcaption { font-size: 12px; color: var(--color-text-secondary, GrayText); margin-top: 8px; text-align: center; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.6 var(--font-mono, monospace); }
+    footer { display: flex; gap: 12px; align-items: center; justify-content: center; margin-top: 16px; font-size: 13px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header><div><h1 id="name">Adjunto de Ristak</h1><p id="detail">Preparando el archivo…</p></div>
+    <nav aria-label="Acciones del archivo"><button id="refresh" hidden>Actualizar enlace</button><a id="download" target="_blank" rel="noopener noreferrer" hidden>Descargar original</a></nav>
+  </header>
+  <p id="status" role="status" aria-live="polite"></p>
+  <main id="preview" aria-label="Vista previa del archivo"></main>
+  <footer id="pages" hidden><button id="previous">Anterior</button><span id="pageLabel"></span><button id="next">Siguiente</button></footer>
+  <script>
+    const byId = id => document.getElementById(id);
+    let current;
+    let nextId = 1;
+    let initialized = false;
+    const pending = new Map();
+    function request(method, params) {
+      return new Promise((resolve, reject) => {
+        const id = nextId++;
+        const timer = setTimeout(() => { pending.delete(id); reject(new Error('La solicitud tardó demasiado. Intenta de nuevo.')); }, 60000);
+        pending.set(id, { resolve, reject, timer });
+        window.parent.postMessage({ jsonrpc: '2.0', id, method, params }, '*');
+      });
+    }
+    function safeLink(url) {
+      try {
+        const parsed = new URL(url);
+        return ['https:', 'http:'].includes(parsed.protocol) && !parsed.username && !parsed.password && parsed.pathname.startsWith('/api/mcp/attachments/') ? parsed.href : '';
+      } catch { return ''; }
+    }
+    function render(result) {
+      const data = result?.structuredContent?.data;
+      if (result?.isError || !data) { byId('status').textContent = 'No se pudo abrir el adjunto. Solicita abrirlo de nuevo en el chat.'; return; }
+      current = data;
+      byId('name').textContent = data.filename;
+      byId('detail').textContent = data.mimeType + ' · Enlace temporal de 10 minutos';
+      byId('refresh').hidden = false;
+      byId('download').href = safeLink(data.downloadUrl);
+      byId('download').hidden = !safeLink(data.downloadUrl);
+      byId('status').textContent = data.previewError || (data.previewStatus === 'not_supported' ? 'Este formato se abre con su aplicación. Descarga el original.' : '');
+      const root = byId('preview');
+      root.replaceChildren();
+      const images = result._meta?.previewImages || [];
+      for (const image of images) {
+        if (image.mimeType !== 'image/jpeg' || !/^[A-Za-z0-9+/=]+$/.test(image.data)) continue;
+        const figure = document.createElement('figure');
+        const img = document.createElement('img');
+        img.src = 'data:image/jpeg;base64,' + image.data;
+        img.alt = data.kind === 'pdf' ? 'Página ' + image.page + ' de ' + data.filename : data.filename;
+        img.onload = resize;
+        figure.append(img);
+        if (data.kind === 'pdf') { const label = document.createElement('figcaption'); label.textContent = 'Página ' + image.page; figure.append(label); }
+        root.append(figure);
+      }
+      if (['video', 'audio'].includes(data.kind) && safeLink(data.previewUrl)) {
+        const player = document.createElement(data.kind);
+        player.controls = true; player.preload = 'metadata'; player.src = safeLink(data.previewUrl);
+        player.setAttribute('playsinline', '');
+        player.onerror = () => { byId('status').textContent = 'El navegador no pudo reproducir este formato o el enlace venció. Actualiza el enlace o descarga el original.'; };
+        root.append(player);
+      }
+      if (data.text) { const text = document.createElement('pre'); text.textContent = data.text; root.append(text); }
+      byId('pages').hidden = !data.totalPages;
+      byId('pageLabel').textContent = data.totalPages ? data.firstPage + '–' + data.lastPage + ' de ' + data.totalPages : '';
+      byId('previous').disabled = !data.firstPage || data.firstPage <= 1;
+      byId('next').disabled = !data.hasMorePages;
+      resize();
+    }
+    function resize() {
+      if (initialized) window.parent.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/size-changed', params: { height: Math.ceil(document.body.getBoundingClientRect().height) } }, '*');
+    }
+    function applyHostContext(context) {
+      if (['light', 'dark'].includes(context?.theme)) document.documentElement.style.colorScheme = context.theme;
+      resize();
+    }
+    async function reload(page) {
+      if (!current) return;
+      const args = { contactId: current.contactId, source: current.source, messageId: current.messageId, page, pageCount: 3 };
+      byId('status').textContent = 'Abriendo archivo…';
+      for (const id of ['refresh', 'previous', 'next']) byId(id).disabled = true;
+      try {
+        const result = initialized ? await request('tools/call', { name: 'chat_open_attachment', arguments: args })
+          : await window.openai.callTool('chat_open_attachment', args);
+        render(result);
+      } catch { byId('status').textContent = 'No se pudo actualizar. Pide abrir el adjunto de nuevo en el chat.'; }
+      finally { byId('refresh').disabled = false; byId('previous').disabled = !current.firstPage || current.firstPage <= 1; byId('next').disabled = !current.hasMorePages; }
+    }
+    byId('refresh').onclick = () => reload(current?.firstPage || 1);
+    byId('previous').onclick = () => reload(Math.max(1, current.firstPage - 3));
+    byId('next').onclick = () => reload(current.lastPage + 1);
+    byId('download').onclick = event => {
+      if (initialized) { event.preventDefault(); request('ui/open-link', { url: byId('download').href }).catch(() => { byId('status').textContent = 'Abre el enlace de descarga desde la respuesta del chat.'; }); }
+      else if (window.openai?.openExternal) { event.preventDefault(); window.openai.openExternal({ href: byId('download').href }); }
+    };
+    window.addEventListener('message', event => {
+      if (event.source !== window.parent || event.data?.jsonrpc !== '2.0') return;
+      const message = event.data;
+      if (pending.has(message.id)) {
+        const item = pending.get(message.id); pending.delete(message.id); clearTimeout(item.timer);
+        if (message.error) item.reject(message.error); else item.resolve(message.result);
+      } else if (message.method === 'ui/notifications/tool-result') render(message.params);
+      else if (message.method === 'ui/notifications/tool-cancelled') byId('status').textContent = 'Se canceló la apertura del archivo.';
+      else if (message.method === 'ui/notifications/host-context-changed') applyHostContext(message.params);
+    });
+    function legacyRender() {
+      if (window.openai?.toolOutput) render({ structuredContent: window.openai.toolOutput, _meta: window.openai.toolResponseMetadata });
+    }
+    window.addEventListener('openai:set_globals', legacyRender);
+    new ResizeObserver(resize).observe(document.body);
+    legacyRender();
+    request('ui/initialize', { protocolVersion: '2026-01-26', appInfo: { name: 'Ristak Attachments', version: '1.0.0' }, appCapabilities: {} })
+      .then(result => {
+        initialized = true;
+        applyHostContext(result?.hostContext);
+        window.parent.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/initialized', params: {} }, '*');
+        resize();
+      }).catch(() => legacyRender());
+  </script>
+</body>
+</html>

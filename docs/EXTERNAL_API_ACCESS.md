@@ -92,7 +92,7 @@ the same server URL; `tools/list` returns the exact tools available to the user
 who authorized that connection.
 
 The MCP is a typed control plane over Ristak's business services, not a generic
-route proxy and not unrestricted SQL. The current registry contains 375 typed
+route proxy and not unrestricted SQL. The current registry contains 376 typed
 tools before authorization filtering. `GET /api/api-access/mcp/status` and
 `tools/list` report only the subset visible to the current user, plan, modules
 and granted scopes. It also removes tools whose provider is not connected in
@@ -155,6 +155,75 @@ Spanish/English action and entity terms, ignores filler words and prioritizes
 matches in the tool name; phrases such as `crear un contacto`, `crear un
 calendario`, `crear una plantilla de mensaje` and `agendar una cita` therefore
 select the corresponding mutation before loosely related tools.
+
+### Visor y lectura de adjuntos del chat
+
+`chat_get_conversation` conserva los IDs locales de cada mensaje. Para abrir un
+archivo, llama `chat_open_attachment` con `contactId`, `messageId` y `source`:
+`whatsapp` usa `whatsapp_api_message_id`; `meta` usa
+`meta_social_message_id` de Messenger/Instagram. No uses `wamid`, el ID remoto
+del proveedor ni una URL arbitraria. La lectura puntual conserva la identidad
+telefónica/social de Chat y bloquea contactos ocultos, archivados, mensajes
+retirados y assets eliminados. El visor cubre los adjuntos persistidos de estos
+canales; no agrega soporte de adjuntos de correo que el chat todavía no expone.
+
+La herramienta es de sólo lectura (`ristak.read`) y requiere Chat, Contactos y
+Developers, con sus permisos/licencia vigentes. Entrega:
+
+- imágenes como contenido MCP `image`, disponible para el modelo y el visor;
+- PDFs como páginas JPEG y texto extraído por página, incluso si el documento es
+  un escaneo sin texto seleccionable. Cada llamada procesa hasta tres páginas;
+  `totalPages`, `firstPage`, `lastPage` y `hasMorePages` indican la cobertura y
+  `page` permite continuar. Una vista parcial no prueba el contenido completo;
+- reproductor HTML de video/audio en los formatos que soporte el navegador;
+- vista de texto plano/JSON/XML y descarga del original para cualquier formato,
+  incluidos documentos de Office. No promete renderizar todos los formatos
+  propietarios ni analizar/transcribir el audio o video por sólo reproducirlo.
+
+El renderizador PDF/imagen usa un proceso independiente, sin credenciales de
+cuenta, con máximo de dos procesos simultáneos, 20 segundos, 15 MB de entrada,
+128 MB de heap JavaScript y páginas de hasta 1600 px. El límite de heap no es un
+límite de la memoria nativa del decodificador. Un archivo grande, cifrado,
+corrupto o no compatible conserva la descarga y un estado explícito de vista
+no disponible; nunca se sustituye por contenido inventado. PDF.js y Canvas se
+instalan juntos mediante el lockfile del backend, sin servicio de IA ni API key
+adicional.
+
+El workflow `docker-image` ejecuta la regresión MCP/adjuntos antes de publicar:
+comprueba PDF/Canvas reales también en Linux, páginas escaneadas, paginación,
+descarga/rangos y revocación de acceso. `backend/test/mcpChatAttachments.test.mjs`
+usa base y archivos locales aislados, con una concesión OAuth válida de prueba.
+
+El recurso `ui://ristak/chat-attachment-v1.html` se anuncia mediante
+`_meta.ui.resourceUri` (y el alias `openai/outputTemplate`). El servidor anuncia
+`resources`, implementa `resources/list`, `resources/read` y el listado vacío de
+plantillas; la lectura del recurso vuelve a aplicar la visibilidad de la tool.
+El componente usa el puente MCP Apps `ui/*`, con compatibilidad `window.openai`,
+sin iframes de terceros ni visores de Google/Office. Su CSP permite medios sólo
+desde el origen de esta instalación. Los clientes sin widgets conservan texto,
+imágenes MCP y enlace del original.
+
+`GET/HEAD /api/mcp/attachments/:ticket` transmite el archivo mediante el lector
+canónico de Media, con soporte de rangos para video y cancelación al desconectar.
+No redirige al CDN. El pase dura diez minutos y liga usuario, grant/version OAuth,
+contacto, mensaje y archivo. Cada descarga revalida conexión, scopes, usuario,
+permisos, licencia y pertenencia al chat; revocar acceso invalida el enlace.
+Las URLs legacy sin asset usan la descarga HTTPS acotada existente, con DNS
+público verificado por salto y límite de 25 MB. Las vistas previas se acotan a
+15 MB. No se abre CORS de las APIs privadas ni se comparten credenciales Bunny.
+
+La firma reutiliza `app_config.public_context_signing_secret_v1`, generada
+internamente en la base; no requiere nuevos secrets de entorno. Las respuestas
+usan `no-store`, `nosniff`, `no-referrer` y `noindex`; los enlaces son accesos
+temporales y no deben persistirse en documentación, logs ni datos del CRM.
+Al vencer, el usuario puede pulsar **Actualizar enlace** o pedir abrir el adjunto
+de nuevo. Después de desplegar, un cliente que cachea el catálogo MCP puede
+necesitar refrescar sus herramientas o iniciar un chat nuevo para descubrir el
+visor. La validación local del recurso no sustituye comprobar el plugin instalado
+en ChatGPT después del despliegue.
+
+Fuentes de compatibilidad: [OpenAI: UI de plugins](https://developers.openai.com/plugins/build/chatgpt-ui)
+y [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview).
 
 ### Payment tools
 

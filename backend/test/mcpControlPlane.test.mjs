@@ -209,7 +209,7 @@ test('initialize anuncia instrucciones, protocolo y servidor MCP v2', async () =
   assert.match(response.payload.result.instructions, /sites_patch_html_draft/)
   assert.match(response.payload.result.instructions, /no vuelvas a leer ni reenviar/i)
   assert.match(response.payload.result.instructions, /no construyas.*bloques nativos/i)
-  assert.deepEqual(response.payload.result.capabilities, { tools: { listChanged: false } })
+  assert.deepEqual(response.payload.result.capabilities, { tools: { listChanged: false }, resources: { listChanged: false, subscribe: false } })
 })
 
 test('pagos separa edición, ejecución y cancelación destructiva', async () => {

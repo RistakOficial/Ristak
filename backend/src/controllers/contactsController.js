@@ -7861,6 +7861,57 @@ export function createContactConversationAbortScope(
   }
 }
 
+// Lectura puntual de un adjunto con la misma identidad de contacto que Chat.
+// Nunca acepta una URL/asset arbitrario proporcionado por el cliente MCP.
+export async function resolveContactChatAttachment({ contactId, source, messageId }) {
+  const unavailable = () => Object.assign(new Error('El adjunto no existe o ya no está disponible en este chat.'), {
+    status: 404, code: 'chat_attachment_unavailable'
+  })
+  const filters = await getHiddenContactFilters()
+  const hidden = buildHiddenContactsCondition(filters, 'contacts', false)
+  const contact = await db.get(
+    `SELECT id, phone FROM contacts WHERE id = ? AND deleted_at IS NULL${hidden ? ` AND ${hidden}` : ''}`,
+    [contactId]
+  )
+  if (!contact) throw unavailable()
+  let row
+  if (source === 'whatsapp') {
+    const phones = await getContactPhoneValues(contactId, contact.phone)
+    const match = buildWhatsAppApiMessageContactMatch(contactId, phones.length ? phones : buildContactPhoneCandidates(contact.phone))
+    row = await db.get(
+      `SELECT msg.* FROM whatsapp_api_messages msg
+       LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
+       WHERE msg.id = ? AND ${match.condition} AND COALESCE(msg.hidden_from_chat, 0) = 0`,
+      [messageId, ...match.params]
+    )
+    if (row) {
+      const media = getWhatsAppMediaFromPayload(row.raw_payload_json, row.message_type)
+      row = { ...row, media_url: row.media_url || media.media_url,
+        media_mime_type: row.media_mime_type || media.media_mime_type,
+        media_filename: row.media_filename || media.media_filename }
+    }
+  } else if (source === 'meta') {
+    const ids = await loadLinkedMetaPersonContactIds(contactId)
+    row = await db.get(
+      `SELECT * FROM meta_social_messages WHERE id = ? AND contact_id IN (${ids.map(() => '?').join(',')})`,
+      [messageId, ...ids]
+    )
+  }
+  if (!row || !cleanString(row.media_url) || ['removed', 'deleted', 'delete', 'remove', 'hide', 'hidden'].includes(cleanString(row.status).toLowerCase())) {
+    throw unavailable()
+  }
+  // Una relación telefónica/social no debe resucitar un contacto oculto.
+  if (row.contact_id && row.contact_id !== contactId) {
+    const visibleOwner = await db.get(
+      `SELECT id FROM contacts WHERE id = ? AND deleted_at IS NULL${hidden ? ` AND ${hidden}` : ''}`,
+      [row.contact_id]
+    )
+    if (!visibleOwner) throw unavailable()
+  }
+  return { url: cleanString(row.media_url), mimeType: cleanString(row.media_mime_type),
+    filename: cleanString(row.media_filename), messageType: cleanString(row.message_type) }
+}
+
 export const getContactConversation = async (req, res) => {
   const requestScope = createContactConversationAbortScope(res)
   const requestStartedAt = performance.now()

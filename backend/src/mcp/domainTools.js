@@ -277,7 +277,7 @@ const chatTools = [
   }),
   controllerSpec({
     name: 'chat_get_conversation',
-    description: 'Lee mensajes de una conversación unificada por contacto con paginación hacia atrás.',
+    description: 'Lee mensajes de una conversación unificada por contacto con paginación hacia atrás. Para ver o leer un adjunto usa chat_open_attachment con contactId y whatsapp_api_message_id (source=whatsapp) o meta_social_message_id (source=meta); no intentes leer PDFs sólo abriendo la URL del CDN.',
     module: 'chat', additionalModules: ['contacts'], access: 'read', scope: 'ristak.read', risk: 'low',
     handler: contactsController.getContactConversation,
     inputSchema: schema({

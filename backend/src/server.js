@@ -243,8 +243,12 @@ app.use((req, res, next) => {
   activeRequests += 1
   if (drainClassification === 'http:media-upload') activeUploadRequests += 1
   if (drainAllowed) activeDrainAllowedRequests += 1
+  // El pase del visor es una credencial temporal; nunca guardarlo en el drain.
+  const drainRequestUrl = /^\/api\/mcp\/attachments\//.test(req.path || '')
+    ? '/api/mcp/attachments/[redacted]'
+    : req.originalUrl || req.url || req.path || ''
   const finishDrainWork = drainAllowed
-    ? beginDeployDrainWork(drainClassification, `${req.method} ${req.originalUrl || req.url || req.path || ''}`)
+    ? beginDeployDrainWork(drainClassification, `${req.method} ${drainRequestUrl}`)
     : null
   let completed = false
   const finish = () => {

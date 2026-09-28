@@ -13,6 +13,7 @@ import { domainToolSpecs } from './domainTools.js'
 import { extendedToolSpecs } from './extendedTools.js'
 import { siteToolSpecs } from './siteTools.js'
 import { capabilityToolSpecs } from './capabilityTools.js'
+import { chatAttachmentToolSpecs } from './chatAttachmentTools.js'
 
 const SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|database[_-]?url|encrypted|hash|cookie|idempotency)/i
 const AUDIT_SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|database[_-]?url|encrypted|hash|cookie|idempotency|approval[_-]?ticket|file[_-]?base64|data[_-]?url|bytes[_-]?base64)/i
@@ -347,6 +348,8 @@ function toolDefinition(spec) {
       idempotentHint: spec.idempotentHint ?? spec.idempotencyRequired === true
     },
     _meta: {
+      ...(spec.uiResourceUri ? { ui: { resourceUri: spec.uiResourceUri },
+        'openai/outputTemplate': spec.uiResourceUri, 'openai/widgetAccessible': true } : {}),
       securitySchemes,
       'ristak/domain': spec.module,
       'ristak/risk': riskLevelFor(spec),
@@ -473,7 +476,8 @@ const allSpecs = Object.freeze([
   ...domainToolSpecs,
   ...siteToolSpecs,
   ...extendedToolSpecs,
-  ...capabilityToolSpecs
+  ...capabilityToolSpecs,
+  ...chatAttachmentToolSpecs
 ]
   .filter(entry => !MCP_DISABLED_TOOL_NAMES.has(entry?.name))
   .map(entry => Object.freeze({

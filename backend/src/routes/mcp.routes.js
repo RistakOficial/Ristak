@@ -31,6 +31,8 @@ import {
 } from '../utils/hiddenContactsFilter.js'
 import { logger } from '../utils/logger.js'
 import { invokeController } from '../mcp/controllerInvoker.js'
+import { attachmentWidgetDefinition, readAttachmentWidget } from '../mcp/attachmentWidget.js'
+import { attachmentToolResult, serveMcpChatAttachment } from '../services/mcpChatAttachmentService.js'
 import {
   callRegisteredMcpTool,
   listMcpToolDefinitions,
@@ -51,6 +53,7 @@ const MCP_SERVER_INSTRUCTIONS = [
   'Ristak MCP opera el CRM por acciones de negocio autorizadas.',
   'Lee con ristak.read; modifica borradores con ristak.write; enviar mensajes, registrar pagos, ejecutar automatizaciones o publicar requiere ristak.execute; borrados, cancelaciones y reembolsos requieren ristak.destructive.',
   'Si no conoces el nombre exacto de una herramienta, usa mcp_search_capabilities con la intención en lenguaje natural y filtros opcionales; no adivines nombres.',
+  'Para abrir o leer adjuntos de WhatsApp, Messenger o Instagram, primero consulta chat_get_conversation y después chat_open_attachment con el ID local del mensaje. Esta herramienta entrega visor, original y páginas PDF legibles como imágenes y texto; no dependas del visor web abriendo el CDN. Si hasMorePages=true, continúa por páginas. Una vista fallida o parcial no permite confirmar el contenido completo.',
   'Al retomar una sesión o desde un runtime con polling, usa mcp_events_list y confirma sólo los eventos ya procesados con mcp_events_acknowledge. Una conversación cerrada no puede despertarse por sí sola.',
   'Publicidad/Meta permite consultar y sincronizar datos existentes. El MCP no permite crear ni modificar campañas o borradores de campaña.',
   'La autorización operativa se concede una sola vez mediante los scopes OAuth de la conexión. Ejecuta directamente las herramientas permitidas sin pedir aprobación humana por llamada; conserva una idempotencyKey estable en cada escritura y nunca pidas ni reveles credenciales o secretos.',
@@ -1483,7 +1486,8 @@ async function getCombinedToolDefinitions(context) {
 }
 
 async function callTool(context, name, args) {
-  return textResult(await callRegisteredMcpTool(context, name, args))
+  const result = await callRegisteredMcpTool(context, name, args)
+  return name === 'chat_open_attachment' ? attachmentToolResult(result) : textResult(result)
 }
 
 function toolErrorResult(error) {
@@ -1517,7 +1521,8 @@ async function handleMessage(context, message) {
     return jsonRpcResult(id, {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {
-        tools: { listChanged: false }
+        tools: { listChanged: false },
+        resources: { listChanged: false, subscribe: false }
       },
       serverInfo: {
         name: 'ristak',
@@ -1534,6 +1539,14 @@ async function handleMessage(context, message) {
     })
   }
 
+  if (method === 'resources/list' || method === 'resources/read') {
+    const visible = (await getCombinedToolDefinitions(context)).some(tool => tool.name === 'chat_open_attachment')
+    if (method === 'resources/list') return jsonRpcResult(id, { resources: visible ? [attachmentWidgetDefinition] : [] })
+    if (!visible || params.uri !== attachmentWidgetDefinition.uri) return jsonRpcError(id, -32002, 'Recurso no disponible')
+    return jsonRpcResult(id, await readAttachmentWidget(context.baseUrl))
+  }
+  if (method === 'resources/templates/list') return jsonRpcResult(id, { resourceTemplates: [] })
+
   if (method === 'tools/call') {
     try {
       return jsonRpcResult(id, await callTool(context, params.name, params.arguments || {}))
@@ -1544,6 +1557,10 @@ async function handleMessage(context, message) {
 
   return jsonRpcError(id, -32601, `Método no soportado: ${method}`)
 }
+
+// El pase temporal sustituye al Bearer sólo para este archivo; se revalidan
+// usuario, grant, scopes, módulos, licencia y pertenencia al chat en cada GET.
+router.get('/attachments/:ticket', mcpRateLimiter, serveMcpChatAttachment)
 
 router.get('/', requireMcpAuth, (_req, res) => {
   res.set('Allow', 'POST')
