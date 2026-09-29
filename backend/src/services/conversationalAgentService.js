@@ -14132,24 +14132,32 @@ function normalizeAgentPromptPatch(promptInput, basePrompt) {
   const hasStrategyText = Object.prototype.hasOwnProperty.call(promptInput, 'strategyText')
   const hasPersonalityText = Object.prototype.hasOwnProperty.call(promptInput, 'personalityText')
   const hasLegacyEditableText = Object.prototype.hasOwnProperty.call(promptInput, 'editableText')
+  const includeBusinessDescription = promptInput.includeBusinessDescription === undefined
+    ? normalizedBase.includeBusinessDescription
+    : promptInput.includeBusinessDescription !== false
 
   // Los clientes nuevos pueden parchear un campo sin borrar el otro. Un
   // cliente anterior que sólo envía editableText conserva su semántica: ese
   // texto completo pasa a estrategia y personalidad queda vacía.
   if (hasStrategyText || hasPersonalityText) {
     // Un bundle anterior puede haber recibido los campos schema 2, conservarlos
-    // al hacer spread y editar únicamente editableText. Si el texto legacy ya
-    // no coincide con esos campos, ésa es la edición real del cliente viejo.
+    // al hacer spread y editar únicamente editableText. Sólo es una edición
+    // legacy si los campos nuevos NO cambiaron: una copia derivada anterior
+    // jamás puede descartar la estrategia o personalidad recién editada.
+    const splitChanged = (
+      (hasStrategyText && String(promptInput.strategyText ?? '').replace(/\r\n?/g, '\n') !== normalizedBase.strategyText) ||
+      (hasPersonalityText && String(promptInput.personalityText ?? '').replace(/\r\n?/g, '\n') !== normalizedBase.personalityText)
+    )
     const splitLegacyText = buildLegacyConversationalEditableText(
-      promptInput.strategyText,
-      promptInput.personalityText
+      hasStrategyText ? promptInput.strategyText : normalizedBase.strategyText,
+      hasPersonalityText ? promptInput.personalityText : normalizedBase.personalityText
     )
     const legacyEditableText = String(promptInput.editableText ?? '').replace(/\r\n?/g, '\n')
-    if (hasLegacyEditableText && legacyEditableText !== splitLegacyText) {
+    if (hasLegacyEditableText && !splitChanged && legacyEditableText !== splitLegacyText) {
       return normalizeConversationalPromptConfig({
         schemaVersion: 1,
         templateVersion: promptInput.templateVersion,
-        includeBusinessDescription: normalizedBase.includeBusinessDescription,
+        includeBusinessDescription,
         editableText: promptInput.editableText
       }, { materializeDefault: true })
     }
@@ -14160,10 +14168,10 @@ function normalizeAgentPromptPatch(promptInput, basePrompt) {
     // La app móvil nativa anterior reenvía editableText aunque el usuario sólo
     // cambie el nombre o el modelo. Si el valor sigue idéntico, conservar los
     // dos campos schema 2 en vez de colapsarlos de nuevo a uno solo.
-    if (legacyEditableText === normalizedBase.editableText) return normalizedBase
+    if (legacyEditableText === normalizedBase.editableText) return { ...normalizedBase, includeBusinessDescription }
     return normalizeConversationalPromptConfig({
       ...promptInput,
-      includeBusinessDescription: normalizedBase.includeBusinessDescription
+      includeBusinessDescription
     }, { materializeDefault: true })
   }
   return normalizeConversationalPromptConfig({ ...normalizedBase, ...promptInput }, { materializeDefault: true })

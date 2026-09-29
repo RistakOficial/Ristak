@@ -69,7 +69,16 @@ test('un error general en el tercer intento no fuerza handoff cuando esa capacid
   assert.equal(getInboundMandatoryHandoffEscalationReason({ state: { inboundProcessingLastError: 'invalid input syntax for type timestamp' }, attemptCount: 3, policyConfigured: false }), null)
   assert.equal(getInboundMandatoryHandoffEscalationReason({ attemptCount: 1, policyConfigured: true }), null)
   assert.equal(getInboundMandatoryHandoffEscalationReason({ attemptCount: 3, policyConfigured: true }).marker, 'mandatory_handoff_attempt_threshold')
-  assert.equal(getInboundMandatoryHandoffEscalationReason({ state: { inboundProcessingLastError: 'mandatory_handoff_escalation_pending:handoff_rule_scope_load_failed' }, attemptCount: 1, policyConfigured: false }).marker, 'mandatory_handoff_escalation_pending')
+})
+
+test('un reintento de traspaso respeta la política actual aunque conserve un error antiguo', () => {
+  for (const marker of ['mandatory_handoff_retry_exhausted', 'mandatory_handoff_retry_blocked_post_gate', 'mandatory_handoff_escalation_pending']) {
+    for (const errorField of ['inboundProcessingLastError', 'inbound_processing_last_error']) {
+      const state = { [errorField]: `${marker}:handoff_rule_scope_load_failed` }
+      assert.equal(getInboundMandatoryHandoffEscalationReason({ state, attemptCount: 37000, policyConfigured: false }), null)
+      assert.equal(getInboundMandatoryHandoffEscalationReason({ state, attemptCount: 1, policyConfigured: true }).marker, marker)
+    }
+  }
 })
 
 test('PostgreSQL real carga pendientes, cuenta historial y busca con timestamps nativos y microsegundos', { skip: !process.env.TEST_POSTGRES_URL }, async () => {

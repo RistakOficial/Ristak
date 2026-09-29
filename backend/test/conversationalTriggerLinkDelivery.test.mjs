@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 
 import { db } from '../src/config/database.js'
 import { createConversationalTools } from '../src/agents/conversational/tools.js'
+import { ensureToolCallingV2VisibleReply, buildToolCallingV2ReplyCompletionEffect } from '../src/agents/conversational/runner.js'
 import { createTriggerLink } from '../src/services/triggerLinksService.js'
 import { readTriggerLinkRecipientToken } from '../src/services/triggerLinkRecipientTokenService.js'
 
@@ -59,6 +60,17 @@ test('el agente conversacional entrega el trigger link opaco del contacto y no e
       await readTriggerLinkRecipientToken(new URL(result.sentUrl).pathname.slice(1)),
       { publicId: triggerLink.publicId, contactId }
     )
+    const emptyReply = ensureToolCallingV2VisibleReply('', ctx.actions)
+    assert.ok(emptyReply.includes(result.sentUrl), 'el simulador muestra el enlace preparado aunque la IA termine con la herramienta')
+    assert.match(emptyReply, /aquí tienes el enlace/i)
+    const textReply = ensureToolCallingV2VisibleReply('Aquí puedes continuar.', ctx.actions)
+    assert.ok(textReply.includes(result.sentUrl))
+    assert.equal(ensureToolCallingV2VisibleReply(textReply, ctx.actions), textReply)
+    assert.equal(buildToolCallingV2ReplyCompletionEffect(ctx.actions), null, 'una prueba jamás confirma una entrega real')
+    for (const outcome of [{ status: 'error', ok: false }, { linkPrepared: false }]) {
+      const failedActions = [{ ...ctx.actions[0], outcome: { ...ctx.actions[0].outcome, ...outcome } }]
+      assert.ok(!ensureToolCallingV2VisibleReply('', failedActions).includes(result.sentUrl))
+    }
   } finally {
     if (triggerLink?.id) {
       await db.run('DELETE FROM trigger_link_events WHERE trigger_link_id = ?', [triggerLink.id]).catch(() => undefined)

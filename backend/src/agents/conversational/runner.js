@@ -91,7 +91,7 @@ import {
   hydrateConversationalMessagesMedia,
   hydrateConversationalPreviewMessagesMedia
 } from './mediaContext.js'
-import { retrieveRelevantBusinessKnowledge } from './intelligence/knowledge.js'
+import { buildConversationalBusinessKnowledge } from './intelligence/knowledge.js'
 import {
   buildConversationalCapabilityManifest,
   getConversationalCapabilitiesConfig,
@@ -726,31 +726,6 @@ function getChannelLabel(channel = 'whatsapp') {
     instagram_comment: 'Comentario de Instagram'
   }[normalized] || 'chat'
 }
-// [Fase 2 — base de conocimiento] La info del negocio es UN solo texto libre que el dueño
-// llena en configuración (el campo "información del negocio" del chatbot). Esa es la única
-// fuente de verdad; NO dependemos de extraer campos estructurados ni de un formulario aparte.
-// Se inyecta con la regla anti-invención: el bot responde dirección/horarios/precios/pagos SOLO
-// si están en ese texto, y para lo que no aparezca, ofrece confirmarlo en vez de inventarlo.
-// Genérico para cualquier giro.
-function buildBusinessInfoGroundingRule() {
-  return [
-    'INFORMACIÓN DEL NEGOCIO (tu única fuente de verdad para datos).',
-    'Todo lo que sabes del negocio sale ÚNICAMENTE del texto de abajo: dirección, horarios, precios, formas de pago, servicios, requisitos, promociones, cobertura, lo que sea.',
-    'Si te preguntan un dato que SÍ está en este texto, respóndelo tal cual. Si te preguntan algo que NO aparece aquí, NO lo inventes ni lo supongas: dile a la persona que se lo confirmas en un momento.'
-  ].join('\n')
-}
-
-export function buildRuntimeBusinessContext(rawContext = '', businessProfile = null) {
-  const primary = compactText(businessProfile?.sourceContext, 5000) || compactText(rawContext, 5000)
-  const summary = businessProfile?.configured ? compactText(businessProfile?.summary, 2000) : ''
-  const parts = []
-  if (primary) parts.push(primary)
-  if (summary && (!primary || !primary.includes(summary))) parts.push(`Resumen del negocio:\n${summary}`)
-  const infoText = parts.join('\n\n').trim()
-  if (!infoText) return ''
-  return `${buildBusinessInfoGroundingRule()}\n\n${infoText}`
-}
-
 export function splitReplyIntoParts(reply, deliveryInput = {}) {
   return splitMessageIntoBubblesFallback({
     text: reply,
@@ -2825,6 +2800,14 @@ function nativeActionVisibleUrl(action = {}) {
   return ''
 }
 
+function nativePreviewPreparedLink(action = {}) {
+  return action?.type === 'send_trigger_link' &&
+    action?.outcome?.status === 'simulated' &&
+    action?.outcome?.linkPrepared === true &&
+    !nativeActionFailed(action) &&
+    Boolean(nativeActionVisibleUrl(action))
+}
+
 export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
   const preventiveSuppression = (Array.isArray(actions) ? actions : []).some((action) => (
     action?.type === 'apply_safety_measure' &&
@@ -2850,9 +2833,11 @@ export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
   // Un mismo turno puede guardar primero un dato requerido y después completar
   // la acción terminal. La confirmación visible debe describir el último efecto
   // exitoso, no el primer paso auxiliar del turno.
+  // El simulador también muestra el enlace preparado; eso no lo convierte en
+  // una entrega real ni en evidencia para completar un objetivo en la cuenta.
   const confirmed = [...(Array.isArray(actions) ? actions : [])]
     .reverse()
-    .find(nativeActionSucceeded)
+    .find((action) => nativeActionSucceeded(action) || nativePreviewPreparedLink(action))
   const completedPreviewAppointment = (Array.isArray(actions) ? actions : []).find(nativePreviewAppointmentSucceeded)
   if (!visible) {
     if (completedPreviewAppointment?.type === 'book_appointment') visible = 'listo, la cita de prueba quedó confirmada'
@@ -2884,7 +2869,7 @@ export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
 
   const requiredLinks = []
   for (const action of Array.isArray(actions) ? actions : []) {
-    if (!nativeActionSucceeded(action)) continue
+    if (!nativeActionSucceeded(action) && !nativePreviewPreparedLink(action)) continue
     if (!['create_payment_link', 'send_goal_url', 'send_trigger_link'].includes(action?.type)) continue
     const url = nativeActionVisibleUrl(action)
     if (!url || requiredLinks.some((item) => item.url === url)) continue
@@ -4606,7 +4591,6 @@ async function buildToolCallingV2AgentForRun({
   contactName,
   dryRun,
   channel = 'whatsapp',
-  knowledgeQuery = '',
   executionId = '',
   inboundClaim = null,
   previewScopeId = '',
@@ -4738,11 +4722,9 @@ async function buildToolCallingV2AgentForRun({
     : ''
   const requiredFirstToolChoice = paymentResumeToolChoice || appointmentOfferAdjudicationToolChoice
   const knowledge = includeBusinessDescription
-    ? retrieveRelevantBusinessKnowledge({
+    ? buildConversationalBusinessKnowledge({
         businessProfile,
-        fallbackContext: buildRuntimeBusinessContext(aiConfig?.business_context || '', businessProfile),
-        query: knowledgeQuery,
-        maxChars: 10000
+        runtimeConfig: aiConfig
       })
     : { context: '' }
   const baseInstructions = buildNativeConversationalInstructions({
@@ -4750,7 +4732,7 @@ async function buildToolCallingV2AgentForRun({
     capabilityManifest,
     capabilitiesConfig,
     businessContext: knowledge.context,
-    brandVoice: String(aiConfig?.brand_voice || '').trim(),
+    brandVoice: includeBusinessDescription ? String(aiConfig?.brand_voice || '').trim() : '',
     businessName,
     timezone,
     nowIso,
@@ -5492,11 +5474,14 @@ export function getPendingMandatoryHandoffEscalationReason(state = {}) {
 }
 
 export function getInboundMandatoryHandoffEscalationReason({ state, attemptCount, policyConfigured = false } = {}) {
+  // Un error persistido no puede reactivar una política que el dueño apagó o
+  // eliminó. De lo contrario el resolver la omite y el retry falla para siempre.
+  if (!policyConfigured) return null
   const pending = getPendingMandatoryHandoffEscalationReason(state)
   if (pending) return pending
   const lastError = String(state?.inboundProcessingLastError || state?.inbound_processing_last_error || '')
   if (lastError.startsWith('WHATSAPP_QR_CONNECTION_NOT_READY:')) return null
-  if (!policyConfigured || Math.max(1, Number(attemptCount) || 1) < MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS) return null
+  if (Math.max(1, Number(attemptCount) || 1) < MANDATORY_HANDOFF_GATE_MAX_ATTEMPTS) return null
   return { marker: 'mandatory_handoff_attempt_threshold', errorCode: 'mandatory_handoff_gate_attempts_exhausted' }
 }
 
@@ -6868,7 +6853,6 @@ export async function runToolCallingV2Turn({
     contactName,
     dryRun,
     channel,
-    knowledgeQuery: traceMessage,
     executionId,
     inboundClaim,
     previewScopeId,

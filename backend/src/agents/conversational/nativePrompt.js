@@ -320,12 +320,12 @@ export function buildNativeConversationalInstructions({
     hasSplitPrompt ? promptConfig?.personalityText : ''
   )
   const includeBusinessDescription = promptConfig?.includeBusinessDescription !== false
-  const realBusinessContext = cleanText(businessContext, 10000)
-  const voice = cleanText(brandVoice, 2400)
+  const realBusinessContext = cleanOwnerPromptText(businessContext).trim()
+  const voice = includeBusinessDescription ? cleanOwnerPromptText(brandVoice).trim() : ''
   const visibleBusinessName = cleanText(businessName, 180) || 'este negocio'
   const visibleChannel = cleanText(channel, 80) || 'chat'
   const followUpIndex = Number(followUpContext?.index || 0)
-  const followUpStrategy = cleanText(followUpContext?.strategy, 500)
+  const followUpStrategy = cleanOwnerPromptText(followUpContext?.strategy).trim()
   const followUpInstruction = followUpContext
     ? [
         `Esta vuelta es un seguimiento programado${followUpIndex > 0 ? ` numero ${followUpIndex}` : ''}: la persona todavia no respondio al ultimo mensaje visible.`,

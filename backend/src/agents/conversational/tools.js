@@ -25,7 +25,8 @@ import {
   getConversationalPaymentProviderRawStatus,
   paymentAmountInMinorUnits
 } from '../../services/conversationalAgentLivePaymentService.js'
-import { getBusinessProfileSnapshot, getOpenAIApiKey } from '../../services/aiRuntimeService.js'
+import { getAIRuntimeConfig, getBusinessProfileSnapshot, getOpenAIApiKey } from '../../services/aiRuntimeService.js'
+import { buildConversationalBusinessKnowledge } from './intelligence/knowledge.js'
 import { analyzePaymentReceiptImage } from './mediaContext.js'
 import { getTriggerLink } from '../../services/triggerLinksService.js'
 import { buildTriggerLinkRecipientUrl } from '../../services/triggerLinkRecipientTokenService.js'
@@ -95,6 +96,7 @@ import {
   buildConversationalCapabilityManifest,
   getConversationalCapabilitiesConfig,
   getConversationalCapability,
+  getConversationalPromptConfig,
   isSafeConversationalHttpUrl
 } from './nativeRuntimeConfig.js'
 import {
@@ -7902,6 +7904,7 @@ async function findBoundNativeAppointment({ ctx, config, calendarId }) {
 
 export function createConversationalTools(ctx) {
   const { config } = ctx
+  const includeBusinessDescription = getConversationalPromptConfig(config).includeBusinessDescription !== false
   const runtimeConfig = getToolRuntimeConfig(ctx, config)
   const normalizedCapabilitiesConfig = getConversationalCapabilitiesConfig(runtimeConfig)
   const nativeAppointmentExpectedCapabilitiesFingerprint = createHash('sha256')
@@ -8200,12 +8203,15 @@ export function createConversationalTools(ctx) {
     description: 'Devuelve los datos reales y estructurados del negocio: giro, oferta, ubicación, horarios, teléfonos, pagos, facturación, precios resumidos y calendarios. Úsala antes de responder preguntas del negocio.',
     parameters: z.object({}),
     execute: async () => {
-      const [hlRow, userRow, calendars, businessProfile] = await Promise.all([
+      const [hlRow, userRow, calendars, profileSnapshot, runtimeConfig] = await Promise.all([
         db.get('SELECT location_data FROM highlevel_config LIMIT 1').catch(() => null),
         db.get('SELECT business_name FROM users ORDER BY id ASC LIMIT 1').catch(() => null),
         db.all("SELECT id, name, is_active FROM calendars WHERE is_active = 1 ORDER BY name ASC LIMIT 20").catch(() => []),
-        getBusinessProfileSnapshot().catch(() => null)
+        getBusinessProfileSnapshot().catch(() => null),
+        getAIRuntimeConfig()
       ])
+      const knowledge = buildConversationalBusinessKnowledge({ runtimeConfig, businessProfile: profileSnapshot })
+      const businessProfile = knowledge.profile
 
       let location = null
       try {
@@ -8215,6 +8221,7 @@ export function createConversationalTools(ctx) {
       return {
         ok: true,
         business: {
+          description: knowledge.context || null,
           name: businessProfile?.businessName || businessProfile?.profile?.businessName || location?.name || userRow?.business_name || null,
           industry: businessProfile?.industry || businessProfile?.profile?.industry || null,
           businessType: businessProfile?.businessType || businessProfile?.profile?.businessType || null,
@@ -14583,7 +14590,11 @@ export function createConversationalTools(ctx) {
     }
   }
 
-  const nativeTools = [getBusinessProfileTool, listProductsTool, getContactProfileTool]
+  const nativeTools = [
+    ...(includeBusinessDescription ? [getBusinessProfileTool] : []),
+    listProductsTool,
+    getContactProfileTool
+  ]
 
   if (!ctx.followUpMode && safetyPolicy?.enabled !== false) {
     nativeTools.push(applySafetyMeasureTool)

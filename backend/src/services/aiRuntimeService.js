@@ -189,7 +189,7 @@ function readConfigField(source, camelField, dbField) {
   return source?.[camelField] ?? source?.[dbField] ?? ''
 }
 
-function buildUnifiedBusinessContext(source = {}) {
+export function buildUnifiedBusinessContext(source = {}) {
   const primaryContext = cleanConfigText(
     readConfigField(source, 'businessContext', 'business_context'),
     BUSINESS_CONTEXT_LIMIT

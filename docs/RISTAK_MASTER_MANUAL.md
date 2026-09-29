@@ -9143,7 +9143,12 @@ deja plantillas utiles por defecto y separa las piezas que el dueño sí control
   precios, condiciones, diferenciadores y reglas del negocio. El guardado
   conserva el texto como fuente primaria y prepara un perfil estructurado cuando
   OpenAI esta disponible; aun sin esa extracción, el runtime puede usar la
-  descripción directa. La pantalla muestra el estado y el resumen reconocido.
+  descripción directa completa. Cada turno y seguimiento recibe esa descripción
+  sin seleccionarla por coincidencias con el último mensaje: un "sí" no retira
+  requisitos del contexto. El perfil extraído sólo complementa el texto cuando
+  corresponde a la misma versión guardada; una extracción vieja no puede
+  resucitar información editada o borrada. La pantalla muestra el estado y el
+  resumen reconocido.
 - Estrategia y capacitacion: conocimiento, objetivo, guion y proceso del negocio.
   Es la autoridad sobre que debe lograr la conversacion, que debe ocurrir antes de
   una accion y en que momento se puede consultar, agendar, cobrar, enlazar o
@@ -9152,11 +9157,13 @@ deja plantillas utiles por defecto y separa las piezas que el dueño sí control
   con un selector **Sí/No** si ese perfil compartido forma parte de su memoria.
   El default es **Sí** para conservar el comportamiento de agentes nuevos y
   existentes. Al elegir **No**, el runtime no recupera ni envia esa descripcion
-  al modelo y el agente se basa en su propia Estrategia y capacitacion; las
-  capacidades y sus consultas operativas reales siguen disponibles.
+  al modelo, retira `get_business_profile` y omite la voz general de respaldo.
+  El agente se basa en su propia Estrategia y capacitacion; las capacidades y
+  sus consultas operativas reales siguen disponibles.
 - Personalidad: tono, vocabulario, formalidad, humor, emojis y estilo del agente.
   No puede cambiar el proceso ni adelantar una accion definida por Estrategia. Si
-  queda vacia, la voz general del negocio funciona como respaldo.
+  queda vacia y la descripción general está incluida, la voz general del negocio
+  funciona como respaldo.
 - Capacidades: agenda, cobro, enlace, traspaso y objetivo propio, cada una con su
   configuracion operativa. Activarlas sólo pone la herramienta a disposicion del
   modelo cuando esta completa y lista; no inicia un flujo ni ordena usarla. La
@@ -9192,7 +9199,19 @@ borrador. El contrato `prompt_config` schema 2 conserva `strategyText` y
 migra de forma compatible copiando todo su contenido a estrategia y dejando
 personalidad vacia, sin intentar adivinar como partirlo. El autosave usa una
 revision por borrador para que una respuesta lenta no pise cambios mas nuevos y
-ejecuta cualquier guardado pendiente al cerrar, probar, publicar o salir.
+ejecuta cualquier guardado pendiente al cerrar, probar, publicar o salir. Una
+edición parcial de estrategia o personalidad conserva el otro campo aunque el
+cliente reenvíe una copia anterior de `editableText`; esa copia derivada no puede
+descartar una edición actual. Reenviar el texto sin cambios tampoco impide
+actualizar la preferencia de descripción general.
+
+**Datos requeridos** es una restricción operativa explícita: los campos marcados
+para cualquier acción se exigen también antes de entregar un enlace. Si la
+estrategia encarga nombre, teléfono y correo al formulario de destino, no deben
+configurarse como requisitos previos del chatbot. La IA no elimina por su cuenta
+una restricción del formulario porque el texto de estrategia diga lo contrario.
+La estrategia de seguimiento se entrega completa hasta su límite guardado de
+5000 caracteres, sin recortarla a los primeros 500.
 
 Cada capacidad se configura por separado y un agente puede tener varias. Agenda
 queda amarrada a un calendario; cobro a un producto/precio real o a un anticipo
@@ -9217,6 +9236,15 @@ resuelve por prioridad terminal: si una condicion obligatoria de
 `handoff_human` coincide, en esa vuelta no se permite ejecutar agenda, cobro,
 enlaces ni objetivos. Unicamente `save_contact_data` puede ocurrir antes del
 traspaso cuando el formulario exige completar un dato.
+
+Los reintentos consultan la política actual de traspaso. Un error antiguo de
+escalación no reactiva condiciones que el dueño ya apagó o eliminó; mientras la
+política siga activa, se conserva la escalación pendiente y su protección.
+
+La prueba del chatbot muestra el enlace general preparado aunque el modelo
+termine el turno al llamar `send_trigger_link` sin redactar texto adicional.
+Mostrarlo en el simulador no confirma una entrega real ni completa objetivos en
+la cuenta. Una preparación fallida no agrega una URL a la respuesta.
 
 El campo **Cuándo debe pasarlo** admite hasta 4000 caracteres en escritorio,
 celular y API. Ambas interfaces muestran el conteo y conservan visible un
