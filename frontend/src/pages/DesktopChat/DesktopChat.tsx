@@ -10120,7 +10120,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
                                               className={styles.messageText}
                                             />
                                           ) : message.text ? (
-                                            <WhatsAppFormattedText text={message.text} className={styles.messageText} />
+                                            <WhatsAppFormattedText text={message.text} deleted={!message.isComment && ['removed', 'deleted'].includes(message.status || '')} className={styles.messageText} />
                                           ) : null}
                                         </>
                                       )}

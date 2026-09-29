@@ -2816,8 +2816,9 @@ La mensajeria usa servicios especializados para plantillas, media, atribucion,
 sincronizacion de conversaciones, read states, presencia y eventos.
 
 Cuando el proveedor avisa que se anuló un mensaje de WhatsApp, Instagram DM o
-Messenger, la misma burbuja queda como **Mensaje anulado** y deja de mostrar el
-texto, foto, audio, video, archivo, ubicación o vista previa originales. El aviso
+Messenger, la misma burbuja queda como *Mensaje eliminado*, en gris tenue con
+un icono de mensaje retirado, y deja de mostrar el texto, foto, audio, video,
+archivo, ubicación o vista previa originales. El aviso
 refresca el chat abierto sin crear otro mensaje, aumentar no leídos ni disparar
 una nueva notificación o respuesta automática. Conserva la fecha, dirección e
 identidad del mensaje original. También se retira la vista previa local del
@@ -6723,7 +6724,7 @@ Ristak usa Meta en varias areas:
   Las mutaciones notificadas por Meta se reconcilian sobre ese mismo
   `meta_message_id`: `message_edit` reemplaza el texto sin crear otro globo ni
   incrementar no leidos, y `message.is_deleted=true` conserva una marca
-  `Mensaje anulado` mientras elimina texto, adjunto y payload original. La
+  `Mensaje eliminado` mientras elimina texto, adjunto y payload original. La
   reconciliación reconoce IDs locales importados, limpia copias heredadas del
   mismo MID dentro de la conversación y mantiene `removed` aunque el aviso llegue
   antes que el original o antes de terminar el envío. Aplica a mensajes entrantes

@@ -64,7 +64,7 @@ for (const direction of ['inbound', 'outbound']) {
       await processMetaDirectWebhookPayload({ payload: envelope([{ id: wamid, from: customer, type: 'image', image: { id: 'must-not-download' } }]) })
       const stored = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [messageId])
       assert.equal(stored.status, 'removed')
-      assert.equal(stored.message_text, 'Mensaje anulado')
+      assert.equal(stored.message_text, 'Mensaje eliminado')
       assert.equal(stored.media_url, null)
       assert.equal(stored.context_json, null)
       assert.equal(new Date(stored.message_timestamp).toISOString(), originalTimestamp)
@@ -73,7 +73,7 @@ for (const direction of ['inbound', 'outbound']) {
       assert.ok(stream.join('').includes(`"messageId":"${messageId}"`))
       assert.ok(stream.join('').includes('"isNew":false'))
       const event = (await conversation(contactId)).find(item => item.data?.whatsapp_api_message_id === messageId)
-      assert.equal(event.data.message_text, 'Mensaje anulado')
+      assert.equal(event.data.message_text, 'Mensaje eliminado')
       assert.equal(event.data.media_url, undefined)
       assert.equal(event.data.message_presentation, undefined)
       assert.equal((await processMetaDirectInboundEnrichmentJob({ messageId, payload: { hasMedia: true } })).reason, 'message_removed')
@@ -142,7 +142,7 @@ for (const platform of ['instagram', 'messenger']) {
       const stored = await db.get('SELECT * FROM meta_social_messages WHERE id = ?', [messageId])
       assert.equal(stored.status, 'removed')
       assert.equal(stored.media_url, null)
-      assert.equal(stored.message_text, 'Mensaje anulado')
+      assert.equal(stored.message_text, 'Mensaje eliminado')
       assert.equal(stored.raw_payload_json.includes('private.jpg'), false)
       assert.equal(stored.raw_payload_json.includes('Texto residual'), false)
       assert.equal((await db.get('SELECT COUNT(*) AS count FROM contacts')).count, before.count)
@@ -192,12 +192,12 @@ test('Meta: anula copias heredadas del mismo MID y respeta otro participante', a
   for (const [index, messageId] of messageIds.entries()) {
     const row = await db.get('SELECT status, message_text FROM meta_social_messages WHERE id = ?', [messageId])
     assert.equal(row.status, index === 2 ? 'received' : 'removed')
-    assert.equal(row.message_text, index === 2 ? 'Privado' : 'Mensaje anulado')
+    assert.equal(row.message_text, index === 2 ? 'Privado' : 'Mensaje eliminado')
   }
 })
 test('chat anulado no reconstruye plantilla, ubicación ni media legacy', () => {
   assert.deepEqual(redactRemovedChatMessage({ status: 'removed', message_type: 'template', direction: 'outbound',
     provider_message_id: 'mid', message_text: 'privado', media_url: 'url', postback_payload: 'secreto',
     message_presentation: { body: 'privado' }, referral_body: 'privado', latitude: 10 }),
-  { status: 'removed', message_type: 'text', message_text: 'Mensaje anulado', direction: 'outbound', provider_message_id: 'mid' })
+  { status: 'removed', message_type: 'text', message_text: 'Mensaje eliminado', direction: 'outbound', provider_message_id: 'mid' })
 })

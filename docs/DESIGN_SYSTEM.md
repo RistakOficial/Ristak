@@ -294,6 +294,13 @@ suelto de `showConfirm`. Para `<Modal>` inline es el prop `typeToConfirm="ELIMIN
 **Móvil/Automatizaciones:** la regla es la misma, pero los flujos `Phone*` /
 `data-phone-*` no se tocan desde un cambio de escritorio (§5.8).
 
+**Mensajes eliminados del chat.** `WhatsAppFormattedText` acepta `deleted` y
+muestra `Mensaje eliminado` en cursiva, peso normal, `--chat-bubble-meta` y un
+icono `Ban` decorativo. Escritorio y `/movil` reutilizan esta variante para DMs
+con estado `removed`/`deleted`; no se aplica a comentarios eliminados ni a texto
+normal que casualmente diga lo mismo. Conserva el globo y su posición. Android
+e iOS reproducen el patrón con los colores de metadatos de su tema nativo.
+
 ---
 
 ## 5. ⚠️ ERRORES PROHIBIDOS (se rechazan en review — esto ya pasó, no se repite)

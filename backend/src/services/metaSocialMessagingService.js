@@ -638,7 +638,7 @@ function extractSocialMessage({ objectType, entry, messaging, config }) {
     const isDeleted = messaging.message.is_deleted === true || messaging.is_deleted === true
     if (isDeleted && !cleanString(messaging.message.mid)) return null
     const attachment = isDeleted ? {} : extractAttachment(messaging.message)
-    const text = isDeleted ? 'Mensaje anulado' : cleanString(messaging.message.text)
+    const text = isDeleted ? 'Mensaje eliminado' : cleanString(messaging.message.text)
     return {
       platform,
       direction,
@@ -4759,7 +4759,7 @@ function getMetaSocialMessageLocalId(socialMessage = {}) {
 async function redactMetaSocialMessageRow(database, id) {
   await database.run(`
     UPDATE meta_social_messages SET status = 'removed', message_type = 'text',
-      message_text = 'Mensaje anulado', media_url = NULL, media_mime_type = NULL,
+      message_text = 'Mensaje eliminado', media_url = NULL, media_mime_type = NULL,
       postback_payload = NULL, referral_json = NULL, raw_payload_json = '{"message_deleted":true}',
       updated_at = CURRENT_TIMESTAMP WHERE id = ?
   `, [id])
@@ -4792,7 +4792,7 @@ async function removeMetaSocialMessage(socialMessage) {
         INSERT INTO meta_social_messages (
           id, platform, meta_message_id, sender_id, recipient_id, page_id, instagram_account_id,
           direction, status, message_type, message_text, message_timestamp, raw_payload_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'removed', 'text', 'Mensaje anulado', ?, '{"message_deleted":true}')
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'removed', 'text', 'Mensaje eliminado', ?, '{"message_deleted":true}')
         ON CONFLICT DO NOTHING
       `, [getMetaSocialMessageLocalId(socialMessage), socialMessage.platform, socialMessage.metaMessageId,
         socialMessage.senderId, socialMessage.recipientId, socialMessage.pageId || null,
@@ -4805,7 +4805,7 @@ async function removeMetaSocialMessage(socialMessage) {
   })
   const results = changed.map(row => ({
     messageId: row.id, contactId: row.contact_id || null, platform: socialMessage.platform,
-    direction: row.direction, messageType: 'text', messageText: 'Mensaje anulado',
+    direction: row.direction, messageType: 'text', messageText: 'Mensaje eliminado',
     status: 'removed', isNew: false, timestamp: row.message_timestamp
   }))
   for (const result of results) {

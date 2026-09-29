@@ -752,7 +752,14 @@ struct MessageRowView: View, Equatable {
     @ViewBuilder
     private var textBlock: some View {
         // El globo NO repite el texto plano cuando hay emailDetails (doc 04 §7.6).
-        if message.emailDetails == nil, message.presentation == nil, !message.displayText.isEmpty {
+        if !message.isComment && ["removed", "deleted"].contains(message.status?.lowercased() ?? "") {
+            HStack(spacing: RistakTheme.Spacing.xxs) {
+                Image(systemName: "nosign")
+                    .accessibilityHidden(true)
+                Text("Mensaje eliminado").italic()
+            }
+            .foregroundStyle(RistakTheme.bubbleMeta)
+        } else if message.emailDetails == nil, message.presentation == nil, !message.displayText.isEmpty {
             WhatsAppFormattedMessageText(text: message.displayText)
                 .foregroundStyle(
                     message.failed

@@ -476,7 +476,7 @@ Meta y no se presume para Cloud API sin Coexistence.
 
 `captureWhatsAppMessageDeletion` verifica número de negocio y participante,
 resuelve WAMID/ID del proveedor o llave de protocolo exacta y cambia las filas
-correspondientes a `status=removed`, `message_type=text`, `Mensaje anulado`.
+correspondientes a `status=removed`, `message_type=text`, `Mensaje eliminado`.
 Retira media, texto original, contexto, referral y payload del mensaje; conserva
 ID, contacto, dirección y fecha. Las respuestas de conversación filtran además
 representaciones enriquecidas que pudieran reconstruir el adjunto o texto.

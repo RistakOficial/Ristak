@@ -13,6 +13,6 @@ export function redactRemovedChatMessage(data = {}) {
   if (String(data.message_type || '').startsWith('comment')) return data
   return {
     ...Object.fromEntries(IDENTITY_FIELDS.filter(key => key in data).map(key => [key, data[key]])),
-    status: 'removed', message_type: 'text', message_text: 'Mensaje anulado'
+    status: 'removed', message_type: 'text', message_text: 'Mensaje eliminado'
   }
 }

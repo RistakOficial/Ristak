@@ -8966,7 +8966,7 @@ async function mergeExactWhatsAppMessageRows({ canonicalId, duplicateId }) {
       cleanCanonicalId
     ])
     if (bestStatus === 'removed') {
-      await tx.run(`UPDATE whatsapp_api_messages SET message_type = 'text', message_text = 'Mensaje anulado',
+      await tx.run(`UPDATE whatsapp_api_messages SET message_type = 'text', message_text = 'Mensaje eliminado',
         media_url = NULL, media_mime_type = NULL, media_filename = NULL, media_duration_ms = NULL,
         raw_payload_json = '{"message_deleted":true}', context_json = NULL, referral_json = NULL,
         error_code = NULL, error_message = NULL WHERE id = ?`, [cleanCanonicalId])
@@ -9362,7 +9362,7 @@ function removedWhatsAppMessageResult(row = {}) {
     direction: row.direction, provider: row.provider, transport: row.transport,
     businessPhoneNumberId: row.business_phone_number_id,
     messageTimestamp: row.message_timestamp, messageType: 'text',
-    messageText: 'Mensaje anulado', status: 'removed', isNew: false,
+    messageText: 'Mensaje eliminado', status: 'removed', isNew: false,
     isMutation: true, shouldTriggerInboundSideEffects: false
   }
 }
@@ -9408,7 +9408,7 @@ export async function captureWhatsAppMessageDeletion({
           wamid, protocol_message_key_id, business_phone_number_id, business_phone, phone,
           from_phone, to_phone, transport, direction, message_type, message_text, status,
           message_timestamp, raw_payload_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'text', 'Mensaje anulado', 'removed', ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'text', 'Mensaje eliminado', 'removed', ?, ?)
         ON CONFLICT DO NOTHING
       `, [tombstoneId, identifiers.provider, identifiers.sourceAdapter,
         identifiers.providerMessageId || null, identifiers.metaMessageId || null, identifiers.ycloudMessageId || null,
@@ -9423,7 +9423,7 @@ export async function captureWhatsAppMessageDeletion({
     for (const id of ids) {
       await transaction.run(`
         UPDATE whatsapp_api_messages SET
-          status = 'removed', message_type = 'text', message_text = 'Mensaje anulado',
+          status = 'removed', message_type = 'text', message_text = 'Mensaje eliminado',
           media_url = NULL, media_mime_type = NULL, media_filename = NULL, media_duration_ms = NULL,
           raw_payload_json = ?, context_json = NULL, referral_json = NULL,
           error_code = NULL, error_message = NULL, updated_at = CURRENT_TIMESTAMP

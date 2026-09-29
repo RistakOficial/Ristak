@@ -515,11 +515,11 @@ test('anular mensaje retira adjunto, ubicación y preview optimistas de Android'
     location: { latitude: 1, longitude: 2 }, presentation: { body: 'Privado' },
   };
   const server = {
-    id: 'server-deleted', date: local.date, direction: 'outbound', status: 'removed', text: 'Mensaje anulado',
+    id: 'server-deleted', date: local.date, direction: 'outbound', status: 'removed', text: 'Mensaje eliminado',
   };
   const [result] = mergeNativeChatMessagesAuthoritatively(false, [local], [server]);
   assert.equal(result.id, local.id);
-  assert.equal(result.text, 'Mensaje anulado');
+  assert.equal(result.text, 'Mensaje eliminado');
   assert.equal(result.attachment, undefined);
   assert.equal(result.location, undefined);
   assert.equal(result.presentation, undefined);

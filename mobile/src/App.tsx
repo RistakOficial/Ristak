@@ -56,6 +56,7 @@ import {
   Archive,
   Activity,
   Banknote,
+  Ban,
   BarChart3,
   Bell,
   BellRing,
@@ -25407,6 +25408,8 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
   onReplySwipe?: (message: ChatMessage) => void;
 }) {
   const outbound = message.direction === 'outbound';
+  const deleted = !String(message.messageType || '').startsWith('comment')
+    && ['removed', 'deleted'].includes(String(message.status || '').toLowerCase());
   const system = message.direction === 'system';
   const attachment = message.attachment;
   const attachmentKind = attachment ? getNativeAttachmentKind(attachment) : null;
@@ -25592,7 +25595,12 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
             outbound={outbound && !scheduled}
           />
         ) : null}
-        {message.presentation && !message.location && !message.emailDetails ? (
+        {deleted ? (
+          <View style={styles.deletedMessageNotice}>
+            <Ban size={17} color={styles.deletedMessageText.color} accessibilityElementsHidden importantForAccessibility="no" />
+            <Text style={[styles.messageText, styles.deletedMessageText]}>Mensaje eliminado</Text>
+          </View>
+        ) : message.presentation && !message.location && !message.emailDetails ? (
           <NativeWhatsAppMessagePresentation
             failed={Boolean(message.failed)}
             fallbackText={visibleMessageText}
@@ -34009,6 +34017,16 @@ function createAppStyles() {
     fontSize: 17,
     lineHeight: 22,
     fontWeight: '500',
+  },
+  deletedMessageNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  deletedMessageText: {
+    color: messageBubbleMetaColor,
+    fontStyle: 'italic',
+    fontWeight: '400',
   },
   messageTextOnAccent: {
     color: messageBubbleTextColor,

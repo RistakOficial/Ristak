@@ -49,3 +49,18 @@
   padding: 0 4px;
   background: color-mix(in srgb, currentColor 10%, transparent);
 }
+
+.formattedText.deletedMessage {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375em;
+  color: var(--chat-bubble-meta);
+  font-style: italic;
+  font-weight: 400;
+}
+
+.deletedMessage svg {
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+}

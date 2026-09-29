@@ -16530,7 +16530,7 @@ export const PhoneChat: React.FC = () => {
                     className={styles.messageText}
                   />
                 ) : (
-                  <WhatsAppFormattedText text={previewText} className={styles.messageText} />
+                  <WhatsAppFormattedText text={previewText} deleted={!message.isComment && ['removed', 'deleted'].includes(message.status || '')} className={styles.messageText} />
                 )}
                 {renderMessageMeta(message)}
               </div>
@@ -16626,7 +16626,7 @@ export const PhoneChat: React.FC = () => {
             className={styles.messageText}
           />
         ) : (
-          message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />
+          message.text && <WhatsAppFormattedText text={message.text} deleted={!message.isComment && ['removed', 'deleted'].includes(message.status || '')} className={styles.messageText} />
         )}
         <span className={styles.messageActionPreviewMeta}>
           {starred && (
@@ -17132,8 +17132,8 @@ export const PhoneChat: React.FC = () => {
                       />
                     ) : (
                       <>
-                        {!isEmailMessage && !hasRichAttachment && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
-                        {!isEmailMessage && hasRichAttachment && !isAudioMessage && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
+                        {!isEmailMessage && !hasRichAttachment && message.text && <WhatsAppFormattedText text={message.text} deleted={!message.isComment && ['removed', 'deleted'].includes(message.status || '')} className={styles.messageText} />}
+                        {!isEmailMessage && hasRichAttachment && !isAudioMessage && message.text && <WhatsAppFormattedText text={message.text} deleted={!message.isComment && ['removed', 'deleted'].includes(message.status || '')} className={styles.messageText} />}
                       </>
                     )}
                     {starredMessageIdSet.has(message.id) && (

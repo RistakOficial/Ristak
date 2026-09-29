@@ -1,4 +1,5 @@
 import type { HTMLAttributes, ReactNode } from 'react'
+import { Ban } from 'lucide-react'
 import {
   parseWhatsAppFormattedText,
   parseWhatsAppInlineText,
@@ -64,9 +65,18 @@ function renderLine(line: WhatsAppFormattedLine, index: number) {
 
 export interface WhatsAppFormattedTextProps extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
   text: string
+  deleted?: boolean
 }
 
-export function WhatsAppFormattedText({ text, className, ...props }: WhatsAppFormattedTextProps) {
+export function WhatsAppFormattedText({ text, deleted = false, className, ...props }: WhatsAppFormattedTextProps) {
+  if (deleted) {
+    return (
+      <div {...props} className={classNames(styles.formattedText, styles.deletedMessage, className)} data-message-deleted>
+        <Ban aria-hidden="true" />
+        <em>Mensaje eliminado</em>
+      </div>
+    )
+  }
   return (
     <div {...props} className={classNames(styles.formattedText, className)}>
       {parseWhatsAppFormattedText(text).map(renderLine)}

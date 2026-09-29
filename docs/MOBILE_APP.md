@@ -149,7 +149,9 @@ por uno; si falla solo una parte, no se reenvian los archivos ya confirmados.
 La excepción es un mensaje anulado: `removed`/`deleted` reemplaza el contenido
 local y descarta adjuntos, previews, ubicación y presentación anteriores. Android
 no debe fusionar esos campos desde la copia optimista; iOS tampoco debe recuperar
-el adjunto local cuando el servidor ya envía **Mensaje anulado**. `/movil` y el
+el adjunto local cuando el servidor ya envía **Mensaje eliminado**. Ese aviso
+se muestra en cursiva, gris de metadatos del tema y un icono de mensaje retirado
+en `/movil`, Android e iOS, también para mensajes eliminados ya guardados. `/movil` y el
 escritorio siguen la misma regla en su reconciliador compartido. La identidad de
 la burbuja permanece estable. El origen y los límites de los avisos de Meta/QR
 están descritos en [Chat y mensajería](./RISTAK_MASTER_MANUAL.md#chat-y-mensajeria).
