@@ -621,6 +621,12 @@ de inbound vivo de Baileys es **enriquecer contenido que la API no entregó**:
   habilitado/conectado y el mismo número; respeta un cooldown de cinco minutos.
   Al conectar se revisan hasta veinte entradas pendientes de los últimos siete
   días y las respuestas se marcan como historial para evitar acciones antiguas.
+  Si en diez segundos no llega la copia individual, se pide una sola página de
+  hasta cincuenta mensajes con `fetchMessageHistory`, anclada en el ID real y su
+  timestamp de proveedor en milisegundos. La fila se vuelve a comprobar antes
+  de la consulta; no se pide historial si ya se recuperó, se eliminó, la licencia
+  bloqueó WhatsApp o QR se desconectó/deshabilitó/cambió de número. El timer es
+  de un solo uso, se cancela al cerrar el socket y no agrega un cron.
   Si el teléfono no devuelve el contenido, se conserva el aviso honesto.
 
 Todo envío de texto aceptado por Graph debe persistirse de inmediato con el texto

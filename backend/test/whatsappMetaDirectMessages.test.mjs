@@ -11,6 +11,7 @@ import {
   requestWhatsAppQrUnavailableMessageRecovery,
   resetWhatsAppQrServiceForTest,
   setBaileysRuntimeForTest,
+  setWhatsAppQrInboundRecoveryDelayForTest,
   startWhatsAppQrConnection
 } from '../src/services/whatsappQrService.js'
 import {
@@ -1945,6 +1946,81 @@ test('al reconectar QR se solicita al teléfono el mensaje exacto pendiente y se
     assert.equal(recovered.message_timestamp, stored.message_timestamp)
     assert.equal(effects.length, 0)
   })
+})
+
+async function startUnavailableRecoveryTestSocket({ phoneNumberId, businessPhone, onPlaceholder, onHistory }) {
+  setWhatsAppQrInboundRecoveryDelayForTest(10)
+  setBaileysRuntimeForTest({
+    DisconnectReason: {}, BufferJSON: { replacer: (_key, value) => value, reviver: (_key, value) => value },
+    Browsers: { macOS: name => ['macOS', name, 'Test'] },
+    initAuthCreds: () => ({ me: { id: `${businessPhone.slice(1)}@s.whatsapp.net` }, registered: true }),
+    makeCacheableSignalKeyStore: keys => keys,
+    makeWASocket: () => {
+      const handlers = new Map()
+      const emit = async (event, value) => { for (const handler of handlers.get(event) || []) await handler(value) }
+      const sock = {
+        user: { id: `${businessPhone.slice(1)}@s.whatsapp.net` }, ws: { close() {} },
+        ev: { on(event, handler) { handlers.set(event, [...(handlers.get(event) || []), handler]) }, removeAllListeners() { handlers.clear() } },
+        requestPlaceholderResend: async (key, metadata) => { await onPlaceholder?.(key, metadata); return 'placeholder-request-id' },
+        fetchMessageHistory: async (count, key, timestampMs) => { await onHistory?.({ count, key, timestampMs, emit }); return 'history-request-id' }
+      }
+      queueMicrotask(() => emit('connection.update', { connection: 'open' }))
+      return sock
+    }
+  })
+  await startWhatsAppQrConnection({ phoneNumberId, acceptedRisk: true, acceptedBy: 'test' })
+}
+
+test('si el teléfono no devuelve el placeholder se pide historial con el ID real y timestamp en milisegundos', async () => {
+  await withUnavailableInboundFixture(async ({ receive, phoneNumberId, protocolKey, businessPhone, customerPhone }) => {
+    const missing = await receive()
+    const stored = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [missing.messageId])
+    const timestamp = Number(JSON.parse(stored.raw_payload_json).timestamp)
+    const requests = []
+    const effects = []
+    setMetaDirectInboundSideEffectsForTest(async rows => effects.push(...rows))
+    await startUnavailableRecoveryTestSocket({ phoneNumberId, businessPhone,
+      onHistory: async ({ count, key, timestampMs, emit }) => {
+        requests.push({ count, key, timestampMs })
+        await emit('messaging-history.set', { messages: [{ key, messageTimestamp: timestamp,
+          message: { conversation: 'Respuesta completa del historial del teléfono' } }] })
+      }
+    })
+    for (let attempt = 0; attempt < 100 && (await db.get('SELECT message_type FROM whatsapp_api_messages WHERE id = ?', [missing.messageId])).message_type === 'unsupported'; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    assert.deepEqual(requests, [{ count: 50,
+      key: { id: protocolKey, remoteJid: `${customerPhone.slice(1)}@s.whatsapp.net`, fromMe: false }, timestampMs: timestamp * 1000 }])
+    const recovered = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [missing.messageId])
+    assert.equal(recovered.message_text, 'Respuesta completa del historial del teléfono')
+    assert.equal(recovered.message_timestamp, stored.message_timestamp)
+    assert.equal(effects.length, 0)
+    assert.equal((await db.get('SELECT COUNT(*) AS total FROM whatsapp_api_messages WHERE protocol_message_key_id = ?', [protocolKey])).total, 1)
+  })
+})
+
+test('no se pide historial si el mensaje ya se recuperó, se borró, QR se apagó o el socket se cerró', async () => {
+  for (const reason of ['recovered', 'removed', 'disabled', 'disconnected']) {
+    await withUnavailableInboundFixture(async ({ receive, capture, phoneNumberId, businessPhone }) => {
+      const missing = await receive()
+      let requested = false
+      let historyRequests = 0
+      await startUnavailableRecoveryTestSocket({ phoneNumberId, businessPhone,
+        onPlaceholder: async () => {
+          if (reason === 'recovered') await capture({ historyImport: true })
+          if (reason === 'removed') await db.run("UPDATE whatsapp_api_messages SET status = 'removed' WHERE id = ?", [missing.messageId])
+          if (reason === 'disabled') await db.run('UPDATE whatsapp_api_phone_numbers SET qr_send_enabled = 0 WHERE id = ?', [phoneNumberId])
+          if (reason === 'disconnected') resetWhatsAppQrServiceForTest()
+          requested = true
+        },
+        onHistory: async () => { historyRequests++ }
+      })
+      for (let attempt = 0; attempt < 100 && !requested; attempt++) await new Promise(resolve => setTimeout(resolve, 10))
+      assert.equal(requested, true, reason)
+      await new Promise(resolve => setTimeout(resolve, 50))
+      assert.equal(historyRequests, 0, reason)
+    })
+  }
 })
 
 test('las claves binarias de archivos QR sobreviven al almacenamiento y las restaura Baileys', async () => {

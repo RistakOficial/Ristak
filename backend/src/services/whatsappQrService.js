@@ -83,8 +83,10 @@ const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
 const liveSessions = new Map()
 const qrRecentMessageAcks = new Map()
 const qrInboundRecoveryRequests = new Map()
+const qrInboundHistoryRecoveryTimers = new Map()
 let baileysRuntime = null
 let reconnectDelayOverrideForTest = null
+let inboundRecoveryDelayOverrideForTest = null
 let recoveredWhatsAppWebVersion = null
 let whatsAppWebVersionRecoveryPromise = null
 let lastWhatsAppWebVersionRecoveryAt = 0
@@ -1445,6 +1447,56 @@ async function handleQrHistorySync(phone, history = {}, sock = null) {
 
 // Pide al teléfono vinculado la copia de un mensaje concreto. Es una operación
 // interna de lectura; no reenvía un WhatsApp al contacto ni cambia el número.
+function cancelQrInboundHistoryRecovery(phoneNumberId, sock = null) {
+  for (const [requestKey, pending] of qrInboundHistoryRecoveryTimers) {
+    if (pending.phoneNumberId !== phoneNumberId || (sock && pending.sock !== sock)) continue
+    clearTimeout(pending.timer)
+    qrInboundHistoryRecoveryTimers.delete(requestKey)
+  }
+}
+
+async function requestUnavailableQrMessageHistory({ row, live, key, timestampMs }) {
+  if (liveSessions.get(row.business_phone_number_id)?.sock !== live.sock || !live.connected) return
+  const current = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [row.id])
+  if (!isUnavailableWhatsAppInbound(current) ||
+    current.business_phone_number_id !== row.business_phone_number_id ||
+    current.protocol_message_key_id !== key.id ||
+    normalizePhoneForStorage(current.phone) !== normalizePhoneForStorage(row.phone) ||
+    normalizePhoneForStorage(current.business_phone) !== normalizePhoneForStorage(row.business_phone)) return
+  const { canRunBackgroundJob } = await import('./licenseService.js')
+  if (!(await canRunBackgroundJob('whatsapp'))) return
+  const session = await db.get(`SELECT s.connected_phone, s.status, p.qr_send_enabled
+    FROM whatsapp_qr_sessions s JOIN whatsapp_api_phone_numbers p ON p.id = s.phone_number_id
+    WHERE s.phone_number_id = ?`, [row.business_phone_number_id])
+  if (session?.status !== 'connected' || Number(session.qr_send_enabled) !== 1 ||
+    normalizePhoneForStorage(session.connected_phone) !== normalizePhoneForStorage(row.business_phone) ||
+    liveSessions.get(row.business_phone_number_id)?.sock !== live.sock || !live.connected) return
+  // Baileys espera milisegundos en oldestMsgTimestampMs, aunque los mensajes
+  // y requestPlaceholderResend usan segundos. El ancla es el mensaje real.
+  await live.sock.fetchMessageHistory(50, key, timestampMs)
+  logger.info(`[WhatsApp QR] Historial de contenido solicitado para ${row.id} (${key.id})`)
+}
+
+function scheduleUnavailableQrMessageHistory({ row, live, key, timestampMs, requestKey }) {
+  if (typeof live.sock?.fetchMessageHistory !== 'function' || !live.connected ||
+    liveSessions.get(row.business_phone_number_id)?.sock !== live.sock) return
+  const previous = qrInboundHistoryRecoveryTimers.get(requestKey)
+  if (previous) clearTimeout(previous.timer)
+  const timer = setTimeout(() => {
+    qrInboundHistoryRecoveryTimers.delete(requestKey)
+    void requestUnavailableQrMessageHistory({ row, live, key, timestampMs }).catch(error => {
+      logger.warn(`[WhatsApp QR] No se pudo solicitar el historial de ${row.id}: ${error.message}`)
+    })
+  }, inboundRecoveryDelayOverrideForTest ?? 10000)
+  timer.unref?.()
+  qrInboundHistoryRecoveryTimers.set(requestKey, { phoneNumberId: row.business_phone_number_id, sock: live.sock, timer })
+  while (qrInboundHistoryRecoveryTimers.size > 200) {
+    const oldestKey = qrInboundHistoryRecoveryTimers.keys().next().value
+    clearTimeout(qrInboundHistoryRecoveryTimers.get(oldestKey).timer)
+    qrInboundHistoryRecoveryTimers.delete(oldestKey)
+  }
+}
+
 export async function requestWhatsAppQrUnavailableMessageRecovery({ row = {}, historyImport = false } = {}) {
   if (!isUnavailableWhatsAppInbound(row) || !cleanString(row.protocol_message_key_id)) {
     return { skipped: true, reason: 'not_unavailable_inbound' }
@@ -1485,6 +1537,10 @@ export async function requestWhatsAppQrUnavailableMessageRecovery({ row = {}, hi
     key, messageTimestamp: Math.floor(instant.toMillis() / 1000),
     ristakQrContentRecovery: { historyImport: historyImport === true }
   })
+  const providerSeconds = Number(raw.timestamp)
+  scheduleUnavailableQrMessageHistory({ row, live, key, requestKey,
+    timestampMs: Number.isSafeInteger(providerSeconds) && providerSeconds > 0
+      ? providerSeconds * 1000 : instant.toMillis() })
   logger.info(`[WhatsApp QR] Recuperación de contenido solicitada para ${row.id} (${key.id})`)
   return { skipped: false, messageId: row.id }
 }
@@ -1838,17 +1894,26 @@ export function setWhatsAppQrReconnectDelayForTest(delayMs = null) {
     : null
 }
 
+export function setWhatsAppQrInboundRecoveryDelayForTest(delayMs = null) {
+  const numericDelay = Number(delayMs)
+  inboundRecoveryDelayOverrideForTest = delayMs != null && Number.isFinite(numericDelay) && numericDelay >= 0
+    ? numericDelay : null
+}
+
 export function resetWhatsAppQrServiceForTest() {
   for (const phoneNumberId of [...liveSessions.keys()]) {
     closeLiveSession(phoneNumberId)
   }
   baileysRuntime = null
   reconnectDelayOverrideForTest = null
+  inboundRecoveryDelayOverrideForTest = null
   recoveredWhatsAppWebVersion = null
   whatsAppWebVersionRecoveryPromise = null
   lastWhatsAppWebVersionRecoveryAt = 0
   qrRecentMessageAcks.clear()
   qrInboundRecoveryRequests.clear()
+  for (const pending of qrInboundHistoryRecoveryTimers.values()) clearTimeout(pending.timer)
+  qrInboundHistoryRecoveryTimers.clear()
   connectionOpenListeners.clear()
 }
 
@@ -2573,6 +2638,7 @@ function mapSessionForResponse(row = {}) {
 
 function closeLiveSession(phoneNumberId, { releaseLease = true } = {}) {
   const live = liveSessions.get(phoneNumberId)
+  cancelQrInboundHistoryRecovery(phoneNumberId)
   liveSessions.delete(phoneNumberId)
 
   if (live?.reconnectTimer) {
@@ -2854,6 +2920,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
     }
 
     if (update.connection === 'close') {
+      cancelQrInboundHistoryRecovery(phone.id, sock)
       const statusCode = getDisconnectStatusCode(update)
       const lastError = getDisconnectMessage(update)
       const status = statusCode ? `disconnected_${statusCode}` : 'disconnected'

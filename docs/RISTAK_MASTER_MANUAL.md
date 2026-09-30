@@ -4356,7 +4356,9 @@ burbuja con la copia QR del mensaje exacto. Conserva su hora, contacto e identid
 no suma mensajes no leídos ni notificaciones. La copia pendiente se conserva
 brevemente en la base para cubrir cualquier orden de llegada y reinicios.
 Al conectar QR se pide al teléfono el contenido reciente pendiente y se repara
-como historial, sin respuestas automáticas antiguas. Si WhatsApp no devuelve el
+como historial, sin respuestas automáticas antiguas. Si la copia individual no
+llega, se consulta un bloque acotado del mismo chat mientras QR siga conectado;
+sólo se completa el mensaje cuyo identificador coincida. Si WhatsApp no devuelve el
 mensaje, el chat explica que su contenido no está disponible y puede consultarse
 en WhatsApp; no lo presenta como un problema de pago. El contrato completo vive
 en `docs/integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md`.
