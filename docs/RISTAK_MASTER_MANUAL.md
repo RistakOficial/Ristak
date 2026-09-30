@@ -4358,8 +4358,10 @@ brevemente en la base para cubrir cualquier orden de llegada y reinicios.
 Al conectar QR se pide al teléfono el contenido reciente pendiente y se repara
 como historial, sin respuestas automáticas antiguas. Si la copia individual no
 llega, se consulta un bloque acotado del mismo chat mientras QR siga conectado;
-sólo se completa el mensaje cuyo identificador coincida. Si WhatsApp no devuelve el
-mensaje, el chat explica que su contenido no está disponible y puede consultarse
+sólo se completa el mensaje cuyo identificador coincida. Si WhatsApp no devuelve
+el contenido por el número del contacto, también se intenta con la identidad interna
+verificada del mismo chat. Las copias tardías conservan el tratamiento histórico.
+Si WhatsApp no devuelve el mensaje, el chat explica que su contenido no está disponible y puede consultarse
 en WhatsApp; no lo presenta como un problema de pago. El contrato completo vive
 en `docs/integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md`.
 Los bloques de HistorySync sí se importan. En históricos, el WAMID

@@ -1408,7 +1408,8 @@ async function handleQrIncomingMessages(phone, upsert = {}, sock = null, { histo
               wamid
             })
           : null,
-        historyImport: historyImport || message.ristakQrContentRecovery?.historyImport === true
+        historyImport: historyImport || message.ristakQrContentRecovery?.historyImport === true ||
+          qrInboundRecoveryRequests.get(`${phone.id}:${wamid}`)?.historyImport === true
       })
 
       if (!result?.skipped && result?.isNew) {
@@ -1471,6 +1472,31 @@ async function requestUnavailableQrMessageHistory({ row, live, key, timestampMs 
   if (session?.status !== 'connected' || Number(session.qr_send_enabled) !== 1 ||
     normalizePhoneForStorage(session.connected_phone) !== normalizePhoneForStorage(row.business_phone) ||
     liveSessions.get(row.business_phone_number_id)?.sock !== live.sock || !live.connected) return
+  // El teléfono puede identificar un chat por LID en lugar de PN. Sólo se usa
+  // esa alternativa si el mapping de Baileys confirma el mismo interlocutor
+  // en ambas direcciones. No confundimos un número telefónico con un LID.
+  const mapping = live.sock.signalRepository?.lidMapping
+  try {
+    if (typeof mapping?.getLIDForPN === 'function' && typeof mapping?.getPNForLID === 'function') {
+      const lid = normalizeJid(await mapping.getLIDForPN(key.remoteJid))
+      const pn = isLidJid(lid) ? await mapping.getPNForLID(lid) : ''
+      if (isLidJid(lid) && normalizePhoneForStorage(normalizePhoneFromJid(pn)) === normalizePhoneForStorage(row.phone) &&
+        liveSessions.get(row.business_phone_number_id)?.sock === live.sock && live.connected &&
+        isUnavailableWhatsAppInbound(await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [row.id]))) {
+        const alternateKey = { id: key.id, remoteJid: lid, fromMe: false }
+        await live.sock.requestPlaceholderResend(alternateKey, {
+          key: { ...alternateKey, remoteJidAlt: key.remoteJid, addressingMode: 'lid' },
+          messageTimestamp: Math.floor(timestampMs / 1000),
+          ristakQrContentRecovery: { historyImport: qrInboundRecoveryRequests.get(`${row.business_phone_number_id}:${key.id}`)?.historyImport === true }
+        })
+        logger.info(`[WhatsApp QR] Copia con identidad LID verificada solicitada para ${row.id} (${key.id})`)
+      }
+    }
+  } catch (error) {
+    logger.warn(`[WhatsApp QR] No se pudo solicitar la copia LID de ${row.id}; se conserva la consulta por teléfono: ${error.message}`)
+  }
+  if (liveSessions.get(row.business_phone_number_id)?.sock !== live.sock || !live.connected ||
+    !isUnavailableWhatsAppInbound(await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [row.id]))) return
   // Baileys espera milisegundos en oldestMsgTimestampMs, aunque los mensajes
   // y requestPlaceholderResend usan segundos. El ancla es el mensaje real.
   await live.sock.fetchMessageHistory(50, key, timestampMs)
@@ -1516,7 +1542,8 @@ export async function requestWhatsAppQrUnavailableMessageRecovery({ row = {}, hi
     return { skipped: true, reason: 'qr_phone_mismatch_or_disabled' }
   }
   const requestKey = `${phoneNumberId}:${row.protocol_message_key_id}`
-  if (Date.now() - (qrInboundRecoveryRequests.get(requestKey) || 0) < 5 * 60 * 1000) {
+  if (Date.now() - (qrInboundRecoveryRequests.get(requestKey)?.requestedAt || 0) < 5 * 60 * 1000) {
+    if (historyImport) qrInboundRecoveryRequests.get(requestKey).historyImport = true
     return { skipped: true, reason: 'recovery_already_requested' }
   }
   let raw = {}
@@ -1531,7 +1558,7 @@ export async function requestWhatsAppQrUnavailableMessageRecovery({ row = {}, hi
     return { skipped: true, reason: 'qr_connection_changed' }
   }
   const key = { remoteJid: `${sender.replace(/\D/g, '')}@s.whatsapp.net`, fromMe: false, id: row.protocol_message_key_id }
-  qrInboundRecoveryRequests.set(requestKey, Date.now())
+  qrInboundRecoveryRequests.set(requestKey, { requestedAt: Date.now(), historyImport: historyImport === true })
   while (qrInboundRecoveryRequests.size > 200) qrInboundRecoveryRequests.delete(qrInboundRecoveryRequests.keys().next().value)
   await live.sock.requestPlaceholderResend(key, {
     key, messageTimestamp: Math.floor(instant.toMillis() / 1000),

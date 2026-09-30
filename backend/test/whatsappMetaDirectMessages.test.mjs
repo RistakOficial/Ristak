@@ -1948,7 +1948,7 @@ test('al reconectar QR se solicita al teléfono el mensaje exacto pendiente y se
   })
 })
 
-async function startUnavailableRecoveryTestSocket({ phoneNumberId, businessPhone, onPlaceholder, onHistory }) {
+async function startUnavailableRecoveryTestSocket({ phoneNumberId, businessPhone, onPlaceholder, onHistory, lidMapping }) {
   setWhatsAppQrInboundRecoveryDelayForTest(10)
   setBaileysRuntimeForTest({
     DisconnectReason: {}, BufferJSON: { replacer: (_key, value) => value, reviver: (_key, value) => value },
@@ -1960,8 +1960,9 @@ async function startUnavailableRecoveryTestSocket({ phoneNumberId, businessPhone
       const emit = async (event, value) => { for (const handler of handlers.get(event) || []) await handler(value) }
       const sock = {
         user: { id: `${businessPhone.slice(1)}@s.whatsapp.net` }, ws: { close() {} },
+        signalRepository: { lidMapping },
         ev: { on(event, handler) { handlers.set(event, [...(handlers.get(event) || []), handler]) }, removeAllListeners() { handlers.clear() } },
-        requestPlaceholderResend: async (key, metadata) => { await onPlaceholder?.(key, metadata); return 'placeholder-request-id' },
+        requestPlaceholderResend: async (key, metadata) => { await onPlaceholder?.(key, metadata, emit); return 'placeholder-request-id' },
         fetchMessageHistory: async (count, key, timestampMs) => { await onHistory?.({ count, key, timestampMs, emit }); return 'history-request-id' }
       }
       queueMicrotask(() => emit('connection.update', { connection: 'open' }))
@@ -2019,6 +2020,63 @@ test('no se pide historial si el mensaje ya se recuperó, se borró, QR se apag�
       assert.equal(requested, true, reason)
       await new Promise(resolve => setTimeout(resolve, 50))
       assert.equal(historyRequests, 0, reason)
+    })
+  }
+})
+
+test('una copia con LID verificado recupera el mensaje exacto aunque el teléfono omita metadata histórica', async () => {
+  await withUnavailableInboundFixture(async ({ receive, phoneNumberId, protocolKey, businessPhone, customerPhone }) => {
+    const missing = await receive()
+    const stored = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [missing.messageId])
+    const pn = `${customerPhone.slice(1)}@s.whatsapp.net`
+    const lid = '123456789012345@lid'
+    const requests = []
+    const effects = []
+    let historyRequests = 0
+    setMetaDirectInboundSideEffectsForTest(async rows => effects.push(...rows))
+    await startUnavailableRecoveryTestSocket({ phoneNumberId, businessPhone,
+      lidMapping: { getLIDForPN: async value => { assert.equal(value, pn); return lid },
+        getPNForLID: async value => { assert.equal(value, lid); return pn } },
+      onPlaceholder: async (key, metadata, emit) => {
+        requests.push(key)
+        if (key.remoteJid === lid) {
+          assert.equal(metadata.key.remoteJidAlt, pn)
+          await emit('messages.upsert', { type: 'notify', messages: [{ key: metadata.key,
+            messageTimestamp: metadata.messageTimestamp, message: { conversation: 'Copia original del chat con LID' } }] })
+        }
+      },
+      onHistory: async () => { historyRequests++ }
+    })
+    for (let attempt = 0; attempt < 100 && (await db.get('SELECT message_type FROM whatsapp_api_messages WHERE id = ?', [missing.messageId])).message_type === 'unsupported'; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    assert.deepEqual(requests, [{ id: protocolKey, remoteJid: pn, fromMe: false }, { id: protocolKey, remoteJid: lid, fromMe: false }])
+    const recovered = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [missing.messageId])
+    assert.equal(recovered.message_text, 'Copia original del chat con LID')
+    assert.equal(recovered.message_timestamp, stored.message_timestamp)
+    assert.equal(effects.length, 0)
+    assert.equal(historyRequests, 0)
+  })
+})
+
+test('un LID incorrecto o una falla de mapping no altera el destinatario ni bloquea la consulta por teléfono', async () => {
+  for (const reason of ['wrong_phone', 'lookup_error']) {
+    await withUnavailableInboundFixture(async ({ receive, phoneNumberId, businessPhone }) => {
+      await receive()
+      const requests = []
+      let historyRequests = 0
+      await startUnavailableRecoveryTestSocket({ phoneNumberId, businessPhone,
+        lidMapping: { getLIDForPN: async () => {
+          if (reason === 'lookup_error') throw new Error('Mapping no disponible')
+          return '123456789012345@lid'
+        }, getPNForLID: async () => '15885559999@s.whatsapp.net' },
+        onPlaceholder: async key => requests.push(key),
+        onHistory: async () => { historyRequests++ }
+      })
+      for (let attempt = 0; attempt < 100 && !historyRequests; attempt++) await new Promise(resolve => setTimeout(resolve, 10))
+      assert.equal(historyRequests, 1, reason)
+      assert.equal(requests.length, 1, reason)
+      assert.ok(requests[0].remoteJid.endsWith('@s.whatsapp.net'), reason)
     })
   }
 })

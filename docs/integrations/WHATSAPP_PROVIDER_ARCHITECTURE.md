@@ -627,6 +627,11 @@ de inbound vivo de Baileys es **enriquecer contenido que la API no entregó**:
   de la consulta; no se pide historial si ya se recuperó, se eliminó, la licencia
   bloqueó WhatsApp o QR se desconectó/deshabilitó/cambió de número. El timer es
   de un solo uso, se cancela al cerrar el socket y no agrega un cron.
+  Antes del historial, si Baileys conoce un LID y su mapping inverso confirma el
+  mismo teléfono del contacto, también se solicita esa copia por la identidad
+  interna del chat. La consulta de historial conserva el PN; jamás se inventan
+  LIDs a partir de un teléfono. El claim de solicitud recuerda si era histórico
+  aunque la respuesta tarde y Baileys ya haya vencido su cache de metadata.
   Si el teléfono no devuelve el contenido, se conserva el aviso honesto.
 
 Todo envío de texto aceptado por Graph debe persistirse de inmediato con el texto
