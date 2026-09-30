@@ -74,10 +74,10 @@ async function loadRecovery(queryable, planId, sourcePaymentId) {
 
 // Explicit repair only. Never infer a plan's tax from today's account settings
 // or apply this automatically to historical plans or already paid installments.
-export async function recoverPaymentPlanTax(planId, sourcePaymentId, { dryRun = true, actorId, expectedPreviewHash } = {}) {
+export async function recoverPaymentPlanTax(planId, sourcePaymentId, { dryRun = true, actorId, expectedPreviewRevision } = {}) {
   const preview = ({ flow, targets, mode, tax }) => ({
     planId: flow.id, sourcePaymentId, mode, currency: flow.currency,
-    previewHash: crypto.createHash('sha256').update(JSON.stringify({
+    previewRevision: crypto.createHash('sha256').update(JSON.stringify({
       planId: flow.id, sourcePaymentId, mode, tax, metadata: flow.metadata,
       payments: targets.map(({ row }) => row)
     })).digest('hex'),
@@ -92,7 +92,7 @@ export async function recoverPaymentPlanTax(planId, sourcePaymentId, { dryRun = 
   return db.transaction(async (tx) => {
     const context = await loadRecovery(tx, planId, sourcePaymentId)
     if (!context.targets.length) return { dryRun: false, changed: false, ...preview(context) }
-    if (expectedPreviewHash !== preview(context).previewHash) throw conflict('Consulta la vista previa y confirma su previewHash antes de aplicar la reparación.')
+    if (expectedPreviewRevision !== preview(context).previewRevision) throw conflict('Consulta la vista previa y confirma su previewRevision antes de aplicar la reparación.')
     const { flow, metadata, tax, targets } = context
     const audit = { sourcePaymentId, actorId: String(actorId || ''), restoredAt: new Date().toISOString() }
     const claimed = await tx.run(

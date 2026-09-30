@@ -257,7 +257,7 @@ operational payment matrix rather than exposing provider routes generically:
   `payments_recover_plan_tax` (restore missing tax on unpaid Stripe installments
   from an explicitly selected paid transaction in the same plan). Both mutations
   default to `dryRun=true` and require `ristak.execute` plus idempotency. Tax
-  repair also requires the exact `expectedPreviewHash` returned by its preview,
+  repair also requires the exact `expectedPreviewRevision` returned by its preview,
   checks identities/currency/mode and preserves amounts, schedules and paid
   history. It must follow the administrator's fiscal decision; a card setup fee
   alone does not establish the intended treatment of an entire plan;

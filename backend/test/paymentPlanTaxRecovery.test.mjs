@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import { db } from '../src/config/database.js'
 import { recoverPaymentPlanTax } from '../src/services/paymentPlanTaxRecoveryService.js'
+import { sanitizeMcpResult } from '../src/mcp/toolRegistry.js'
 
 async function fixture(run) {
   const id = crypto.randomUUID()
@@ -37,10 +38,11 @@ async function fixture(run) {
 test('legacy tax repair previews without writes and preserves amounts, dates and paid history', async () => {
   await fixture(async ({ planId, sourcePaymentId, paidId, nextId, read }) => {
     const before = await read()
-    const preview = await recoverPaymentPlanTax(planId, sourcePaymentId)
+    const preview = sanitizeMcpResult(await recoverPaymentPlanTax(planId, sourcePaymentId))
+    assert.match(preview.previewRevision, /^[a-f0-9]{64}$/)
     assert.deepEqual(await read(), before)
     assert.deepEqual(preview.payments, [{ paymentId: nextId, amount: 1160, subtotalAmount: 1000, taxAmount: 160, rateValue: 16, calculationMode: 'inclusive' }])
-    const result = await recoverPaymentPlanTax(planId, sourcePaymentId, { dryRun: false, actorId: 'admin_fixture', expectedPreviewHash: preview.previewHash })
+    const result = await recoverPaymentPlanTax(planId, sourcePaymentId, { dryRun: false, actorId: 'admin_fixture', expectedPreviewRevision: preview.previewRevision })
     assert.equal(result.changed, true)
     const after = await read()
     assert.deepEqual(after.installments, before.installments)
@@ -68,13 +70,13 @@ test('legacy tax repair previews without writes and preserves amounts, dates and
 test('legacy repair requires the reviewed preview and rejects a changed amount', async () => {
   await fixture(async ({ planId, sourcePaymentId, nextId, read }) => {
     const before = await read()
-    await assert.rejects(() => recoverPaymentPlanTax(planId, sourcePaymentId, { dryRun: false }), /previewHash/)
+    await assert.rejects(() => recoverPaymentPlanTax(planId, sourcePaymentId, { dryRun: false }), /previewRevision/)
     assert.deepEqual(await read(), before)
     const preview = await recoverPaymentPlanTax(planId, sourcePaymentId)
     await db.run('UPDATE payments SET amount = 2320 WHERE id = ?', [nextId])
     await db.run('UPDATE installment_payments SET amount = 2320 WHERE payment_id = ?', [nextId])
     const changed = await read()
-    await assert.rejects(() => recoverPaymentPlanTax(planId, sourcePaymentId, { dryRun: false, expectedPreviewHash: preview.previewHash }), /previewHash/)
+    await assert.rejects(() => recoverPaymentPlanTax(planId, sourcePaymentId, { dryRun: false, expectedPreviewRevision: preview.previewRevision }), /previewRevision/)
     assert.deepEqual(await read(), changed)
   })
 })

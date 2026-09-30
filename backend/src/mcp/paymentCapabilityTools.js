@@ -362,14 +362,14 @@ function savedCardTool({ name, provider, handler, source, sourceField = 'payment
 const transactionInsightTools = [
   executeTool({
     name: 'payments_recover_plan_tax',
-    description: 'Repara explícitamente el impuesto ausente de parcialidades no cobradas de un plan Stripe legacy, desde un pago confirmado del mismo plan. No cambia importes, fechas, moneda ni pagos históricos. Exige validación fiscal del administrador. dryRun=true devuelve el desglose y previewHash; para aplicar exige dryRun=false y expectedPreviewHash. No emite facturas ni envía mensajes.',
+    description: 'Repara explícitamente el impuesto ausente de parcialidades no cobradas de un plan Stripe legacy, desde un pago confirmado del mismo plan. No cambia importes, fechas, moneda ni pagos históricos. Exige validación fiscal del administrador. dryRun=true devuelve el desglose y previewRevision; para aplicar exige dryRun=false y expectedPreviewRevision. No emite facturas ni envía mensajes.',
     module: 'payments',
     featureKeys: ['payment_plans'],
     adminOnly: true,
     handler: paymentPlansController.recoverPaymentPlanFiscalTax,
-    inputSchema: schema({ planId: ID, sourcePaymentId: ID, dryRun: { type: 'boolean', default: true }, expectedPreviewHash: { type: 'string', pattern: '^[a-f0-9]{64}$' } }, ['planId', 'sourcePaymentId']),
+    inputSchema: schema({ planId: ID, sourcePaymentId: ID, dryRun: { type: 'boolean', default: true }, expectedPreviewRevision: { type: 'string', pattern: '^[a-f0-9]{64}$' } }, ['planId', 'sourcePaymentId']),
     params: args => ({ scheduleId: args.planId }),
-    body: args => ({ sourcePaymentId: args.sourcePaymentId, dryRun: args.dryRun !== false, expectedPreviewHash: args.expectedPreviewHash })
+    body: args => ({ sourcePaymentId: args.sourcePaymentId, dryRun: args.dryRun !== false, expectedPreviewRevision: args.expectedPreviewRevision })
   }),
   readTool({
     name: 'payments_inspect_fiscal_invoice',

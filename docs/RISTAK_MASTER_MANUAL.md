@@ -5118,8 +5118,8 @@ Los planes Stripe legacy no se backfillean automáticamente. Con una decisión
 fiscal explícita del administrador, `payments_recover_plan_tax` puede restaurar
 el snapshot ausente del plan y de sus parcialidades no cobradas a partir de un
 pago confirmado del mismo plan, contacto, moneda y ambiente. La vista previa
-devuelve IDs, importes, base, impuesto y `previewHash`; aplicar exige ese mismo
-`expectedPreviewHash`, admin e idempotencia. La operación es transaccional,
+devuelve IDs, importes, base, impuesto y `previewRevision`; aplicar exige ese mismo
+`expectedPreviewRevision`, admin e idempotencia. La operación es transaccional,
 reclama el plan a `editing`, rechaza cobros en proceso y verifica cada fila antes
 de escribir. Nunca sobrescribe elecciones fiscales explícitas, cambia importes,
 fechas, tarjetas o pagos históricos ni emite CFDI. Guarda procedencia y actor en

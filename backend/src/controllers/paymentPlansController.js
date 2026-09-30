@@ -21,7 +21,7 @@ export const recoverPaymentPlanFiscalTax = async (req, res) => {
   try {
     const data = await recoverPaymentPlanTax(req.params.scheduleId, req.body?.sourcePaymentId, {
       dryRun: req.body?.dryRun !== false,
-      expectedPreviewHash: req.body?.expectedPreviewHash,
+      expectedPreviewRevision: req.body?.expectedPreviewRevision,
       actorId: req.user?.id
     })
     res.json({ success: true, data })
