@@ -4,7 +4,7 @@ import crypto from 'node:crypto'
 import { db, databaseReady, setAppConfig } from '../src/config/database.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
-import { getGigstackContactLink, getGigstackClientContext, linkGigstackContact, searchGigstackClients, resolveGigstackClientForPayment } from '../src/services/gigstackContactService.js'
+import { getGigstackContactLink, getGigstackClientContext, linkGigstackContact, validateGigstackContact, searchGigstackClients, resolveGigstackClientForPayment } from '../src/services/gigstackContactService.js'
 import { recoverPaymentFiscalTax } from '../src/services/paymentFiscalTaxRecoveryService.js'
 import { inspectGigstackPaymentForTransaction, issueGigstackInvoiceForTransaction, registerGigstackPaymentForTransactionInBackground, setGigstackInvoiceDeliveryDependenciesForTest } from '../src/services/gigstackInvoiceService.js'
 import { paymentCapabilityToolSpecs } from '../src/mcp/paymentCapabilityTools.js'
@@ -104,6 +104,57 @@ test('client discovery keeps pagination and phone matching never trusts an incom
     assert.ok(calls.some(url => url.includes('next=client_first')))
     globalThis.fetch = async () => response({ data: [client('client_us', { phone: '+15512345678' })], has_more: false })
     await assert.rejects(resolveGigstackClientForPayment({ ...await read(), contact_phone: '+525512345678' }, settings, 'test'), { code: 'missing_gigstack_client' })
+  })
+})
+
+test('fiscal validation requires a reviewed bound receiver and never stamps pending receipts or changes fiscal data', async () => {
+  await fixture(async ({ contactId, read }) => {
+    await assert.rejects(validateGigstackContact({ contactId, mode: 'test' }), { code: 'gigstack_client_link_conflict' })
+    const binding = await linkGigstackContact({ contactId, clientId: 'client_fixture', mode: 'test' })
+    await linkGigstackContact({ contactId, clientId: 'client_fixture', mode: 'test', dryRun: false, expectedPreviewRevision: binding.previewRevision })
+    const calls = []
+    let valid = false
+    globalThis.fetch = async (url, options) => {
+      const path = new URL(url).pathname
+      calls.push([options.method, path])
+      if (options.method === 'POST') {
+        assert.equal(path, '/v2/clients/validate/client_fixture')
+        assert.equal(options.body, undefined)
+        valid = true
+        return response({ data: { fiscal_validation: { status: 'valid', message: 'Validado' } } })
+      }
+      return response({ data: client('client_fixture', { is_valid: valid }) })
+    }
+    const args = { contactId, mode: 'test' }
+    const before = await read()
+    const preview = await validateGigstackContact(args)
+    assert.equal(preview.client.isValid, false)
+    assert.equal(calls.some(([method]) => method === 'POST'), false)
+    await assert.rejects(validateGigstackContact({ ...args, dryRun: false }), { code: 'gigstack_client_link_conflict' })
+    const applied = await validateGigstackContact({ ...args, dryRun: false, expectedPreviewRevision: preview.previewRevision })
+    assert.equal(applied.client.isValid, true)
+    assert.equal(applied.validation.status, 'valid')
+    assert.equal(calls.filter(([method]) => method === 'POST').length, 1)
+    assert.equal(calls.some(([method]) => method === 'PUT'), false)
+    assert.deepEqual(await read(), before)
+    assert.equal(JSON.parse((await getGigstackContactLink(contactId, await getGigstackClientContext('test'))).client_profile_json).isValid, true)
+  })
+})
+
+test('a rejected fiscal validation preserves the real rejection and blocks invoice issuance', async () => {
+  await fixture(async ({ contactId, sourcePaymentId }) => {
+    const binding = await linkGigstackContact({ contactId, clientId: 'client_fixture', mode: 'test' })
+    await linkGigstackContact({ contactId, clientId: 'client_fixture', mode: 'test', dryRun: false, expectedPreviewRevision: binding.previewRevision })
+    const reason = 'El domicilio fiscal no coincide con el SAT.'
+    globalThis.fetch = async (_url, options) => options.method === 'POST'
+      ? response({ data: { fiscal_validation: { status: 'not_valid', message: reason } } })
+      : response({ data: client('client_fixture', { is_valid: false, fiscal_validation: { status: 'not_valid', message: reason } }) })
+    const preview = await validateGigstackContact({ contactId, mode: 'test' })
+    const applied = await validateGigstackContact({ contactId, mode: 'test', dryRun: false, expectedPreviewRevision: preview.previewRevision })
+    assert.equal(applied.client.isValid, false)
+    assert.equal(applied.validation.message, reason)
+    await assert.rejects(issueGigstackInvoiceForTransaction(sourcePaymentId), { code: 'gigstack_client_fiscal_incomplete', message: reason })
+    assert.equal((await db.get('SELECT COUNT(*) AS count FROM gigstack_invoice_jobs WHERE payment_id = ?', [sourcePaymentId])).count, 0)
   })
 })
 
@@ -229,8 +280,8 @@ test('manual issuance rejects incomplete receivers, stale identity and an active
 })
 
 test('backend tools require an administrator, idempotency and reviewed previews for application', async () => {
-  const tools = paymentCapabilityToolSpecs.filter(tool => ['payments_search_fiscal_clients', 'payments_link_fiscal_contact', 'payments_recover_payment_tax', 'payments_issue_fiscal_invoice'].includes(tool.name))
-  assert.equal(tools.length, 4)
+  const tools = paymentCapabilityToolSpecs.filter(tool => ['payments_search_fiscal_clients', 'payments_link_fiscal_contact', 'payments_validate_fiscal_contact', 'payments_recover_payment_tax', 'payments_issue_fiscal_invoice'].includes(tool.name))
+  assert.equal(tools.length, 5)
   for (const tool of tools) {
     assert.equal(tool.adminOnly, true)
     await assert.rejects(tool.execute({ invoke: (handler, request) => invokeController(handler, { user: { id: 2, role: 'member' } }, request) }, { contactId: 'contact', paymentId: 'payment', mode: 'test', idempotencyKey: 'fixture-key' }), { code: 'admin_required' })

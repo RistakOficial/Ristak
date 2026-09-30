@@ -32,6 +32,7 @@ test('MCP expone la matriz operativa de pagos sin endpoints de secretos ni check
     'payments_update_automation_settings',
     'payments_search_fiscal_clients',
     'payments_link_fiscal_contact',
+    'payments_validate_fiscal_contact',
     'payments_recover_payment_tax',
     'payments_issue_fiscal_invoice',
     'payments_recover_plan_tax',

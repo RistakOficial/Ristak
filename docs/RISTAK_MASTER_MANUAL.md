@@ -5142,6 +5142,13 @@ nuevos en el frontend. El MCP administrativo ofrece:
   vista previa y revisión vigente. Conserva total, fechas e historial del pago;
   no sobrescribe `tax.enabled=false`, `applyTax=false` ni actividad fiscal.
   La procedencia y el actor quedan en `metadata_json.fiscalTaxRecovery`.
+- `payments_validate_fiscal_contact`: consulta la validación del receptor ya
+  vinculado y permite repetirla explícitamente con vista previa vigente. Usa
+  [POST /clients/validate/{id}](https://docs.gigstack.io/validate-client-fiscal-information-20352665e0),
+  vuelve a leer el cliente y devuelve `isValid` y `fiscalValidation` con el motivo
+  de rechazo. No modifica RFC, nombre, domicilio ni régimen, no actualiza el
+  cliente mediante PUT y no timbra recibos pendientes. Una validación rechazada
+  permanece rechazada; nunca se sustituye por un estado válido local.
 - `payments_issue_fiscal_invoice`: revisa receptor existente y validado,
   desglose guardado, total y forma de pago antes de emitir explícitamente una
   PUE. `dryRun=true` no escribe ni timbra; aplicar exige revisión vigente y usa
@@ -5156,6 +5163,7 @@ nuevos en el frontend. El MCP administrativo ofrece:
 Las escrituras requieren admin, `ristak.execute` e idempotencia. Los endpoints
 equivalentes son `GET /api/transactions/fiscal-clients`,
 `POST /api/transactions/fiscal-clients/:contactId/link`,
+`POST /api/transactions/fiscal-clients/:contactId/validate`,
 `POST /api/transactions/:id/fiscal-tax/recover` y
 `POST /api/transactions/:id/fiscal-invoice/issue`, protegidos por autenticación,
 acceso a pagos, admin y clave idempotente. Vincular no factura por sí mismo;

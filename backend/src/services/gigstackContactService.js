@@ -21,6 +21,13 @@ export async function getGigstackClientContext(mode, settings) {
   return { mode, teamId: identity.teamId, token }
 }
 
+function safeFiscalValidation(raw, context) {
+  return {
+    status: clean(raw?.status, 80),
+    message: clean(raw?.message, 1000).split(context.token).join('[REDACTED]')
+  }
+}
+
 function safeClient(raw, context) {
   const client = raw?.data && !Array.isArray(raw.data) ? raw.data : raw
   if (!client?.id) throw conflict('Gigstack no devolvió la identidad del cliente.')
@@ -34,6 +41,7 @@ function safeClient(raw, context) {
     phone: clean(client.phone, 80), taxId: clean(client.tax_id),
     legalName: clean(client.legal_name), taxSystem: clean(client.tax_system),
     postalCode: clean(client.address?.zip, 20), isValid: client.is_valid === true,
+    fiscalValidation: safeFiscalValidation(client.fiscal_validation, context),
     teamId: context.teamId, mode: context.mode
   }
 }
@@ -131,6 +139,31 @@ export async function rememberGigstackClient(contactId, profile, context, source
     SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM contacts WHERE id = ? AND deleted_at IS NULL)
     ON CONFLICT(contact_id, payment_mode, team_id) DO NOTHING`,
   [contactId, context.mode, context.teamId, profile.id, JSON.stringify(profile), source, contactId])
+}
+
+// This endpoint validates only the linked receiver. Unlike updating a client,
+// it never asks Gigstack to stamp all of that client's pending receipts.
+export async function validateGigstackContact({ contactId, mode, dryRun = true, expectedPreviewRevision } = {}) {
+  contactId = clean(contactId)
+  const context = await getGigstackClientContext(mode)
+  const contact = await getContact(contactId)
+  const existing = await getGigstackContactLink(contactId, context)
+  if (!existing) throw conflict('Primero vincula el contacto con su cliente de Gigstack.')
+  const profile = await getGigstackClient(existing.client_id, context)
+  const preview = linkPreview(contact, context, profile, existing)
+  if (dryRun !== false) return { dryRun: true, ...preview }
+  if (expectedPreviewRevision !== preview.previewRevision) throw conflict('La ficha fiscal o el vínculo cambió. Revisa la vista previa antes de validarlo.')
+  const result = await gigstackRequest(`/clients/validate/${encodeURIComponent(profile.id)}`, { token: context.token, method: 'POST', timeoutMs: 30_000 })
+  const validated = await getGigstackClient(profile.id, context)
+  await db.transaction(async tx => {
+    await tx.run('UPDATE contacts SET id = id WHERE id = ?', [contactId])
+    const current = linkPreview(await getContact(contactId, tx), context, profile, await getGigstackContactLink(contactId, context, tx))
+    if (current.previewRevision !== expectedPreviewRevision) throw conflict('El vínculo cambió durante la validación. El resultado no se guardó en otro receptor.')
+    await tx.run(`UPDATE gigstack_contact_links SET client_profile_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE contact_id = ? AND payment_mode = ? AND team_id = ? AND client_id = ?`,
+    [JSON.stringify(validated), contactId, context.mode, context.teamId, profile.id])
+  })
+  return { dryRun: false, ...preview, client: validated, validation: safeFiscalValidation(result.data?.fiscal_validation, context) }
 }
 
 export async function resolveGigstackClientForPayment(row, settings, mode) {

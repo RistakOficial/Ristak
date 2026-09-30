@@ -67,9 +67,9 @@ export function assertGigstackTokenMode(token, mode) {
   return metadata
 }
 
-export async function gigstackRequest(path, { token, method = 'GET', body } = {}) {
+export async function gigstackRequest(path, { token, method = 'GET', body, timeoutMs = GIGSTACK_REQUEST_TIMEOUT_MS } = {}) {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), GIGSTACK_REQUEST_TIMEOUT_MS)
+  const timeout = setTimeout(() => controller.abort(), Math.max(1, Math.min(Number(timeoutMs) || GIGSTACK_REQUEST_TIMEOUT_MS, 30_000)))
   timeout.unref?.()
   try {
     const response = await fetch(`${GIGSTACK_API_BASE_URL}${path}`, {

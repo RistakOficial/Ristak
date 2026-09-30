@@ -1364,7 +1364,7 @@ export async function issueGigstackInvoiceForTransaction(paymentId, {
     if (!payload.client.id) throw createGigstackError('Vincula primero el contacto con el ID existente de Gigstack para emitir manualmente.', { status: 409, code: 'gigstack_client_link_required' })
     client = await getGigstackClient(payload.client.id, context)
     if (!client.isValid || !client.taxId || !client.legalName || !client.postalCode || !client.taxSystem) {
-      throw createGigstackError('El receptor fiscal no está validado o tiene datos fiscales incompletos en Gigstack.', { status: 409, code: 'gigstack_client_fiscal_incomplete' })
+      throw createGigstackError(client.fiscalValidation.message || 'El receptor fiscal no está validado o tiene datos fiscales incompletos en Gigstack.', { status: 409, code: 'gigstack_client_fiscal_incomplete' })
     }
   }
   const preview = {

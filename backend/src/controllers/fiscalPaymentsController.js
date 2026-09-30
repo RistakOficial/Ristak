@@ -1,4 +1,4 @@
-import { searchGigstackClients, linkGigstackContact } from '../services/gigstackContactService.js'
+import { searchGigstackClients, linkGigstackContact, validateGigstackContact } from '../services/gigstackContactService.js'
 import { recoverPaymentFiscalTax } from '../services/paymentFiscalTaxRecoveryService.js'
 import { issueGigstackInvoiceForTransaction } from '../services/gigstackInvoiceService.js'
 
@@ -17,6 +17,9 @@ const adminAction = operation => async (req, res) => {
 export const searchFiscalClients = adminAction(req => searchGigstackClients(req.query))
 export const linkFiscalContact = adminAction(req => linkGigstackContact({
   ...req.body, contactId: req.params.contactId, dryRun: req.body?.dryRun !== false, actorId: req.user.id
+}))
+export const validateFiscalContact = adminAction(req => validateGigstackContact({
+  ...req.body, contactId: req.params.contactId, dryRun: req.body?.dryRun !== false
 }))
 export const recoverFiscalPaymentTax = adminAction(req => recoverPaymentFiscalTax(req.params.id, req.body.sourcePaymentId, {
   dryRun: req.body?.dryRun !== false, expectedPreviewRevision: req.body.expectedPreviewRevision, actorId: req.user.id

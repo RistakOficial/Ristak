@@ -383,6 +383,15 @@ const transactionInsightTools = [
     body: args => ({ ...cleanControls(args), dryRun: args.dryRun !== false })
   }),
   executeTool({
+    name: 'payments_validate_fiscal_contact',
+    description: 'Revalida ante Gigstack la ficha fiscal del cliente ya vinculado al contacto, sin cambiar sus datos, cobrar, facturar recibos pendientes ni mandar mensajes. Sólo admin. dryRun=true consulta el estado y devuelve previewRevision; aplicar exige dryRun=false y expectedPreviewRevision. Devuelve el estado fiscal y el motivo de rechazo.',
+    module: 'payments', adminOnly: true,
+    handler: fiscalPaymentsController.validateFiscalContact,
+    inputSchema: schema({ contactId: ID, mode: { type: 'string', enum: ['test', 'live'] }, dryRun: { type: 'boolean', default: true }, expectedPreviewRevision: { type: 'string', pattern: '^[a-f0-9]{64}$' } }, ['contactId', 'mode']),
+    params: args => ({ contactId: args.contactId }),
+    body: args => ({ ...cleanControls(args), dryRun: args.dryRun !== false })
+  }),
+  executeTool({
     name: 'payments_recover_payment_tax',
     description: 'Restaura sólo el impuesto ausente de un pago confirmado legacy desde otro pago confirmado del mismo plan, contacto, moneda y ambiente. Exige decisión fiscal explícita de admin. No modifica importes ni emite CFDI. dryRun=true devuelve desglose y previewRevision; aplicar exige expectedPreviewRevision.',
     module: 'payments', adminOnly: true,
