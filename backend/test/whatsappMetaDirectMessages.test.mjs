@@ -6,7 +6,18 @@ import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import { getDeployDrainSnapshot } from '../src/utils/deployDrainTracker.js'
 import { getContactConversation } from '../src/controllers/contactsController.js'
-import { markLatestInboundWhatsAppQrMessageReadForContact } from '../src/services/whatsappQrService.js'
+import {
+  markLatestInboundWhatsAppQrMessageReadForContact,
+  requestWhatsAppQrUnavailableMessageRecovery,
+  resetWhatsAppQrServiceForTest,
+  setBaileysRuntimeForTest,
+  startWhatsAppQrConnection
+} from '../src/services/whatsappQrService.js'
+import {
+  getUnavailableWhatsAppInboundsForQrRecovery,
+  getWhatsAppQrInboundBackup,
+  storeWhatsAppQrInboundBackup
+} from '../src/services/whatsappInboundRecoveryService.js'
 import {
   captureQrChatMessage,
   getWhatsAppApiConfigKeys,
@@ -1685,6 +1696,270 @@ test('retry de media Meta recupera la misma fila sin duplicar claim ni callback 
     await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
   }
+})
+
+async function withUnavailableInboundFixture(callback) {
+  const suffix = randomUUID()
+  const phoneNumberId = `meta_unavailable_${suffix}`
+  const wabaId = `waba_unavailable_${suffix}`
+  const businessPhone = '+15885550001'
+  const customerPhone = '+52565550002'
+  const protocolKey = `3EB0${suffix.replaceAll('-', '').slice(0, 20).toUpperCase()}`
+  const wamid = `wamid.${Buffer.from(`\u0000${customerPhone.slice(1)}\u0000${protocolKey}\u0000`).toString('base64')}`
+  let contactId = ''
+  try {
+    await withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, async () => {
+      await db.run("UPDATE whatsapp_api_phone_numbers SET qr_send_enabled = 1, qr_status = 'connected', qr_connected_phone = ? WHERE id = ?", [businessPhone, phoneNumberId])
+      setMetaDirectFetchForTest(async () => graphResponse({ data: [] }))
+      const payload = webhookEnvelope({
+        wabaId, phoneNumberId, businessPhone,
+        contacts: [{ wa_id: customerPhone.slice(1), profile: { name: 'Cliente Recuperación' } }],
+        messages: [{
+          id: wamid, from: customerPhone.slice(1), timestamp: String(Math.floor(Date.now() / 1000)),
+          type: 'unsupported', unsupported: { type: 'unknown', raw_type: 'unknown' },
+          errors: [{ code: 131060, title: 'This message is unavailable.',
+            message: 'This message is unavailable.', error_data: { details: 'This message is currently unavailable.' } }]
+        }]
+      })
+      const receive = async () => {
+        const [result] = await processMetaDirectWebhookPayload({ payload, eventRowId: `evt-${suffix}` })
+        contactId = result.contactId
+        return result
+      }
+      const capture = overrides => captureQrChatMessage({
+        phoneNumberId, businessPhone, contactPhone: customerPhone, direction: 'inbound',
+        wamid: protocolKey, messageType: 'text', text: 'Sí, te mandé mi respuesta completa.',
+        timestamp: new Date().toISOString(),
+        raw: { key: { id: protocolKey, remoteJid: `${customerPhone.slice(1)}@s.whatsapp.net`, fromMe: false },
+          message: { conversation: 'Sí, te mandé mi respuesta completa.' } },
+        ...overrides
+      })
+      await callback({ receive, capture, payload, phoneNumberId, businessPhone, customerPhone, protocolKey, wamid })
+    })
+  } finally {
+    setMetaDirectInboundSideEffectsForTest(null)
+    resetWhatsAppQrServiceForTest()
+    await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId])
+    await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId])
+    await db.run('DELETE FROM chat_delivery_outbox WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM whatsapp_api_attribution WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR wamid = ?', [contactId, wamid])
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId, customerPhone])
+    await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, customerPhone])
+  }
+}
+
+test('131060 recupera el texto QR en la misma burbuja, conserva identidad y no repite unread ni respuestas', async () => {
+  await withUnavailableInboundFixture(async ({ receive, capture, protocolKey }) => {
+    const effects = []
+    setMetaDirectInboundSideEffectsForTest(async rows => effects.push(...rows))
+    const missing = await receive()
+    assert.equal(missing.providerContentUnavailable, true)
+    const before = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [missing.messageId])
+    const recovered = await capture()
+    assert.equal(recovered.contentRecovered, true)
+    assert.equal(recovered.messageId, missing.messageId)
+    assert.equal(recovered.isNew, false)
+    const row = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [missing.messageId])
+    for (const field of ['id', 'contact_id', 'provider', 'transport', 'source_adapter', 'wamid', 'meta_message_id', 'provider_message_id', 'message_timestamp', 'created_at']) {
+      assert.deepEqual(row[field], before[field], `la recuperación no cambia ${field}`)
+    }
+    assert.equal(row.message_type, 'text')
+    assert.equal(row.message_text, 'Sí, te mandé mi respuesta completa.')
+    assert.equal(row.error_code, null)
+    assert.equal(row.error_message, null)
+    const raw = JSON.parse(row.raw_payload_json)
+    assert.equal(raw.qrInboundRecovery.protocolMessageKeyId, protocolKey)
+    assert.equal(raw.qrInboundRecovery.originalPayload.errors[0].code, 131060)
+    assert.equal(raw.errors, undefined)
+    const conversation = await readConversation(missing.contactId)
+    const messages = conversation.filter(event => event.type === 'whatsapp_message')
+    assert.equal(messages.length, 1)
+    assert.equal(messages[0].data.message_text, 'Sí, te mandé mi respuesta completa.')
+    assert.notEqual(messages[0].data.presentation?.kind, 'unsupported')
+    await capture()
+    const retry = await receive()
+    assert.equal(retry.isNew, false)
+    assert.equal(retry.messageText, 'Sí, te mandé mi respuesta completa.')
+    assert.equal(retry.providerContentUnavailable, false)
+    assert.equal((await db.get('SELECT COUNT(*) AS total FROM chat_inbound_message_claims WHERE message_id = ?', [missing.messageId])).total, 1)
+    assert.equal(effects.length, 1)
+  })
+})
+
+test('QR antes de Meta queda oculto y sobrevive a un reinicio; el webhook recupera el contenido una sola vez', async () => {
+  await withUnavailableInboundFixture(async ({ receive, capture, protocolKey }) => {
+    assert.equal((await capture()).reason, 'official_api_active')
+    assert.equal((await db.get('SELECT COUNT(*) AS total FROM whatsapp_api_messages WHERE protocol_message_key_id = ?', [protocolKey])).total, 0)
+    resetWhatsAppQrServiceForTest()
+    const received = await receive()
+    assert.equal(received.messageText, 'Sí, te mandé mi respuesta completa.')
+    assert.equal(received.providerContentUnavailable, false)
+    assert.equal(received.shouldTriggerInboundSideEffects, true)
+    const push = await getChatDeliveryJob({ jobKind: CHAT_DELIVERY_JOB_KIND.PUSH, messageId: received.messageId })
+    assert.equal(push.payload.text, received.messageText)
+    assert.equal(push.payload.messageType, 'text')
+    assert.equal((await receive()).isNew, false)
+  })
+})
+
+test('la recuperación exige el ID exacto y el mismo interlocutor, no mezcla mensajes por texto u hora', async () => {
+  await withUnavailableInboundFixture(async ({ receive, capture }) => {
+    const missing = await receive()
+    await capture({ contactPhone: '+52565559999' })
+    await capture({ wamid: '3EB0DEADBEEFDEADBEEF0000', raw: null })
+    const row = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [missing.messageId])
+    assert.equal(row.message_type, 'unsupported')
+    assert.equal(row.message_text, null)
+    assert.equal(row.error_code, '131060')
+  })
+})
+
+test('un QR histórico repara 131060 sin nuevas respuestas, push ni claims', async () => {
+  await withUnavailableInboundFixture(async ({ receive, capture }) => {
+    const effects = []
+    setMetaDirectInboundSideEffectsForTest(async rows => effects.push(...rows))
+    const missing = await receive()
+    const jobsBefore = await db.get('SELECT COUNT(*) AS total FROM chat_delivery_outbox WHERE message_id = ?', [missing.messageId])
+    const recovered = await capture({ historyImport: true })
+    assert.equal(recovered.messageId, missing.messageId)
+    assert.equal(recovered.contentRecovered, true)
+    assert.equal(recovered.shouldTriggerInboundSideEffects, false)
+    assert.equal(effects.length, 0)
+    assert.equal((await db.get('SELECT COUNT(*) AS total FROM chat_delivery_outbox WHERE message_id = ?', [missing.messageId])).total, jobsBefore.total)
+    assert.equal((await db.get('SELECT COUNT(*) AS total FROM chat_inbound_message_claims WHERE message_id = ?', [missing.messageId])).total, 1)
+    assert.equal((await capture({ historyImport: true })).reason, 'official_api_message_exists')
+  })
+})
+
+test('el contenido recuperado incluye archivos QR y nunca revive un mensaje eliminado', async () => {
+  await withUnavailableInboundFixture(async ({ receive, capture }) => {
+    const missing = await receive()
+    let downloads = 0
+    await capture({
+      messageType: 'image', text: 'Aquí está la información',
+      resolveInboundMedia: async () => {
+        downloads++
+        return { mediaUrl: 'https://media.example.test/recovered.jpg', mediaMimeType: 'image/jpeg', mediaFilename: 'foto.jpg' }
+      }
+    })
+    const row = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [missing.messageId])
+    assert.equal(row.message_type, 'image')
+    assert.equal(row.media_url, 'https://media.example.test/recovered.jpg')
+    assert.equal(downloads, 1)
+    await db.run("UPDATE whatsapp_api_messages SET status = 'removed', message_type = 'text', message_text = 'Mensaje eliminado', media_url = NULL WHERE id = ?", [missing.messageId])
+    await capture({ historyImport: true })
+    const removed = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [missing.messageId])
+    assert.equal(removed.status, 'removed')
+    assert.equal(removed.message_text, 'Mensaje eliminado')
+    assert.equal(removed.media_url, null)
+  })
+})
+
+test('el respaldo que llega antes de una foto Meta no descarga media hasta que se demuestra 131060', async () => {
+  await withUnavailableInboundFixture(async ({ receive, capture }) => {
+    let downloads = 0
+    await capture({ messageType: 'image', text: 'Foto completa', resolveInboundMedia: async () => { downloads++; return null } })
+    assert.equal(downloads, 0)
+    const received = await receive()
+    assert.equal(received.messageType, 'image')
+    const job = await getChatDeliveryJob({ jobKind: CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT, messageId: received.messageId })
+    assert.equal(job.payload.hasQrMedia, true)
+  })
+})
+
+test('una copia QR vencida o de otro negocio no rellena contenido no disponible', async () => {
+  await withUnavailableInboundFixture(async ({ receive, capture, phoneNumberId, protocolKey, customerPhone, businessPhone }) => {
+    await capture()
+    await db.run('UPDATE whatsapp_qr_inbound_backups SET expires_at_ms = ? WHERE phone_number_id = ?', [Date.now() - 1, phoneNumberId])
+    const missing = await receive()
+    assert.equal(missing.providerContentUnavailable, true)
+    await db.run('DELETE FROM whatsapp_qr_inbound_backups WHERE phone_number_id = ?', [phoneNumberId])
+    await storeWhatsAppQrInboundBackup({ phoneNumberId, protocolMessageKeyId: protocolKey,
+      businessPhone: '+15885559999', contactPhone: customerPhone, messageType: 'text', text: 'Otro negocio' })
+    assert.equal(await getWhatsAppQrInboundBackup({ business_phone_number_id: phoneNumberId,
+      protocol_message_key_id: protocolKey, business_phone: businessPhone, phone: customerPhone }), null)
+    assert.equal((await receive()).providerContentUnavailable, true)
+  })
+})
+
+test('QR y webhooks concurrentes mantienen un solo mensaje y un solo permiso para procesar la respuesta', async () => {
+  await withUnavailableInboundFixture(async ({ receive, capture, protocolKey }) => {
+    const effects = []
+    setMetaDirectInboundSideEffectsForTest(async rows => effects.push(...rows))
+    const received = await receive()
+    const results = await Promise.all([capture(), receive(), capture(), receive()])
+    const row = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [received.messageId])
+    assert.equal(row.message_type, 'text')
+    assert.equal(row.message_text, 'Sí, te mandé mi respuesta completa.')
+    assert.equal(row.error_code, null)
+    assert.equal((await db.get('SELECT COUNT(*) AS total FROM whatsapp_api_messages WHERE protocol_message_key_id = ?', [protocolKey])).total, 1)
+    assert.ok(results.filter(result => result.shouldTriggerInboundSideEffects && result.contentRecovered).length <= 1)
+    assert.ok(effects.length <= 1)
+    assert.equal((await db.get('SELECT business_effects_claimed FROM whatsapp_qr_inbound_backups WHERE protocol_message_key_id = ?', [protocolKey])).business_effects_claimed, 1)
+  })
+})
+
+test('al reconectar QR se solicita al teléfono el mensaje exacto pendiente y se recupera como historial', async () => {
+  await withUnavailableInboundFixture(async ({ receive, phoneNumberId, protocolKey, businessPhone, customerPhone }) => {
+    const missing = await receive()
+    const stored = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [missing.messageId])
+    assert.equal((await requestWhatsAppQrUnavailableMessageRecovery({ row: stored })).reason, 'qr_not_connected')
+    const pending = await getUnavailableWhatsAppInboundsForQrRecovery({ phoneNumberId, businessPhone })
+    assert.equal(pending[0].id, missing.messageId)
+    const requests = []
+    const effects = []
+    setMetaDirectInboundSideEffectsForTest(async rows => effects.push(...rows))
+    setBaileysRuntimeForTest({
+      DisconnectReason: {}, BufferJSON: { replacer: (_key, value) => value, reviver: (_key, value) => value },
+      Browsers: { macOS: name => ['macOS', name, 'Test'] },
+      initAuthCreds: () => ({ me: { id: `${businessPhone.slice(1)}@s.whatsapp.net` }, registered: true }),
+      makeCacheableSignalKeyStore: keys => keys,
+      makeWASocket: () => {
+        const handlers = new Map()
+        const emit = async (event, value) => { for (const handler of handlers.get(event) || []) await handler(value) }
+        const sock = {
+          user: { id: `${businessPhone.slice(1)}@s.whatsapp.net` },
+          ws: { close() {} },
+          ev: { on(event, handler) { handlers.set(event, [...(handlers.get(event) || []), handler]) }, removeAllListeners() { handlers.clear() } },
+          requestPlaceholderResend: async (key, metadata) => {
+            requests.push({ key, metadata })
+            await emit('messages.upsert', { type: 'notify', messages: [{ ...metadata, message: { conversation: 'Recuperado del teléfono original' } }] })
+            return 'read-request-id'
+          }
+        }
+        queueMicrotask(() => emit('connection.update', { connection: 'open' }))
+        return sock
+      }
+    })
+    await startWhatsAppQrConnection({ phoneNumberId, acceptedRisk: true, acceptedBy: 'test' })
+    for (let attempt = 0; attempt < 50 && (await db.get('SELECT message_type FROM whatsapp_api_messages WHERE id = ?', [missing.messageId])).message_type === 'unsupported'; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    assert.equal(requests.length, 1)
+    assert.deepEqual(requests[0].key, { id: protocolKey, remoteJid: `${customerPhone.slice(1)}@s.whatsapp.net`, fromMe: false })
+    assert.equal(requests[0].metadata.ristakQrContentRecovery.historyImport, true)
+    const recovered = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ?', [missing.messageId])
+    assert.equal(recovered.message_text, 'Recuperado del teléfono original')
+    assert.equal(recovered.message_timestamp, stored.message_timestamp)
+    assert.equal(effects.length, 0)
+  })
+})
+
+test('las claves binarias de archivos QR sobreviven al almacenamiento y las restaura Baileys', async () => {
+  await withUnavailableInboundFixture(async ({ phoneNumberId, protocolKey, businessPhone, customerPhone }) => {
+    const bytes = Buffer.from([1, 2, 3, 4, 255])
+    const backup = await storeWhatsAppQrInboundBackup({
+      phoneNumberId, protocolMessageKeyId: protocolKey, businessPhone, contactPhone: customerPhone,
+      messageType: 'image', raw: { key: { id: protocolKey, fromMe: false },
+        message: { imageMessage: { mediaKey: bytes, fileSha256: new Uint8Array(bytes) } } }
+    })
+    const { BufferJSON } = await import('@whiskeysockets/baileys')
+    const restored = JSON.parse(JSON.stringify(backup.content.qrRaw), BufferJSON.reviver)
+    assert.deepEqual(restored.message.imageMessage.mediaKey, bytes)
+    assert.deepEqual(restored.message.imageMessage.fileSha256, bytes)
+  })
 })
 
 test('duplicados concurrentes Meta crean un solo job y una sola hidratación durable', async () => {

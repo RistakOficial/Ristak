@@ -6,6 +6,8 @@ import { logger } from '../utils/logger.js'
 import { acquireDistributedLock, releaseDistributedLock, renewDistributedLock } from '../utils/distributedLock.js'
 import { waitForWhatsAppQrDripSlot } from './whatsappQrDripService.js'
 import { downloadSafeOutboundMediaUrl } from './outboundMediaReferenceService.js'
+import { parseStoredUtcDateTime } from '../utils/dateUtils.js'
+import { getUnavailableWhatsAppInboundsForQrRecovery, isUnavailableWhatsAppInbound } from './whatsappInboundRecoveryService.js'
 
 const QR_CONSENT_TEXT = 'Acepto que esta conexión usa WhatsApp Web por QR y no la API oficial de Meta. Entiendo que puede desconectarse, fallar o poner en riesgo el número. Ristak podrá usarla para mensajes configurados cuando QR sea el canal principal, o como respaldo si hay WhatsApp API conectada y yo activo ese respaldo.'
 const CONNECT_TIMEOUT_MS = 20000
@@ -80,6 +82,7 @@ const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
 
 const liveSessions = new Map()
 const qrRecentMessageAcks = new Map()
+const qrInboundRecoveryRequests = new Map()
 let baileysRuntime = null
 let reconnectDelayOverrideForTest = null
 let recoveredWhatsAppWebVersion = null
@@ -1403,7 +1406,7 @@ async function handleQrIncomingMessages(phone, upsert = {}, sock = null, { histo
               wamid
             })
           : null,
-        historyImport
+        historyImport: historyImport || message.ristakQrContentRecovery?.historyImport === true
       })
 
       if (!result?.skipped && result?.isNew) {
@@ -1438,6 +1441,81 @@ async function handleQrHistorySync(phone, history = {}, sock = null) {
     `${history.progress != null ? `, progreso ${history.progress}%` : ''}` +
     `${history.isLatest ? ', último bloque' : ''}`
   )
+}
+
+// Pide al teléfono vinculado la copia de un mensaje concreto. Es una operación
+// interna de lectura; no reenvía un WhatsApp al contacto ni cambia el número.
+export async function requestWhatsAppQrUnavailableMessageRecovery({ row = {}, historyImport = false } = {}) {
+  if (!isUnavailableWhatsAppInbound(row) || !cleanString(row.protocol_message_key_id)) {
+    return { skipped: true, reason: 'not_unavailable_inbound' }
+  }
+  const phoneNumberId = cleanString(row.business_phone_number_id)
+  const live = liveSessions.get(phoneNumberId)
+  if (!live?.connected || typeof live.sock?.requestPlaceholderResend !== 'function') {
+    return { skipped: true, reason: 'qr_not_connected' }
+  }
+  const { canRunBackgroundJob } = await import('./licenseService.js')
+  if (!(await canRunBackgroundJob('whatsapp'))) return { skipped: true, reason: 'license_blocked' }
+  const session = await db.get(`SELECT s.connected_phone, s.status, p.qr_send_enabled
+    FROM whatsapp_qr_sessions s JOIN whatsapp_api_phone_numbers p ON p.id = s.phone_number_id
+    WHERE s.phone_number_id = ?`, [phoneNumberId])
+  if (session?.status !== 'connected' || Number(session.qr_send_enabled) !== 1 ||
+    normalizePhoneForStorage(session.connected_phone) !== normalizePhoneForStorage(row.business_phone)) {
+    return { skipped: true, reason: 'qr_phone_mismatch_or_disabled' }
+  }
+  const requestKey = `${phoneNumberId}:${row.protocol_message_key_id}`
+  if (Date.now() - (qrInboundRecoveryRequests.get(requestKey) || 0) < 5 * 60 * 1000) {
+    return { skipped: true, reason: 'recovery_already_requested' }
+  }
+  let raw = {}
+  try { raw = JSON.parse(row.raw_payload_json || '{}') } catch { /* Payload legacy inválido. */ }
+  const sender = cleanString(raw.from || row.from_phone || row.phone)
+  if (normalizePhoneForStorage(sender) !== normalizePhoneForStorage(row.phone)) {
+    return { skipped: true, reason: 'contact_phone_mismatch' }
+  }
+  const instant = parseStoredUtcDateTime(row.message_timestamp)
+  if (!instant?.isValid) return { skipped: true, reason: 'invalid_message_timestamp' }
+  if (liveSessions.get(phoneNumberId)?.sock !== live.sock || !live.connected) {
+    return { skipped: true, reason: 'qr_connection_changed' }
+  }
+  const key = { remoteJid: `${sender.replace(/\D/g, '')}@s.whatsapp.net`, fromMe: false, id: row.protocol_message_key_id }
+  qrInboundRecoveryRequests.set(requestKey, Date.now())
+  while (qrInboundRecoveryRequests.size > 200) qrInboundRecoveryRequests.delete(qrInboundRecoveryRequests.keys().next().value)
+  await live.sock.requestPlaceholderResend(key, {
+    key, messageTimestamp: Math.floor(instant.toMillis() / 1000),
+    ristakQrContentRecovery: { historyImport: historyImport === true }
+  })
+  logger.info(`[WhatsApp QR] Recuperación de contenido solicitada para ${row.id} (${key.id})`)
+  return { skipped: false, messageId: row.id }
+}
+
+export async function recoverUnavailableWhatsAppInboundsAfterQrConnection({ phoneNumberId, businessPhone } = {}) {
+  const rows = await getUnavailableWhatsAppInboundsForQrRecovery({ phoneNumberId, businessPhone })
+  for (const row of rows) {
+    await requestWhatsAppQrUnavailableMessageRecovery({ row, historyImport: true }).catch(error => {
+      logger.warn(`[WhatsApp QR] No se pudo recuperar ${row.id} al conectar: ${error.message}`)
+    })
+  }
+  return { requested: rows.length }
+}
+
+export async function resolveWhatsAppQrInboundBackupMedia({ backup } = {}) {
+  const live = liveSessions.get(backup?.phone_number_id)
+  if (!live?.connected) return null
+  const content = backup?.content || {}
+  if (!content.qrRaw?.message || !QR_DOWNLOADABLE_MEDIA_TYPES.has(content.type)) return null
+  const session = await db.get('SELECT connected_phone, status FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [backup.phone_number_id])
+  if (session?.status !== 'connected' || normalizePhoneForStorage(session.connected_phone) !== backup.business_phone) return null
+  // Las claves binarias de media se almacenan como BufferJSON. Antes de pasar
+  // una copia durable a Baileys deben volver a ser bytes, no objetos JSON.
+  const runtime = await loadBaileys()
+  const qrRaw = JSON.parse(JSON.stringify(content.qrRaw), runtime.BufferJSON?.reviver)
+  return downloadAndStoreQrInboundMedia({
+    phone: { id: backup.phone_number_id },
+    message: { key: qrRaw.key, message: qrRaw.message },
+    content: qrRaw.message, messageType: content.type,
+    wamid: backup.protocol_message_key_id
+  })
 }
 
 async function handleQrMessageReactions(phone, updates = [], sock = null) {
@@ -1770,6 +1848,7 @@ export function resetWhatsAppQrServiceForTest() {
   whatsAppWebVersionRecoveryPromise = null
   lastWhatsAppWebVersionRecoveryAt = 0
   qrRecentMessageAcks.clear()
+  qrInboundRecoveryRequests.clear()
   connectionOpenListeners.clear()
 }
 
@@ -2768,6 +2847,9 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
         phone: activePhone
       })
       resolveCurrentOpen(sock)
+      void recoverUnavailableWhatsAppInboundsAfterQrConnection({
+        phoneNumberId: activePhone.id, businessPhone: connectedPhone
+      }).catch(error => logger.warn(`[WhatsApp QR] No se pudo revisar contenido pendiente ${activePhone.id}: ${error.message}`))
       return
     }
 

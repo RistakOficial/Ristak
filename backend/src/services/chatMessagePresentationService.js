@@ -662,8 +662,9 @@ function buildSystemPresentation(rawMessage, normalizedType, messageText) {
     : []
   return {
     kind: unavailable ? 'unsupported' : 'system',
-    header: { kind: 'text', text: unavailable ? 'Mensaje no compatible' : (labels[normalizedType] || 'Aviso de WhatsApp') },
-    body: firstString(rawMessage?.system?.body, rawMessage?.system?.text, messageText),
+    header: { kind: 'text', text: unavailable ? 'Contenido no disponible' : (labels[normalizedType] || 'Aviso de WhatsApp') },
+    body: firstString(rawMessage?.system?.body, rawMessage?.system?.text, messageText) ||
+      (unavailable ? 'WhatsApp no entregó el contenido a Ristak. Puedes verlo en WhatsApp.' : ''),
     buttons
   }
 }

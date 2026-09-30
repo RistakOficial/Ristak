@@ -576,15 +576,52 @@ del negocio, la tarjeta muestra nombre, descripción, ubicación y enlace, pero 
 inventa una hora local.
 
 `type=unsupported`/`unknown` y los errores `131051` o `131060` significan que el
-proveedor no entregó el contenido a Ristak. El payload se conserva para soporte,
-pero la interfaz muestra un aviso neutral para consultar la aplicación original;
-no inventa texto, media ni tipo. El `error_message` de una entrada es diagnóstico
+proveedor no entregó el contenido a Ristak; no demuestran que WhatsApp haya
+perdido el mensaje ni tienen relación con el método de pago. El payload se conserva
+para soporte. Si hay QR del mismo número, Ristak intenta recuperar esa copia por
+identidad exacta. Mientras no la tenga, la interfaz muestra `Contenido no disponible`
+y explica que WhatsApp no entregó el contenido. No inventa texto, media ni tipo.
+El `error_message` de una entrada es diagnóstico
 del proveedor y nunca equivale a un fallo de envío del negocio. Los indicadores
 rojos y el detalle de rechazo se reservan para salidas realmente fallidas.
 
 Los controles `edit`/`system` y el contenido no entregado por el proveedor se
 persisten y publican para refrescar el historial, pero no se pasan a citas,
 automatizaciones ni al agente conversacional como una respuesta nueva.
+
+### Recuperación de contenido inbound mediante QR
+
+La API conserva la autoridad y su fila canónica. La única excepción al descarte
+de inbound vivo de Baileys es **enriquecer contenido que la API no entregó**:
+
+- `whatsapp_qr_inbound_backups` conserva hasta 1,000 copias pendientes por número,
+  hasta 512 KiB por copia y con caducidad de siete días. Se purga al capturar otra copia; no necesita cron
+  ni secretos nuevos. La tabla vive en la DB del cliente, contiene sólo contenido
+  de mensajes/metadata de protocolo y desaparece al eliminar el número asociado.
+- Si QR llega primero, esa copia no crea burbuja, contacto, unread, push ni
+  automatización. Si el webhook llega primero, QR puede completar esa misma fila.
+- Deben coincidir `protocol_message_key_id`, Phone Number ID oficial, número del
+  negocio e interlocutor normalizado. Nunca se busca por texto o cercanía de hora.
+- La recuperación conserva ID, WAMID, proveedor, adaptador oficial, transporte,
+  contacto y hora original. `raw_payload_json.qrInboundRecovery` registra la fuente
+  Baileys y el payload oficial original; los errores de contenido desaparecen de
+  las columnas visibles. Un replay de `unsupported` no borra el contenido completo.
+- La actualización publica SSE como enriquecimiento (`isNew=false`), no suma
+  unread ni envía otro push. Si el push original sigue pendiente, se completa con
+  el texto recuperado. `business_effects_claimed` reserva una sola ejecución de
+  citas/automatizaciones/agente cuando la recuperación corresponde a tráfico vivo.
+  Un import o recuperación de historial nunca activa esos efectos.
+- Los archivos sólo se descargan cuando se demuestra una entrada oficial sin
+  contenido. Si QR llegó primero, el outbox Meta existente descarga después del
+  ACK y conserva reintentos; el raw recuperado permite descargar aunque la copia
+  temporal ya haya caducado. El archivo usa el storage normal de chat.
+- Al recibir un webhook sin contenido, o abrir de nuevo una conexión QR, se pide
+  al teléfono vinculado la copia exacta con `requestPlaceholderResend` de Baileys.
+  Es una lectura interna, no un reenvío al cliente. Exige licencia activa, QR
+  habilitado/conectado y el mismo número; respeta un cooldown de cinco minutos.
+  Al conectar se revisan hasta veinte entradas pendientes de los últimos siete
+  días y las respuestas se marcan como historial para evitar acciones antiguas.
+  Si el teléfono no devuelve el contenido, se conserva el aviso honesto.
 
 Todo envío de texto aceptado por Graph debe persistirse de inmediato con el texto
 visible, la autorización original de fallback, `provider=meta_direct`,
@@ -649,8 +686,10 @@ en el mismo modelo interno, pero conservan `provider`, `source_adapter`,
 Baileys procesa `messages.upsert`, `messaging-history.set` y ACKs del socket.
 Es transporte QR y fallback; no es un proveedor de Cloud API, no usa las
 credenciales de Meta/YCloud y no debe consumir sus webhooks. Mientras la API
-oficial del mismo número esté operativa, `captureQrChatMessage` omite todo el
-tráfico vivo inbound/outbound. Sólo HistorySync puede importarse en paralelo.
+oficial del mismo número esté operativa, `captureQrChatMessage` omite el tráfico
+vivo como fuente de mensajes. HistorySync puede importarse en paralelo y las
+copias inbound QR pueden completar una entrada oficial sin contenido bajo el
+contrato de recuperación anterior; nunca crean una segunda burbuja viva.
 La excepción de control es una anulación explícita: `messages.update` con
 `messageStubType=REVOKE` o un `protocolMessage` de tipo `REVOKE` retira el mensaje
 identificado por la llave original. Puede actualizar su copia API por identidad
@@ -738,7 +777,8 @@ nuevo sigue el flujo estándar de Cloud API.
 11. El ID oficial del proveedor manda. En tráfico nuevo con API operativa no se
     crea la fila espejo de Baileys; YCloud/Meta produce la única fila y sus
     estados `accepted`, `sent`, `delivered` y `read` la actualizan. La fusión por
-    `protocol_message_key_id` sólo repara/importa históricos exactos. No se
+    `protocol_message_key_id` repara/importa históricos exactos y permite completar
+    una entrada oficial sin contenido. No se
     permite resolver ningún caso por texto, hora, teléfono aproximado ni
     deduplicación visual. El mantenimiento de arranque también restaura una
     plantilla Meta que una versión anterior hubiera etiquetado como QR sólo

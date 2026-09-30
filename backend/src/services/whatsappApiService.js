@@ -29,6 +29,8 @@ import {
   sendWhatsAppQrVideoMessage,
   sendWhatsAppQrTextMessage,
   prepareWhatsAppQrTextDelivery,
+  requestWhatsAppQrUnavailableMessageRecovery,
+  resolveWhatsAppQrInboundBackupMedia,
   startWhatsAppQrConnection,
   warmWhatsAppQrProfilePictures
 } from './whatsappQrService.js'
@@ -74,7 +76,8 @@ import {
   DEFAULT_TIMEZONE,
   businessTodayDateOnly,
   getAccountTimezone,
-  normalizeDateOnlyInTimezone
+  normalizeDateOnlyInTimezone,
+  parseStoredUtcDateTime
 } from '../utils/dateUtils.js'
 import {
   buildConversationalAgentMessageMetadata,
@@ -99,6 +102,13 @@ import {
   isWhatsAppProviderContentUnavailable,
   shouldTriggerWhatsAppInboundSideEffects
 } from './whatsappMessageContentService.js'
+import {
+  findUnavailableWhatsAppInboundForBackup,
+  getWhatsAppQrInboundBackup,
+  preserveRecoveredWhatsAppInboundPayload,
+  recoverWhatsAppInboundFromQrBackup,
+  storeWhatsAppQrInboundBackup
+} from './whatsappInboundRecoveryService.js'
 import {
   buildMetaDirectTemplateCreatePayload,
   buildMetaDirectTemplateEditPayload,
@@ -9466,7 +9476,7 @@ async function upsertMessage({
   deferInboundProfilePicture = false,
   onInboundPersisted = null
 }) {
-  const normalizedMessage = normalizeWebhookMessage(message)
+  let normalizedMessage = normalizeWebhookMessage(message)
   const identity = getMessageIdentity({ payload, direction, message: normalizedMessage, businessPhoneHints })
   const incomingProvider = cleanString(normalizedMessage.provider || payload.provider) || PROVIDER_NAME
   const deferMetaInboundEnrichment = identity.direction === 'inbound' &&
@@ -9542,6 +9552,11 @@ async function upsertMessage({
     })
   }
   if (existingMessage?.status === 'removed') return removedWhatsAppMessageResult(existingMessage)
+  if (cleanTransport === 'api' && identity.direction === 'inbound') {
+    normalizedMessage = preserveRecoveredWhatsAppInboundPayload(normalizedMessage, existingMessage, {
+      businessPhone: identity.businessPhone, contactPhone: identity.phone
+    })
+  }
   // Plantillas API (YCloud / Meta): el echo y los eventos de estado no incluyen el
   // cuerpo renderizado, solo el nombre interno de la plantilla. Reconstruimos el texto
   // real desde el snapshot aprobado para que el chat muestre el mensaje enviado y no un
@@ -9659,20 +9674,20 @@ async function upsertMessage({
   const status = existingQrFallbackApplied
     ? (normalizeMessageDeliveryStatus(existingMessage?.status) || 'sent')
     : pickBestMessageDeliveryStatus(existingMessage?.status, incomingStatus)
-  const { code: errorCode, message: errorMessage } = extractWhatsAppProviderError({
+  let { code: errorCode, message: errorMessage } = extractWhatsAppProviderError({
     errors: normalizedMessage.errors,
     error: normalizedMessage.error,
     errorCode: normalizedMessage.errorCode,
     errorMessage: normalizedMessage.errorMessage,
     whatsappApiError: normalizedMessage.whatsappApiError
   })
-  const messageType = cleanString(normalizedMessage.type) || 'unknown'
-  const providerContentUnavailable = isWhatsAppProviderContentUnavailable({
+  let messageType = cleanString(normalizedMessage.type) || 'unknown'
+  let providerContentUnavailable = isWhatsAppProviderContentUnavailable({
     messageType,
     errorCode,
     errorMessage
   })
-  const shouldTriggerInboundSideEffects = shouldTriggerWhatsAppInboundSideEffects({
+  let shouldTriggerInboundSideEffects = shouldTriggerWhatsAppInboundSideEffects({
     messageType,
     contentUnavailable: providerContentUnavailable
   })
@@ -9694,6 +9709,11 @@ async function upsertMessage({
   const storedRoutingReason = existingQrFallbackApplied
     ? existingMessage?.routing_reason
     : routingReason
+  const keepExistingInboundContent = `
+    LOWER(COALESCE(excluded.direction, '')) = 'inbound'
+    AND LOWER(COALESCE(whatsapp_api_messages.direction, '')) = 'inbound'
+    AND LOWER(COALESCE(excluded.message_type, '')) IN ('unsupported', 'unknown', 'unavailable')
+    AND LOWER(COALESCE(whatsapp_api_messages.message_type, '')) NOT IN ('', 'status', 'unsupported', 'unknown', 'unavailable')`
 
   const persistWhatsAppMessage = async ({ targetMessageId, updateOnIdConflict }) => db.run(`
     INSERT INTO whatsapp_api_messages (
@@ -9751,7 +9771,8 @@ async function upsertMessage({
         ELSE COALESCE(NULLIF(excluded.routing_reason, ''), whatsapp_api_messages.routing_reason)
       END,
       direction = COALESCE(NULLIF(excluded.direction, ''), whatsapp_api_messages.direction),
-      message_type = COALESCE(NULLIF(excluded.message_type, ''), whatsapp_api_messages.message_type),
+      message_type = CASE WHEN ${keepExistingInboundContent} THEN whatsapp_api_messages.message_type
+        ELSE COALESCE(NULLIF(excluded.message_type, ''), whatsapp_api_messages.message_type) END,
       message_text = COALESCE(NULLIF(excluded.message_text, ''), whatsapp_api_messages.message_text),
       media_url = COALESCE(NULLIF(excluded.media_url, ''), whatsapp_api_messages.media_url),
       media_mime_type = COALESCE(NULLIF(excluded.media_mime_type, ''), whatsapp_api_messages.media_mime_type),
@@ -9769,6 +9790,7 @@ async function upsertMessage({
       business_echo = COALESCE(excluded.business_echo, whatsapp_api_messages.business_echo),
       relay_event_id = COALESCE(NULLIF(excluded.relay_event_id, ''), whatsapp_api_messages.relay_event_id),
       error_code = CASE
+        WHEN ${keepExistingInboundContent} THEN whatsapp_api_messages.error_code
         WHEN LOWER(COALESCE(excluded.transport, whatsapp_api_messages.transport, '')) = 'qr' THEN NULL
         WHEN LOWER(COALESCE(whatsapp_api_messages.transport, '')) = 'qr'
           AND COALESCE(whatsapp_api_messages.routing_reason, '') != ''
@@ -9778,6 +9800,7 @@ async function upsertMessage({
         ELSE COALESCE(NULLIF(excluded.error_code, ''), whatsapp_api_messages.error_code)
       END,
       error_message = CASE
+        WHEN ${keepExistingInboundContent} THEN whatsapp_api_messages.error_message
         WHEN LOWER(COALESCE(excluded.transport, whatsapp_api_messages.transport, '')) = 'qr' THEN NULL
         WHEN LOWER(COALESCE(whatsapp_api_messages.transport, '')) = 'qr'
           AND COALESCE(whatsapp_api_messages.routing_reason, '') != ''
@@ -9787,7 +9810,8 @@ async function upsertMessage({
         ELSE COALESCE(NULLIF(excluded.error_message, ''), whatsapp_api_messages.error_message)
       END,
       message_timestamp = COALESCE(excluded.message_timestamp, whatsapp_api_messages.message_timestamp),
-      raw_payload_json = COALESCE(NULLIF(excluded.raw_payload_json, ''), whatsapp_api_messages.raw_payload_json),
+      raw_payload_json = CASE WHEN ${keepExistingInboundContent} THEN whatsapp_api_messages.raw_payload_json
+        ELSE COALESCE(NULLIF(excluded.raw_payload_json, ''), whatsapp_api_messages.raw_payload_json) END,
       context_json = COALESCE(NULLIF(excluded.context_json, 'null'), whatsapp_api_messages.context_json),
       referral_json = COALESCE(NULLIF(excluded.referral_json, 'null'), whatsapp_api_messages.referral_json),
       detected_ctwa_clid = COALESCE(NULLIF(excluded.detected_ctwa_clid, ''), whatsapp_api_messages.detected_ctwa_clid),
@@ -9996,6 +10020,31 @@ async function upsertMessage({
 
   if (canonicalMessage?.status === 'removed') return removedWhatsAppMessageResult(canonicalMessage)
 
+  let inboundContentRecovered = false
+  if (cleanTransport === 'api' && identity.direction === 'inbound' && providerContentUnavailable) {
+    const recovery = await recoverWhatsAppInboundFromQrBackup({ messageId, triggerSideEffects: !historyImport })
+    if (recovery.changed) {
+      inboundContentRecovered = true
+      existingMessage = recovery.row
+      normalizedMessage = normalizeWebhookMessage(parseJsonValue(recovery.row.raw_payload_json, {}) || {})
+      messageText = cleanString(recovery.row.message_text)
+      messageType = cleanString(recovery.row.message_type)
+      media = extractMessageMedia(normalizedMessage)
+      errorCode = ''
+      errorMessage = ''
+      providerContentUnavailable = false
+      shouldTriggerInboundSideEffects = recovery.shouldTriggerBusinessEffects && shouldTriggerWhatsAppInboundSideEffects({ messageType })
+      if (deferMetaInboundEnrichment && QR_MEDIA_MESSAGE_TYPES.has(messageType)) {
+        await enqueueChatDeliveryJob({
+          jobKind: CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT,
+          messageId, contactId: localContact.id, provider: META_DIRECT_PROVIDER_NAME,
+          payload: { hasQrMedia: true, businessPhoneNumberId }
+        })
+        chatDeliveryJobWasEnqueued = true
+      }
+    }
+  }
+
   const hasDurableInboundIdentity = Boolean(providerMessageId || wamid || protocolMessageKeyId)
   if (
     identity.direction === 'inbound' &&
@@ -10172,6 +10221,7 @@ async function upsertMessage({
     messageText,
     messageType,
     providerContentUnavailable,
+    contentRecovered: inboundContentRecovered,
     shouldTriggerInboundSideEffects,
     mediaUrl: media.mediaUrl || '',
     mediaMimeType: media.mediaMimeType || '',
@@ -10188,7 +10238,7 @@ async function upsertMessage({
 
   if (
     !deterministicTemplateFallback.pending &&
-    (identity.direction !== 'inbound' || isNewMessage)
+    (identity.direction !== 'inbound' || isNewMessage || inboundContentRecovered)
   ) {
     publishChatMessageEvent({
       contactId: localContact.id,
@@ -10232,6 +10282,17 @@ async function upsertMessage({
     })
   }
 
+  if (providerContentUnavailable && identity.direction === 'inbound' && cleanTransport === 'api' && !historyImport) {
+    void requestWhatsAppQrUnavailableMessageRecovery({ row: { ...existingMessage,
+      id: messageId, business_phone_number_id: businessPhoneNumberId,
+      business_phone: identity.businessPhone, phone: identity.phone,
+      protocol_message_key_id: protocolMessageKeyId,
+      raw_payload_json: safeJson(normalizedMessage), message_timestamp: messageTimestamp
+    } }).catch(error => {
+      logger.warn(`[WhatsApp QR] No se pudo solicitar el contenido de ${messageId}: ${error.message}`)
+    })
+  }
+
   return buildResult()
 }
 
@@ -10257,6 +10318,30 @@ export async function processMetaDirectInboundEnrichmentJob({ messageId = '', pa
   const normalizedMessage = normalizeWebhookMessage(parseJsonValue(stored.raw_payload_json, {}) || {})
   let enrichmentChanged = false
   let attribution = isPlainObject(payload.attribution) ? payload.attribution : {}
+
+  if (payload.hasQrMedia === true && normalizedMessage.qrInboundRecovery && !cleanString(stored.media_url)) {
+    const backup = await getWhatsAppQrInboundBackup(stored) || {
+      phone_number_id: stored.business_phone_number_id,
+      protocol_message_key_id: stored.protocol_message_key_id,
+      business_phone: stored.business_phone,
+      content: { type: stored.message_type, qrRaw: normalizedMessage.qrRaw }
+    }
+    const hydratedMedia = backup ? await resolveWhatsAppQrInboundBackupMedia({ backup }) : null
+    if (!hydratedMedia?.mediaUrl) throw new Error('El respaldo QR todavía no entregó el archivo del mensaje recuperado')
+    const mediaKey = normalizeQrMediaKey(stored.message_type)
+    const raw = {
+      ...normalizedMessage,
+      [mediaKey]: { link: hydratedMedia.mediaUrl, mimeType: hydratedMedia.mediaMimeType,
+        filename: hydratedMedia.mediaFilename, durationMs: hydratedMedia.mediaDurationMs }
+    }
+    const result = await db.run(`UPDATE whatsapp_api_messages SET
+      media_url = ?, media_mime_type = ?, media_filename = ?, media_duration_ms = ?,
+      raw_payload_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND COALESCE(status, '') != 'removed' AND raw_payload_json = ?`,
+    [hydratedMedia.mediaUrl, hydratedMedia.mediaMimeType || null, hydratedMedia.mediaFilename || null,
+      hydratedMedia.mediaDurationMs || null, safeJson(raw), cleanMessageId, stored.raw_payload_json])
+    enrichmentChanged = Number(result?.changes || 0) === 1
+  }
 
   if (payload.shouldHydrateAttributionPreview === true) {
     await persistWhatsAppAttributionRow({
@@ -10507,10 +10592,32 @@ export async function captureQrChatMessage({
   const officialApiOperational = routingConfig.enabled !== false &&
     Boolean(routingConfig.officialApiAvailable && officialPhoneRow?.id) &&
     !(await getOfficialApiRestrictionReason({ phoneRow: officialPhoneRow, config: routingConfig }))
-  // En vivo, la API oficial es la única fuente mientras esté operativa. Durante un HistorySync QR
-  // sí importamos el pasado porque puede ser anterior a la conexión oficial.
-  // Durante un HistorySync QR no podemos asumir que la API ya tenga ese pasado:
-  // se importa y la identidad exacta de WhatsApp decide si ya existía.
+  // La API sigue siendo la fuente viva. La copia QR sólo puede enriquecer una
+  // fila oficial sin contenido cuando coincide la identidad exacta y el número.
+  if (officialApiOperational && cleanDirection === 'inbound') {
+    const historyUnavailable = historyImport ? await findUnavailableWhatsAppInboundForBackup({
+      phone_number_id: officialPhoneRow.id, protocol_message_key_id: cleanWamid,
+      business_phone: cleanBusinessPhone, contact_phone: cleanContactPhone
+    }) : null
+    // Un HistorySync puede traer miles de mensajes ya visibles. No duplica ese
+    // pasado en la cache; sólo guarda la copia cuando tiene una fila que reparar.
+    const backup = !historyImport || historyUnavailable ? await storeWhatsAppQrInboundBackup({
+      phoneNumberId: officialPhoneRow.id, businessPhone: cleanBusinessPhone,
+      contactPhone: cleanContactPhone, protocolMessageKeyId: cleanWamid,
+      messageType: cleanMessageType, text: messageText, profileName,
+      timestamp: messageTimestamp, raw
+    }) : null
+    const unavailable = historyUnavailable || (backup ? await findUnavailableWhatsAppInboundForBackup(backup) : null)
+    if (unavailable && backup) {
+      const inboundMedia = typeof resolveInboundMedia === 'function' && QR_MEDIA_MESSAGE_TYPES.has(cleanMessageType)
+        ? await Promise.resolve().then(resolveInboundMedia).catch(error => {
+            logger.warn(`[WhatsApp QR] No se pudo guardar el archivo de ${cleanWamid}: ${error.message}`)
+            return null
+          })
+        : null
+      return completeQrInboundContentRecovery({ unavailable, backup, media: inboundMedia, historyImport })
+    }
+  }
   if (officialApiOperational && !historyImport) {
     return { skipped: true, reason: 'official_api_active' }
   }
@@ -10518,11 +10625,12 @@ export async function captureQrChatMessage({
     const existingOfficialMessage = await db.get(`
       SELECT id
       FROM whatsapp_api_messages
-      WHERE wamid = ?
+      WHERE (wamid = ? OR protocol_message_key_id = ?)
+        AND business_phone_number_id = ?
         AND LOWER(COALESCE(transport, '')) = 'api'
         AND LOWER(COALESCE(source_adapter, '')) != 'baileys'
       LIMIT 1
-    `, [cleanWamid]).catch(() => null)
+    `, [cleanWamid, cleanWamid, officialPhoneRow.id]).catch(() => null)
     if (existingOfficialMessage?.id) {
       return {
         skipped: true,
@@ -10684,6 +10792,40 @@ export async function captureQrChatMessage({
   }
 
   return { skipped: false, ...result }
+}
+
+async function completeQrInboundContentRecovery({ unavailable, backup, media, historyImport }) {
+  const recovery = await recoverWhatsAppInboundFromQrBackup({ messageId: unavailable.id, backup, media, triggerSideEffects: !historyImport })
+  if (!recovery.changed) return { skipped: true, reason: 'content_already_recovered', messageId: unavailable.id }
+  const row = recovery.row
+  const result = {
+    skipped: false, isNew: false, contentRecovered: true, historyImport: historyImport === true,
+    messageId: row.id, contactId: row.contact_id, apiContactId: row.whatsapp_api_contact_id,
+    provider: row.provider, sourceAdapter: row.source_adapter, providerMessageId: row.provider_message_id,
+    direction: 'inbound', transport: 'api', phone: row.phone, businessPhone: row.business_phone,
+    businessPhoneNumberId: row.business_phone_number_id, messageText: row.message_text || '',
+    messageType: row.message_type, messageTimestamp: parseStoredUtcDateTime(row.message_timestamp)?.toISO() || row.message_timestamp,
+    mediaUrl: row.media_url || '', providerContentUnavailable: false,
+    shouldTriggerInboundSideEffects: recovery.shouldTriggerBusinessEffects && shouldTriggerWhatsAppInboundSideEffects({ messageType: row.message_type })
+  }
+  publishChatMessageEvent({ ...result, channel: 'whatsapp' })
+  logger.info(`[WhatsApp QR] Contenido recuperado en el mensaje oficial ${row.id} (${backup.protocol_message_key_id})`)
+  if (row.provider === META_DIRECT_PROVIDER_NAME && QR_MEDIA_MESSAGE_TYPES.has(row.message_type) && !row.media_url) {
+    await enqueueChatDeliveryJob({
+      jobKind: CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT,
+      messageId: row.id, contactId: row.contact_id, provider: META_DIRECT_PROVIDER_NAME,
+      payload: { hasQrMedia: true, businessPhoneNumberId: row.business_phone_number_id }
+    })
+    void import('../jobs/metaDirectChatDelivery.cron.js')
+      .then(worker => worker.requestMetaDirectChatDeliveryDrain('qr-inbound-content-recovery'))
+      .catch(error => logger.warn(`[WhatsApp QR] No se pudo despertar la descarga de ${row.id}: ${error.message}`))
+  }
+  if (!historyImport && result.shouldTriggerInboundSideEffects) {
+    const sideEffectsRunner = metaDirectInboundSideEffectsForTest || processMetaDirectInboundSideEffects
+    void trackDeployDrainWork('whatsapp-qr-inbound-content-recovery', () => sideEffectsRunner([result]), row.id)
+      .catch(error => logger.warn(`[WhatsApp QR] No se pudo procesar el contenido recuperado ${row.id}: ${error.message}`))
+  }
+  return result
 }
 
 function directionFromCandidatePath(path = [], payload = {}) {
@@ -11757,15 +11899,16 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
 
     const inboundResults = messageResults.filter(result =>
       result?.direction === 'inbound' &&
-      result?.isNew !== false &&
+      (result?.isNew !== false || result?.contentRecovered === true) &&
       result?.historyImport !== true
     )
     const actionableInboundResults = inboundResults.filter(result => result?.shouldTriggerInboundSideEffects !== false)
-    inboundResults.forEach(result => scheduleInboundWhatsAppContactProfilePictureRefresh(result, 'ycloud_webhook'))
+    const newInboundResults = inboundResults.filter(result => result?.isNew !== false)
+    newInboundResults.forEach(result => scheduleInboundWhatsAppContactProfilePictureRefresh(result, 'ycloud_webhook'))
 
     // Entrega primero: citas, automatizaciones y agente pueden usar servicios
     // externos, pero nunca deben retrasar el aviso de un mensaje ya persistido.
-    inboundResults.forEach(result => {
+    newInboundResults.forEach(result => {
       void sendChatMessageNotification({
         contactId: result.contactId,
         contactName: result.contactName,
@@ -13023,7 +13166,7 @@ export async function processMetaDirectWebhookRelay({ payload = {}, rawBody = ''
     })
     const inboundResults = messageResults.filter(result =>
       result?.direction === 'inbound' &&
-      result?.isNew !== false &&
+      (result?.isNew !== false || result?.contentRecovered === true) &&
       result?.historyImport !== true &&
       result?.shouldTriggerInboundSideEffects !== false
     )

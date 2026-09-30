@@ -75,6 +75,9 @@ jobs:
           TEST_POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/ristak_bootstrap
         run: node --test --test-concurrency=1 backend/test/notificationContactFilters.test.mjs backend/test/notificationContactFiltersPostgres.test.mjs
 
+      - name: Verificar recuperación de contenido WhatsApp y mensajes sin duplicados
+        run: node --test --test-concurrency=1 backend/test/whatsappMetaDirectMessages.test.mjs backend/test/whatsappQrInboundMedia.test.mjs backend/test/chatInboundMessageContent.test.mjs
+
       - name: Verificar MCP y visor de adjuntos con PDF y Canvas reales
         run: node --test --test-concurrency=1 backend/test/mcp*.test.mjs backend/test/outboundMediaReference.test.mjs
 

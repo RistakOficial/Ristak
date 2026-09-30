@@ -4348,10 +4348,19 @@ y ACK se guardan como identidad/estado autoritativo separado y se fusionan en
 background dentro de ese mismo globo. El final del POST no debe cambiar la key
 visible, recargar toda la conversacion, desmontar la imagen ni mover el scroll;
 el siguiente SSE/poll silencioso solo completa los datos remotos.
-Si el mismo numero tambien tiene WhatsApp QR/Baileys conectado, Baileys no debe
-capturar tráfico vivo inbound ni outbound mientras la API oficial esté
-operativa; el webhook oficial es la única fuente y no aparece una burbuja QR
-transitoria. Los bloques de HistorySync sí se importan. En históricos, el WAMID
+Si el mismo numero tambien tiene WhatsApp QR/Baileys conectado, el webhook
+oficial conserva la autoridad mientras la API esté operativa y no aparece una
+burbuja QR transitoria. Hay una excepción de contenido: si Meta/YCloud entregó
+`unsupported` o los errores `131051`/`131060`, Ristak puede completar esa misma
+burbuja con la copia QR del mensaje exacto. Conserva su hora, contacto e identidad;
+no suma mensajes no leídos ni notificaciones. La copia pendiente se conserva
+brevemente en la base para cubrir cualquier orden de llegada y reinicios.
+Al conectar QR se pide al teléfono el contenido reciente pendiente y se repara
+como historial, sin respuestas automáticas antiguas. Si WhatsApp no devuelve el
+mensaje, el chat explica que su contenido no está disponible y puede consultarse
+en WhatsApp; no lo presenta como un problema de pago. El contrato completo vive
+en `docs/integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md`.
+Los bloques de HistorySync sí se importan. En históricos, el WAMID
 de YCloud/Meta contiene la misma identidad interna que Baileys entrega como
 `key.id`; Ristak la guarda en `protocol_message_key_id` y ambos adaptadores hacen
 upsert sobre una sola fila.
