@@ -2323,6 +2323,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   })
 
   const buildGatewayPaymentPlanPayload = (payload: Record<string, any>, summary: InvoiceSummary, provider: 'stripe' | 'conekta' | 'rebill' | 'offline') => ({
+    collectionMode: provider === 'offline' ? 'offline' : 'automatic',
+    remainingAutomatic: provider !== 'offline',
     contact: {
       id: selectedContact?.id || '',
       name: summary.contactName || selectedContact?.name || '',

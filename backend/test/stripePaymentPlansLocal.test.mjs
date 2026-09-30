@@ -108,8 +108,8 @@ async function seedStripePlan() {
       id, contact_id, contact_name, contact_email, contact_phone,
       total_amount, currency, concept, payment_type,
       card_setup_required, card_setup_status, card_setup_invoice_id, card_setup_payment_link,
-      payment_provider, current_state, state_history, metadata
-    ) VALUES (?, ?, ?, ?, ?, ?, 'MXN', ?, 'partial', 1, 'pending', ?, ?, 'stripe', 'waiting_card_authorization', '[]', ?)`,
+      payment_provider, current_state, state_history, metadata, remaining_automatic
+    ) VALUES (?, ?, ?, ?, ?, ?, 'MXN', ?, 'partial', 1, 'pending', ?, ?, 'stripe', 'waiting_card_authorization', '[]', ?, 1)`,
     [
       ids.flowId,
       ids.contactId,

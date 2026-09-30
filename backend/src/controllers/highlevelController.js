@@ -3949,7 +3949,7 @@ async function listLocalInvoiceSchedules(query = {}, { signal } = {}) {
   };
 }
 
-async function getLocalInvoiceSchedule(scheduleId) {
+export async function getLocalInvoiceSchedule(scheduleId) {
   const row = await db.get(
     'SELECT * FROM payment_plans WHERE id = ? OR ghl_schedule_id = ? LIMIT 1',
     [scheduleId, scheduleId]

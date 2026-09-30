@@ -21,6 +21,8 @@ import {
 } from './paymentPlanNamingService.js'
 import {
   assertExactPaymentPlanTotal,
+  assertAutomaticPaymentPlanRequest,
+  claimAutomaticPlanInstallment,
   assertPlanCanChangeState,
   markOverduePaymentPlanChargesForReview,
   withPaymentPlanEditState
@@ -267,7 +269,7 @@ function duePlanFirstPaymentCondition(expression) {
   return `((${hasExplicitTimeSql} AND ${timedDueSql}) OR (NOT ${hasExplicitTimeSql} AND ${dateDueSql}))`
 }
 
-function assertRebillCurrency(value) {
+export function assertRebillCurrency(value) {
   const currency = normalizeCurrency(value)
   if (!REBILL_SUPPORTED_CURRENCIES.has(currency)) {
     const error = new Error('Rebill SDK acepta ARS, BRL, CLP, COP, MXN o USD para checkout instantaneo. Cambia la moneda de la cuenta o usa otra pasarela.')
@@ -2425,7 +2427,7 @@ async function releaseRebillPlanPaymentLink(paymentId, { baseUrl = '', notes = '
   return ensured.row || updated
 }
 
-async function persistRebillPaymentPlanMirror(flowId, extra = {}) {
+export async function persistRebillPaymentPlanMirror(flowId, extra = {}) {
   const cleanFlowId = cleanString(flowId, 180)
   if (!cleanFlowId) return null
 
@@ -2460,6 +2462,7 @@ async function persistRebillPaymentPlanMirror(flowId, extra = {}) {
     : getRebillPlanMirrorStatus(flow)
   const scheduleJson = {
     provider: 'rebill',
+    collectionMode: Number(flow.remaining_automatic) === 1 ? 'automatic' : 'offline',
     flowId: cleanFlowId,
     remainingFrequency: metadata.remainingFrequency || 'custom',
     checkoutProvider: 'rebill',
@@ -3313,6 +3316,7 @@ export async function createRebillSavedCardPayment(input = {}, { mode = '', prov
 }
 
 export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' } = {}) {
+  assertAutomaticPaymentPlanRequest(input, 'Rebill')
   const config = await getRebillClientConfig(mode)
   const accountCurrency = await getConfiguredCurrency()
   const accountTimezone = await getAccountTimezone().catch(() => ACCOUNT_DEFAULT_TIMEZONE)
@@ -3381,6 +3385,7 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
       null,
       JSON.stringify({
         source: plan.source,
+        collectionMode: 'automatic',
         creationRequestKey: cleanString(input.idempotencyKey, 200),
         applyTax: plan.applyTax,
         tax: plan.tax,
@@ -3683,6 +3688,7 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
      FROM payment_flows f
      JOIN payments p ON p.id = f.first_payment_invoice_id
      WHERE f.payment_provider = 'rebill'
+       AND f.remaining_automatic = 1
        AND f.current_state IN (?, ?)
        AND f.first_payment_invoice_id IS NOT NULL
        AND f.first_payment_method IN ('payment_link', 'card', 'rebill_checkout', 'saved_card', 'rebill_saved_card')
@@ -3714,6 +3720,7 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
      JOIN payment_flows f ON f.id = i.flow_id
      LEFT JOIN payments p ON p.id = i.payment_id
      WHERE f.payment_provider = 'rebill'
+       AND f.remaining_automatic = 1
        AND f.current_state = ?
        AND f.rebill_card_id IS NOT NULL
        AND i.automatic = 1
@@ -3748,9 +3755,12 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
            SET first_payment_status = 'processing',
                updated_at = CURRENT_TIMESTAMP
            WHERE id = ?
+             AND remaining_automatic = 1
+             AND payment_provider = 'rebill'
+             AND COALESCE(rebill_card_id, '') = ?
              AND current_state = '${REBILL_PLAN_STATES.ACTIVE}'
              AND (first_payment_status IN ('pending', 'scheduled') OR (first_payment_status = 'processing' AND ${staleFirstPaymentClaimSql}))`,
-          [row.flow_id]
+          [row.flow_id, row.rebill_card_id || '']
         )
         if (!(Number(claim?.changes || 0) > 0)) continue
 
@@ -3801,6 +3811,8 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
          SET first_payment_status = 'processing',
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
+           AND remaining_automatic = 1
+           AND payment_provider = 'rebill'
            AND current_state = '${REBILL_PLAN_STATES.WAITING_CARD_AUTHORIZATION}'
            AND (first_payment_status = 'scheduled' OR (first_payment_status = 'processing' AND ${staleFirstPaymentClaimSql}))`,
         [row.flow_id]
@@ -3851,19 +3863,22 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
     }
 
     try {
-      const claim = await db.run(
+      const claim = await claimAutomaticPlanInstallment(row.flow_id, 'rebill', REBILL_PLAN_STATES.ACTIVE, row.rebill_card_id, tx => tx.run(
         `UPDATE installment_payments
          SET status = 'processing',
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
+           AND automatic = 1
            AND EXISTS (
              SELECT 1 FROM payment_flows f
              WHERE f.id = installment_payments.flow_id
+               AND f.remaining_automatic = 1
+               AND f.payment_provider = 'rebill'
                AND f.current_state = '${REBILL_PLAN_STATES.ACTIVE}'
            )
            AND (status = 'scheduled' OR (status = 'processing' AND ${staleInstallmentClaimSql}))`,
         [row.installment_id]
-      )
+      ))
       if (!(Number(claim?.changes || 0) > 0)) continue
 
       const savedSource = await resolveRebillSavedSource(row.contact_id, row.rebill_card_id)
@@ -4037,72 +4052,76 @@ async function syncRebillPaymentPlanFromLocalPayment(payment) {
 
     if (savedSource && status === 'paid') {
       const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [row.flow_id]).catch(() => null)
-      if (flow?.payment_provider === 'rebill') {
+      if (flow?.payment_provider === 'rebill' && Number(flow.remaining_automatic)) {
         const history = addPlanState(parseJson(flow.state_history, []), REBILL_PLAN_STATES.ACTIVE)
-        await db.run(
-          `UPDATE payment_flows
-           SET rebill_customer_id = ?,
-               rebill_card_id = ?,
-               rebill_card_label = ?,
-               card_authorized_at = COALESCE(card_authorized_at, ?),
-               installment_plan_active_at = COALESCE(installment_plan_active_at, ?),
-               current_state = ?,
-               state_history = ?,
-               card_setup_required = 0,
-               card_setup_status = CASE
-                 WHEN card_setup_invoice_id = ? THEN 'paid'
-                 ELSE card_setup_status
-               END,
-               first_payment_status = CASE
-                 WHEN first_payment_invoice_id = ? THEN 'paid'
-                 ELSE first_payment_status
-               END,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?`,
-          [
-            savedSource.rebill_customer_id,
-            savedSource.rebill_card_id,
-            cardLabel,
-            new Date().toISOString(),
-            new Date().toISOString(),
-            REBILL_PLAN_STATES.ACTIVE,
-            JSON.stringify(history),
-            payment.id,
-            payment.id,
-            row.flow_id
-          ]
-        ).catch(() => undefined)
+        await db.transaction(async () => {
+          const activation = await db.run(
+            `UPDATE payment_flows
+             SET rebill_customer_id = ?,
+                 rebill_card_id = ?,
+                 rebill_card_label = ?,
+                 card_authorized_at = COALESCE(card_authorized_at, ?),
+                 installment_plan_active_at = COALESCE(installment_plan_active_at, ?),
+                 current_state = ?,
+                 state_history = ?,
+                 card_setup_required = 0,
+                 card_setup_status = CASE
+                   WHEN card_setup_invoice_id = ? THEN 'paid'
+                   ELSE card_setup_status
+                 END,
+                 first_payment_status = CASE
+                   WHEN first_payment_invoice_id = ? THEN 'paid'
+                   ELSE first_payment_status
+                 END,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ? AND payment_provider = 'rebill' AND remaining_automatic = 1
+               AND current_state NOT IN ('editing', 'paused', 'cancelled', 'deleted')`,
+            [
+              savedSource.rebill_customer_id,
+              savedSource.rebill_card_id,
+              cardLabel,
+              new Date().toISOString(),
+              new Date().toISOString(),
+              REBILL_PLAN_STATES.ACTIVE,
+              JSON.stringify(history),
+              payment.id,
+              payment.id,
+              row.flow_id
+            ]
+          )
+          if (Number(activation?.changes || 0) !== 1) return
 
-        await db.run(
-          `UPDATE installment_payments
-           SET status = 'scheduled',
-               payment_method = 'rebill_saved_card',
-               notes = ?,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE flow_id = ?
-             AND automatic = 1
-             AND status IN (?, 'pending')`,
-          [
-            `Programado para cobrarse con ${cardLabel}.`,
-            row.flow_id,
-            REBILL_PLAN_STATES.WAITING_CARD_AUTHORIZATION
-          ]
-        ).catch(() => undefined)
-
-        await db.run(
-          `UPDATE payments
-           SET status = CASE WHEN status IN (?, 'pending') THEN 'scheduled' ELSE status END,
-               payment_method = CASE WHEN payment_method = 'rebill_scheduled_card' THEN 'rebill_scheduled_card' ELSE payment_method END,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id IN (
-             SELECT payment_id
-             FROM installment_payments
+          await db.run(
+            `UPDATE installment_payments
+             SET status = 'scheduled',
+                 payment_method = 'rebill_saved_card',
+                 notes = ?,
+                 updated_at = CURRENT_TIMESTAMP
              WHERE flow_id = ?
                AND automatic = 1
-               AND payment_id IS NOT NULL
-           )`,
-          [REBILL_PLAN_STATES.WAITING_CARD_AUTHORIZATION, row.flow_id]
-        ).catch(() => undefined)
+               AND status IN (?, 'pending')`,
+            [
+              `Programado para cobrarse con ${cardLabel}.`,
+              row.flow_id,
+              REBILL_PLAN_STATES.WAITING_CARD_AUTHORIZATION
+            ]
+          )
+
+          await db.run(
+            `UPDATE payments
+             SET status = CASE WHEN status IN (?, 'pending') THEN 'scheduled' ELSE status END,
+                 payment_method = CASE WHEN payment_method = 'rebill_scheduled_card' THEN 'rebill_scheduled_card' ELSE payment_method END,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id IN (
+               SELECT payment_id
+               FROM installment_payments
+               WHERE flow_id = ?
+                 AND automatic = 1
+                 AND payment_id IS NOT NULL
+             )`,
+            [REBILL_PLAN_STATES.WAITING_CARD_AUTHORIZATION, row.flow_id]
+          )
+        }).catch(() => undefined)
       }
     }
 

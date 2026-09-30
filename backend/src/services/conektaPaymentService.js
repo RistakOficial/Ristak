@@ -23,6 +23,8 @@ import {
 } from './paymentPlanNamingService.js'
 import {
   assertExactPaymentPlanTotal,
+  assertAutomaticPaymentPlanRequest,
+  claimAutomaticPlanInstallment,
   assertPlanCanChangeState,
   markOverduePaymentPlanChargesForReview,
   withPaymentPlanEditState
@@ -2733,7 +2735,7 @@ async function updatePlanPaymentTitle(paymentId, title, description = title) {
   )
 }
 
-async function persistConektaPaymentPlanMirror(flowId, extra = {}) {
+export async function persistConektaPaymentPlanMirror(flowId, extra = {}) {
   const cleanFlowId = cleanString(flowId)
   if (!cleanFlowId) return null
 
@@ -2769,6 +2771,7 @@ async function persistConektaPaymentPlanMirror(flowId, extra = {}) {
   const cardLabel = flow.conekta_payment_source_label || metadata.conektaPaymentSourceLabel || null
   const scheduleJson = {
     provider: 'conekta',
+    collectionMode: Number(flow.remaining_automatic) === 1 ? 'automatic' : 'offline',
     flowId: cleanFlowId,
     remainingFrequency: metadata.remainingFrequency || 'custom',
     cardSetupRequired: Boolean(flow.card_setup_required),
@@ -2890,76 +2893,81 @@ async function activateConektaPaymentPlan(flowId, savedSource, config) {
   const cleanFlowId = cleanString(flowId)
   if (!cleanFlowId || !savedSource) return null
 
-  const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
-  if (!flow || flow.payment_provider !== 'conekta') return null
+  return db.transaction(async () => {
+    const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+    if (!flow || flow.payment_provider !== 'conekta' || !Number(flow.remaining_automatic)) return null
 
-  const stateHistory = addPlanState(flow.state_history, CONEKTA_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE)
-  const now = new Date().toISOString()
-  const cardLabel = getConektaSavedCardLabelFromRow(savedSource)
-  const metadata = parseJson(flow.metadata, {})
+    const stateHistory = addPlanState(flow.state_history, CONEKTA_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE)
+    const now = new Date().toISOString()
+    const cardLabel = getConektaSavedCardLabelFromRow(savedSource)
+    const metadata = parseJson(flow.metadata, {})
 
-  await db.run(
-    `UPDATE payment_flows
-     SET current_state = ?,
-         conekta_customer_id = COALESCE(?, conekta_customer_id),
-         conekta_payment_source_id = COALESCE(?, conekta_payment_source_id),
-         conekta_payment_source_label = COALESCE(?, conekta_payment_source_label),
-         card_authorized_at = COALESCE(card_authorized_at, ?),
-         installment_plan_created_at = COALESCE(installment_plan_created_at, ?),
-         installment_plan_active_at = COALESCE(installment_plan_active_at, ?),
-         state_history = ?,
-         metadata = ?,
-         updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`,
-    [
-      CONEKTA_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE,
-      savedSource.conekta_customer_id,
-      savedSource.conekta_payment_source_id,
-      cardLabel,
-      now,
-      now,
-      now,
-      JSON.stringify(stateHistory),
-      JSON.stringify({
-        ...metadata,
-        conektaMode: config?.mode || metadata.conektaMode || 'test',
-        conektaCustomerId: savedSource.conekta_customer_id,
-        conektaPaymentSourceId: savedSource.conekta_payment_source_id,
-        conektaPaymentSourceLabel: cardLabel
-      }),
-      cleanFlowId
-    ]
-  )
+    const activation = await db.run(
+      `UPDATE payment_flows
+       SET current_state = ?,
+           conekta_customer_id = COALESCE(?, conekta_customer_id),
+           conekta_payment_source_id = COALESCE(?, conekta_payment_source_id),
+           conekta_payment_source_label = COALESCE(?, conekta_payment_source_label),
+           card_authorized_at = COALESCE(card_authorized_at, ?),
+           installment_plan_created_at = COALESCE(installment_plan_created_at, ?),
+           installment_plan_active_at = COALESCE(installment_plan_active_at, ?),
+           state_history = ?,
+           metadata = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND payment_provider = 'conekta' AND remaining_automatic = 1
+         AND current_state NOT IN ('editing', 'paused', 'cancelled', 'deleted')`,
+      [
+        CONEKTA_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE,
+        savedSource.conekta_customer_id,
+        savedSource.conekta_payment_source_id,
+        cardLabel,
+        now,
+        now,
+        now,
+        JSON.stringify(stateHistory),
+        JSON.stringify({
+          ...metadata,
+          conektaMode: config?.mode || metadata.conektaMode || 'test',
+          conektaCustomerId: savedSource.conekta_customer_id,
+          conektaPaymentSourceId: savedSource.conekta_payment_source_id,
+          conektaPaymentSourceLabel: cardLabel
+        }),
+        cleanFlowId
+      ]
+    )
+    if (Number(activation.changes) !== 1) return null
 
-  await db.run(
-    `UPDATE installment_payments
-     SET status = 'scheduled',
-         payment_method = 'conekta_saved_card',
-         updated_at = CURRENT_TIMESTAMP
-     WHERE flow_id = ?
-       AND automatic = 1
-       AND status IN ('waiting_card_authorization', 'pending_card', 'pending')`,
-    [cleanFlowId]
-  )
-
-  await db.run(
-    `UPDATE payments
-     SET status = 'scheduled',
-         conekta_payment_source_id = COALESCE(?, conekta_payment_source_id),
-         updated_at = CURRENT_TIMESTAMP
-     WHERE id IN (
-       SELECT payment_id
-       FROM installment_payments
+    await db.run(
+      `UPDATE installment_payments
+       SET status = 'scheduled',
+           payment_method = 'conekta_saved_card',
+           updated_at = CURRENT_TIMESTAMP
        WHERE flow_id = ?
-         AND payment_id IS NOT NULL
-     )
-       AND status IN ('pending', 'waiting_card_authorization')`,
-    [savedSource.conekta_payment_source_id, cleanFlowId]
-  )
+         AND automatic = 1
+         AND status IN ('waiting_card_authorization', 'pending_card', 'pending')`,
+      [cleanFlowId]
+    )
 
-  await persistConektaPaymentPlanMirror(cleanFlowId)
+    await db.run(
+      `UPDATE payments
+       SET status = 'scheduled',
+           conekta_payment_source_id = COALESCE(?, conekta_payment_source_id),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id IN (
+         SELECT payment_id
+         FROM installment_payments
+         WHERE flow_id = ?
+           AND automatic = 1
+           AND payment_id IS NOT NULL
+       )
+         AND status IN ('pending', 'waiting_card_authorization')`,
+      [savedSource.conekta_payment_source_id, cleanFlowId]
+    )
 
-  return db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+    await persistConektaPaymentPlanMirror(cleanFlowId)
+
+    return db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+  })
 }
 
 async function syncConektaPlanFromPayment(paymentRow, savedSource, config) {
@@ -3103,6 +3111,7 @@ async function chargeConektaPaymentRowWithSavedSource({
 }
 
 export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
+  assertAutomaticPaymentPlanRequest(input, 'Conekta')
   const config = await getConektaPaymentConfig({ includeSecrets: true })
   if (!config.configured) {
     const error = new Error('Conekta no está configurado todavía. Guarda las llaves primero.')
@@ -3174,6 +3183,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
       null,
       JSON.stringify({
         source: plan.source,
+        collectionMode: 'automatic',
         creationRequestKey: cleanString(input.idempotencyKey),
         conektaMode: config.mode,
         timezone: accountTimezone,
@@ -3473,6 +3483,7 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25, isLeaseV
      FROM payment_flows f
      JOIN payments p ON p.id = f.first_payment_invoice_id
      WHERE f.payment_provider = 'conekta'
+       AND f.remaining_automatic = 1
        AND f.current_state = ?
        AND f.first_payment_invoice_id IS NOT NULL
        AND (
@@ -3503,6 +3514,7 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25, isLeaseV
      JOIN payment_flows f ON f.id = i.flow_id
      LEFT JOIN payments p ON p.id = i.payment_id
      WHERE f.payment_provider = 'conekta'
+       AND f.remaining_automatic = 1
        AND f.current_state = ?
        AND i.automatic = 1
        AND (
@@ -3537,9 +3549,12 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25, isLeaseV
          SET first_payment_status = 'processing',
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
+           AND remaining_automatic = 1
+           AND payment_provider = 'conekta'
+           AND COALESCE(conekta_payment_source_id, '') = ?
            AND current_state = '${CONEKTA_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE}'
            AND (first_payment_status IN ('pending', 'scheduled') OR (first_payment_status = 'processing' AND ${staleFirstPaymentClaimSql}))`,
-        [row.flow_id]
+        [row.flow_id, row.conekta_payment_source_id || '']
       )
       if (!(Number(claim?.changes || 0) > 0)) {
         // Otra ejecución ya reclamó este primer pago; lo saltamos sin cobrar.
@@ -3590,19 +3605,22 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25, isLeaseV
       // parcialidad si ganamos la transición a 'processing'. Replica el filtro del
       // SELECT (scheduled, o processing-pero-stale) dentro del UPDATE para que dos
       // ejecuciones concurrentes no cobren la misma parcialidad dos veces.
-      const claim = await db.run(
+      const claim = await claimAutomaticPlanInstallment(row.flow_id, 'conekta', CONEKTA_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE, row.conekta_payment_source_id, tx => tx.run(
         `UPDATE installment_payments
          SET status = 'processing',
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
+           AND automatic = 1
            AND EXISTS (
              SELECT 1 FROM payment_flows f
              WHERE f.id = installment_payments.flow_id
+               AND f.remaining_automatic = 1
+               AND f.payment_provider = 'conekta'
                AND f.current_state = '${CONEKTA_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE}'
            )
            AND (status = 'scheduled' OR (status = 'processing' AND ${staleInstallmentClaimSql}))`,
         [row.installment_id]
-      )
+      ))
       if (!(Number(claim?.changes || 0) > 0)) {
         // Otra ejecución ya reclamó esta parcialidad; la saltamos sin cobrar.
         continue

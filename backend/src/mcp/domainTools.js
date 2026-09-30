@@ -658,7 +658,7 @@ const paymentTools = [
     body: (args) => ({ ...args.plan, idempotencyKey: args.idempotencyKey })
   }),
   controllerSpec({
-    name: 'payments_update_plan', description: 'Actualiza un plan de pagos existente mediante su servicio canónico. Para cambiar sólo nombre, título de factura, descripción o notas sin tocar el calendario, envía changes.namingOnly=true; Ristak lo permite mientras no exista cobro, intento de cobro ni recordatorio enviado.',
+    name: 'payments_update_plan', description: 'Actualiza un plan de pagos existente mediante su servicio canónico. Para cambiar la forma de cobro, envía sólo changes.collectionMode=offline (recordatorios) o automatic junto con paymentProvider=stripe|conekta|rebill y paymentMethodId de una tarjeta guardada del contacto; conserva pagos recibidos y el estado pausado. Esa decisión nunca se infiere de pagar un enlace. Guarda calendario y modalidad en llamadas separadas. Para cambiar sólo nombre, título de factura, descripción o notas sin tocar el calendario, envía changes.namingOnly=true; Ristak lo permite mientras no exista cobro, intento de cobro ni recordatorio enviado.',
     module: 'payments', access: 'write', scope: 'ristak.execute', risk: 'high', featureKeys: ['payment_plans'], handler: paymentPlansController.updatePaymentPlan, method: 'PUT',
     confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ planId: ID, changes: { type: 'object', additionalProperties: true }, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['planId', 'changes'], { confirm: true, idempotency: true })),

@@ -1245,8 +1245,12 @@ async function getReminderCandidates(settings, now, limit, paymentIds = [], time
     FROM payments p
     LEFT JOIN (
       SELECT payment_id, MIN(flow_id) AS flow_id, MIN(sequence) AS sequence
-      FROM installment_payments
-      WHERE payment_id IS NOT NULL
+      FROM (
+        SELECT payment_id, flow_id, sequence FROM installment_payments WHERE payment_id IS NOT NULL
+        UNION ALL
+        SELECT first_payment_invoice_id AS payment_id, id AS flow_id, 0 AS sequence
+        FROM payment_flows WHERE first_payment_invoice_id IS NOT NULL
+      ) plan_payments
       GROUP BY payment_id
     ) ip ON ip.payment_id = p.id
     LEFT JOIN payment_flows pf ON pf.id = ip.flow_id

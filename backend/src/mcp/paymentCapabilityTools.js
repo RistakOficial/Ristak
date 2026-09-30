@@ -194,6 +194,8 @@ const REMAINING_PAYMENT = schema({
 }, ['amount', 'dueDate'])
 
 const PLAN_PROPERTIES = {
+  collectionMode: { type: 'string', enum: ['offline', 'automatic'], description: 'Offline sólo envía recordatorios, aunque el cliente pague una cuota con tarjeta. Automatic domicilia expresamente los pagos futuros.' },
+  remainingAutomatic: { type: 'boolean' },
   contact: CONTACT,
   totalAmount: AMOUNT,
   currency: CURRENCY,
@@ -297,6 +299,8 @@ function planTool({ name, provider, handler, description }) {
   const planProperties = provider === 'offline'
     ? {
         ...PLAN_PROPERTIES,
+        collectionMode: { type: 'string', enum: ['offline'], const: 'offline' },
+        remainingAutomatic: { type: 'boolean', enum: [false], const: false },
         reminderDaysBefore: {
           type: 'integer',
           minimum: 0,
@@ -305,7 +309,7 @@ function planTool({ name, provider, handler, description }) {
         },
         reminderTime: TIME
       }
-    : PLAN_PROPERTIES
+    : { ...PLAN_PROPERTIES, collectionMode: { type: 'string', enum: ['automatic'], const: 'automatic', description: 'Autoriza expresamente la domiciliación de las cuotas futuras. Para recordatorios usa payments_create_offline_plan y enlaces individuales.' }, remainingAutomatic: { type: 'boolean', enum: [true], const: true } }
   return executeTool({
     name,
     title: `Crear plan de pagos ${provider}`,
@@ -314,7 +318,7 @@ function planTool({ name, provider, handler, description }) {
     featureKeys: ['payment_plans'],
     connectionPrerequisites: provider === 'offline' ? [] : [provider],
     handler,
-    inputSchema: schema(planProperties, ['contact', 'totalAmount', 'title', 'remainingPayments']),
+    inputSchema: schema(planProperties, ['contact', 'totalAmount', 'title', 'remainingPayments', ...(provider === 'offline' ? [] : ['collectionMode'])]),
     body: args => ({ ...cleanControls(args), source: args.source || `ristak_mcp_${provider}_plan` })
   })
 }

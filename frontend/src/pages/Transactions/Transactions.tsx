@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, Button, Table, TableSelectionToolbar, DateRangePicker, ContactSearchInput, PageContainer, PageHeader, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading, NumberInput, CustomSelect, TimePickerSelect, Modal, PaymentPlatformLogo } from '@/components/common'
+import { PaymentPlanCollectionControls } from '@/components/common/PaymentPlanCollectionControls/PaymentPlanCollectionControls'
 import { KpiCard } from '@/components/common/KpiCard/KpiCard'
 import type { Column, PaymentPlatformLogoId } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
@@ -127,6 +128,7 @@ interface StripePlanPaymentDraft {
   amount: string
   dueDate: string
   method: string
+  historicalMethodLabel?: string
   status: string
   paymentId?: string | null
   locked?: boolean
@@ -433,6 +435,12 @@ const isPlanCardLinkMethod = (method: string | null | undefined, provider: Local
 const getStripePlanMethodLabel = (method?: string | null, provider: LocalCheckoutPlanProvider = 'stripe') => {
   const normalized = getEditablePlanMethod(method, provider)
   return getPlanMethodOptions(provider).find(option => option.value === normalized)?.label || normalized
+}
+
+const getHistoricalPlanMethodLabel = (method?: string | null, provider?: string) => {
+  const names: Record<string, string> = { stripe: 'Stripe', conekta: 'Conekta', rebill: 'Rebill', mercadopago: 'Mercado Pago', clip: 'CLIP' }
+  const gateway = provider && names[provider] ? provider : Object.keys(names).find(key => String(method || '').startsWith(key))
+  return gateway ? `Pago con ${names[gateway]}` : undefined
 }
 
 const isOfflinePlanPaymentMethod = (method?: string | null) => OFFLINE_PLAN_PAYMENT_METHODS.has(String(method || '').toLowerCase())
@@ -1028,6 +1036,7 @@ export const Transactions: React.FC = () => {
       amount: normalizeDraftAmount(firstAmount),
       dueDate: getEditablePlanDate(firstPayment?.date || firstPayment?.dueDate || plan.startDate, firstMethod, firstLocked, timezone),
       method: firstMethod,
+      historicalMethodLabel: getHistoricalPlanMethodLabel(firstPayment?.paymentMethod || firstPayment?.method, firstPayment?.paymentProvider || provider),
       status: firstStatus || 'pending',
       paymentId: firstPayment?.paymentId || null,
       locked: firstLocked
@@ -1051,6 +1060,7 @@ export const Transactions: React.FC = () => {
         amount: normalizeDraftAmount(item.amount),
         dueDate: getEditablePlanDate(item.dueDate || item.date || item.scheduledAt || plan.nextRunAt, method, locked, timezone),
         method,
+        historicalMethodLabel: getHistoricalPlanMethodLabel(item.paymentMethod || item.method, item.paymentProvider || provider),
         status: displayStatus,
         paymentId: item.paymentId || null,
         locked
@@ -3563,7 +3573,7 @@ export const Transactions: React.FC = () => {
     }
   ) => {
     const locked = Boolean(draft.locked)
-    const methodLabel = getStripePlanMethodLabel(draft.method, options.provider)
+    const methodLabel = locked && draft.historicalMethodLabel ? draft.historicalMethodLabel : getStripePlanMethodLabel(draft.method, options.provider)
     const methodOptions = getPlanMethodOptions(options.provider)
     const defaultMethod = getDefaultPlanMethod(options.provider)
     const paymentLabel = getPlanPaymentLabel(paymentNumber, totalPayments)
@@ -3699,6 +3709,30 @@ export const Transactions: React.FC = () => {
 
     return (
       <section className={styles.stripePlanEditor} aria-label="Calendario del plan">
+        <PaymentPlanCollectionControls
+          planId={plan.id}
+          contactId={plan.contactId || ''}
+          currentMode={provider === 'offline' || provider === 'mercadopago' || schedule.collectionMode === 'offline' ? 'offline' : 'automatic'}
+          connected={{ stripe: stripeConnected, conekta: conektaConnected, rebill: rebillConnected }}
+          disabled={paymentPlanModal.saving || paymentPlanScheduleDirty || ['cancelled', 'canceled', 'deleted', 'completed'].includes(plan.status)}
+          controlsClassName={`${styles.stripePlanControls} ${styles.stripePlanControlsOffline}`}
+          fieldClassName={styles.formGroup}
+          onApply={async changes => {
+            setPaymentPlanModal(prev => ({ ...prev, saving: true }))
+            try {
+              await transactionsService.updatePaymentPlan(plan.id, changes)
+              const canonicalPlan = await transactionsService.getPaymentPlan(plan.id)
+              setPaymentPlanModal({ plan: canonicalPlan, loading: false, saving: false })
+              showToast('success', 'Forma de cobro actualizada', changes.collectionMode === 'offline'
+                ? 'Este plan queda offline. Las tarjetas guardadas no cobrarán los pagos pendientes.'
+                : 'Este plan queda domiciliado con la tarjeta elegida. Si estaba pausado, continúa pausado.')
+              await fetchPaymentPlans()
+            } finally {
+              setPaymentPlanModal(prev => ({ ...prev, saving: false }))
+            }
+          }}
+        />
+        {paymentPlanScheduleDirty && <p>Guarda los cambios del calendario antes de aplicar otra forma de cobro.</p>}
         <div className={`${styles.stripePlanControls} ${provider === 'offline' ? styles.stripePlanControlsOffline : ''}`}>
           <div className={styles.formGroup}>
             <label>Frecuencia base</label>

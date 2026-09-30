@@ -6024,6 +6024,46 @@ si ese snapshot o la lectura de agenda ya verificaron una cita vigente.
 
 ### Planes de pago locales
 
+La modalidad de cobro es una decisión del plan. **Offline** nunca se convierte
+en domiciliación por encontrar una tarjeta guardada ni porque el cliente pague
+una cuota por enlace, con cualquier pasarela. Las cuotas offline pueden seguir
+pagándose por Stripe, Conekta, Rebill, Mercado Pago o CLIP sin autorizar cargos
+futuros. Los crons de tarjeta exigen tanto `payment_flows.remaining_automatic=1`
+como `installment_payments.automatic=1`, y vuelven a comprobarlo al reclamar el
+cargo. La preparación de cada cuota bloquea brevemente su plan y comprueba que
+la tarjeta elegida siga siendo la vigente, evitando una carrera con el editor.
+Las confirmaciones de tarjeta tampoco pueden reactivar planes offline,
+pausados o que están cambiando de modalidad.
+
+**Editar plan → Forma de cobro del plan** permite aplicar **Offline · sólo
+recordatorios** o **Domiciliar tarjeta guardada**. La domiciliación exige elegir
+una tarjeta del contacto en Stripe, Conekta o Rebill, en el modo de pagos actual;
+Mercado Pago y CLIP conservan su funcionamiento por enlace. El cambio se guarda
+por separado del calendario, conserva el mismo ID, importes, moneda,
+vencimientos, ligas públicas e historial pagado, y afecta sólo los pagos
+pendientes sin actividad financiera. Un cargo en proceso o checkout iniciado
+bloquea la operación completa. Un plan pausado conserva la pausa, y domiciliar
+exige reprogramar cualquier fecha vencida antes de continuar. Guardar la elección
+no ejecuta un cobro inmediato dentro de la petición: cada cuota conserva su fecha
+y el cron sólo podrá cobrar las cuotas activas cuando corresponda.
+
+Cambiar a offline conserva las tarjetas del contacto para otros usos, retira la
+domiciliación del calendario pendiente y deja los avisos a cargo de las
+Automatizaciones de Pagos. Si los recordatorios globales están apagados, la
+cuenta puede igualmente detener la domiciliación; no se envían avisos hasta que
+los active. La elección y su operador quedan en
+`payment_flows.metadata.collectionModeHistory`, sin credenciales nuevas.
+
+MCP exige `collectionMode="automatic"` para crear planes Stripe/Conekta/Rebill.
+Un alta de pasarela rechaza `remainingAutomatic=false`, `collectionMode=offline`
+o cuotas con método manual antes de preparar tarjetas o links. Para cuotas con
+recordatorios se usa `payments_create_offline_plan`, y sus enlaces se configuran
+con el editor canónico. `payments_update_plan` cambia la modalidad enviando sólo
+`changes.collectionMode="offline"`, o `"automatic"` con `paymentProvider` y
+`paymentMethodId`; calendario y modalidad se guardan en llamadas separadas. Los
+clientes antiguos que no enviaban el campo conservan la semántica de la ruta
+específica de alta automática; escritorio y MCP declaran la elección explícita.
+
 En Stripe, Conekta, Rebill, Mercado Pago y offline, el calendario editable
 muestra y guarda cada pago como `Pago N/M`, donde `N` es la posicion visible del
 pago y `M` es el total actual del plan. Si el calendario se edita, por ejemplo de

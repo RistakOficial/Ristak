@@ -86,6 +86,10 @@ Usa estos formatos de forma intencional:
   diarios con la zona del negocio.
 - Un pago programado para "hoy" en el negocio queda vencido hoy aunque el servidor
   esté en UTC y ya haya cambiado de día.
+- Un plan offline sólo envía recordatorios, aunque exista una tarjeta guardada
+  o una cuota se haya pagado por enlace. Cambiarlo a domiciliación exige una
+  elección explícita por plan, mantiene las fechas y la pausa, y rechaza
+  vencimientos anteriores a hoy. Guardar la modalidad nunca cobra por sí mismo.
 - Si un pago automático tiene tarjeta guardada y vence en el día actual del
   negocio, el cron puede cobrarlo al llegar su hora o en el siguiente tick del
   mismo día.

@@ -418,6 +418,9 @@ export async function persistOfflinePaymentPlanMirror(flowId) {
   const metadata = parseJson(flow.metadata)
   const naming = paymentPlanNamingFromMetadata(flow, metadata)
   const visibleInstallments = installments || []
+  const firstPaymentRecord = flow.first_payment_invoice_id
+    ? await db.get('SELECT payment_provider, payment_method FROM payments WHERE id = ?', [flow.first_payment_invoice_id])
+    : null
   const nextInstallment = visibleInstallments.find((item) => !CLOSED_PAYMENT_STATUSES.has(cleanString(item.status, 40).toLowerCase()))
   const firstInstallment = visibleInstallments[0]
   const lastInstallment = visibleInstallments[visibleInstallments.length - 1]
@@ -429,6 +432,7 @@ export async function persistOfflinePaymentPlanMirror(flowId) {
   const defaultCollection = normalizeInstallmentCollectionMethod(inferredDefaultMethod)
   const schedule = {
     provider: OFFLINE_PROVIDER,
+    collectionMode: 'offline',
     flowId: id,
     remainingFrequency: metadata.remainingFrequency || 'custom',
     reminderChannel: metadata.reminderChannel || '',
@@ -442,6 +446,8 @@ export async function persistOfflinePaymentPlanMirror(flowId) {
           amount: Number(flow.first_payment_amount || 0),
           date: flow.first_payment_date || null,
           method: flow.first_payment_method || 'offline',
+          paymentProvider: firstPaymentRecord?.payment_provider || OFFLINE_PROVIDER,
+          paymentMethod: firstPaymentRecord?.payment_method || flow.first_payment_method || 'offline',
           status: flow.first_payment_status || null,
           paymentId: flow.first_payment_invoice_id || null
         }
@@ -535,6 +541,9 @@ export async function persistOfflinePaymentPlanMirror(flowId) {
 }
 
 export async function createOfflinePaymentPlan(input = {}, { baseUrl = '' } = {}) {
+  if (input.remainingAutomatic === true || (input.collectionMode !== undefined && input.collectionMode !== 'offline')) {
+    throw createHttpError('Un plan offline sólo envía recordatorios. Para domiciliarlo, cambia expresamente su forma de cobro y elige una tarjeta guardada.', 400)
+  }
   const contact = normalizeContact(input)
   if (!contact.id) throw createHttpError('Selecciona un contacto para crear el plan offline.')
 
@@ -643,6 +652,7 @@ export async function createOfflinePaymentPlan(input = {}, { baseUrl = '' } = {}
         createdAt,
         JSON.stringify({
           source: cleanString(input.source, 160) || 'record_payment_modal_offline_plan',
+          collectionMode: 'offline',
           creationRequestKey: cleanString(input.idempotencyKey, 200),
           timezone,
           paymentMode: settings.paymentMode,

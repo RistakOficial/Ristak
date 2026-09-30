@@ -22,6 +22,8 @@ import {
 } from './paymentPlanNamingService.js'
 import {
   assertExactPaymentPlanTotal,
+  assertAutomaticPaymentPlanRequest,
+  claimAutomaticPlanInstallment,
   assertPlanCanChangeState,
   markOverduePaymentPlanChargesForReview,
   withPaymentPlanEditState
@@ -4170,7 +4172,7 @@ async function updatePlanPaymentTitle(paymentId, title, description = title) {
   )
 }
 
-async function persistStripePaymentPlanMirror(flowId, extra = {}) {
+export async function persistStripePaymentPlanMirror(flowId, extra = {}) {
   const cleanFlowId = cleanString(flowId)
   if (!cleanFlowId) return null
 
@@ -4207,6 +4209,7 @@ async function persistStripePaymentPlanMirror(flowId, extra = {}) {
     : getStripePlanMirrorStatus(flow)
   const scheduleJson = {
     provider: 'stripe',
+    collectionMode: Number(flow.remaining_automatic) === 1 ? 'automatic' : 'offline',
     flowId: cleanFlowId,
     remainingFrequency: metadata.remainingFrequency || 'custom',
     cardSetupRequired: Boolean(flow.card_setup_required),
@@ -4798,65 +4801,70 @@ async function activateStripePaymentPlan(flowId, savedMethod, config) {
   const cleanFlowId = cleanString(flowId)
   if (!cleanFlowId || !savedMethod) return null
 
-  const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
-  if (!flow || flow.payment_provider !== 'stripe') return null
+  return db.transaction(async () => {
+    const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+    if (!flow || flow.payment_provider !== 'stripe' || !Number(flow.remaining_automatic)) return null
 
-  const stateHistory = addPlanState(addPlanState(flow.state_history, STRIPE_PLAN_STATES.CARD_AUTHORIZED), STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE)
-  const now = new Date().toISOString()
+    const stateHistory = addPlanState(addPlanState(flow.state_history, STRIPE_PLAN_STATES.CARD_AUTHORIZED), STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE)
+    const now = new Date().toISOString()
 
-  await db.run(
-    `UPDATE payment_flows
-     SET current_state = ?,
-         stripe_customer_id = COALESCE(?, stripe_customer_id),
-         stripe_payment_method_id = COALESCE(?, stripe_payment_method_id),
-         stripe_payment_method_label = COALESCE(?, stripe_payment_method_label),
-         card_authorized_at = COALESCE(card_authorized_at, ?),
-         installment_plan_created_at = COALESCE(installment_plan_created_at, ?),
-         installment_plan_active_at = COALESCE(installment_plan_active_at, ?),
-         state_history = ?,
-         updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`,
-    [
-      STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE,
-      savedMethod.stripe_customer_id,
-      savedMethod.stripe_payment_method_id,
-      getSavedCardLabelFromRow(savedMethod),
-      now,
-      now,
-      now,
-      JSON.stringify(stateHistory),
-      cleanFlowId
-    ]
-  )
+    const activation = await db.run(
+      `UPDATE payment_flows
+       SET current_state = ?,
+           stripe_customer_id = COALESCE(?, stripe_customer_id),
+           stripe_payment_method_id = COALESCE(?, stripe_payment_method_id),
+           stripe_payment_method_label = COALESCE(?, stripe_payment_method_label),
+           card_authorized_at = COALESCE(card_authorized_at, ?),
+           installment_plan_created_at = COALESCE(installment_plan_created_at, ?),
+           installment_plan_active_at = COALESCE(installment_plan_active_at, ?),
+           state_history = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND payment_provider = 'stripe' AND remaining_automatic = 1
+         AND current_state NOT IN ('editing', 'paused', 'cancelled', 'deleted')`,
+      [
+        STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE,
+        savedMethod.stripe_customer_id,
+        savedMethod.stripe_payment_method_id,
+        getSavedCardLabelFromRow(savedMethod),
+        now,
+        now,
+        now,
+        JSON.stringify(stateHistory),
+        cleanFlowId
+      ]
+    )
+    if (Number(activation.changes) !== 1) return null
 
-  await db.run(
-    `UPDATE installment_payments
-     SET status = 'scheduled',
-         payment_method = 'stripe_saved_card',
-         updated_at = CURRENT_TIMESTAMP
-     WHERE flow_id = ?
-       AND automatic = 1
-       AND status IN ('waiting_card_authorization', 'pending_card', 'pending')`,
-    [cleanFlowId]
-  )
-
-  await db.run(
-    `UPDATE payments
-     SET status = 'scheduled',
-         updated_at = CURRENT_TIMESTAMP
-     WHERE id IN (
-       SELECT payment_id
-       FROM installment_payments
+    await db.run(
+      `UPDATE installment_payments
+       SET status = 'scheduled',
+           payment_method = 'stripe_saved_card',
+           updated_at = CURRENT_TIMESTAMP
        WHERE flow_id = ?
-         AND payment_id IS NOT NULL
-     )
-       AND status IN ('pending', 'waiting_card_authorization')`,
-    [cleanFlowId]
-  )
+         AND automatic = 1
+         AND status IN ('waiting_card_authorization', 'pending_card', 'pending')`,
+      [cleanFlowId]
+    )
 
-  await persistStripePaymentPlanMirror(cleanFlowId)
+    await db.run(
+      `UPDATE payments
+       SET status = 'scheduled',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id IN (
+         SELECT payment_id
+         FROM installment_payments
+         WHERE flow_id = ?
+           AND automatic = 1
+           AND payment_id IS NOT NULL
+       )
+         AND status IN ('pending', 'waiting_card_authorization')`,
+      [cleanFlowId]
+    )
 
-  return db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+    await persistStripePaymentPlanMirror(cleanFlowId)
+
+    return db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+  })
 }
 
 async function syncStripePlanFromPayment(paymentRow, savedMethod, config) {
@@ -5382,6 +5390,7 @@ export async function createStripeSavedCardPayment(input = {}, { providerIdempot
 }
 
 export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
+  assertAutomaticPaymentPlanRequest(input, 'Stripe')
   const { config } = await getStripeClient()
   const accountCurrency = await getConfiguredCurrency()
   const accountTimezone = await getAccountTimezone()
@@ -5448,6 +5457,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       null,
       JSON.stringify({
         source: plan.source,
+        collectionMode: 'automatic',
         creationRequestKey: cleanString(input.idempotencyKey),
         timezone: accountTimezone,
         remainingFrequency: plan.remainingFrequency,
@@ -5740,6 +5750,7 @@ export async function processDueStripePaymentPlanCharges({ limit = 25, isLeaseVa
      FROM payment_flows f
      JOIN payments p ON p.id = f.first_payment_invoice_id
      WHERE f.payment_provider = 'stripe'
+       AND f.remaining_automatic = 1
        AND f.current_state = ?
        AND f.first_payment_invoice_id IS NOT NULL
        AND (
@@ -5770,6 +5781,7 @@ export async function processDueStripePaymentPlanCharges({ limit = 25, isLeaseVa
      JOIN payment_flows f ON f.id = i.flow_id
      LEFT JOIN payments p ON p.id = i.payment_id
      WHERE f.payment_provider = 'stripe'
+       AND f.remaining_automatic = 1
        AND f.current_state = ?
        AND i.automatic = 1
        AND (
@@ -5802,9 +5814,12 @@ export async function processDueStripePaymentPlanCharges({ limit = 25, isLeaseVa
          SET first_payment_status = 'processing',
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
+           AND remaining_automatic = 1
+           AND payment_provider = 'stripe'
+           AND COALESCE(stripe_payment_method_id, '') = ?
            AND current_state = '${STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE}'
            AND (first_payment_status IN ('pending', 'scheduled') OR (first_payment_status = 'processing' AND ${staleFirstPaymentClaimSql}))`,
-        [row.flow_id]
+        [row.flow_id, row.stripe_payment_method_id || '']
       )
       if (!(Number(claim?.changes || 0) > 0)) continue
 
@@ -5868,19 +5883,22 @@ export async function processDueStripePaymentPlanCharges({ limit = 25, isLeaseVa
     try {
       // Claim atómico antes de resolver/cobrar la tarjeta guardada. Esto mantiene a
       // Stripe con la misma garantía anti-doble-cargo que los demás proveedores.
-      const claim = await db.run(
+      const claim = await claimAutomaticPlanInstallment(row.flow_id, 'stripe', STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE, row.stripe_payment_method_id, tx => tx.run(
         `UPDATE installment_payments
          SET status = 'processing',
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
+           AND automatic = 1
            AND EXISTS (
              SELECT 1 FROM payment_flows f
              WHERE f.id = installment_payments.flow_id
+               AND f.remaining_automatic = 1
+               AND f.payment_provider = 'stripe'
                AND f.current_state = '${STRIPE_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE}'
            )
            AND (status = 'scheduled' OR (status = 'processing' AND ${staleInstallmentClaimSql}))`,
         [row.installment_id]
-      )
+      ))
       if (!(Number(claim?.changes || 0) > 0)) continue
 
       const savedMethod = await resolveStripeSavedMethod(row.contact_id, row.stripe_payment_method_id, config)

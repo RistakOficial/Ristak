@@ -36,6 +36,33 @@ function createHttpError(message, status) {
   return error
 }
 
+export function assertAutomaticPaymentPlanRequest(input = {}, provider = '') {
+  const manualMethods = new Set(['offline', 'manual', 'cash', 'bank_transfer', 'transfer', 'deposit', 'check', 'other'])
+  const hasManualInstallment = (Array.isArray(input.remainingPayments) ? input.remainingPayments : []).some(row => manualMethods.has(String(row?.paymentMethod || row?.method || '').trim().toLowerCase()))
+  if ((input.remainingAutomatic !== undefined && input.remainingAutomatic !== true)
+    || (input.collectionMode !== undefined && input.collectionMode !== 'automatic')
+    || hasManualInstallment) {
+    throw createHttpError(`Este alta de ${provider} domicilia los pagos futuros. Para sólo recordatorios usa el plan offline; pagar una cuota por enlace no autoriza domiciliación.`, 400)
+  }
+}
+
+// Serializa la preparación de una cuota con los cambios de forma de cobro.
+// El bloqueo vive sólo hasta marcarla processing; nunca durante la llamada externa.
+export async function claimAutomaticPlanInstallment(flowId, provider, activeState, cardId, claim) {
+  const cardColumn = { stripe: 'stripe_payment_method_id', conekta: 'conekta_payment_source_id', rebill: 'rebill_card_id' }[provider]
+  if (!cardColumn) throw createHttpError('Pasarela de domiciliación no compatible.', 400)
+  return db.transaction(async tx => {
+    const locked = await tx.run(
+      `UPDATE payment_flows SET current_state = current_state
+       WHERE id = ? AND payment_provider = ? AND remaining_automatic = 1 AND current_state = ?
+         AND COALESCE(${cardColumn}, '') = ?`,
+      [flowId, provider, activeState, String(cardId || '')]
+    )
+    if (Number(locked.changes) !== 1) return { changes: 0 }
+    return claim(tx)
+  })
+}
+
 async function acquireCreationHashGuard(provider, hash, idempotencyKey) {
   const now = new Date()
   const nowIso = now.toISOString()
