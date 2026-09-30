@@ -30,6 +30,9 @@ test('MCP expone la matriz operativa de pagos sin endpoints de secretos ni check
   const expectedNames = [
     'payments_get_automation_settings',
     'payments_update_automation_settings',
+    'payments_recover_plan_tax',
+    'payments_inspect_fiscal_invoice',
+    'payments_reconcile_fiscal_invoice',
     'payments_get_stats',
     'payments_get_summary',
     'payments_get_facets',
@@ -68,6 +71,22 @@ test('MCP expone la matriz operativa de pagos sin endpoints de secretos ni check
   const registry = getMcpRegistrySummary()
   assert.ok(registry.toolCount >= 375)
   assert.ok(registry.toolsByDomain.payments >= 61)
+})
+
+test('la conciliación fiscal MCP exige admin e idempotencia y conserva dryRun por defecto', async () => {
+  const inspect = paymentTool('payments_inspect_fiscal_invoice')
+  const reconcile = paymentTool('payments_reconcile_fiscal_invoice')
+  assert.equal(inspect.adminOnly, true)
+  assert.equal(inspect.access, 'read')
+  assert.equal(reconcile.adminOnly, true)
+  assert.equal(reconcile.idempotencyRequired, true)
+  assert.equal(reconcile.scope, 'ristak.execute')
+  const calls = []
+  const context = { invoke: async (_handler, request) => { calls.push(request); return {} } }
+  await reconcile.execute(context, { paymentId: 'payment-existing', idempotencyKey: 'fiscal-preview-001' })
+  await reconcile.execute(context, { paymentId: 'payment-existing', idempotencyKey: 'fiscal-apply-001', dryRun: false })
+  assert.deepEqual(calls.map(call => call.body), [{ dryRun: true }, { dryRun: false }])
+  assert.deepEqual(calls.map(call => call.params), [{ id: 'payment-existing' }, { id: 'payment-existing' }])
 })
 
 test('ajustes MCP de automatizaciones de pago son parciales y no exponen configuración sensible', async () => {

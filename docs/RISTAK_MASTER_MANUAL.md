@@ -5014,7 +5014,10 @@ local quedó confirmado y conserva una elección fiscal explícita en el pago.
 La cola y el envío vuelven a revisar `metadata_json.tax.enabled`: un pago sin
 desglose, con `tax: null` o con `enabled: false` no se encola ni se registra en
 Gigstack. Nunca se reconstruye su impuesto desde la configuración global. Esto
-también aplica a reintentos que ya estaban en cola. La corrección no cancela ni
+también aplica a reintentos que todavía no tienen un ID remoto. Si Gigstack ya
+acusó el registro, Ristak permite consultar ese pago y recuperar su CFDI aunque
+el registro legacy no tenga snapshot fiscal: esa conciliación sólo usa GET y
+no reconstruye impuestos ni vuelve a registrar el pago. La corrección no cancela ni
 altera documentos emitidos anteriormente; esos casos requieren conciliación con
 el registro remoto. Configuración > Pagos > Impuestos separa
 dos API keys: Test y Live. Ambas se cifran dentro de
@@ -5090,6 +5093,39 @@ localmente junto con ambiente, ID remoto e IDs de factura. Cuando se eligió
 marca el resultado como `stamped` si Gigstack confirma `stamped`/`valid` en el
 mismo ambiente; registrar el pago remoto no se confunde con haber timbrado.
 
+El acuse remoto se guarda como `pendingRemotePaymentId` y `pendingInvoiceIds`
+antes de consultar el timbrado. Si falta el CFDI, falla su consulta o se reinicia
+el proceso, los siguientes intentos usan `GET /v2/payments/:id` y después
+consultan las facturas; nunca repiten `POST /v2/payments/register` con un ID
+remoto conocido. `automationType` conserva la intención original del envío,
+incluso si después cambia el switch global. Un ID o ambiente remoto distinto
+bloquea la conciliación. Los errores de proveedor extraen códigos, campos y
+mensajes de objetos/arreglos, con longitud limitada y sin copiar requests ni
+credenciales; no se convierten a `[object Object]`.
+
+El MCP administrativo expone `payments_inspect_fiscal_invoice` para revisar un
+pago remoto y verificar sus CFDI sin modificar datos, y
+`payments_reconcile_fiscal_invoice` para recuperar el resultado en Ristak. La
+conciliación exige admin, `ristak.execute`, clave idempotente y un ID remoto ya
+guardado; `dryRun=true` es el default. Con `dryRun=false` reclama el mismo lease
+del worker y admite un trabajo bloqueado, pero sólo realiza una consulta
+explícita: no cobra, registra pagos, emite CFDI, encola entregas ni programa
+reintentos automáticos. Si todavía no existe factura, conserva el bloqueo para
+revisión. No se deben usar las herramientas genéricas de registrar pago ni SQL
+de soporte para resolver estos casos.
+
+Los planes Stripe legacy no se backfillean automáticamente. Con una decisión
+fiscal explícita del administrador, `payments_recover_plan_tax` puede restaurar
+el snapshot ausente del plan y de sus parcialidades no cobradas a partir de un
+pago confirmado del mismo plan, contacto, moneda y ambiente. La vista previa
+devuelve IDs, importes, base, impuesto y `previewHash`; aplicar exige ese mismo
+`expectedPreviewHash`, admin e idempotencia. La operación es transaccional,
+reclama el plan a `editing`, rechaza cobros en proceso y verifica cada fila antes
+de escribir. Nunca sobrescribe elecciones fiscales explícitas, cambia importes,
+fechas, tarjetas o pagos históricos ni emite CFDI. Guarda procedencia y actor en
+`metadata.taxRecovery`/`metadata_json.taxRecovery`. Que el cobro de domiciliación
+tenga IVA no autoriza por sí solo a elegir PUE o PPD para el programa completo.
+
 La sección Gigstack ofrece dos switches independientes, activos por defecto:
 **Enviar PDF y XML por WhatsApp** y **Enviar PDF y XML por correo**. Se aplican
 únicamente a nuevas facturas PUE confirmadas como `stamped`/`valid`; guardar la
@@ -5119,8 +5155,9 @@ interna al navegador. El ZIP se arma en Ristak con PDF y XML; las URLs remotas s
 aceptan sólo por HTTPS y desde hosts autorizados de Gigstack o Google Storage.
 
 `gigstack_invoice_jobs` es el outbox durable de reintentos. La fila nace antes de
-la llamada externa, reclama un lease por pago y reintenta sólo red, timeout,
-`429` y `5xx` con backoff. Errores fiscales, credenciales incorrectas o datos de
+la llamada externa, reclama un lease por pago y reintenta red, timeout,
+`429`, `5xx` y facturas todavía pendientes con backoff limitado. El ID remoto
+también queda en la fila del job cuando falla la verificación. Errores fiscales, credenciales incorrectas o datos de
 cliente faltantes quedan bloqueados para corregir configuración; nunca se
 reenvían a ciegas. Activar Gigstack no factura pagos históricos: sólo se encolan
 pagos nuevos cuando la integración ya estaba encendida.

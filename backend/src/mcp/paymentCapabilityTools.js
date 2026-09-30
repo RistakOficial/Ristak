@@ -1,4 +1,5 @@
 import * as transactionsController from '../controllers/transactionsController.js'
+import * as paymentPlansController from '../controllers/paymentPlansController.js'
 import * as offlinePaymentsController from '../controllers/offlinePaymentsController.js'
 import * as stripePaymentsController from '../controllers/stripePaymentsController.js'
 import * as conektaPaymentsController from '../controllers/conektaPaymentsController.js'
@@ -359,6 +360,36 @@ function savedCardTool({ name, provider, handler, source, sourceField = 'payment
 }
 
 const transactionInsightTools = [
+  executeTool({
+    name: 'payments_recover_plan_tax',
+    description: 'Repara explícitamente el impuesto ausente de parcialidades no cobradas de un plan Stripe legacy, desde un pago confirmado del mismo plan. No cambia importes, fechas, moneda ni pagos históricos. Exige validación fiscal del administrador. dryRun=true devuelve el desglose y previewHash; para aplicar exige dryRun=false y expectedPreviewHash. No emite facturas ni envía mensajes.',
+    module: 'payments',
+    featureKeys: ['payment_plans'],
+    adminOnly: true,
+    handler: paymentPlansController.recoverPaymentPlanFiscalTax,
+    inputSchema: schema({ planId: ID, sourcePaymentId: ID, dryRun: { type: 'boolean', default: true }, expectedPreviewHash: { type: 'string', pattern: '^[a-f0-9]{64}$' } }, ['planId', 'sourcePaymentId']),
+    params: args => ({ scheduleId: args.planId }),
+    body: args => ({ sourcePaymentId: args.sourcePaymentId, dryRun: args.dryRun !== false, expectedPreviewHash: args.expectedPreviewHash })
+  }),
+  readTool({
+    name: 'payments_inspect_fiscal_invoice',
+    description: 'Consulta en Gigstack el pago remoto y sus facturas ya existentes. No registra pagos, emite CFDI, modifica datos ni envía mensajes.',
+    module: 'payments',
+    adminOnly: true,
+    handler: transactionsController.inspectTransactionFiscalInvoice,
+    inputSchema: schema({ paymentId: ID }, ['paymentId']),
+    params: args => ({ id: args.paymentId })
+  }),
+  executeTool({
+    name: 'payments_reconcile_fiscal_invoice',
+    description: 'Recupera en Ristak una factura ya existente en Gigstack usando exclusivamente el ID remoto guardado. dryRun=true por defecto; false realiza un intento con lease, sin nuevos registros, cobros, timbrados, mensajes ni reintentos automáticos.',
+    module: 'payments',
+    adminOnly: true,
+    handler: transactionsController.reconcileTransactionFiscalInvoice,
+    inputSchema: schema({ paymentId: ID, dryRun: { type: 'boolean', default: true } }, ['paymentId']),
+    params: args => ({ id: args.paymentId }),
+    body: args => ({ dryRun: args.dryRun !== false })
+  }),
   readTool({
     name: 'payments_get_stats',
     description: 'Obtiene métricas agregadas de pagos usando los filtros y la moneda de la cuenta.',

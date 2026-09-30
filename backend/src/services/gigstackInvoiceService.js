@@ -111,6 +111,25 @@ function createGigstackError(message, { status = 0, code = 'gigstack_error', ret
   return error
 }
 
+function gigstackErrorDetail(value, depth = 0) {
+  if (depth > 5 || value == null) return ''
+  if (typeof value === 'string' || typeof value === 'number') return cleanString(value, 1000)
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map((item) => gigstackErrorDetail(item, depth + 1)).filter(Boolean).join('; ')
+  }
+  if (typeof value !== 'object') return ''
+
+  // Read diagnostic fields, not echoed requests, credentials or provider config.
+  const diagnosticKeys = ['code', 'field', 'path', 'message', 'detail', 'description', 'error', 'errors', 'details']
+  const keys = diagnosticKeys.some((key) => value[key] != null)
+    ? diagnosticKeys
+    : Object.keys(value).filter((key) => !/token|secret|password|authorization|api.?key|headers|request|response|config|stack|metadata/i.test(key))
+  return keys.slice(0, 20).map((key) => {
+    const detail = gigstackErrorDetail(value[key], depth + 1)
+    return detail && !diagnosticKeys.includes(key) ? `${key}: ${detail}` : detail
+  }).filter(Boolean).join('; ')
+}
+
 export function normalizeGigstackPaymentMode(value) {
   const normalized = cleanString(value, 24).toLowerCase()
   if (['test', 'sandbox'].includes(normalized)) return 'test'
@@ -435,7 +454,10 @@ async function gigstackRequest(path, { token, method = 'GET', body } = {}) {
     })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-      const message = cleanString(data?.message || data?.error, 1000) || `Gigstack respondió ${response.status}`
+      const details = [data?.message, data?.error, data?.errors, data?.details]
+        .map((value) => gigstackErrorDetail(value)).filter(Boolean)
+      const detail = [...new Set(details)].join('; ')
+      const message = cleanString(token ? detail.split(token).join('[REDACTED]') : detail, 1000) || `Gigstack respondió ${response.status}`
       throw createGigstackError(message, {
         status: response.status,
         code: `gigstack_http_${response.status}`,
@@ -1351,7 +1373,80 @@ export async function testGigstackConnection({ mode, token } = {}) {
   }
 }
 
-export async function registerGigstackPaymentForTransaction(paymentId, { expectedMode } = {}) {
+async function getGigstackRecoveryContext(paymentId) {
+  const row = await getPaymentRow(cleanString(paymentId, 160))
+  if (!row) throw createGigstackError('Pago no encontrado.', { status: 404, code: 'payment_not_found' })
+  const fiscal = parseJson(row.metadata_json).gigstack || {}
+  const mode = normalizeGigstackPaymentMode(row.payment_mode)
+  const remotePaymentId = cleanString(fiscal.pendingRemotePaymentId || fiscal.id, 180)
+  if (!PAID_STATUSES.has(cleanString(row.status).toLowerCase()) || !remotePaymentId) {
+    throw createGigstackError('La conciliación exige un pago confirmado con un ID de Gigstack ya guardado.', {
+      status: 409, code: 'gigstack_remote_payment_required'
+    })
+  }
+  if (!mode || normalizeGigstackPaymentMode(fiscal.mode) !== mode) {
+    throw createGigstackError('El ambiente fiscal guardado no coincide con el pago.', {
+      status: 409, code: 'gigstack_payment_mode_changed'
+    })
+  }
+  return { row, fiscal, mode, remotePaymentId }
+}
+
+// Support inspection is read-only at both ends: no registration, queue reset,
+// invoice issuance, delivery, or changes to the original fiscal election.
+export async function inspectGigstackPaymentForTransaction(paymentId) {
+  const { row, fiscal, mode, remotePaymentId } = await getGigstackRecoveryContext(paymentId)
+  const settings = await getPaymentSettings({ includeSecrets: true, resolveBusinessProfile: false })
+  const token = getGigstackTokenForMode(settings.taxes, mode)
+  assertGigstackTokenMode(token, mode)
+  const response = await gigstackRequest(`/payments/${encodeURIComponent(remotePaymentId)}`, { token })
+  const remote = response?.data && typeof response.data === 'object' ? response.data : response
+  if (cleanString(remote?.id || remote?.payment?.id, 180) !== remotePaymentId) {
+    throw createGigstackError('Gigstack devolvió un pago distinto al solicitado.', {
+      status: 409, code: 'gigstack_payment_identity_mismatch'
+    })
+  }
+  if (typeof remote?.livemode === 'boolean' && remote.livemode !== (mode === 'live')) {
+    throw createGigstackError('Gigstack devolvió un ambiente distinto al pago.', {
+      status: 409, code: 'gigstack_response_mode_mismatch'
+    })
+  }
+  const invoiceIds = [...new Set([
+    ...(Array.isArray(remote?.invoices) ? remote.invoices : []),
+    ...(Array.isArray(fiscal.pendingInvoiceIds) ? fiscal.pendingInvoiceIds : []),
+    ...(Array.isArray(fiscal.invoiceIds) ? fiscal.invoiceIds : [])
+  ].map((invoice) => cleanString(typeof invoice === 'object' ? invoice?.id || invoice?.uuid : invoice, 180)).filter(Boolean))]
+  let invoices = []
+  let verificationError = null
+  try {
+    invoices = await verifyGigstackInvoices(invoiceIds, token, mode)
+  } catch (error) {
+    verificationError = { code: error.code, message: cleanString(error.message, 1000) }
+  }
+  return {
+    paymentId: row.id, mode, remotePaymentId,
+    localStatus: cleanString(fiscal.status, 80),
+    remoteStatus: cleanString(remote?.status, 80),
+    invoiceIds, invoices, verificationError,
+    canReconcile: invoices.length > 0 && !verificationError
+      && REGISTERED_GIGSTACK_STATUSES.has(cleanString(remote?.status, 80).toLowerCase())
+  }
+}
+
+export async function reconcileGigstackPaymentForTransaction(paymentId, { dryRun = true } = {}) {
+  if (dryRun !== false) return { dryRun: true, ...await inspectGigstackPaymentForTransaction(paymentId) }
+  const { row, mode } = await getGigstackRecoveryContext(paymentId)
+  await db.run(
+    `INSERT INTO gigstack_invoice_jobs (payment_id, payment_mode, status)
+     VALUES (?, ?, 'pending') ON CONFLICT(payment_id) DO NOTHING`,
+    [row.id, mode]
+  )
+  // One explicit attempt through the same lease as the worker. Never enqueue
+  // messages or an automatic retry for this administrative reconciliation.
+  return { dryRun: false, ...await processGigstackInvoiceJob(row.id, { reconcileOnly: true }) }
+}
+
+export async function registerGigstackPaymentForTransaction(paymentId, { expectedMode, reconcileOnly = false, enqueueDelivery = true } = {}) {
   const cleanPaymentId = cleanString(paymentId, 160)
   if (!cleanPaymentId) return { skipped: true, reason: 'missing_payment_id' }
 
@@ -1389,24 +1484,45 @@ export async function registerGigstackPaymentForTransaction(paymentId, { expecte
   }
 
   const existingMetadata = parseJson(row.metadata_json)
+  const fiscal = existingMetadata.gigstack || {}
+  reconcileOnly = reconcileOnly || fiscal.reconcileOnly === true
+  enqueueDelivery = enqueueDelivery && !reconcileOnly
+  const pendingRemotePaymentId = cleanString(fiscal.pendingRemotePaymentId || (reconcileOnly ? fiscal.id : ''), 180)
+  if (reconcileOnly && !pendingRemotePaymentId && !cleanString(fiscal.id, 180)) {
+    throw createGigstackError('El pago no tiene un registro remoto de Gigstack para conciliar.', {
+      status: 409,
+      code: 'gigstack_remote_payment_required'
+    })
+  }
+  if ((pendingRemotePaymentId || fiscal.id) && normalizeGigstackPaymentMode(fiscal.mode) !== mode) {
+    throw createGigstackError('El registro de Gigstack y el pago pertenecen a ambientes distintos o desconocidos.', {
+      code: 'gigstack_payment_mode_changed'
+    })
+  }
   if (
-    REGISTERED_GIGSTACK_STATUSES.has(cleanString(existingMetadata.gigstack?.status).toLowerCase()) ||
-    cleanString(existingMetadata.gigstack?.id)
+    !pendingRemotePaymentId && (
+      REGISTERED_GIGSTACK_STATUSES.has(cleanString(fiscal.status).toLowerCase()) ||
+      cleanString(fiscal.id)
+    )
   ) {
     const existingSettings = await getPaymentSettings({ resolveBusinessProfile: false })
-    const delivery = await enqueueGigstackInvoiceDeliveryJobs(cleanPaymentId, {
+    const delivery = enqueueDelivery ? await enqueueGigstackInvoiceDeliveryJobs(cleanPaymentId, {
       mode,
       invoices: existingMetadata.gigstack?.invoices || [],
       taxes: existingSettings.taxes || {}
-    })
-    return { skipped: true, reason: 'already_registered', delivery }
+    }) : { skipped: true, reason: 'manual_reconciliation' }
+    return { skipped: true, reason: 'already_registered', remotePaymentId: cleanString(fiscal.id, 180), delivery }
   }
 
   const settings = await getPaymentSettings({ includeSecrets: true, resolveBusinessProfile: false })
   const taxes = settings.taxes || {}
-  if (!taxes.enabled || !taxes.gigstackEnabled) return { skipped: true, reason: 'gigstack_disabled' }
+  if (!taxes.gigstackEnabled || (!pendingRemotePaymentId && !taxes.enabled)) {
+    return { skipped: true, reason: 'gigstack_disabled' }
+  }
   const tax = getPaymentTax(row, settings)
-  if (!tax?.enabled) return { skipped: true, reason: 'missing_tax' }
+  // Legacy payments may have no tax snapshot. A known remote payment can still
+  // be reconciled read-only; it must never be registered a second time.
+  if (!pendingRemotePaymentId && !tax?.enabled) return { skipped: true, reason: 'missing_tax' }
   const token = getGigstackTokenForMode(taxes, mode)
   try {
     assertGigstackTokenMode(token, mode)
@@ -1420,22 +1536,29 @@ export async function registerGigstackPaymentForTransaction(paymentId, { expecte
     throw error
   }
 
-  if (!/^[A-Z]{3}$/.test(cleanString(row.currency, 3).toUpperCase())) {
+  if (!pendingRemotePaymentId && !/^[A-Z]{3}$/.test(cleanString(row.currency, 3).toUpperCase())) {
     throw createGigstackError('El pago no tiene una moneda ISO válida; no se enviará a Gigstack.', { code: 'missing_payment_currency' })
   }
 
-  const payload = await buildGigstackPayload(row, settings, tax, mode)
+  const payload = pendingRemotePaymentId ? null : await buildGigstackPayload(row, settings, tax, mode)
+  // Older pending references were only saved after a failed PUE verification.
+  // Pin that intent instead of using today's global automation switch.
+  const automationType = pendingRemotePaymentId ? (fiscal.automationType || 'pue_invoice') : payload.automation_type
   await updateGigstackMetadata(cleanPaymentId, {
     status: 'processing',
     mode,
-    idempotencyKey: payload.idempotency_key,
+    automationType,
+    ...(reconcileOnly ? { reconcileOnly: true } : {}),
+    idempotencyKey: fiscal.idempotencyKey || payload?.idempotency_key || `ristak-payment-${cleanPaymentId}`,
     error: '',
     errorCode: ''
   })
 
   let data
   try {
-    data = await gigstackRequest('/payments/register', { token, method: 'POST', body: payload })
+    data = pendingRemotePaymentId
+      ? await gigstackRequest(`/payments/${encodeURIComponent(pendingRemotePaymentId)}`, { token })
+      : await gigstackRequest('/payments/register', { token, method: 'POST', body: payload })
   } catch (error) {
     await updateGigstackMetadata(cleanPaymentId, {
       status: 'error',
@@ -1447,6 +1570,27 @@ export async function registerGigstackPaymentForTransaction(paymentId, { expecte
   }
 
   const result = data?.data && typeof data.data === 'object' ? data.data : data
+  const remotePaymentId = cleanString(result?.id || result?.payment?.id || '', 180)
+  if (!remotePaymentId || (pendingRemotePaymentId && remotePaymentId !== pendingRemotePaymentId)) {
+    const error = createGigstackError('Gigstack no devolvió la identidad esperada del pago. Requiere conciliación antes de continuar.', {
+      code: 'gigstack_payment_identity_mismatch'
+    })
+    await updateGigstackMetadata(cleanPaymentId, { status: 'error', errorCode: error.code, error: error.message })
+    throw error
+  }
+  const invoiceIds = [...new Set([
+    ...(Array.isArray(fiscal.pendingInvoiceIds) ? fiscal.pendingInvoiceIds : []),
+    ...(Array.isArray(result?.invoices) ? result.invoices : [])
+  ].map((invoice) => cleanString(
+    typeof invoice === 'object' ? invoice?.id || invoice?.uuid : invoice,
+    180
+  )).filter(Boolean))]
+  // Persist the acknowledgement before validating status or fetching invoices.
+  // A timeout, rejected invoice or process restart must resume with GET.
+  await updateGigstackMetadata(cleanPaymentId, {
+    pendingRemotePaymentId: remotePaymentId,
+    pendingInvoiceIds: invoiceIds
+  })
   if (typeof result?.livemode === 'boolean' && result.livemode !== (mode === 'live')) {
     const error = createGigstackError('Gigstack registró el pago en un ambiente distinto al esperado.', {
       code: 'gigstack_response_mode_mismatch'
@@ -1475,17 +1619,9 @@ export async function registerGigstackPaymentForTransaction(paymentId, { expecte
     throw error
   }
 
-  const remotePaymentId = cleanString(result?.id || result?.payment?.id || '', 180)
-  const invoiceIds = Array.isArray(result?.invoices)
-    ? result.invoices.map((invoice) => cleanString(
-        typeof invoice === 'object' ? invoice?.id || invoice?.uuid : invoice,
-        180
-      )).filter(Boolean)
-    : []
-  const automationType = payload.automation_type
   let verifiedInvoices = []
   try {
-    verifiedInvoices = automationType === 'pue_invoice'
+    verifiedInvoices = reconcileOnly || automationType === 'pue_invoice'
       ? await verifyGigstackInvoices(invoiceIds, token, mode)
       : []
   } catch (error) {
@@ -1500,25 +1636,27 @@ export async function registerGigstackPaymentForTransaction(paymentId, { expecte
     throw error
   }
   await updateGigstackMetadata(cleanPaymentId, {
-    status: automationType === 'pue_invoice' ? 'stamped' : 'registered',
+    status: reconcileOnly || automationType === 'pue_invoice' ? 'stamped' : 'registered',
     remoteStatus: remoteStatus || 'succeeded',
     mode,
     livemode: mode === 'live',
     id: remotePaymentId,
     invoiceIds,
     invoices: verifiedInvoices,
-    registeredAt: new Date().toISOString(),
+    pendingRemotePaymentId: null,
+    pendingInvoiceIds: [],
+    registeredAt: fiscal.registeredAt || new Date().toISOString(),
     error: '',
     errorCode: ''
   })
 
   let delivery
   try {
-    delivery = await enqueueGigstackInvoiceDeliveryJobs(cleanPaymentId, {
+    delivery = enqueueDelivery ? await enqueueGigstackInvoiceDeliveryJobs(cleanPaymentId, {
       mode,
       invoices: verifiedInvoices,
       taxes
-    })
+    }) : { skipped: true, reason: 'manual_reconciliation' }
   } catch (error) {
     await updateGigstackMetadata(cleanPaymentId, {
       deliveryEnqueueStatus: 'error',
@@ -1548,10 +1686,12 @@ async function enqueueGigstackInvoiceJob(paymentId) {
     db.get('SELECT payment_mode, metadata_json FROM payments WHERE id = ?', [cleanPaymentId])
   ])
   if (!payment) return { skipped: true, reason: 'payment_not_found' }
-  if (!settings.taxes?.enabled || !settings.taxes?.gigstackEnabled) {
+  const fiscal = parseJson(payment.metadata_json).gigstack || {}
+  const pendingRemotePaymentId = cleanString(fiscal.pendingRemotePaymentId, 180)
+  if (!settings.taxes?.gigstackEnabled || (!pendingRemotePaymentId && !settings.taxes?.enabled)) {
     return { skipped: true, reason: 'gigstack_disabled' }
   }
-  if (!getPaymentTax(payment, settings)?.enabled) {
+  if (!pendingRemotePaymentId && !getPaymentTax(payment, settings)?.enabled) {
     return { skipped: true, reason: 'missing_tax' }
   }
 
@@ -1576,7 +1716,7 @@ async function enqueueGigstackInvoiceJob(paymentId) {
   return { queued: true, paymentId: cleanPaymentId, mode }
 }
 
-async function claimGigstackInvoiceJob(paymentId) {
+async function claimGigstackInvoiceJob(paymentId, { includeBlocked = false } = {}) {
   const now = Date.now()
   const claimToken = crypto.randomUUID()
   await db.run(
@@ -1586,7 +1726,7 @@ async function claimGigstackInvoiceJob(paymentId) {
      WHERE payment_id = ?
        AND next_attempt_at_ms <= ?
        AND (
-         status IN ('pending', 'retry')
+         status IN ('pending', 'retry'${includeBlocked ? ", 'blocked', 'skipped', 'registered'" : ''})
          OR (status = 'processing' AND COALESCE(lease_until_at_ms, 0) <= ?)
        )`,
     [claimToken, now + GIGSTACK_JOB_LEASE_MS, paymentId, now, now]
@@ -1612,14 +1752,16 @@ async function finishGigstackInvoiceJob(paymentId, claimToken, patch = {}) {
   )
 }
 
-export async function processGigstackInvoiceJob(paymentId) {
-  const claim = await claimGigstackInvoiceJob(cleanString(paymentId, 160))
+export async function processGigstackInvoiceJob(paymentId, { reconcileOnly = false } = {}) {
+  const claim = await claimGigstackInvoiceJob(cleanString(paymentId, 160), { includeBlocked: reconcileOnly })
   if (!claim) return { skipped: true, reason: 'not_claimed' }
 
   const { row, claimToken } = claim
   try {
     const result = await registerGigstackPaymentForTransaction(row.payment_id, {
-      expectedMode: row.payment_mode
+      expectedMode: row.payment_mode,
+      reconcileOnly,
+      enqueueDelivery: !reconcileOnly
     })
     if (result.registered || result.reason === 'already_registered') {
       await finishGigstackInvoiceJob(row.payment_id, claimToken, {
@@ -1638,10 +1780,13 @@ export async function processGigstackInvoiceJob(paymentId) {
     })
     return { skipped: true, reason: result.reason, paymentId: row.payment_id }
   } catch (error) {
-    const retryable = error?.retryable === true && Number(row.attempt_count) < GIGSTACK_MAX_ATTEMPTS
+    const payment = await db.get('SELECT metadata_json FROM payments WHERE id = ?', [row.payment_id])
+    const fiscal = parseJson(payment?.metadata_json).gigstack || {}
+    const retryable = !reconcileOnly && fiscal.reconcileOnly !== true && error?.retryable === true && Number(row.attempt_count) < GIGSTACK_MAX_ATTEMPTS
     const status = retryable ? 'retry' : 'blocked'
     await finishGigstackInvoiceJob(row.payment_id, claimToken, {
       status,
+      remotePaymentId: fiscal.pendingRemotePaymentId || fiscal.id,
       nextAttemptAtMs: retryable ? nextRetryAtMs(Number(row.attempt_count)) : 0,
       lastError: `${error?.code || 'gigstack_error'}: ${cleanString(error?.message, 900)}`
     })

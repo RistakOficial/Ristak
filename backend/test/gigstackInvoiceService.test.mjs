@@ -9,6 +9,8 @@ import {
   getGigstackFiscalProfile,
   getGigstackInvoiceDeliveryPublicFile,
   getGigstackInvoiceFileDownload,
+  inspectGigstackPaymentForTransaction,
+  reconcileGigstackPaymentForTransaction,
   processDueGigstackInvoiceDeliveryJobs,
   processGigstackInvoiceDeliveryJob,
   processGigstackInvoiceJob,
@@ -33,6 +35,46 @@ function fakeGigstackToken(livemode) {
   return `${header}.${payload}.signature`
 }
 
+async function withInvoiceRecoveryPayment(run, { metadata, taxes = {} } = {}) {
+  const paymentId = `recovery_${crypto.randomUUID()}`
+  const contactId = `contact_${paymentId}`
+  await initializeMasterKey()
+  await savePaymentSettings({ taxes: {
+    enabled: true,
+    gigstackEnabled: true,
+    gigstackTestApiToken: fakeGigstackToken(false),
+    gigstackSendEmail: false,
+    gigstackSendWhatsapp: false,
+    ...taxes
+  } }, { allowGigstackFiscalOverride: true })
+  await db.run('INSERT INTO contacts (id, email, full_name) VALUES (?, ?, ?)', [contactId, `${paymentId}@example.com`, 'Invoice recovery test'])
+  await db.run(
+    "INSERT INTO payments (id, contact_id, amount, currency, status, payment_mode, metadata_json) VALUES (?, ?, 116, 'MXN', 'paid', 'test', ?)",
+    [paymentId, contactId, JSON.stringify(metadata ?? { tax: {
+      enabled: true, taxName: 'IVA', rateValue: 16, calculationMode: 'inclusive',
+      subtotalAmount: 100, taxAmount: 16, totalAmount: 116
+    } })]
+  )
+  const readFiscal = async () => JSON.parse((await db.get('SELECT metadata_json FROM payments WHERE id = ?', [paymentId])).metadata_json).gigstack
+  const readJob = () => db.get('SELECT * FROM gigstack_invoice_jobs WHERE payment_id = ?', [paymentId])
+  const retry = async () => {
+    await db.run('UPDATE gigstack_invoice_jobs SET next_attempt_at_ms = 0 WHERE payment_id = ?', [paymentId])
+    return processGigstackInvoiceJob(paymentId)
+  }
+  try {
+    await run({ paymentId, readFiscal, readJob, retry })
+  } finally {
+    await db.run('DELETE FROM gigstack_invoice_delivery_jobs WHERE payment_id = ?', [paymentId])
+    await db.run('DELETE FROM gigstack_invoice_jobs WHERE payment_id = ?', [paymentId])
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+}
+
+function gigstackResponse(data, status = 200) {
+  return { ok: status >= 200 && status < 300, status, json: async () => data }
+}
+
 afterEach(async () => {
   globalThis.fetch = originalFetch
   setGigstackInvoiceDeliveryDependenciesForTest(null)
@@ -40,6 +82,228 @@ afterEach(async () => {
 })
 
 describe('Gigstack payment registration', () => {
+  it('previews and reconciles a blocked legacy job without registering or delivering anything', async () => {
+    await withInvoiceRecoveryPayment(async ({ paymentId, readFiscal, readJob }) => {
+      await db.run("INSERT INTO gigstack_invoice_jobs (payment_id, payment_mode, status, attempt_count, last_error) VALUES (?, 'test', 'blocked', 2, 'gigstack_http_400: [object Object]')", [paymentId])
+      const before = await readFiscal()
+      globalThis.fetch = async (url, options) => {
+        assert.equal(options.method, 'GET')
+        return String(url).includes('/invoices/income/')
+          ? gigstackResponse({ data: { status: 'stamped', livemode: false } })
+          : gigstackResponse({ data: { id: 'payment_blocked', status: 'succeeded', invoices: ['invoice_existing'], livemode: false } })
+      }
+      const preview = await reconcileGigstackPaymentForTransaction(paymentId)
+      assert.equal(preview.dryRun, true)
+      assert.equal(preview.canReconcile, true)
+      assert.deepEqual(await readFiscal(), before)
+      assert.equal((await readJob()).attempt_count, 2)
+      assert.equal((await reconcileGigstackPaymentForTransaction(paymentId, { dryRun: false })).registered, true)
+      assert.equal((await readFiscal()).status, 'stamped')
+      assert.equal((await readJob()).status, 'registered')
+      assert.equal((await readFiscal()).reconcileOnly, true)
+      assert.equal((await registerGigstackPaymentForTransaction(paymentId)).registered, true)
+      assert.equal((await db.get('SELECT COUNT(*) AS count FROM gigstack_invoice_delivery_jobs WHERE payment_id = ?', [paymentId])).count, 0)
+    }, {
+      metadata: { gigstack: { mode: 'test', status: 'error', pendingRemotePaymentId: 'payment_blocked', pendingInvoiceIds: [] } },
+      taxes: { gigstackSendEmail: true, gigstackSendWhatsapp: true }
+    })
+  })
+
+  it('manual reconciliation never queues automatic retries or accepts a payment without a remote identity', async () => {
+    await withInvoiceRecoveryPayment(async ({ paymentId, readJob }) => {
+      globalThis.fetch = async () => { throw new Error('No provider call allowed') }
+      await assert.rejects(() => inspectGigstackPaymentForTransaction(paymentId), { code: 'gigstack_remote_payment_required' })
+      await assert.rejects(() => reconcileGigstackPaymentForTransaction(paymentId, { dryRun: false }), { code: 'gigstack_remote_payment_required' })
+      assert.equal(await readJob(), null)
+    })
+    await withInvoiceRecoveryPayment(async ({ paymentId, readJob }) => {
+      globalThis.fetch = async (_url, options) => {
+        assert.equal(options.method, 'GET')
+        return gigstackResponse({ data: { id: 'payment_pending', status: 'succeeded', invoices: [], livemode: false } })
+      }
+      const preview = await inspectGigstackPaymentForTransaction(paymentId)
+      assert.equal(preview.canReconcile, false)
+      assert.equal(preview.verificationError.code, 'gigstack_invoice_pending')
+      const result = await reconcileGigstackPaymentForTransaction(paymentId, { dryRun: false })
+      assert.equal(result.code, 'gigstack_invoice_pending')
+      assert.equal(result.retryable, false)
+      assert.equal((await readJob()).status, 'blocked')
+    }, { metadata: { gigstack: { mode: 'test', pendingRemotePaymentId: 'payment_pending' } } })
+  })
+
+  it('registers once and reconciles a pending PUE with GET, preserving intent when settings change', async () => {
+    await withInvoiceRecoveryPayment(async ({ paymentId, readFiscal, readJob, retry }) => {
+      const requests = []
+      let ready = false
+      globalThis.fetch = async (url, options) => {
+        const path = new URL(url).pathname
+        requests.push([options.method, path])
+        if (options.method === 'POST') {
+          assert.equal(JSON.parse(options.body).idempotency_key, `ristak-payment-${paymentId}`)
+          assert.equal((await readJob()).status, 'processing')
+          return gigstackResponse({ data: { id: 'payment_recovery', status: 'succeeded', livemode: false, invoices: [] } })
+        }
+        if (path === '/v2/payments/payment_recovery') {
+          return gigstackResponse({ data: { id: 'payment_recovery', status: 'succeeded', livemode: false, invoices: ready ? ['invoice_recovery'] : [] } })
+        }
+        assert.equal(path, '/v2/invoices/income/invoice_recovery')
+        assert.equal((await readFiscal()).pendingRemotePaymentId, 'payment_recovery')
+        return gigstackResponse({ data: { status: 'stamped', uuid: 'uuid_recovery', livemode: false } })
+      }
+
+      const first = await registerGigstackPaymentForTransactionInBackground(paymentId)
+      assert.equal(first.code, 'gigstack_invoice_pending')
+      assert.equal(first.retryable, true)
+      assert.equal((await readJob()).remote_payment_id, 'payment_recovery')
+      assert.equal((await readFiscal()).pendingRemotePaymentId, 'payment_recovery')
+      assert.equal((await retry()).code, 'gigstack_invoice_pending')
+
+      await savePaymentSettings({ taxes: { enabled: false, gigstackAutomationType: 'none', gigstackAutomateInvoiceOnComplete: false } }, { allowGigstackFiscalOverride: true })
+      ready = true
+      assert.equal((await retry()).registered, true)
+      const fiscal = await readFiscal()
+      assert.equal(fiscal.status, 'stamped')
+      assert.equal(fiscal.automationType, 'pue_invoice')
+      assert.equal(fiscal.id, 'payment_recovery')
+      assert.equal(fiscal.pendingRemotePaymentId, null)
+      assert.deepEqual(fiscal.pendingInvoiceIds, [])
+      assert.equal((await readJob()).status, 'registered')
+      assert.equal((await registerGigstackPaymentForTransaction(paymentId)).reason, 'already_registered')
+      assert.deepEqual(requests, [
+        ['POST', '/v2/payments/register'],
+        ['GET', '/v2/payments/payment_recovery'],
+        ['GET', '/v2/payments/payment_recovery'],
+        ['GET', '/v2/invoices/income/invoice_recovery']
+      ])
+    })
+  })
+
+  it('reconciles an existing legacy remote payment without adding a missing tax snapshot', async () => {
+    await withInvoiceRecoveryPayment(async ({ paymentId, readFiscal }) => {
+      const requests = []
+      globalThis.fetch = async (url, options) => {
+        assert.equal(options.method, 'GET')
+        requests.push(new URL(url).pathname)
+        if (requests.length === 1) return gigstackResponse({ data: { id: 'payment_legacy', status: 'succeeded', invoices: [] } })
+        return gigstackResponse({ data: { status: 'valid', uuid: 'legacy_uuid', livemode: false } })
+      }
+      assert.equal((await registerGigstackPaymentForTransactionInBackground(paymentId)).registered, true)
+      assert.equal((await readFiscal()).status, 'stamped')
+      const metadata = JSON.parse((await db.get('SELECT metadata_json FROM payments WHERE id = ?', [paymentId])).metadata_json)
+      assert.equal(Object.hasOwn(metadata, 'tax'), false)
+      assert.deepEqual(requests, ['/v2/payments/payment_legacy', '/v2/invoices/income/invoice_legacy'])
+    }, { metadata: { gigstack: {
+      mode: 'test', status: 'error', pendingRemotePaymentId: 'payment_legacy',
+      pendingInvoiceIds: ['invoice_legacy'], error: '[object Object]'
+    } } })
+  })
+
+  it('never falls back to registering again when the remote payment lookup fails', async () => {
+    for (const status of [400, 404, 429, 503]) {
+      await withInvoiceRecoveryPayment(async ({ paymentId, readFiscal, readJob }) => {
+        let calls = 0
+        globalThis.fetch = async (url, options) => {
+          calls += 1
+          assert.equal(options.method, 'GET')
+          assert.match(String(url), /\/payments\/payment_existing$/)
+          return gigstackResponse({ error: { code: 'PROVIDER_ERROR', message: 'Consulta fallida' } }, status)
+        }
+        const result = await registerGigstackPaymentForTransactionInBackground(paymentId)
+        assert.equal(result.code, `gigstack_http_${status}`)
+        assert.equal(result.retryable, status === 429 || status === 503)
+        assert.equal(calls, 1)
+        assert.equal((await readFiscal()).pendingRemotePaymentId, 'payment_existing')
+        assert.equal((await readJob()).remote_payment_id, 'payment_existing')
+      }, { metadata: { gigstack: { mode: 'test', pendingRemotePaymentId: 'payment_existing' } } })
+    }
+  })
+
+  it('saves the remote acknowledgement before invoice lookup fails', async () => {
+    await withInvoiceRecoveryPayment(async ({ paymentId, readFiscal, retry }) => {
+      let posts = 0
+      let invoiceReady = false
+      globalThis.fetch = async (url, options) => {
+        if (options.method === 'POST') posts += 1
+        if (String(url).includes('/invoices/income/')) {
+          assert.equal((await readFiscal()).pendingRemotePaymentId, 'payment_ack')
+          if (!invoiceReady) throw new TypeError('fetch failed')
+          return gigstackResponse({ data: { status: 'stamped', livemode: false } })
+        }
+        return gigstackResponse({ data: { id: 'payment_ack', status: 'succeeded', invoices: ['invoice_ack'], livemode: false } })
+      }
+      assert.equal((await registerGigstackPaymentForTransactionInBackground(paymentId)).code, 'gigstack_network_error')
+      invoiceReady = true
+      assert.equal((await retry()).registered, true)
+      assert.equal(posts, 1)
+    })
+  })
+
+  it('keeps a remote identity even when its first response has an unexpected status', async () => {
+    await withInvoiceRecoveryPayment(async ({ paymentId, readFiscal, retry }) => {
+      let posts = 0
+      globalThis.fetch = async (url, options) => {
+        if (options.method === 'POST') posts += 1
+        return gigstackResponse({ data: { id: 'payment_processing', status: 'processing', invoices: [], livemode: false } })
+      }
+      assert.equal((await registerGigstackPaymentForTransactionInBackground(paymentId)).code, 'gigstack_unexpected_status')
+      assert.equal((await readFiscal()).pendingRemotePaymentId, 'payment_processing')
+      assert.equal((await retry()).code, 'gigstack_unexpected_status')
+      assert.equal(posts, 1)
+    })
+  })
+
+  it('blocks mismatched payment identities and environments without replacing the saved reference', async () => {
+    for (const remote of [
+      { id: 'payment_wrong', livemode: false },
+      { id: 'payment_expected', livemode: true }
+    ]) {
+      await withInvoiceRecoveryPayment(async ({ paymentId, readFiscal }) => {
+        let calls = 0
+        globalThis.fetch = async (url, options) => {
+          calls += 1
+          assert.equal(options.method, 'GET')
+          return gigstackResponse({ data: { ...remote, status: 'succeeded', invoices: ['invoice_wrong'] } })
+        }
+        const result = await registerGigstackPaymentForTransactionInBackground(paymentId)
+        assert.equal(result.retryable, false)
+        assert.equal(result.code, remote.livemode ? 'gigstack_response_mode_mismatch' : 'gigstack_payment_identity_mismatch')
+        assert.equal((await readFiscal()).pendingRemotePaymentId, 'payment_expected')
+        assert.equal(calls, 1)
+      }, { metadata: { gigstack: { mode: 'test', pendingRemotePaymentId: 'payment_expected' } } })
+    }
+  })
+
+  it('rejects a changed historical mode before any reconciliation request', async () => {
+    await withInvoiceRecoveryPayment(async ({ paymentId }) => {
+      let calls = 0
+      globalThis.fetch = async () => { calls += 1; throw new Error('Unexpected request') }
+      const result = await registerGigstackPaymentForTransactionInBackground(paymentId)
+      assert.equal(result.code, 'gigstack_payment_mode_changed')
+      assert.equal(calls, 0)
+    }, { metadata: { gigstack: { mode: 'live', pendingRemotePaymentId: 'payment_live' } } })
+  })
+
+  it('preserves structured provider errors in payment metadata and the durable job', async () => {
+    await withInvoiceRecoveryPayment(async ({ paymentId, readFiscal, readJob }) => {
+      globalThis.fetch = async () => gigstackResponse({
+        message: 'No se pudo facturar',
+        error: {
+          code: 'INVALID_FISCAL_DATA', message: 'Datos fiscales inválidos',
+          details: [{ field: 'tax_id', message: 'RFC inválido' }, { postal_code: ['Falta código postal'] }],
+          request: { token: 'must-not-be-stored' }
+        }
+      }, 400)
+      assert.equal((await registerGigstackPaymentForTransactionInBackground(paymentId)).code, 'gigstack_http_400')
+      const fiscal = await readFiscal()
+      assert.match(fiscal.error, /No se pudo facturar/)
+      assert.match(fiscal.error, /INVALID_FISCAL_DATA/)
+      assert.match(fiscal.error, /RFC inválido/)
+      assert.match(fiscal.error, /postal_code: Falta código postal/)
+      assert.doesNotMatch(fiscal.error, /\[object Object\]|must-not-be-stored/)
+      assert.match((await readJob()).last_error, /RFC inválido/)
+    })
+  })
+
   it('never queues or sends an untaxed payment, even with global taxes and Gigstack enabled', async () => {
     await savePaymentSettings({ taxes: { enabled: true, gigstackEnabled: true, rateValue: 16 } }, { allowGigstackFiscalOverride: true })
     let requests = 0

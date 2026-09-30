@@ -34,6 +34,8 @@ import { sendPaymentNotification } from '../services/pushNotificationsService.js
 import { queuePaymentAutomationMessage } from '../services/paymentAutomationsService.js'
 import {
   getGigstackInvoiceFileDownload,
+  inspectGigstackPaymentForTransaction,
+  reconcileGigstackPaymentForTransaction,
   registerGigstackPaymentForTransactionInBackground
 } from '../services/gigstackInvoiceService.js'
 import { dispatchProductPostWebhooksForPaymentInBackground } from '../services/productPostWebhookService.js'
@@ -1497,6 +1499,23 @@ export const downloadTransactionFiscalInvoice = async (req, res) => {
       success: false,
       error: error.message || 'No se pudo descargar la factura fiscal'
     })
+  }
+}
+
+export const inspectTransactionFiscalInvoice = async (req, res) => {
+  try {
+    res.json({ success: true, data: await inspectGigstackPaymentForTransaction(req.params.id) })
+  } catch (error) {
+    res.status(error.status || 502).json({ success: false, code: error.code, error: error.message })
+  }
+}
+
+export const reconcileTransactionFiscalInvoice = async (req, res) => {
+  try {
+    const data = await reconcileGigstackPaymentForTransaction(req.params.id, { dryRun: req.body?.dryRun !== false })
+    res.json({ success: !data.error, data })
+  } catch (error) {
+    res.status(error.status || 502).json({ success: false, code: error.code, error: error.message })
   }
 }
 

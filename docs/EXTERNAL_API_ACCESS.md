@@ -227,7 +227,7 @@ y [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview).
 
 ### Payment tools
 
-The `payments` domain contains 61 typed tools and mirrors the supported
+The `payments` domain contains 64 typed tools and mirrors the supported
 operational payment matrix rather than exposing provider routes generically:
 
 - payment automation settings can be read and partially updated for reminders,
@@ -251,6 +251,16 @@ operational payment matrix rather than exposing provider routes generically:
 - transaction statistics, summaries, facets, HighLevel invoice sync, safe
   deletion, local/manual registration, send, refund, void and transfer-proof
   decisions use the same protected services as the product UI;
+- admin-only fiscal recovery uses `payments_inspect_fiscal_invoice` (read-only
+  provider inspection), `payments_reconcile_fiscal_invoice` (recover an existing
+  CFDI without registering, stamping or sending anything) and
+  `payments_recover_plan_tax` (restore missing tax on unpaid Stripe installments
+  from an explicitly selected paid transaction in the same plan). Both mutations
+  default to `dryRun=true` and require `ristak.execute` plus idempotency. Tax
+  repair also requires the exact `expectedPreviewHash` returned by its preview,
+  checks identities/currency/mode and preserves amounts, schedules and paid
+  history. It must follow the administrator's fiscal decision; a card setup fee
+  alone does not establish the intended treatment of an entire plan;
 - products, prices and recurring subscriptions continue through their existing
   typed tools.
 
