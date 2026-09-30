@@ -215,6 +215,42 @@ hora. El texto persistido y cualquier fallback QR usan el mismo contrato
 aprendido, de modo que el chat no muestra una versión distinta a la entregada.
 No se crea una variable de entorno ni se modifica a ciegas la plantilla aprobada.
 
+### Diagnóstico de rechazos y respaldo QR
+
+`backend/src/utils/whatsappProviderError.js` conserva el código real del proveedor
+y el detalle de `error_data.details` tanto en respuestas síncronas como en
+recibos Meta/YCloud. El estado HTTP (`400`, `403`, `500`) no debe sustituir al
+código de WhatsApp que venga dentro de la respuesta.
+
+El historial y las respuestas de envío de texto/plantilla explican estos casos
+en español:
+
+- `131042`: Meta rechazó ese intento por facturación de la cuenta de WhatsApp.
+  Sólo se afirma que faltaba un método de pago cuando el detalle original lo
+  confirma. Una tarjeta de anuncios o de otro portfolio no prueba que la WABA
+  elegida tenga facturación habilitada. El diagnóstico describe el momento del
+  rechazo; envíos posteriores entregados/leídos no borran el fallo histórico ni
+  justifican tratarlo como un bloqueo todavía activo.
+- `130472`: Meta no entregó la plantilla por un experimento sobre el destinatario,
+  independiente del método de pago. Cuando el respaldo autorizado sí envía, el
+  aviso empieza confirmando el envío por QR y la fila conserva su estado real.
+  El historial adapta también el aviso legacy sin reenviar mensajes.
+- `131049`: Meta aplicó límites de marketing al destinatario; no se recomienda
+  reintentar inmediatamente.
+
+La lectura aprovecha detalles que ya estaban guardados en `raw_payload_json` o
+`deliveryReceipt`, sin migrar ni modificar filas históricas. Si un fallback QR
+limpió `error_code`/`error_message`, no se resucita el rechazo API conservado para
+auditoría. Errores `131042` y `BALANCE_INSUFFICIENT` quedan fuera de la heurística
+de pérdida de autorización y del fallback por validación estructural, incluso
+si su detalle menciona una restricción o un parámetro faltante. No habilitan
+respaldos ni bloquean el número entero por esas palabras.
+
+Fuentes del contrato: [errores y recibos de YCloud](https://docs.ycloud.com/reference/whatsapp-errors)
+y [referencia de errores del proveedor 360dialog](https://docs.360dialog.com/docs/support/api-error-message-list).
+El código, detalle y estado guardados del intento son la evidencia operativa;
+revisar facturación actual exige la cuenta de WhatsApp correspondiente en Meta.
+
 ## Matriz de implementaciones
 
 | Implementación | API oficial | Intermediario | Coexistence | Entrada principal | Autenticación |

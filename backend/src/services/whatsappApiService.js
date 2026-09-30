@@ -44,6 +44,11 @@ import { logger } from '../utils/logger.js'
 import { trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import { normalizeYCloudApiKeyInput } from '../utils/ycloudApiKey.js'
 import {
+  WHATSAPP_EXPERIMENT_QR_FALLBACK_REASON,
+  extractWhatsAppProviderError,
+  isWhatsAppBillingError
+} from '../utils/whatsappProviderError.js'
+import {
   GENERIC_WHATSAPP_API_CONTACT_NAME,
   extractWhatsAppProfileName,
   normalizeWhatsAppProfileName,
@@ -296,7 +301,7 @@ const TEMPLATE_FALLBACK_RECIPIENT_ERROR_PATTERN = /\b(DESTINATARI[OA]S?|CLIENTE|
 const TEMPLATE_REJECTION_QR_FALLBACK_REASON = 'WhatsApp rechazó definitivamente la plantilla antes de entregarla; Ristak la envió como texto por el respaldo QR.'
 const TEMPLATE_EXPERIMENT_QR_FALLBACK_ERROR_CODES = new Set(['130472'])
 const TEMPLATE_EXPERIMENT_QR_FALLBACK_REASON =
-  'WhatsApp no entregó la plantilla porque el destinatario está incluido en el experimento 130472; Ristak la envió como texto por el respaldo QR.'
+  WHATSAPP_EXPERIMENT_QR_FALLBACK_REASON
 const ASYNC_QR_FALLBACK_MAX_AGE_MS = 15 * 60 * 1000
 
 const REQUIRED_WEBHOOK_EVENTS = [
@@ -4550,6 +4555,9 @@ function getReplyWindowQrFallbackReason(windowReason = '') {
 }
 
 function getOfficialApiRestrictionErrorReason(error) {
+  // Billing is not a loss of authorization or a template validation failure.
+  // Its detailed payload can say "restricted" without authorizing QR routing.
+  if (isWhatsAppBillingError(error)) return ''
   const statusCode = Number(error?.statusCode || 0)
   // OJO: para decidir el ALCANCE del error se usa solo el mensaje del error,
   // nunca el JSON crudo del webhook: ese JSON siempre trae "from" y "wabaId",
@@ -4710,7 +4718,8 @@ function isDeterministicTemplatePreDeliveryFailure({
 } = {}) {
   if (
     cleanString(messageType).toLowerCase() !== 'template' ||
-    normalizeMessageDeliveryStatus(status) !== 'failed'
+    normalizeMessageDeliveryStatus(status) !== 'failed' ||
+    isWhatsAppBillingError({ errorCode, errorMessage })
   ) {
     return false
   }
@@ -9650,9 +9659,13 @@ async function upsertMessage({
   const status = existingQrFallbackApplied
     ? (normalizeMessageDeliveryStatus(existingMessage?.status) || 'sent')
     : pickBestMessageDeliveryStatus(existingMessage?.status, incomingStatus)
-  const error = Array.isArray(normalizedMessage.errors) ? normalizedMessage.errors[0] : normalizedMessage.error
-  const errorCode = cleanString(error?.code || normalizedMessage.errorCode)
-  const errorMessage = cleanString(error?.message || error?.title || normalizedMessage.errorMessage)
+  const { code: errorCode, message: errorMessage } = extractWhatsAppProviderError({
+    errors: normalizedMessage.errors,
+    error: normalizedMessage.error,
+    errorCode: normalizedMessage.errorCode,
+    errorMessage: normalizedMessage.errorMessage,
+    whatsappApiError: normalizedMessage.whatsappApiError
+  })
   const messageType = cleanString(normalizedMessage.type) || 'unknown'
   const providerContentUnavailable = isWhatsAppProviderContentUnavailable({
     messageType,
@@ -10021,7 +10034,7 @@ async function upsertMessage({
   const effectiveFailure = incomingStatus === 'failed' || normalizeMessageDeliveryStatus(existingMessage?.status) === 'failed'
   const failureText = `${effectiveErrorCode} ${effectiveErrorMessage}`.trim()
   const restrictionReason = effectiveFailure
-    ? getOfficialApiRestrictionErrorReason({ message: failureText })
+    ? getOfficialApiRestrictionErrorReason({ graphCode: effectiveErrorCode, message: failureText })
     : ''
   if (
     cleanTransport === 'api' &&
@@ -10409,8 +10422,7 @@ export async function requeueEphemeralMetaDirectMediaBatch({ limit = 100 } = {})
 // vea en el historial y pueda reintentarlo.
 async function persistFailedOutboundApiMessage({ fromPhone, toPhone, type = 'text', content = {}, externalId, contactId, error, provider = PROVIDER_NAME } = {}) {
   try {
-    const errorMessage = cleanString(error?.message || error)
-    const errorCode = cleanString(error?.graphCode || error?.code || error?.statusCode)
+    const { code: errorCode, message: errorMessage } = extractWhatsAppProviderError(error)
     const persistedMessage = await upsertMessage({
       payload: {
         id: externalId || hashId('waapi_send_failed_event', `${fromPhone}|${toPhone}|${type}|${nowIso()}`),
@@ -12668,9 +12680,13 @@ async function reconcileMetaDirectMessageStatus({ item } = {}) {
   }
 
   const incomingStatus = normalizeMessageDeliveryStatus(message.status)
-  const error = Array.isArray(message.errors) ? message.errors[0] : message.error
-  const errorCode = cleanString(error?.code || message.errorCode)
-  const errorMessage = cleanString(error?.message || error?.title || message.errorMessage)
+  const { code: errorCode, message: errorMessage } = extractWhatsAppProviderError({
+    errors: message.errors,
+    error: message.error,
+    errorCode: message.errorCode,
+    errorMessage: message.errorMessage,
+    whatsappApiError: message.whatsappApiError
+  })
   const receipt = {
     ...message,
     id: wamid,

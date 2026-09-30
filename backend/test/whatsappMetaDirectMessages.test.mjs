@@ -859,6 +859,66 @@ test('Meta direct persists one text bubble, reconciles status ACKs, and saves CT
   }
 })
 
+test('el rechazo 131042 conserva el detalle de Meta y el historial explica el fallo antiguo sin bloquear el número', async () => {
+  const suffix = randomUUID()
+  const phoneNumberId = `meta_billing_phone_${suffix}`
+  const wabaId = `meta_billing_waba_${suffix}`
+  const businessPhone = `+1557${Date.now().toString().slice(-7)}`
+  const customerPhone = `+5257${Date.now().toString().slice(-8)}`
+  const contactId = `rstk_contact_meta_billing_${suffix}`
+  const messageId = `waapi_meta_billing_${suffix}`
+  const wamid = `wamid.meta.billing.${suffix}`
+  const title = 'Business eligibility payment issue'
+  const detail = 'Message failed to send because no payment method is set up for your WhatsApp Business account.'
+
+  try {
+    await withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, async () => {
+      await db.run(`
+        INSERT INTO contacts (id, phone, full_name, first_name, source)
+        VALUES (?, ?, 'Cliente Facturación', 'Cliente', 'WhatsApp_API')
+      `, [contactId, customerPhone])
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, source_adapter, provider_message_id, meta_message_id, wamid,
+          contact_id, phone, from_phone, to_phone, business_phone, business_phone_number_id,
+          transport, direction, message_type, message_text, status, message_timestamp, raw_payload_json
+        ) VALUES (?, 'meta_direct', 'meta_direct', ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          'api', 'outbound', 'template', 'Hola Cliente', 'pending', CURRENT_TIMESTAMP, '{}')
+      `, [messageId, wamid, wamid, wamid, contactId, customerPhone,
+        businessPhone, customerPhone, businessPhone, phoneNumberId])
+      await processMetaDirectWebhookPayload({
+        payload: webhookEnvelope({
+          wabaId, phoneNumberId, businessPhone,
+          statuses: [{ id: wamid, recipient_id: customerPhone, status: 'failed',
+            timestamp: String(Math.floor(Date.now() / 1000)),
+            errors: [{ code: 131042, title, message: title, error_data: { details: detail } }]
+          }]
+        })
+      })
+      const stored = await db.get('SELECT status, error_code, error_message FROM whatsapp_api_messages WHERE id = ?', [messageId])
+      assert.equal(stored.status, 'failed')
+      assert.equal(stored.error_code, '131042')
+      assert.equal(stored.error_message, `${title}: ${detail}`)
+
+      // Existing installations saved only the title; the receipt already has
+      // the exact reason. Read it without rewriting that historical record.
+      await db.run('UPDATE whatsapp_api_messages SET error_message = ? WHERE id = ?', [title, messageId])
+      const conversation = await readConversation(contactId)
+      const failure = conversation.find(event => event.data?.whatsapp_api_message_id === messageId)
+      assert.equal(failure?.data.status, 'failed')
+      assert.equal(failure?.data.error_code, '131042')
+      assert.match(failure?.data.error_message || '', /en ese momento.*no tenía un método de pago/i)
+      assert.equal(await db.get('SELECT error_message FROM whatsapp_api_messages WHERE id = ?', [messageId]).then(row => row.error_message), title)
+      assert.equal(await db.get('SELECT status, api_send_enabled FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).then(row => row.status), 'CONNECTED')
+      assert.equal(await db.get('SELECT COUNT(*) AS total FROM whatsapp_api_alerts WHERE entity_id = ?', [wabaId]).then(row => Number(row.total)), 0)
+    })
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
 test('un rechazo de lectura 100/33 conserva Meta incluso si nombra el número; un token inválido sí desconecta', async () => {
   const suffix = randomUUID()
   const phoneNumberId = `meta_phone_read_guard_${suffix}`

@@ -2148,6 +2148,7 @@ test('rechazos definitivos y el experimento 130472 usan QR una sola vez', async 
   const ambiguousProviderMessageId = `ycloud_template_ambiguous_${id}`
   const recipientProviderMessageId = `ycloud_template_recipient_${id}`
   const experimentProviderMessageId = `ycloud_template_experiment_${id}`
+  const billingProviderMessageId = `ycloud_template_billing_${id}`
   const blockedProviderMessageId = `ycloud_template_132000_blocked_${id}`
   const errorMessage = 'body: number of localizable_params (1) does not match the expected number of params (2)'
   const renderedText = 'Hola Eduardo, oye una pregunta... ¿en dónde me encontraste?'
@@ -2440,6 +2441,41 @@ test('rechazos definitivos y el experimento 130472 usan QR una sola vez', async 
         FROM whatsapp_api_messages
         WHERE ycloud_message_id = ?
       `, [recipientProviderMessageId]).then(row => row?.transport), 'api')
+
+      // A detailed billing error can contain both "restricted" and a missing
+      // parameter. Neither phrase authorizes template fallback or API blocking.
+      nextProviderMessageId = billingProviderMessageId
+      await sendWhatsAppApiTemplateMessage({
+        to: recipientPhone,
+        from: businessPhone,
+        templateId,
+        variables: { 1: 'Eduardo' },
+        contactId: recipientContactId,
+        phoneNumberId,
+        allowQrFallback: true
+      })
+      await processFailure({
+        eventId: `evt_template_billing_${id}`,
+        messageId: billingProviderMessageId,
+        toPhone: recipientPhone,
+        errorCode: '131042',
+        failureMessage: 'Business eligibility payment issue: account payment is restricted; a required currency parameter is missing.'
+      })
+      assert.equal(sentMessages.length, 2)
+      const billingRow = await db.get(`
+        SELECT id, status, transport, error_code
+        FROM whatsapp_api_messages WHERE ycloud_message_id = ?
+      `, [billingProviderMessageId])
+      assert.equal(billingRow.status, 'failed')
+      assert.equal(billingRow.transport, 'api')
+      assert.equal(billingRow.error_code, '131042')
+      assert.equal(await db.get(`
+        SELECT COUNT(*) AS total FROM whatsapp_api_qr_fallback_attempts WHERE api_message_id = ?
+      `, [billingRow.id]).then(row => Number(row.total)), 0)
+      assert.equal(await db.get(`
+        SELECT COUNT(*) AS total FROM whatsapp_api_alerts
+        WHERE status = 'active' AND entity_id IN (?, 'waba_template_132000')
+      `, [phoneNumberId]).then(row => Number(row.total)), 0)
 
       nextProviderMessageId = experimentProviderMessageId
       await sendWhatsAppApiTemplateMessage({

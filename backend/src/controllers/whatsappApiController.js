@@ -59,6 +59,7 @@ import {
 import { onWhatsAppQrConnectionOpen } from '../services/whatsappQrService.js'
 import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { formatWhatsAppProviderError } from '../utils/whatsappProviderError.js'
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 import { resolveOutboundChatMediaReference } from '../services/outboundMediaReferenceService.js'
 import { getInstallerSignatureHeaders } from '../services/installerSignatureService.js'
@@ -891,7 +892,7 @@ export async function sendWhatsAppApiTextMessageView(req, res) {
     logger.error(`Error enviando WhatsApp_API: ${error.message}`)
     res.status(400).json({
       success: false,
-      error: error.message || 'No se pudo enviar el mensaje por WhatsApp_API'
+      error: formatWhatsAppProviderError(error) || 'No se pudo enviar el mensaje por WhatsApp_API'
     })
   }
 }
@@ -1276,7 +1277,7 @@ export async function sendWhatsAppApiTemplateMessageView(req, res) {
     logger.error(`Error enviando plantilla WhatsApp_API: ${error.message}`)
     res.status(400).json({
       success: false,
-      error: error.message || 'No se pudo enviar la plantilla por WhatsApp_API'
+      error: formatWhatsAppProviderError(error) || 'No se pudo enviar la plantilla por WhatsApp_API'
     })
   }
 }

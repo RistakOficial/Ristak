@@ -86,6 +86,7 @@ import { getChangedContactFields } from '../utils/contactChangeFields.js'
 import { mergeAndPersistContactCustomFields } from '../services/contactCustomFieldsPersistenceService.js'
 import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizePhoneForAccount } from '../utils/accountLocale.js'
+import { formatWhatsAppQrFallbackReason, resolveStoredWhatsAppProviderError } from '../utils/whatsappProviderError.js'
 import {
   isSuspiciousSharedVisitorId,
   isTrustedTrackingVisitorId
@@ -7264,6 +7265,12 @@ export const getContactJourney = async (req, res) => {
         messageText: msg.message_text,
         messageType: msg.message_type
       })
+      const providerError = resolveStoredWhatsAppProviderError({
+        errorCode: msg.error_code,
+        errorMessage: msg.error_message,
+        rawPayload,
+        transport: msg.transport
+      })
       const detectedSourceId = cleanString(msg.detected_source_id || detectedAttribution.sourceId)
       const detectedSourceType = cleanString(msg.detected_source_type || detectedAttribution.sourceType)
       const replyContextId = getWhatsAppReplyContextId(context, rawPayload)
@@ -7287,7 +7294,7 @@ export const getContactJourney = async (req, res) => {
         transport: msg.transport || 'api',
         provider: msg.provider || 'ycloud',
         source_adapter: msg.source_adapter || (msg.transport === 'qr' ? 'baileys' : 'ycloud'),
-        routing_reason: msg.routing_reason || null,
+        routing_reason: formatWhatsAppQrFallbackReason(msg.routing_reason) || null,
         message_text: stripRistakAdIdMarkersFromText(visibleMessageText),
         message_type: msg.message_type,
         message_presentation: messagePresentation,
@@ -7316,8 +7323,8 @@ export const getContactJourney = async (req, res) => {
         reaction_target_provider_message_id: cleanString(msg.message_type).toLowerCase() === 'reaction' ? replyContextId : '',
         direction: msg.direction || 'inbound',
         status: msg.status || null,
-        error_code: msg.error_code || null,
-        error_message: msg.error_message || null,
+        error_code: providerError.code || null,
+        error_message: providerError.message || null,
         content_unavailable: isWhatsAppProviderContentUnavailable({
           messageType: msg.message_type,
           errorCode: msg.error_code,
