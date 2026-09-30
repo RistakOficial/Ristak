@@ -6,7 +6,7 @@ import { initializeMasterKey } from '../src/utils/encryption.js'
 import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 import { getGigstackContactLink, getGigstackClientContext, linkGigstackContact, validateGigstackContact, searchGigstackClients, resolveGigstackClientForPayment } from '../src/services/gigstackContactService.js'
 import { recoverPaymentFiscalTax } from '../src/services/paymentFiscalTaxRecoveryService.js'
-import { getGigstackInvoiceFileDownload, inspectGigstackPaymentForTransaction, issueGigstackInvoiceForTransaction, registerGigstackPaymentForTransactionInBackground, setGigstackInvoiceDeliveryDependenciesForTest } from '../src/services/gigstackInvoiceService.js'
+import { getGigstackInvoiceFileDownload, inspectGigstackPaymentForTransaction, issueGigstackInvoiceForTransaction, processDueGigstackInvoiceDeliveryJobs, processGigstackInvoiceJob, registerGigstackPaymentForTransactionInBackground, setGigstackInvoiceDeliveryDependenciesForTest } from '../src/services/gigstackInvoiceService.js'
 import { paymentCapabilityToolSpecs } from '../src/mcp/paymentCapabilityTools.js'
 import { invokeController } from '../src/mcp/controllerInvoker.js'
 
@@ -230,7 +230,9 @@ test('manual issue previews, stamps once and delivers only PDF/XML to WhatsApp w
     assert.deepEqual(await read(), before)
     await assert.rejects(issueGigstackInvoiceForTransaction(paymentId, { ...args, dryRun: false }), { code: 'gigstack_invoice_preview_changed' })
     const result = await issueGigstackInvoiceForTransaction(paymentId, { ...args, dryRun: false, expectedPreviewRevision: preview.previewRevision, actorId: 'admin_fixture' })
-    assert.equal(result.delivery.filter(result => result.sent).length, 2)
+    assert.equal(result.delivery.filter(result => result.queued).length, 2)
+    assert.equal(sent.length, 0)
+    assert.equal((await processDueGigstackInvoiceDeliveryJobs()).filter(result => result.sent).length, 2)
     assert.equal(sent.length, 2)
     assert.equal(sent.every(message => message.contactId === contactId && message.sensitive), true)
     const next = await issueGigstackInvoiceForTransaction(paymentId, args)
@@ -307,7 +309,8 @@ test('explicit delivery recovery retries only unsent blocked files using the exi
     const args = { deliveryChannel: 'whatsapp' }
     const preview = await issueGigstackInvoiceForTransaction(sourcePaymentId, args)
     const first = await issueGigstackInvoiceForTransaction(sourcePaymentId, { ...args, dryRun: false, expectedPreviewRevision: preview.previewRevision })
-    assert.equal(first.delivery.filter(item => item.error).length, 2)
+    assert.equal(first.delivery.filter(item => item.queued).length, 2)
+    await processDueGigstackInvoiceDeliveryJobs()
     const beforeInspection = await db.get('SELECT metadata_json FROM payments WHERE id = ?', [sourcePaymentId])
     const inspection = await inspectGigstackPaymentForTransaction(sourcePaymentId, { includeFiles: true })
     assert.equal(inspection.files[0].documents.every(item => !item.available), true)
@@ -319,12 +322,42 @@ test('explicit delivery recovery retries only unsent blocked files using the exi
     assert.equal(retry.willRegister, false)
     assert.equal(retry.blockedDelivery.length, 2)
     const result = await issueGigstackInvoiceForTransaction(sourcePaymentId, { ...retryArgs, dryRun: false, expectedPreviewRevision: retry.previewRevision })
-    assert.equal(result.delivery.filter(item => item.sent).length, 2)
+    assert.equal(result.delivery.filter(item => item.queued).length, 2)
+    await processDueGigstackInvoiceDeliveryJobs()
     const alreadySent = await issueGigstackInvoiceForTransaction(sourcePaymentId, retryArgs)
     assert.equal(alreadySent.blockedDelivery.length, 0)
     await issueGigstackInvoiceForTransaction(sourcePaymentId, { ...retryArgs, dryRun: false, expectedPreviewRevision: alreadySent.previewRevision })
     assert.equal(registrations, 1)
     assert.equal(sent.length, 2)
+  })
+})
+
+test('an asynchronous PUE stays pending and the worker recovers the acknowledged payment without registering again', async () => {
+  await fixture(async ({ contactId, sourcePaymentId }) => {
+    const binding = await linkGigstackContact({ contactId, clientId: 'client_fixture', mode: 'test' })
+    await linkGigstackContact({ contactId, clientId: 'client_fixture', mode: 'test', dryRun: false, expectedPreviewRevision: binding.previewRevision })
+    let registrations = 0
+    globalThis.fetch = async (url, options) => {
+      const path = new URL(url).pathname
+      if (path.includes('/clients/')) return response({ data: client() })
+      if (path.includes('/payments')) {
+        if (options.method === 'POST') registrations += 1
+        return response({ data: { id: 'remote_pending', client: { id: 'client_fixture' }, status: 'succeeded', livemode: false,
+          invoices: options.method === 'POST' ? [] : ['invoice_fixture'] } })
+      }
+      return response({ data: { status: 'valid', uuid: 'uuid_fixture', livemode: false } })
+    }
+    const args = { deliveryChannel: 'whatsapp' }
+    const preview = await issueGigstackInvoiceForTransaction(sourcePaymentId, args)
+    const pending = await issueGigstackInvoiceForTransaction(sourcePaymentId, { ...args, dryRun: false, expectedPreviewRevision: preview.previewRevision })
+    assert.equal(pending.status, 'pending')
+    assert.equal(pending.remotePaymentId, 'remote_pending')
+    assert.equal((await db.get('SELECT status FROM gigstack_invoice_jobs WHERE payment_id = ?', [sourcePaymentId])).status, 'retry')
+    await db.run('UPDATE gigstack_invoice_jobs SET next_attempt_at_ms = 0 WHERE payment_id = ?', [sourcePaymentId])
+    assert.equal((await processGigstackInvoiceJob(sourcePaymentId)).registered, true)
+    assert.equal(registrations, 1)
+    assert.equal((await db.get("SELECT COUNT(*) AS count FROM gigstack_invoice_delivery_jobs WHERE payment_id = ? AND status = 'pending'", [sourcePaymentId])).count, 2)
+    assert.equal((await db.get("SELECT COUNT(*) AS count FROM gigstack_invoice_delivery_jobs WHERE payment_id = ? AND channel = 'email'", [sourcePaymentId])).count, 0)
   })
 })
 

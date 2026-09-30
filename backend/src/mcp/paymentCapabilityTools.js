@@ -402,7 +402,7 @@ const transactionInsightTools = [
   }),
   executeTool({
     name: 'payments_issue_fiscal_invoice',
-    description: 'Emite explícitamente una factura PUE del pago confirmado con impuesto guardado y receptor existente vinculado a Gigstack, o recupera su CFDI ya existente. No vuelve a cobrar. Sólo admin; dryRun=true por defecto y expectedPreviewRevision obligatorio al aplicar. deliveryChannel=whatsapp envía PDF y XML por el canal del contacto; none no envía mensajes. retryDelivery=true recupera envíos bloqueados sin confirmación previa. No registra otro pago cuando ya hay un ID remoto.',
+    description: 'Emite explícitamente una factura PUE del pago confirmado con impuesto guardado y receptor existente vinculado a Gigstack, o recupera su CFDI ya existente. No vuelve a cobrar. Sólo admin; dryRun=true por defecto y expectedPreviewRevision obligatorio al aplicar. deliveryChannel=whatsapp encola PDF y XML para el canal del contacto; queued indica pendiente y sent confirma el envío. status=pending espera la PUE del mismo ID remoto. none no envía mensajes. retryDelivery=true recupera envíos bloqueados sin confirmación previa. No registra otro pago cuando ya hay un ID remoto.',
     module: 'payments', adminOnly: true,
     handler: fiscalPaymentsController.issueFiscalPaymentInvoice,
     inputSchema: schema({ paymentId: ID, dryRun: { type: 'boolean', default: true }, expectedPreviewRevision: { type: 'string', pattern: '^[a-f0-9]{64}$' }, deliveryChannel: { type: 'string', enum: ['none', 'whatsapp', 'email'], default: 'none' }, retryDelivery: { type: 'boolean', default: false } }, ['paymentId']),

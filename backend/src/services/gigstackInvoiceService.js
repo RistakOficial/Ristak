@@ -1440,7 +1440,6 @@ export async function issueGigstackInvoiceForTransaction(paymentId, {
   try {
     const result = await registerGigstackPaymentForTransaction(row.id, { expectedMode: context.mode, reconcileOnly: Boolean(remotePaymentId), enqueueDelivery: false })
     if (!result.registered && result.reason !== 'already_registered') throw createGigstackError(`No se pudo emitir: ${result.reason}`, { code: result.reason || 'gigstack_invoice_not_issued' })
-    await finishGigstackInvoiceJob(row.id, claimToken, { status: 'registered', remotePaymentId: result.remotePaymentId })
     const current = parseJson((await getPaymentRow(row.id)).metadata_json).gigstack
     await enqueueGigstackInvoiceDeliveryJobs(row.id, {
       mode: context.mode, invoices: current.invoices,
@@ -1452,13 +1451,26 @@ export async function issueGigstackInvoiceForTransaction(paymentId, {
         AND invoice_id = ? AND channel = ? AND status = 'blocked'
         AND COALESCE(provider_message_id, '') = '' AND sent_at IS NULL`, [row.id, context.mode, invoice.id, deliveryChannel])
     }
-    const jobs = deliveryChannel === 'none' ? [] : await db.all(`SELECT id FROM gigstack_invoice_delivery_jobs
-      WHERE payment_id = ? AND channel = ? AND status IN ('pending', 'retry') ORDER BY document_format`, [row.id, deliveryChannel])
-    const delivery = []
-    for (const job of jobs) delivery.push(await processGigstackInvoiceDeliveryJob(job.id))
+    await finishGigstackInvoiceJob(row.id, claimToken, { status: 'registered', remotePaymentId: result.remotePaymentId })
+    // WhatsApp can legitimately take longer than an MCP/HTTP request. Commit
+    // durable delivery jobs and let the existing worker confirm each send.
+    const jobs = deliveryChannel === 'none' ? [] : await db.all(`SELECT id, status, document_format, provider_message_id
+      FROM gigstack_invoice_delivery_jobs WHERE payment_id = ? AND channel = ? ORDER BY document_format`, [row.id, deliveryChannel])
+    const delivery = jobs.map(job => ({ jobId: job.id, channel: deliveryChannel, documentFormat: job.document_format,
+      status: job.status, queued: ['pending', 'retry', 'processing'].includes(job.status), sent: job.status === 'sent',
+      providerMessageId: job.provider_message_id || null }))
     return { dryRun: false, paymentId: row.id, mode: context.mode, remotePaymentId: current.id, invoices: current.invoices, delivery }
   } catch (error) {
     const current = parseJson((await getPaymentRow(row.id)).metadata_json).gigstack || {}
+    if (error.code === 'gigstack_invoice_pending' && current.pendingRemotePaymentId) {
+      // The payment was acknowledged; retry only its GET reconciliation.
+      // Never register it again while Gigstack finishes the same CFDI.
+      await finishGigstackInvoiceJob(row.id, claimToken, {
+        status: 'retry', remotePaymentId: current.pendingRemotePaymentId, nextAttemptAtMs: nextRetryAtMs(1), lastError: error.code
+      })
+      return { dryRun: false, paymentId: row.id, mode: context.mode, status: 'pending',
+        remotePaymentId: current.pendingRemotePaymentId, invoices: [], delivery: [] }
+    }
     // An explicit attempt stays blocked for review. A known remote ID can only
     // be queried on a later attempt; it never registers another payment.
     await finishGigstackInvoiceJob(row.id, claimToken, {

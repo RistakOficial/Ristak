@@ -5157,8 +5157,12 @@ nuevos en el frontend. El MCP administrativo ofrece:
   `metadata_json.gigstack.invoiceRequest`. `deliveryChannel=none` es el default;
   `whatsapp` entrega PDF/XML únicamente a ese canal, respetando el emisor del
   contacto, y `email` sólo al correo. Un envío ya confirmado no se duplica.
-  Una falla del intento explícito queda bloqueada para revisión; las entregas
-  mantienen sus reintentos independientes.
+  Si Gigstack ya confirmó el ID remoto pero aún genera la PUE, devuelve
+  `status=pending` y la cola consulta ese mismo pago hasta confirmar su CFDI.
+  Otros errores del intento explícito quedan bloqueados para revisión. Las
+  entregas quedan en la cola persistente y la respuesta muestra `queued` o
+  `sent` según el estado real; el request no espera a WhatsApp. El worker ya
+  existente realiza los envíos y sus reintentos independientes.
   `retryDelivery=true` permite recuperar explícitamente entregas bloqueadas del
   canal elegido que no tengan confirmación ni fecha de envío. La vista previa
   enumera esos trabajos; los documentos enviados o en proceso no se reactivan.
