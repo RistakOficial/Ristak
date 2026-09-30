@@ -6,7 +6,7 @@ import { initializeMasterKey } from '../src/utils/encryption.js'
 import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 import { getGigstackContactLink, getGigstackClientContext, linkGigstackContact, validateGigstackContact, searchGigstackClients, resolveGigstackClientForPayment } from '../src/services/gigstackContactService.js'
 import { recoverPaymentFiscalTax } from '../src/services/paymentFiscalTaxRecoveryService.js'
-import { inspectGigstackPaymentForTransaction, issueGigstackInvoiceForTransaction, registerGigstackPaymentForTransactionInBackground, setGigstackInvoiceDeliveryDependenciesForTest } from '../src/services/gigstackInvoiceService.js'
+import { getGigstackInvoiceFileDownload, inspectGigstackPaymentForTransaction, issueGigstackInvoiceForTransaction, registerGigstackPaymentForTransactionInBackground, setGigstackInvoiceDeliveryDependenciesForTest } from '../src/services/gigstackInvoiceService.js'
 import { paymentCapabilityToolSpecs } from '../src/mcp/paymentCapabilityTools.js'
 import { invokeController } from '../src/mcp/controllerInvoker.js'
 
@@ -253,6 +253,78 @@ test('automatic registration retains the remote client association for the next 
     assert.equal((await registerGigstackPaymentForTransactionInBackground(sourcePaymentId)).registered, true)
     assert.equal((await getGigstackContactLink(contactId, await getGigstackClientContext('test'))).client_id, 'client_fixture')
     assert.equal(calls.filter(([method]) => method === 'POST').length, 1)
+  })
+})
+
+test('invoice files accept typed lists, base64 fields and a direct descriptor only for the requested format', async () => {
+  await fixture(async ({ sourcePaymentId }) => {
+    await db.run('UPDATE payments SET metadata_json = ? WHERE id = ?', [JSON.stringify({ tax, gigstack: { mode: 'test', status: 'stamped', invoices: [{ id: 'invoice_fixture', uuid: 'uuid_fixture', status: 'valid' }] } }), sourcePaymentId])
+    const pdf = Buffer.from('%PDF-1.4 fiscal invoice fixture')
+    const xml = Buffer.from('<?xml version="1.0"?><cfdi/>')
+    const variants = [
+      () => ({ data: [{ file_type: 'pdf', base64: pdf.toString('base64') }, { file_type: 'xml', content: xml.toString() }] }),
+      () => ({ data: { pdfBase64: pdf.toString('base64'), xmlBase64: xml.toString('base64') } }),
+      url => ({ data: new URL(url).searchParams.has('file_type') ? { file: { url: `https://storage.googleapis.com/fiscal/invoice.${new URL(url).searchParams.get('file_type')}` } } : {} })
+    ]
+    for (const variant of variants) {
+      globalThis.fetch = async (url, options = {}) => {
+        if (new URL(url).hostname === 'api.gigstack.io') return response(variant(url))
+        assert.equal(options.headers?.Authorization, undefined)
+        const buffer = String(url).endsWith('.pdf') ? pdf : xml
+        return { ok: true, headers: { get: () => String(buffer.length) }, arrayBuffer: async () => buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) }
+      }
+      assert.deepEqual((await getGigstackInvoiceFileDownload(sourcePaymentId, 'pdf')).buffer, pdf)
+      assert.deepEqual((await getGigstackInvoiceFileDownload(sourcePaymentId, 'xml')).buffer, xml)
+    }
+    globalThis.fetch = async url => new Response(new URL(url).searchParams.get('file_type') === 'pdf' ? pdf : xml, { headers: { 'content-type': new URL(url).searchParams.get('file_type') === 'pdf' ? 'application/pdf' : 'application/xml' } })
+    assert.deepEqual((await getGigstackInvoiceFileDownload(sourcePaymentId, 'pdf')).buffer, pdf)
+    assert.deepEqual((await getGigstackInvoiceFileDownload(sourcePaymentId, 'xml')).buffer, xml)
+    globalThis.fetch = async () => response({ data: { pdf: `data:text/html;base64,${Buffer.from('<html>Login</html>').toString('base64')}` } })
+    await assert.rejects(getGigstackInvoiceFileDownload(sourcePaymentId, 'pdf'), { code: 'gigstack_invalid_pdf' })
+  })
+})
+
+test('explicit delivery recovery retries only unsent blocked files using the existing stamped invoice', async () => {
+  await fixture(async ({ contactId, sourcePaymentId }) => {
+    const binding = await linkGigstackContact({ contactId, clientId: 'client_fixture', mode: 'test' })
+    await linkGigstackContact({ contactId, clientId: 'client_fixture', mode: 'test', dryRun: false, expectedPreviewRevision: binding.previewRevision })
+    let filesReady = false
+    let registrations = 0
+    const sent = []
+    globalThis.fetch = async (url, options) => {
+      const path = new URL(url).pathname
+      if (path.includes('/clients/')) return response({ data: client() })
+      if (options.method === 'POST') registrations += 1
+      if (path.includes('/payments')) return response({ data: { id: 'remote_fixture', client: { id: 'client_fixture' }, status: 'succeeded', livemode: false, invoices: ['invoice_fixture'] } })
+      if (path.endsWith('/files')) return response({ data: filesReady ? { pdfBase64: Buffer.from('%PDF-1.4 fiscal invoice fixture').toString('base64'), xmlBase64: Buffer.from('<?xml version="1.0"?><cfdi/>').toString('base64') } : { secret: 'must-not-leak' } })
+      return response({ data: { id: 'invoice_fixture', status: 'valid', uuid: 'uuid_fixture', livemode: false } })
+    }
+    setGigstackInvoiceDeliveryDependenciesForTest({
+      resolvePaymentWhatsAppRoute: async () => ({ available: true, transport: 'qr', phoneNumberId: 'qr_fixture' }),
+      paymentWhatsAppRouteArgs: () => ({ transport: 'qr', phoneNumberId: 'qr_fixture' }),
+      sendWhatsAppApiDocumentMessage: async args => { sent.push(args); return { id: `doc_${sent.length}`, status: 'sent' } }
+    })
+    const args = { deliveryChannel: 'whatsapp' }
+    const preview = await issueGigstackInvoiceForTransaction(sourcePaymentId, args)
+    const first = await issueGigstackInvoiceForTransaction(sourcePaymentId, { ...args, dryRun: false, expectedPreviewRevision: preview.previewRevision })
+    assert.equal(first.delivery.filter(item => item.error).length, 2)
+    const beforeInspection = await db.get('SELECT metadata_json FROM payments WHERE id = ?', [sourcePaymentId])
+    const inspection = await inspectGigstackPaymentForTransaction(sourcePaymentId, { includeFiles: true })
+    assert.equal(inspection.files[0].documents.every(item => !item.available), true)
+    assert.equal(JSON.stringify(inspection.files).includes('must-not-leak'), false)
+    assert.deepEqual(await db.get('SELECT metadata_json FROM payments WHERE id = ?', [sourcePaymentId]), beforeInspection)
+    filesReady = true
+    const retryArgs = { ...args, retryDelivery: true }
+    const retry = await issueGigstackInvoiceForTransaction(sourcePaymentId, retryArgs)
+    assert.equal(retry.willRegister, false)
+    assert.equal(retry.blockedDelivery.length, 2)
+    const result = await issueGigstackInvoiceForTransaction(sourcePaymentId, { ...retryArgs, dryRun: false, expectedPreviewRevision: retry.previewRevision })
+    assert.equal(result.delivery.filter(item => item.sent).length, 2)
+    const alreadySent = await issueGigstackInvoiceForTransaction(sourcePaymentId, retryArgs)
+    assert.equal(alreadySent.blockedDelivery.length, 0)
+    await issueGigstackInvoiceForTransaction(sourcePaymentId, { ...retryArgs, dryRun: false, expectedPreviewRevision: alreadySent.previewRevision })
+    assert.equal(registrations, 1)
+    assert.equal(sent.length, 2)
   })
 })
 

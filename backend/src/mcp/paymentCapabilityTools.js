@@ -402,10 +402,10 @@ const transactionInsightTools = [
   }),
   executeTool({
     name: 'payments_issue_fiscal_invoice',
-    description: 'Emite explícitamente una factura PUE del pago confirmado con impuesto guardado y receptor existente vinculado a Gigstack, o recupera su CFDI ya existente. No vuelve a cobrar. Sólo admin; dryRun=true por defecto y expectedPreviewRevision obligatorio al aplicar. deliveryChannel=whatsapp envía PDF y XML por el canal del contacto; none no envía mensajes. No registra otro pago cuando ya hay un ID remoto.',
+    description: 'Emite explícitamente una factura PUE del pago confirmado con impuesto guardado y receptor existente vinculado a Gigstack, o recupera su CFDI ya existente. No vuelve a cobrar. Sólo admin; dryRun=true por defecto y expectedPreviewRevision obligatorio al aplicar. deliveryChannel=whatsapp envía PDF y XML por el canal del contacto; none no envía mensajes. retryDelivery=true recupera envíos bloqueados sin confirmación previa. No registra otro pago cuando ya hay un ID remoto.',
     module: 'payments', adminOnly: true,
     handler: fiscalPaymentsController.issueFiscalPaymentInvoice,
-    inputSchema: schema({ paymentId: ID, dryRun: { type: 'boolean', default: true }, expectedPreviewRevision: { type: 'string', pattern: '^[a-f0-9]{64}$' }, deliveryChannel: { type: 'string', enum: ['none', 'whatsapp', 'email'], default: 'none' } }, ['paymentId']),
+    inputSchema: schema({ paymentId: ID, dryRun: { type: 'boolean', default: true }, expectedPreviewRevision: { type: 'string', pattern: '^[a-f0-9]{64}$' }, deliveryChannel: { type: 'string', enum: ['none', 'whatsapp', 'email'], default: 'none' }, retryDelivery: { type: 'boolean', default: false } }, ['paymentId']),
     params: args => ({ id: args.paymentId }),
     body: args => ({ ...cleanControls(args), dryRun: args.dryRun !== false })
   }),
@@ -422,12 +422,13 @@ const transactionInsightTools = [
   }),
   readTool({
     name: 'payments_inspect_fiscal_invoice',
-    description: 'Consulta en Gigstack el pago remoto y sus facturas ya existentes. No registra pagos, emite CFDI, modifica datos ni envía mensajes.',
+    description: 'Consulta en Gigstack el pago remoto y sus facturas ya existentes. includeFiles=true comprueba la descarga y el formato de PDF/XML; devuelve disponibilidad, tamaño o diagnóstico sin binarios, URLs firmadas ni credenciales. No registra pagos, emite CFDI, modifica datos ni envía mensajes.',
     module: 'payments',
     adminOnly: true,
     handler: transactionsController.inspectTransactionFiscalInvoice,
-    inputSchema: schema({ paymentId: ID }, ['paymentId']),
-    params: args => ({ id: args.paymentId })
+    inputSchema: schema({ paymentId: ID, includeFiles: { type: 'boolean', default: false } }, ['paymentId']),
+    params: args => ({ id: args.paymentId }),
+    query: args => ({ includeFiles: args.includeFiles === true })
   }),
   executeTool({
     name: 'payments_reconcile_fiscal_invoice',

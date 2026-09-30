@@ -5159,6 +5159,15 @@ nuevos en el frontend. El MCP administrativo ofrece:
   contacto, y `email` sólo al correo. Un envío ya confirmado no se duplica.
   Una falla del intento explícito queda bloqueada para revisión; las entregas
   mantienen sus reintentos independientes.
+  `retryDelivery=true` permite recuperar explícitamente entregas bloqueadas del
+  canal elegido que no tengan confirmación ni fecha de envío. La vista previa
+  enumera esos trabajos; los documentos enviados o en proceso no se reactivan.
+  `payments_inspect_fiscal_invoice` con `includeFiles=true` comprueba la descarga
+  de PDF/XML y devuelve disponibilidad, tamaño y diagnóstico seguro, sin
+  binarios ni URLs de descarga. Se aceptan referencias por formato, listas y
+  descriptores directos cuando se pidió `file_type`, así como descargas binarias
+  PDF/XML del endpoint; se valida la firma básica
+  del contenido antes de adjuntarlo.
 
 Las escrituras requieren admin, `ristak.execute` e idempotencia. Los endpoints
 equivalentes son `GET /api/transactions/fiscal-clients`,

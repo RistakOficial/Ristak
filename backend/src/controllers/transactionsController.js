@@ -1504,7 +1504,7 @@ export const downloadTransactionFiscalInvoice = async (req, res) => {
 
 export const inspectTransactionFiscalInvoice = async (req, res) => {
   try {
-    res.json({ success: true, data: await inspectGigstackPaymentForTransaction(req.params.id) })
+    res.json({ success: true, data: await inspectGigstackPaymentForTransaction(req.params.id, { includeFiles: req.query?.includeFiles === true || req.query?.includeFiles === 'true' }) })
   } catch (error) {
     res.status(error.status || 502).json({ success: false, code: error.code, error: error.message })
   }

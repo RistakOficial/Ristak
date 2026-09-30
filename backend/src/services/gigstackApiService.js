@@ -67,7 +67,7 @@ export function assertGigstackTokenMode(token, mode) {
   return metadata
 }
 
-export async function gigstackRequest(path, { token, method = 'GET', body, timeoutMs = GIGSTACK_REQUEST_TIMEOUT_MS } = {}) {
+export async function gigstackRequest(path, { token, method = 'GET', body, timeoutMs = GIGSTACK_REQUEST_TIMEOUT_MS, responseType = 'json', maxResponseBytes = 25 * 1024 * 1024 } = {}) {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), Math.max(1, Math.min(Number(timeoutMs) || GIGSTACK_REQUEST_TIMEOUT_MS, 30_000)))
   timeout.unref?.()
@@ -81,7 +81,15 @@ export async function gigstackRequest(path, { token, method = 'GET', body, timeo
       ...(body ? { body: JSON.stringify(body) } : {}),
       signal: controller.signal
     })
-    const data = await response.json().catch(() => ({}))
+    const contentType = String(response.headers?.get?.('content-type') || '').toLowerCase()
+    let data
+    if (response.ok && responseType === 'file' && !contentType.includes('json') && typeof response.arrayBuffer === 'function') {
+      const declaredSize = Number(response.headers?.get?.('content-length') || 0)
+      if (declaredSize > maxResponseBytes) throw createGigstackError('El archivo fiscal excede el tamaño permitido.', { status: 413, code: 'gigstack_file_too_large' })
+      const fileBuffer = Buffer.from(await response.arrayBuffer())
+      if (fileBuffer.length > maxResponseBytes) throw createGigstackError('El archivo fiscal excede el tamaño permitido.', { status: 413, code: 'gigstack_file_too_large' })
+      data = { fileBuffer, contentType }
+    } else data = await response.json().catch(() => ({}))
     if (!response.ok) {
       const details = [data?.message, data?.error, data?.errors, data?.details]
         .map((value) => gigstackErrorDetail(value)).filter(Boolean)

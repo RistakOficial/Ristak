@@ -388,24 +388,41 @@ export async function getGigstackFiscalProfile({ mode, token } = {}) {
   return normalizeGigstackTeamProfile(response, tokenMetadata)
 }
 
-function findInvoiceFileReference(payload, format) {
+function findInvoiceFileReference(payload, format, singleFormat = false) {
   if (!payload) return null
-  const root = payload?.data && typeof payload.data === 'object' ? payload.data : payload
+  const root = payload?.data ?? payload
   const candidates = [
     root?.[format],
     root?.[`${format}_url`],
     root?.[`${format}Url`],
     root?.[`${format}_file`],
     root?.[`${format}File`],
+    root?.[format.toUpperCase()],
+    root?.[`${format}Base64`],
+    root?.[`${format}_base64`],
     root?.files?.[format]
   ]
-  const files = Array.isArray(root?.files) ? root.files : []
+  const files = Array.isArray(root) ? root : Array.isArray(root?.files) ? root.files : []
   const listedFile = files.find((file) => {
-    const type = cleanString(file?.type || file?.format || file?.extension || file?.name, 120).toLowerCase()
+    const type = cleanString(file?.file_type || file?.type || file?.format || file?.extension || file?.mime_type || file?.filename || file?.name, 120).toLowerCase()
     return type === format || type.endsWith(`.${format}`) || type.includes(format)
   })
   if (listedFile) candidates.push(listedFile)
-  return candidates.find((candidate) => candidate !== undefined && candidate !== null && candidate !== '') || null
+  const matched = candidates.find((candidate) => candidate !== undefined && candidate !== null && candidate !== '')
+  if (matched) return matched
+  // A direct descriptor is unambiguous only after requesting file_type.
+  if (singleFormat && (typeof root === 'string' || (root && !Array.isArray(root)
+    && ['url', 'download_url', 'downloadUrl', 'file_url', 'fileUrl', 'href', 'link', 'signed_url', 'base64', 'content', 'file'].some(key => root[key])))) return root
+  return null
+}
+
+function invoiceFileResponseShape(value, depth = 0) {
+  if (value === null) return 'null'
+  if (depth >= 3 && typeof value === 'object') return Array.isArray(value) ? 'array' : 'object'
+  if (Array.isArray(value)) return `[${value.slice(0, 2).map(item => invoiceFileResponseShape(item, depth + 1)).join(',')}]`
+  if (typeof value !== 'object') return typeof value
+  if (depth >= 3) return 'object'
+  return `{${Object.keys(value).slice(0, 12).map(key => `${/token|secret|password|authorization|key/i.test(key) ? '[private]' : cleanString(key, 60)}:${invoiceFileResponseShape(value[key], depth + 1)}`).join(',')}}`
 }
 
 function decodeInlineInvoiceFile(reference, format) {
@@ -413,7 +430,7 @@ function decodeInlineInvoiceFile(reference, format) {
   if (reference && typeof reference === 'object') {
     const nested = reference.url || reference.download_url || reference.downloadUrl ||
       reference.file_url || reference.fileUrl || reference.href || reference.base64 ||
-      reference.content || reference.data
+      reference.content || reference.data || reference.file || reference.link || reference.signed_url
     return decodeInlineInvoiceFile(nested, format)
   }
   const value = String(reference || '').trim()
@@ -433,13 +450,14 @@ function decodeInlineInvoiceFile(reference, format) {
   return null
 }
 
-function getInvoiceFileUrl(reference) {
+function getInvoiceFileUrl(reference, depth = 0) {
+  if (depth > 6) return ''
   if (typeof reference === 'string' && /^https?:\/\//i.test(reference.trim())) return reference.trim()
   if (!reference || typeof reference !== 'object') return ''
-  return cleanString(
+  return getInvoiceFileUrl(
     reference.url || reference.download_url || reference.downloadUrl ||
-      reference.file_url || reference.fileUrl || reference.href,
-    4000
+      reference.file_url || reference.fileUrl || reference.href || reference.link || reference.signed_url || reference.file || reference.data,
+    depth + 1
   )
 }
 
@@ -515,17 +533,18 @@ async function fetchInvoiceFileUrl(rawUrl, token) {
 }
 
 async function loadGigstackInvoiceFile(invoiceId, format, token) {
-  let response = await gigstackRequest(`/invoices/${encodeURIComponent(invoiceId)}/files`, { token })
-  let reference = findInvoiceFileReference(response, format)
+  const options = { token, responseType: 'file', maxResponseBytes: GIGSTACK_FILE_MAX_BYTES }
+  let response = await gigstackRequest(`/invoices/${encodeURIComponent(invoiceId)}/files?file_type=${encodeURIComponent(format)}`, options)
+  let reference = response.fileBuffer || findInvoiceFileReference(response, format, true)
   if (!reference) {
     response = await gigstackRequest(
-      `/invoices/${encodeURIComponent(invoiceId)}/files?file_type=${encodeURIComponent(format)}`,
-      { token }
+      `/invoices/${encodeURIComponent(invoiceId)}/files`,
+      options
     )
-    reference = findInvoiceFileReference(response, format)
+    reference = response.fileBuffer || findInvoiceFileReference(response, format)
   }
   if (!reference) {
-    throw createGigstackError(`Gigstack no devolvió el archivo ${format.toUpperCase()} de esta factura.`, {
+    throw createGigstackError(`Gigstack no devolvió el archivo ${format.toUpperCase()} de esta factura. Estructura: ${invoiceFileResponseShape(response)}`, {
       status: 404,
       code: `gigstack_${format}_not_available`
     })
@@ -533,7 +552,9 @@ async function loadGigstackInvoiceFile(invoiceId, format, token) {
 
   const inline = decodeInlineInvoiceFile(reference, format)
   const buffer = inline || await fetchInvoiceFileUrl(getInvoiceFileUrl(reference), token)
-  if (!buffer?.length || buffer.length > GIGSTACK_FILE_MAX_BYTES) {
+  const signature = buffer?.subarray(0, 512).toString('utf8').replace(/^\uFEFF/, '').trimStart() || ''
+  const correctFormat = format === 'pdf' ? signature.startsWith('%PDF-') : /^<\?xml\b|^<(?:\w+:)?(?:Comprobante|cfdi)\b/i.test(signature)
+  if (!buffer?.length || buffer.length > GIGSTACK_FILE_MAX_BYTES || !correctFormat) {
     throw createGigstackError(`El archivo ${format.toUpperCase()} de Gigstack no es válido.`, {
       status: 422,
       code: `gigstack_invalid_${format}`
@@ -1272,7 +1293,7 @@ async function getGigstackRecoveryContext(paymentId) {
 
 // Support inspection is read-only at both ends: no registration, queue reset,
 // invoice issuance, delivery, or changes to the original fiscal election.
-export async function inspectGigstackPaymentForTransaction(paymentId) {
+export async function inspectGigstackPaymentForTransaction(paymentId, { includeFiles = false } = {}) {
   const { row, fiscal, mode, remotePaymentId } = await getGigstackRecoveryContext(paymentId)
   const settings = await getPaymentSettings({ includeSecrets: true, resolveBusinessProfile: false })
   const token = getGigstackTokenForMode(settings.taxes, mode)
@@ -1305,11 +1326,24 @@ export async function inspectGigstackPaymentForTransaction(paymentId) {
   } catch (error) {
     verificationError = { code: error.code, message: cleanString(error.message, 1000) }
   }
+  const files = []
+  if (includeFiles) for (const invoice of invoices) {
+    const documents = []
+    for (const format of ['pdf', 'xml']) {
+      try {
+        const buffer = await loadGigstackInvoiceFile(invoice.id, format, token)
+        documents.push({ format, available: true, bytes: buffer.length })
+      } catch (error) {
+        documents.push({ format, available: false, code: error.code, message: cleanString(error.message, 1000) })
+      }
+    }
+    files.push({ invoiceId: invoice.id, documents })
+  }
   return {
     paymentId: row.id, mode, remotePaymentId,
     localStatus: cleanString(fiscal.status, 80),
     remoteStatus: cleanString(remote?.status, 80),
-    invoiceIds, invoices, verificationError,
+    invoiceIds, invoices, verificationError, ...(includeFiles ? { files } : {}),
     canReconcile: invoices.length > 0 && !verificationError
       && REGISTERED_GIGSTACK_STATUSES.has(cleanString(remote?.status, 80).toLowerCase())
   }
@@ -1331,11 +1365,12 @@ export async function reconcileGigstackPaymentForTransaction(paymentId, { dryRun
 // Explicit backend operation. Preview fiscal identity and the already-paid
 // total, then claim the same durable lease used by automatic invoicing.
 export async function issueGigstackInvoiceForTransaction(paymentId, {
-  dryRun = true, expectedPreviewRevision, actorId, deliveryChannel = 'none'
+  dryRun = true, expectedPreviewRevision, actorId, deliveryChannel = 'none', retryDelivery = false
 } = {}) {
   if (!['none', 'whatsapp', 'email'].includes(deliveryChannel)) {
     throw createGigstackError('Canal de entrega inválido.', { status: 400, code: 'invalid_invoice_delivery_channel' })
   }
+  if (retryDelivery && deliveryChannel === 'none') throw createGigstackError('Elige el canal para reintentar la entrega.', { status: 400, code: 'invalid_invoice_delivery_channel' })
   const row = await getPaymentRow(cleanString(paymentId, 160))
   if (!row || !PAID_STATUSES.has(cleanString(row.status).toLowerCase())) {
     throw createGigstackError('La factura requiere un pago confirmado.', { status: 409, code: 'payment_not_paid' })
@@ -1367,12 +1402,15 @@ export async function issueGigstackInvoiceForTransaction(paymentId, {
       throw createGigstackError(client.fiscalValidation.message || 'El receptor fiscal no está validado o tiene datos fiscales incompletos en Gigstack.', { status: 409, code: 'gigstack_client_fiscal_incomplete' })
     }
   }
+  const blockedDelivery = retryDelivery ? await db.all(`SELECT id, invoice_id, document_format FROM gigstack_invoice_delivery_jobs
+    WHERE payment_id = ? AND payment_mode = ? AND channel = ? AND status = 'blocked'
+    AND COALESCE(provider_message_id, '') = '' AND sent_at IS NULL ORDER BY id`, [row.id, context.mode, deliveryChannel]) : []
   const preview = {
     paymentId: row.id, contactId: row.contact_id, mode: context.mode, currency: row.currency,
     amount: Number(row.amount), client, willRegister: !remotePaymentId,
     remotePaymentId: remotePaymentId || null, invoices: inspection?.invoices || [],
-    tax: metadata.tax || null, paymentForm: payload?.payment_form || null, deliveryChannel,
-    previewRevision: crypto.createHash('sha256').update(JSON.stringify({ row, payload, client, inspection, deliveryChannel })).digest('hex')
+    tax: metadata.tax || null, paymentForm: payload?.payment_form || null, deliveryChannel, retryDelivery, blockedDelivery,
+    previewRevision: crypto.createHash('sha256').update(JSON.stringify({ row, payload, client, inspection, deliveryChannel, retryDelivery, blockedDelivery })).digest('hex')
   }
   if (dryRun !== false) return { dryRun: true, ...preview }
   if (expectedPreviewRevision !== preview.previewRevision) {
@@ -1408,6 +1446,12 @@ export async function issueGigstackInvoiceForTransaction(paymentId, {
       mode: context.mode, invoices: current.invoices,
       taxes: { gigstackSendWhatsapp: deliveryChannel === 'whatsapp', gigstackSendEmail: deliveryChannel === 'email' }
     })
+    if (retryDelivery) for (const invoice of current.invoices || []) {
+      await db.run(`UPDATE gigstack_invoice_delivery_jobs SET status = 'pending', next_attempt_at_ms = 0,
+        last_error = NULL, updated_at = CURRENT_TIMESTAMP WHERE payment_id = ? AND payment_mode = ?
+        AND invoice_id = ? AND channel = ? AND status = 'blocked'
+        AND COALESCE(provider_message_id, '') = '' AND sent_at IS NULL`, [row.id, context.mode, invoice.id, deliveryChannel])
+    }
     const jobs = deliveryChannel === 'none' ? [] : await db.all(`SELECT id FROM gigstack_invoice_delivery_jobs
       WHERE payment_id = ? AND channel = ? AND status IN ('pending', 'retry') ORDER BY document_format`, [row.id, deliveryChannel])
     const delivery = []

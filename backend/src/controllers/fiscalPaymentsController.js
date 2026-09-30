@@ -26,5 +26,5 @@ export const recoverFiscalPaymentTax = adminAction(req => recoverPaymentFiscalTa
 }))
 export const issueFiscalPaymentInvoice = adminAction(req => issueGigstackInvoiceForTransaction(req.params.id, {
   dryRun: req.body?.dryRun !== false, expectedPreviewRevision: req.body.expectedPreviewRevision,
-  deliveryChannel: req.body?.deliveryChannel || 'none', actorId: req.user.id
+  deliveryChannel: req.body?.deliveryChannel || 'none', retryDelivery: req.body?.retryDelivery === true, actorId: req.user.id
 }))
