@@ -4040,6 +4040,23 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_payment_automation_dispatches_payment ON payment_automation_dispatches(payment_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_payment_automation_dispatches_status ON payment_automation_dispatches(status, updated_at)')
 
+    // El receptor fiscal pertenece al contacto, equipo y ambiente; no a un pago.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS gigstack_contact_links (
+        contact_id TEXT NOT NULL,
+        payment_mode TEXT NOT NULL,
+        team_id TEXT NOT NULL,
+        client_id TEXT NOT NULL,
+        client_profile_json TEXT NOT NULL,
+        source TEXT NOT NULL,
+        actor_id TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(contact_id, payment_mode, team_id),
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      )
+    `)
+
     // Outbox fiscal durable. El ambiente se copia del pago y nunca se infiere
     // desde la configuración global para impedir que una prueba llegue a Live.
     await db.run(`

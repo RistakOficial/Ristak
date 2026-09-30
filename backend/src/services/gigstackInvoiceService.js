@@ -1,5 +1,8 @@
 import crypto from 'crypto'
 import JSZip from 'jszip'
+import { assertGigstackTokenMode, createGigstackError, getGigstackTokenForMode, gigstackRequest, normalizeGigstackPaymentMode, GIGSTACK_REQUEST_TIMEOUT_MS } from './gigstackApiService.js'
+import { getGigstackClient, getGigstackClientContext, rememberGigstackClient, resolveGigstackClientForPayment } from './gigstackContactService.js'
+export { normalizeGigstackPaymentMode } from './gigstackApiService.js'
 
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
@@ -21,8 +24,6 @@ import {
   verifyPublicContextToken
 } from './publicContextTokenService.js'
 
-const GIGSTACK_API_BASE_URL = (process.env.GIGSTACK_API_BASE_URL || 'https://api.gigstack.io/v2').replace(/\/+$/, '')
-const GIGSTACK_REQUEST_TIMEOUT_MS = 15_000
 const GIGSTACK_FILE_MAX_BYTES = 25 * 1024 * 1024
 const GIGSTACK_UNIT_NAMES = {
   E48: 'Unidad de servicio',
@@ -103,70 +104,8 @@ function positiveQuantity(value) {
   return Number.isFinite(quantity) && quantity > 0 ? quantity : 1
 }
 
-function createGigstackError(message, { status = 0, code = 'gigstack_error', retryable = false } = {}) {
-  const error = new Error(message)
-  error.status = status
-  error.code = code
-  error.retryable = retryable
-  return error
-}
-
-function gigstackErrorDetail(value, depth = 0) {
-  if (depth > 5 || value == null) return ''
-  if (typeof value === 'string' || typeof value === 'number') return cleanString(value, 1000)
-  if (Array.isArray(value)) {
-    return value.slice(0, 20).map((item) => gigstackErrorDetail(item, depth + 1)).filter(Boolean).join('; ')
-  }
-  if (typeof value !== 'object') return ''
-
-  // Read diagnostic fields, not echoed requests, credentials or provider config.
-  const diagnosticKeys = ['code', 'field', 'path', 'message', 'detail', 'description', 'error', 'errors', 'details']
-  const keys = diagnosticKeys.some((key) => value[key] != null)
-    ? diagnosticKeys
-    : Object.keys(value).filter((key) => !/token|secret|password|authorization|api.?key|headers|request|response|config|stack|metadata/i.test(key))
-  return keys.slice(0, 20).map((key) => {
-    const detail = gigstackErrorDetail(value[key], depth + 1)
-    return detail && !diagnosticKeys.includes(key) ? `${key}: ${detail}` : detail
-  }).filter(Boolean).join('; ')
-}
-
-export function normalizeGigstackPaymentMode(value) {
-  const normalized = cleanString(value, 24).toLowerCase()
-  if (['test', 'sandbox'].includes(normalized)) return 'test'
-  if (['live', 'production'].includes(normalized)) return 'live'
-  return null
-}
-
 function gigstackModeTitle(mode) {
   return mode === 'live' ? 'Live' : 'Test'
-}
-
-function getGigstackTokenForMode(taxes = {}, mode) {
-  return mode === 'live'
-    ? cleanString(taxes.gigstackLiveApiToken, 5000)
-    : cleanString(taxes.gigstackTestApiToken, 5000)
-}
-
-function assertGigstackTokenMode(token, mode) {
-  if (!token) {
-    throw createGigstackError(`Falta la API key ${gigstackModeTitle(mode)} de Gigstack.`, {
-      code: `missing_${mode}_token`
-    })
-  }
-
-  const metadata = decodeGigstackTokenMetadata(token)
-  if (!metadata.valid) {
-    throw createGigstackError(`La API key ${gigstackModeTitle(mode)} de Gigstack no tiene un formato verificable.`, {
-      code: `invalid_${mode}_token`
-    })
-  }
-  if (metadata.mode !== mode) {
-    throw createGigstackError(
-      `La API key configurada para ${gigstackModeTitle(mode)} pertenece al ambiente ${gigstackModeTitle(metadata.mode)}.`,
-      { code: 'gigstack_token_mode_mismatch' }
-    )
-  }
-  return metadata
 }
 
 function normalizeGigstackTaxRate(value) {
@@ -395,31 +334,13 @@ function getPaymentTax(row, settings) {
 async function buildGigstackPayload(row, settings, tax, mode) {
   const taxes = settings.taxes || {}
   const metadata = parseJson(row.metadata_json)
-  const clientId = taxes.gigstackClientMatchMode === 'client_id_or_email'
-    ? cleanString(metadata.gigstackClientId || metadata.clientId || '', 180)
-    : ''
-  const email = cleanString(row.contact_email, 180).toLowerCase()
-
-  if (!clientId && !email) {
-    throw createGigstackError('El pago no tiene correo del cliente ni client ID de Gigstack; no se enviará al SAT.', {
-      code: 'missing_gigstack_client'
-    })
-  }
-
-  const client = clientId
-    ? { id: clientId }
-    : {
-        search: { on_key: 'email', on_value: email, auto_create: true },
-        name: cleanString(row.contact_name || email, 180),
-        email,
-        phone: cleanString(row.contact_phone, 80)
-      }
+  const client = await resolveGigstackClientForPayment(row, settings, mode)
 
   return {
     client,
-    automation_type: taxes.gigstackAutomationType === 'none' || taxes.gigstackAutomateInvoiceOnComplete === false
+    automation_type: metadata.gigstack?.invoiceRequest?.automationType || (taxes.gigstackAutomationType === 'none' || taxes.gigstackAutomateInvoiceOnComplete === false
       ? 'none'
-      : 'pue_invoice',
+      : 'pue_invoice'),
     currency: cleanString(row.currency, 3).toUpperCase(),
     items: await buildGigstackItems(row, settings, tax),
     payment_form: resolvePaymentForm(
@@ -434,51 +355,8 @@ async function buildGigstackPayload(row, settings, tax, mode) {
     idempotency_key: `ristak-payment-${cleanString(row.id, 160)}`,
     // Ristak entrega y audita PDF + XML por sus propios canales. Dejar este
     // flag activo haría que Gigstack mandara un segundo correo sin trazabilidad.
-    send_email: false
-  }
-}
-
-async function gigstackRequest(path, { token, method = 'GET', body } = {}) {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), GIGSTACK_REQUEST_TIMEOUT_MS)
-  timeout.unref?.()
-  try {
-    const response = await fetch(`${GIGSTACK_API_BASE_URL}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(body ? { 'Content-Type': 'application/json' } : {})
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-      signal: controller.signal
-    })
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok) {
-      const details = [data?.message, data?.error, data?.errors, data?.details]
-        .map((value) => gigstackErrorDetail(value)).filter(Boolean)
-      const detail = [...new Set(details)].join('; ')
-      const message = cleanString(token ? detail.split(token).join('[REDACTED]') : detail, 1000) || `Gigstack respondió ${response.status}`
-      throw createGigstackError(message, {
-        status: response.status,
-        code: `gigstack_http_${response.status}`,
-        retryable: response.status === 429 || response.status >= 500
-      })
-    }
-    return data
-  } catch (error) {
-    if (error?.name === 'AbortError') {
-      throw createGigstackError('Gigstack tardó demasiado en responder.', {
-        code: 'gigstack_timeout',
-        retryable: true
-      })
-    }
-    if (error?.code) throw error
-    throw createGigstackError(cleanString(error?.message, 1000) || 'No se pudo conectar con Gigstack.', {
-      code: 'gigstack_network_error',
-      retryable: true
-    })
-  } finally {
-    clearTimeout(timeout)
+    send_email: false,
+    ignore_emails: true
   }
 }
 
@@ -1201,9 +1079,9 @@ export async function processGigstackInvoiceDeliveryJob(jobId) {
 
     const settings = await getPaymentSettings({ includeSecrets: true, resolveBusinessProfile: false })
     const taxes = settings.taxes || {}
-    const channelEnabled = job.channel === 'whatsapp'
-      ? taxes.gigstackSendWhatsapp !== false
-      : taxes.gigstackSendEmail !== false
+    const explicitRequest = parseJson(payment.metadata_json).gigstack?.invoiceRequest
+    const channelEnabled = explicitRequest ? explicitRequest.deliveryChannel === job.channel
+      : job.channel === 'whatsapp' ? taxes.gigstackSendWhatsapp !== false : taxes.gigstackSendEmail !== false
     if (!channelEnabled) {
       await finishGigstackInvoiceDeliveryJob(job.id, claimToken, {
         status: 'skipped',
@@ -1411,6 +1289,10 @@ export async function inspectGigstackPaymentForTransaction(paymentId) {
       status: 409, code: 'gigstack_response_mode_mismatch'
     })
   }
+  const remoteClientId = cleanString(typeof remote?.client === 'object' ? remote.client?.id : remote?.client, 180)
+  if (fiscal.expectedClientId && remoteClientId && fiscal.expectedClientId !== remoteClientId) {
+    throw createGigstackError('El pago remoto pertenece a otro receptor fiscal.', { status: 409, code: 'gigstack_payment_client_mismatch' })
+  }
   const invoiceIds = [...new Set([
     ...(Array.isArray(remote?.invoices) ? remote.invoices : []),
     ...(Array.isArray(fiscal.pendingInvoiceIds) ? fiscal.pendingInvoiceIds : []),
@@ -1444,6 +1326,103 @@ export async function reconcileGigstackPaymentForTransaction(paymentId, { dryRun
   // One explicit attempt through the same lease as the worker. Never enqueue
   // messages or an automatic retry for this administrative reconciliation.
   return { dryRun: false, ...await processGigstackInvoiceJob(row.id, { reconcileOnly: true }) }
+}
+
+// Explicit backend operation. Preview fiscal identity and the already-paid
+// total, then claim the same durable lease used by automatic invoicing.
+export async function issueGigstackInvoiceForTransaction(paymentId, {
+  dryRun = true, expectedPreviewRevision, actorId, deliveryChannel = 'none'
+} = {}) {
+  if (!['none', 'whatsapp', 'email'].includes(deliveryChannel)) {
+    throw createGigstackError('Canal de entrega inválido.', { status: 400, code: 'invalid_invoice_delivery_channel' })
+  }
+  const row = await getPaymentRow(cleanString(paymentId, 160))
+  if (!row || !PAID_STATUSES.has(cleanString(row.status).toLowerCase())) {
+    throw createGigstackError('La factura requiere un pago confirmado.', { status: 409, code: 'payment_not_paid' })
+  }
+  const settings = await getPaymentSettings({ includeSecrets: true, resolveBusinessProfile: false })
+  const context = await getGigstackClientContext(row.payment_mode, settings)
+  const metadata = parseJson(row.metadata_json)
+  const fiscal = metadata.gigstack || {}
+  const remotePaymentId = cleanString(fiscal.pendingRemotePaymentId || fiscal.id, 180)
+  let payload = null
+  let client = null
+  let inspection = null
+  if (remotePaymentId) {
+    inspection = await inspectGigstackPaymentForTransaction(row.id)
+  } else {
+    const tax = getPaymentTax(row, settings)
+    if (!tax) throw createGigstackError('El pago no conserva un impuesto explícito. Repara y revisa su desglose antes de facturar.', { status: 409, code: 'missing_tax' })
+    if (roundMoney(tax.totalAmount) !== roundMoney(row.amount)
+      || roundMoney(tax.subtotalAmount + tax.taxAmount) !== roundMoney(row.amount)
+      || !/^[A-Z]{3}$/.test(cleanString(row.currency, 3).toUpperCase())) {
+      throw createGigstackError('El desglose fiscal no coincide con el importe o moneda del pago.', { status: 409, code: 'invalid_payment_tax_total' })
+    }
+    payload = await buildGigstackPayload({ ...row, metadata_json: JSON.stringify({
+      ...metadata, gigstack: { ...fiscal, invoiceRequest: { automationType: 'pue_invoice' } }
+    }) }, settings, tax, context.mode)
+    if (!payload.client.id) throw createGigstackError('Vincula primero el contacto con el ID existente de Gigstack para emitir manualmente.', { status: 409, code: 'gigstack_client_link_required' })
+    client = await getGigstackClient(payload.client.id, context)
+    if (!client.isValid || !client.taxId || !client.legalName || !client.postalCode || !client.taxSystem) {
+      throw createGigstackError('El receptor fiscal no está validado o tiene datos fiscales incompletos en Gigstack.', { status: 409, code: 'gigstack_client_fiscal_incomplete' })
+    }
+  }
+  const preview = {
+    paymentId: row.id, contactId: row.contact_id, mode: context.mode, currency: row.currency,
+    amount: Number(row.amount), client, willRegister: !remotePaymentId,
+    remotePaymentId: remotePaymentId || null, invoices: inspection?.invoices || [],
+    tax: metadata.tax || null, paymentForm: payload?.payment_form || null, deliveryChannel,
+    previewRevision: crypto.createHash('sha256').update(JSON.stringify({ row, payload, client, inspection, deliveryChannel })).digest('hex')
+  }
+  if (dryRun !== false) return { dryRun: true, ...preview }
+  if (expectedPreviewRevision !== preview.previewRevision) {
+    throw createGigstackError('El pago o receptor cambió. Revisa de nuevo la vista previa antes de emitir.', { status: 409, code: 'gigstack_invoice_preview_changed' })
+  }
+  const claimToken = crypto.randomUUID()
+  await db.transaction(async tx => {
+    await tx.run('UPDATE contacts SET id = id WHERE id = ? AND deleted_at IS NULL', [row.contact_id])
+    await tx.run(`INSERT INTO gigstack_invoice_jobs (payment_id, payment_mode, status)
+      VALUES (?, ?, 'pending') ON CONFLICT(payment_id) DO NOTHING`, [row.id, context.mode])
+    const claimed = await tx.run(`UPDATE gigstack_invoice_jobs SET status = 'processing', claim_token = ?,
+      lease_until_at_ms = ?, attempt_count = attempt_count + 1, updated_at = CURRENT_TIMESTAMP
+      WHERE payment_id = ? AND payment_mode = ? AND (status != 'processing' OR COALESCE(lease_until_at_ms, 0) <= ?)`,
+    [claimToken, Date.now() + GIGSTACK_JOB_LEASE_MS, row.id, context.mode, Date.now()])
+    if (Number(claimed?.changes || 0) !== 1) throw createGigstackError('La factura ya está en proceso.', { status: 409, code: 'gigstack_invoice_busy' })
+    const linked = await resolveGigstackClientForPayment(row, settings, context.mode)
+    if (payload && linked.id !== payload.client.id) throw createGigstackError('El vínculo fiscal cambió durante la emisión.', { status: 409, code: 'gigstack_invoice_preview_changed' })
+    const next = { ...metadata, gigstack: { ...fiscal, invoiceRequest: {
+      automationType: 'pue_invoice', deliveryChannel, actorId: cleanString(actorId, 180), requestedAt: new Date().toISOString()
+    } } }
+    const changed = await tx.run(`UPDATE payments SET metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND status = ? AND amount = ? AND currency = ? AND payment_mode = ? AND contact_id = ?
+      AND COALESCE(metadata_json, '') = ?`, [JSON.stringify(next), row.id, row.status, row.amount,
+      row.currency, row.payment_mode, row.contact_id, row.metadata_json || ''])
+    if (Number(changed?.changes || 0) !== 1) throw createGigstackError('El pago cambió durante la emisión.', { status: 409, code: 'gigstack_invoice_preview_changed' })
+  })
+  try {
+    const result = await registerGigstackPaymentForTransaction(row.id, { expectedMode: context.mode, reconcileOnly: Boolean(remotePaymentId), enqueueDelivery: false })
+    if (!result.registered && result.reason !== 'already_registered') throw createGigstackError(`No se pudo emitir: ${result.reason}`, { code: result.reason || 'gigstack_invoice_not_issued' })
+    await finishGigstackInvoiceJob(row.id, claimToken, { status: 'registered', remotePaymentId: result.remotePaymentId })
+    const current = parseJson((await getPaymentRow(row.id)).metadata_json).gigstack
+    await enqueueGigstackInvoiceDeliveryJobs(row.id, {
+      mode: context.mode, invoices: current.invoices,
+      taxes: { gigstackSendWhatsapp: deliveryChannel === 'whatsapp', gigstackSendEmail: deliveryChannel === 'email' }
+    })
+    const jobs = deliveryChannel === 'none' ? [] : await db.all(`SELECT id FROM gigstack_invoice_delivery_jobs
+      WHERE payment_id = ? AND channel = ? AND status IN ('pending', 'retry') ORDER BY document_format`, [row.id, deliveryChannel])
+    const delivery = []
+    for (const job of jobs) delivery.push(await processGigstackInvoiceDeliveryJob(job.id))
+    return { dryRun: false, paymentId: row.id, mode: context.mode, remotePaymentId: current.id, invoices: current.invoices, delivery }
+  } catch (error) {
+    const current = parseJson((await getPaymentRow(row.id)).metadata_json).gigstack || {}
+    // An explicit attempt stays blocked for review. A known remote ID can only
+    // be queried on a later attempt; it never registers another payment.
+    await finishGigstackInvoiceJob(row.id, claimToken, {
+      status: 'blocked', remotePaymentId: current.pendingRemotePaymentId || current.id,
+      lastError: `${error.code || 'gigstack_error'}: ${cleanString(error.message, 900)}`
+    })
+    throw error
+  }
 }
 
 export async function registerGigstackPaymentForTransaction(paymentId, { expectedMode, reconcileOnly = false, enqueueDelivery = true } = {}) {
@@ -1485,6 +1464,11 @@ export async function registerGigstackPaymentForTransaction(paymentId, { expecte
 
   const existingMetadata = parseJson(row.metadata_json)
   const fiscal = existingMetadata.gigstack || {}
+  const deliveryTaxes = taxes => fiscal.invoiceRequest ? {
+    ...taxes,
+    gigstackSendWhatsapp: fiscal.invoiceRequest.deliveryChannel === 'whatsapp',
+    gigstackSendEmail: fiscal.invoiceRequest.deliveryChannel === 'email'
+  } : taxes
   reconcileOnly = reconcileOnly || fiscal.reconcileOnly === true
   enqueueDelivery = enqueueDelivery && !reconcileOnly
   const pendingRemotePaymentId = cleanString(fiscal.pendingRemotePaymentId || (reconcileOnly ? fiscal.id : ''), 180)
@@ -1509,7 +1493,7 @@ export async function registerGigstackPaymentForTransaction(paymentId, { expecte
     const delivery = enqueueDelivery ? await enqueueGigstackInvoiceDeliveryJobs(cleanPaymentId, {
       mode,
       invoices: existingMetadata.gigstack?.invoices || [],
-      taxes: existingSettings.taxes || {}
+      taxes: deliveryTaxes(existingSettings.taxes || {})
     }) : { skipped: true, reason: 'manual_reconciliation' }
     return { skipped: true, reason: 'already_registered', remotePaymentId: cleanString(fiscal.id, 180), delivery }
   }
@@ -1548,6 +1532,7 @@ export async function registerGigstackPaymentForTransaction(paymentId, { expecte
     status: 'processing',
     mode,
     automationType,
+    expectedClientId: fiscal.expectedClientId || payload?.client?.id || '',
     ...(reconcileOnly ? { reconcileOnly: true } : {}),
     idempotencyKey: fiscal.idempotencyKey || payload?.idempotency_key || `ristak-payment-${cleanPaymentId}`,
     error: '',
@@ -1604,6 +1589,21 @@ export async function registerGigstackPaymentForTransaction(paymentId, { expecte
     throw error
   }
 
+  const clientId = cleanString(result?.client?.id || (typeof result?.client === 'string' ? result.client : '') || payload?.client?.id, 180)
+  const expectedClientId = cleanString(fiscal.expectedClientId || payload?.client?.id, 180)
+  const remoteTeamId = cleanString(typeof result?.team === 'object' ? result.team?.id : result?.team, 180)
+  const identity = assertGigstackTokenMode(token, mode)
+  if ((expectedClientId && clientId && clientId !== expectedClientId) || (remoteTeamId && remoteTeamId !== identity.teamId)) {
+    const error = createGigstackError('Gigstack devolvió un receptor o equipo distinto al solicitado. Requiere revisión antes de entregar la factura.', { code: 'gigstack_payment_client_mismatch' })
+    await updateGigstackMetadata(cleanPaymentId, { status: 'blocked', errorCode: error.code, error: error.message })
+    throw error
+  }
+  if (clientId && row.contact_id) {
+    const context = await getGigstackClientContext(mode, settings)
+    await rememberGigstackClient(row.contact_id, { id: clientId }, context)
+    await updateGigstackMetadata(cleanPaymentId, { clientId, teamId: context.teamId })
+  }
+
   const remoteStatus = cleanString(result?.status, 80).toLowerCase()
   if (remoteStatus && !REGISTERED_GIGSTACK_STATUSES.has(remoteStatus)) {
     const error = createGigstackError(`Gigstack devolvió un estado inesperado: ${remoteStatus}.`, {
@@ -1655,7 +1655,7 @@ export async function registerGigstackPaymentForTransaction(paymentId, { expecte
     delivery = enqueueDelivery ? await enqueueGigstackInvoiceDeliveryJobs(cleanPaymentId, {
       mode,
       invoices: verifiedInvoices,
-      taxes
+      taxes: deliveryTaxes(taxes)
     }) : { skipped: true, reason: 'manual_reconciliation' }
   } catch (error) {
     await updateGigstackMetadata(cleanPaymentId, {

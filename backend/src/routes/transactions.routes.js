@@ -30,6 +30,7 @@ import {
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import { requireFeature } from '../middleware/licenseMiddleware.js'
+import { searchFiscalClients, linkFiscalContact, recoverFiscalPaymentTax, issueFiscalPaymentInvoice } from '../controllers/fiscalPaymentsController.js'
 
 const router = express.Router()
 const requirePaymentPlansFeature = requireFeature('payment_plans')
@@ -44,6 +45,8 @@ router.get('/stats', getTransactionStats)
 router.get('/summary', getTransactionSummary)
 router.get('/facets', getTransactionFacets)
 router.post('/sync', syncTransactions)
+router.get('/fiscal-clients', searchFiscalClients)
+router.post('/fiscal-clients/:contactId/link', linkFiscalContact)
 
 // Planes y flujos de parcialidades propios de Ristak. Las rutas /highlevel se
 // conservan como alias legacy para instalaciones antiguas.
@@ -55,6 +58,8 @@ router.post('/payment-plans/:scheduleId/action', requirePaymentPlansFeature, act
 router.post('/payment-flows/installments', requirePaymentPlansFeature, createPaymentInstallmentFlow)
 
 router.get('/:id/fiscal-invoice', downloadTransactionFiscalInvoice)
+router.post('/:id/fiscal-tax/recover', recoverFiscalPaymentTax)
+router.post('/:id/fiscal-invoice/issue', issueFiscalPaymentInvoice)
 router.get('/:id', getTransactionById)
 router.put('/:id', updateTransaction)
 router.delete('/:id', deleteTransaction)

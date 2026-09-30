@@ -8,6 +8,7 @@ import * as rebillPaymentsController from '../controllers/rebillPaymentsControll
 import * as clipPaymentsController from '../controllers/clipPaymentsController.js'
 import * as highlevelController from '../controllers/highlevelController.js'
 import * as paymentSettingsController from '../controllers/paymentSettingsController.js'
+import * as fiscalPaymentsController from '../controllers/fiscalPaymentsController.js'
 
 const MAX_ARGUMENT_BYTES = 768 * 1024
 const ID = { type: 'string', minLength: 1, maxLength: 300 }
@@ -364,6 +365,41 @@ function savedCardTool({ name, provider, handler, source, sourceField = 'payment
 }
 
 const transactionInsightTools = [
+  readTool({
+    name: 'payments_search_fiscal_clients',
+    description: 'Busca clientes ya existentes en Gigstack y muestra el vínculo fiscal del contacto. Sólo lectura para administradores; la búsqueda por nombre no establece vínculos. Continúa con next mientras hasMore=true, aunque una página no tenga coincidencias.',
+    module: 'payments', adminOnly: true,
+    handler: fiscalPaymentsController.searchFiscalClients,
+    inputSchema: schema({ contactId: ID, mode: { type: 'string', enum: ['test', 'live'] }, query: SHORT_TEXT, next: ID, limit: { type: 'integer', minimum: 1, maximum: 100 } }, ['contactId', 'mode']),
+    query: compactDefined
+  }),
+  executeTool({
+    name: 'payments_link_fiscal_contact',
+    description: 'Vincula desde el backend un contacto con un cliente existente de Gigstack por ID, equipo y ambiente. No crea clientes, cobra, factura ni envía mensajes. Sólo admin. dryRun=true devuelve la vista previa; aplicar exige dryRun=false y expectedPreviewRevision. No reactiva facturas históricas bloqueadas.',
+    module: 'payments', adminOnly: true,
+    handler: fiscalPaymentsController.linkFiscalContact,
+    inputSchema: schema({ contactId: ID, clientId: ID, mode: { type: 'string', enum: ['test', 'live'] }, dryRun: { type: 'boolean', default: true }, expectedPreviewRevision: { type: 'string', pattern: '^[a-f0-9]{64}$' } }, ['contactId', 'clientId', 'mode']),
+    params: args => ({ contactId: args.contactId }),
+    body: args => ({ ...cleanControls(args), dryRun: args.dryRun !== false })
+  }),
+  executeTool({
+    name: 'payments_recover_payment_tax',
+    description: 'Restaura sólo el impuesto ausente de un pago confirmado legacy desde otro pago confirmado del mismo plan, contacto, moneda y ambiente. Exige decisión fiscal explícita de admin. No modifica importes ni emite CFDI. dryRun=true devuelve desglose y previewRevision; aplicar exige expectedPreviewRevision.',
+    module: 'payments', adminOnly: true,
+    handler: fiscalPaymentsController.recoverFiscalPaymentTax,
+    inputSchema: schema({ paymentId: ID, sourcePaymentId: ID, dryRun: { type: 'boolean', default: true }, expectedPreviewRevision: { type: 'string', pattern: '^[a-f0-9]{64}$' } }, ['paymentId', 'sourcePaymentId']),
+    params: args => ({ id: args.paymentId }),
+    body: args => ({ ...cleanControls(args), dryRun: args.dryRun !== false })
+  }),
+  executeTool({
+    name: 'payments_issue_fiscal_invoice',
+    description: 'Emite explícitamente una factura PUE del pago confirmado con impuesto guardado y receptor existente vinculado a Gigstack, o recupera su CFDI ya existente. No vuelve a cobrar. Sólo admin; dryRun=true por defecto y expectedPreviewRevision obligatorio al aplicar. deliveryChannel=whatsapp envía PDF y XML por el canal del contacto; none no envía mensajes. No registra otro pago cuando ya hay un ID remoto.',
+    module: 'payments', adminOnly: true,
+    handler: fiscalPaymentsController.issueFiscalPaymentInvoice,
+    inputSchema: schema({ paymentId: ID, dryRun: { type: 'boolean', default: true }, expectedPreviewRevision: { type: 'string', pattern: '^[a-f0-9]{64}$' }, deliveryChannel: { type: 'string', enum: ['none', 'whatsapp', 'email'], default: 'none' } }, ['paymentId']),
+    params: args => ({ id: args.paymentId }),
+    body: args => ({ ...cleanControls(args), dryRun: args.dryRun !== false })
+  }),
   executeTool({
     name: 'payments_recover_plan_tax',
     description: 'Repara explícitamente el impuesto ausente de parcialidades no cobradas de un plan Stripe legacy, desde un pago confirmado del mismo plan. No cambia importes, fechas, moneda ni pagos históricos. Exige validación fiscal del administrador. dryRun=true devuelve el desglose y previewRevision; para aplicar exige dryRun=false y expectedPreviewRevision. No emite facturas ni envía mensajes.',

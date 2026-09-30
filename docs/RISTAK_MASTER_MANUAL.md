@@ -5066,12 +5066,23 @@ La separación de ambientes es estricta:
 
 El registro usa `POST /v2/payments/register` con el contrato v2 vigente:
 `client`, `automation_type`, `currency`, `payment_form`, `items[].unit_price`,
-`metadata`, `idempotency_key` y `send_email`. Ristak manda `send_email=false`
+`metadata`, `idempotency_key`, `send_email` e `ignore_emails`. Ristak manda
+`send_email=false` e `ignore_emails=true` (este último es el switch efectivo del
+registro v2, según [el contrato oficial de Gigstack](https://docs.gigstack.io/register-payment-20352682e0))
 porque la entrega de documentos se controla y audita localmente; dejar que
 Gigstack enviara otro correo duplicaría el mensaje y no permitiría confirmar
-qué archivos salieron. El correo del contacto busca o
-crea al cliente; opcionalmente puede preferirse un `gigstackClientId` ya ligado
-al pago. Si faltan ambos, no se inventa un receptor. La moneda sale siempre del
+qué archivos salieron. El receptor ligado en `gigstack_contact_links` tiene
+prioridad y pertenece al contacto, ambiente y equipo de la llave utilizada;
+funciona aunque el contacto no tenga correo o el modo de búsqueda global sea
+`email`. Sin vínculo, el correo canónico (o su snapshot si falta) busca o crea
+al cliente con `search.update=false`, sin sobrescribir sus datos fiscales. Un
+`gigstackClientId` legacy se admite en modo `client_id_or_email`; si contradice
+el vínculo canónico se bloquea. Sin correo, puede usarse un único cliente con
+el mismo teléfono internacional tras completar la búsqueda paginada; un nombre
+parecido jamás establece identidad y una búsqueda incompleta o ambigua exige
+vinculación manual. Al recibir el acuse remoto, el ID del cliente se conserva
+para los pagos futuros sin reemplazar una asociación manual. Si falta una
+identidad verificable, no se inventa un receptor. La moneda sale siempre del
 pago, que a su vez usa `account_currency`; la forma SAT sólo se detecta cuando el
 proveedor reporta un medio inequívoco (por ejemplo, crédito, débito o SPEI). Si
 el dato es ambiguo, se usa el fallback configurado —por defecto `99`— en vez de
@@ -5113,6 +5124,45 @@ explícita: no cobra, registra pagos, emite CFDI, encola entregas ni programa
 reintentos automáticos. Si todavía no existe factura, conserva el bloqueo para
 revisión. No se deben usar las herramientas genéricas de registrar pago ni SQL
 de soporte para resolver estos casos.
+
+La reparación de receptores vive **sólo en backend**, sin pantalla ni controles
+nuevos en el frontend. El MCP administrativo ofrece:
+
+- `payments_search_fiscal_clients`: consulta los clientes existentes y el
+  vínculo del contacto en un ambiente explícito. `hasMore`/`next` continúan la
+  paginación aunque una página no tenga coincidencias por nombre.
+- `payments_link_fiscal_contact`: verifica el ID remoto, equipo y ambiente,
+  devuelve una vista previa y guarda el vínculo con actor. Aplicar exige
+  `dryRun=false` y `expectedPreviewRevision`. Un timbrado en proceso impide
+  cambiar el receptor. No crea clientes, altera el perfil del contacto, emite
+  CFDI ni reactiva pagos históricos bloqueados.
+- `payments_recover_payment_tax`: restaura únicamente un snapshot ausente en
+  un pago confirmado legacy, desde otro pago confirmado del mismo plan
+  canónico, contacto, moneda y ambiente. Requiere decisión fiscal explícita,
+  vista previa y revisión vigente. Conserva total, fechas e historial del pago;
+  no sobrescribe `tax.enabled=false`, `applyTax=false` ni actividad fiscal.
+  La procedencia y el actor quedan en `metadata_json.fiscalTaxRecovery`.
+- `payments_issue_fiscal_invoice`: revisa receptor existente y validado,
+  desglose guardado, total y forma de pago antes de emitir explícitamente una
+  PUE. `dryRun=true` no escribe ni timbra; aplicar exige revisión vigente y usa
+  el mismo lease y llave idempotente del outbox. Un ID remoto conocido sólo se
+  consulta; nunca registra otro pago. La intención queda fijada en
+  `metadata_json.gigstack.invoiceRequest`. `deliveryChannel=none` es el default;
+  `whatsapp` entrega PDF/XML únicamente a ese canal, respetando el emisor del
+  contacto, y `email` sólo al correo. Un envío ya confirmado no se duplica.
+  Una falla del intento explícito queda bloqueada para revisión; las entregas
+  mantienen sus reintentos independientes.
+
+Las escrituras requieren admin, `ristak.execute` e idempotencia. Los endpoints
+equivalentes son `GET /api/transactions/fiscal-clients`,
+`POST /api/transactions/fiscal-clients/:contactId/link`,
+`POST /api/transactions/:id/fiscal-tax/recover` y
+`POST /api/transactions/:id/fiscal-invoice/issue`, protegidos por autenticación,
+acceso a pagos, admin y clave idempotente. Vincular no factura por sí mismo;
+restaurar el impuesto tampoco. Cada emisión requiere la orden explícita.
+Las API keys siguen cifradas en `app_config.payments_settings`, separadas por
+ambiente; la nueva tabla guarda IDs y perfil seguro, nunca credenciales. No se
+añaden secrets ni variables obligatorias para arrancar.
 
 Los planes Stripe legacy no se backfillean automáticamente. Con una decisión
 fiscal explícita del administrador, `payments_recover_plan_tax` puede restaurar

@@ -555,7 +555,7 @@ describe('Gigstack payment registration', () => {
           search: {
             on_key: 'email',
             on_value: `cliente-${suffix}@example.com`,
-            auto_create: true
+            update: false
           },
           name: 'Cliente Demo',
           email: `cliente-${suffix}@example.com`,
@@ -585,7 +585,8 @@ describe('Gigstack payment registration', () => {
           ristak_payment_mode: 'test'
         },
         idempotency_key: `ristak-payment-${paymentId}`,
-        send_email: false
+        send_email: false,
+        ignore_emails: true
       })
       const storedPayment = await db.get('SELECT metadata_json FROM payments WHERE id = ?', [paymentId])
       const storedMetadata = JSON.parse(storedPayment.metadata_json)
