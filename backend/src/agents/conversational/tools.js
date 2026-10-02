@@ -394,6 +394,23 @@ export function requiredDataVisibleReply(result = {}) {
   return ''
 }
 
+function appointmentOfferPreflightResult(result = {}, fallbackReply = '') {
+  const dataReply = requiredDataVisibleReply(result)
+  const canCollectData = result.needsData === true && Boolean(dataReply)
+  return {
+    ...result,
+    // El resolver es la primera tool obligatoria. Cerrar aquí impedía que la
+    // misma IA guardara datos presentes en el mensaje y reintentara la acción.
+    terminal: !canCollectData,
+    visibleReply: dataReply || fallbackReply,
+    ...(canCollectData ? {
+      continueWith: result.requiredField === 'agreedAmount'
+        ? 'Revisa si la conversación ya contiene un monto de anticipo confirmado. Si lo tiene, vuelve a resolve_active_appointment_offer con decision="accept" y ese agreedAmount. Si falta, pregunta sólo el monto; no vuelvas a pedir confirmación del horario.'
+        : 'Antes de repetir la pregunta, consulta get_contact_profile y revisa los datos que la persona ya confirmó en la conversación. Guarda los datos propios del solicitante con save_contact_data; los del titular distinto o invitados van únicamente en primaryAttendee/guests. Después de completar o corregir los datos, vuelve a resolve_active_appointment_offer con decision="accept" en este mismo turno. Si todavía falta algo, pregunta sólo esos datos. No vuelvas a ofrecer ni a pedir confirmación del horario.'
+    } : {})
+  }
+}
+
 function getVirtualThreadContact(ctx = {}) {
   const source = ctx.virtualContact && typeof ctx.virtualContact === 'object'
     ? ctx.virtualContact
@@ -13892,7 +13909,8 @@ export function createConversationalTools(ctx) {
       'Adjudica semánticamente la única oferta estructurada de horario que Ristak ya dejó pendiente. Cuando está disponible debe ser la primera herramienta del turno.',
       `La MISMA IA decide: accept si la persona acepta; request_other_options si rechaza ese horario pero quiere otro; decline si ya no quiere agendar; ${canResolveOfferWithHandoff ? 'handoff si pide explícitamente hablar con una persona; ' : ''}preserve si preguntó otra cosa o si no está claro qué quiso hacer con la oferta.`,
       'preserve no modifica ni cierra la oferta y permite continuar el turno para responder libremente o usar otra herramienta.',
-      'Nunca uses accept por el simple hecho de que exista una oferta. No repitas ni reconstruyas fecha u hora; el servidor recupera el slot exacto y, si hay anticipo por link, prepara el enlace en este mismo flujo.'
+      'Nunca uses accept por el simple hecho de que exista una oferta. No repitas ni reconstruyas fecha u hora; el servidor recupera el slot exacto y, si hay anticipo por link, prepara el enlace en este mismo flujo.',
+      'Si accept devuelve needsData, continúa: guarda los datos confirmados que ya recibiste y reintenta accept sólo después de completar o corregir esos datos. Si la persona ya aceptó esta oferta y ahora contesta los datos que faltaban, continúa esa misma aceptación sin volver a pedir confirmación del horario.'
     ].join(' '),
     parameters: z.object({
       decision: z.enum(canResolveOfferWithHandoff
@@ -14309,11 +14327,10 @@ export function createConversationalTools(ctx) {
           facts: paymentRequirementFacts(paymentCapability)
         })
         if (requiredPaymentData) {
-          return {
-            ...requiredPaymentData,
-            terminal: true,
-            visibleReply: requiredDataVisibleReply(requiredPaymentData) || 'para continuar con el anticipo me falta un dato. me ayudas a completarlo?'
-          }
+          return appointmentOfferPreflightResult(
+            requiredPaymentData,
+            'para continuar con el anticipo me falta un dato. me ayudas a completarlo?'
+          )
         }
 
         const accountCurrency = String(
@@ -14326,16 +14343,12 @@ export function createConversationalTools(ctx) {
           accountCurrency
         })
         if (!paymentAuthority.ok) {
-          const paymentQuestion = requiredDataVisibleReply(paymentAuthority)
-          return {
-            ...paymentAuthority,
-            terminal: true,
-            visibleReply: paymentQuestion || (
-              paymentAuthority.amountMismatch
-                ? 'el anticipo acordado no coincide con el configurado. qué monto vas a dejar?'
-                : 'no pude validar el anticipo configurado. necesito que el equipo lo revise antes de apartar el horario'
-            )
-          }
+          return appointmentOfferPreflightResult(
+            paymentAuthority,
+            paymentAuthority.amountMismatch
+              ? 'el anticipo acordado no coincide con el configurado. qué monto vas a dejar?'
+              : 'no pude validar el anticipo configurado. necesito que el equipo lo revise antes de apartar el horario'
+          )
         }
       }
 
@@ -14519,12 +14532,10 @@ export function createConversationalTools(ctx) {
                   : 'esa cita o la configuración cambió desde que ofrecí el horario. no repetí ningún cambio; necesito revisar opciones nuevas')
           }
         }
-        const missingDataReply = requiredDataVisibleReply(bookingResult)
-        return {
-          ...bookingResult,
-          terminal: true,
-          visibleReply: missingDataReply || 'no pude terminar la cita con ese horario. necesito que el equipo lo revise antes de volver a intentarlo'
-        }
+        return appointmentOfferPreflightResult(
+          bookingResult,
+          'no pude terminar la cita con ese horario. necesito que el equipo lo revise antes de volver a intentarlo'
+        )
       }
       ctx.appointmentOfferDecision = null
       const humanBooking = expected.terminalToolName === 'request_human_booking'

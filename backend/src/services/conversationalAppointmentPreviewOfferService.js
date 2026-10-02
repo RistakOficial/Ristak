@@ -207,6 +207,14 @@ export async function cleanupExpiredConversationalAppointmentPreviewOffers({
     } catch {
       detail = {}
     }
+    // Una oferta individual activa no caduca por tiempo, ni siquiera si un
+    // binario anterior guardó expiresAt. Las nuevas ofertas usan null también
+    // después de aceptar: un anticipo pendiente puede necesitar esa evidencia.
+    // Reiniciar o limpiar la corrida elimina explícitamente estas filas.
+    if (
+      row.eventType === CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT &&
+      (detail.status === 'active' || detail.expiresAt === null)
+    ) continue
     const expiresAtMs = Date.parse(detail?.expiresAt || '')
     if (Number.isFinite(expiresAtMs) && expiresAtMs > cutoff.getTime()) continue
     if (

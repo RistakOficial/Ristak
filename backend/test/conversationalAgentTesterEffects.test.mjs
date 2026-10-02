@@ -1542,7 +1542,7 @@ test('dos previews del mismo contacto serializan el slot: gana uno y el otro con
   }
 })
 
-test('ofertas preview vencidas se limpian por TTL y nunca aparecen en la bitácora visible', async () => {
+test('ofertas preview no aparecen en la bitácora y sólo las resueltas vencidas se limpian por TTL', async () => {
   const suffix = randomUUID()
   const agentId = `agent_preview_ttl_${suffix}`
   const contactId = `contact_preview_ttl_${suffix}`
@@ -1568,6 +1568,13 @@ test('ofertas preview vencidas se limpian por TTL y nunca aparecen en la bitáco
     assert.deepEqual(await listConversationalAgentEvents({ contactId }), [])
     const metricsAfter = await getConversationalAgentMetrics()
     assert.equal(metricsAfter.totalEvents, metricsBefore.totalEvents)
+    await cleanupExpiredConversationalAppointmentPreviewOffers({ now: new Date(), limit: 20 })
+    assert.ok(await db.get('SELECT id FROM conversational_agent_events WHERE id = ?', [eventId]),
+      'una oferta activa legacy no caduca por el reloj')
+    await db.run('UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?', [
+      JSON.stringify({ previewScopeId: scopeId, status: 'declined', expiresAt: '2000-01-01T00:00:00.000Z' }),
+      eventId
+    ])
     const result = await cleanupExpiredConversationalAppointmentPreviewOffers({ now: new Date(), limit: 20 })
     assert.ok(result.deleted >= 1)
     assert.equal(await db.get('SELECT id FROM conversational_agent_events WHERE id = ?', [eventId]), null)

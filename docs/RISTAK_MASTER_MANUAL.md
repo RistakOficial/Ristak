@@ -10179,6 +10179,19 @@ su memoria, y una sesión abandonada expira
 tras 24 horas sin guardar datos. No se aceptan datos de contacto enviados como
 estado por el navegador: sólo los validados por la herramienta del servidor.
 
+Si la aceptación de un horario encuentra datos obligatorios faltantes, el
+resolver permite continuar la misma vuelta: la IA revisa la ficha y el hilo,
+guarda únicamente los datos propios ya confirmados y reintenta la misma
+aceptación. Una respuesta con nombre y teléfono después del «sí» completa
+ese paso sin volver a ofrecer ni pedir confirmación del horario. Si sólo llegó
+una parte, solicita únicamente lo que siga faltando. La prevalidación sólo se
+repite cuando cambian datos o argumentos y permite como máximo tres reintentos;
+la cita o entrega al equipo se ejecuta una sola vez, después de comprobar todos
+los requisitos y la disponibilidad vigente. Este flujo también permite
+completar los datos o el monto acordado de un anticipo sin repetir la
+confirmación; los errores de configuración, evidencia o disponibilidad
+conservan sus bloqueos.
+
 Cada burbuja de usuario o asistente del tester conserva un ID de transcript
 estable tanto en el editor como en el wizard. El backend lo valida y lo aisla
 dentro del `previewScopeId`; para clientes anteriores que todavía no mandan IDs,
@@ -10487,7 +10500,11 @@ nunca un booleano escrito por el modelo.
   rechaza una oferta individual, esa referencia mas reciente manda sobre la lista
   anterior. Una oferta individual no vence por tiempo: las nuevas guardan
   `expiresAt=null` y el loader ignora el vencimiento de ofertas legacy. Esto no
-  reserva el espacio. Al recibir la confirmación, el backend vuelve a comprobar
+  reserva el espacio. La limpieza periódica del tester tampoco borra una oferta
+  activa por el reloj ni trata `expiresAt=null` como vencimiento inválido.
+  Conserva también esa evidencia después de aceptar mientras la sesión pueda
+  necesitarla para un anticipo; reiniciar o limpiar la corrida la elimina
+  explícitamente. Al recibir la confirmación, el backend vuelve a comprobar
   el instante ofrecido contra el calendario vigente y sólo entonces crea o
   reagenda. Si el horario ya pasó, cambió de alcance o dejó de estar disponible,
   la oferta se cierra por CAS. Cuando el conflicto es otra cita y

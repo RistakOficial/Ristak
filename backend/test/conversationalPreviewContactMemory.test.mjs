@@ -8,7 +8,9 @@ import { getAccountTimezone } from '../src/utils/dateUtils.js'
 import { upsertLocalCalendar } from '../src/services/localCalendarService.js'
 import { createConversationalTools, loadConversationalAppointmentOfferDecisionContext,
   loadConversationalAppointmentSelectionProgressContext, restoreConversationalPreviewContactData } from '../src/agents/conversational/tools.js'
+import { runToolCallingV2Turn } from '../src/agents/conversational/runner.js'
 import { buildConversationalAppointmentPreviewScopeId, loadConversationalPreviewContactData,
+  buildConversationalAppointmentPreviewOfferEventId,
   cleanupConversationalAppointmentPreviewOffers, cleanupExpiredConversationalAppointmentPreviewOffers,
   CONVERSATIONAL_PREVIEW_CONTACT_DATA_EVENT } from '../src/services/conversationalAppointmentPreviewOfferService.js'
 import { prepareConversationalAgentTestRun, recordConversationalAgentPreviewEffects,
@@ -119,6 +121,171 @@ for (const virtual of [false, true]) {
     }
   })
 }
+
+for (const bookingOwner of ['ai', 'human']) {
+  for (const updateContact of [false, true]) {
+    test(`el runtime guarda los datos recibidos después del sí y completa agenda ${bookingOwner}; actualizar ficha ${updateContact}`, async () => {
+      const suffix = randomUUID()
+      const agentId = `agent_data_resume_${suffix}`
+      const contactId = `contact_data_resume_${suffix}`
+      const calendarId = `calendar_data_resume_${suffix}`
+      const scope = { agentId, contactId, previewScopeId: buildConversationalAppointmentPreviewScopeId({
+        testSessionId: `session_${suffix}`, requestedByUserId: 'owner', agentId
+      }) }
+      const config = { id: agentId, runtimeMode: 'tool_calling_v2', capabilitiesConfig: {
+        schemaVersion: 3,
+        dataRequirements: { enabled: true, fields: [
+          { field: 'full_name', level: 'required', scope: 'any_action' },
+          { field: 'phone', level: 'required', scope: 'any_action' }
+        ], updateContact: { enabled: updateContact, policy: 'replace_placeholders' } },
+        items: [{ id: 'schedule_appointment', enabled: true, calendarId, bookingOwner }]
+      } }
+      const messages = []
+      const context = (content) => {
+        const executionId = `preview:${randomUUID()}`
+        messages.push({ id: executionId, role: 'user', content })
+        return { ...scope, config, dryRun: true, channel: 'whatsapp', executionId,
+          conversationMessages: [...messages], actions: [],
+          virtualContact: updateContact ? null : { id: contactId, fullName: 'Contacto de prueba' } }
+      }
+      const acceptPayload = { decision: 'accept', nextPreferenceScope: null, reply: null,
+        title: null, notes: null, attendeeName: null, attendeeContext: null,
+        primaryAttendee: null, guests: [], agreedAmount: null }
+      const runTurn = async (ctx, executeAgent) => {
+        return runToolCallingV2Turn({ config, runtime: {}, messages: [...messages],
+          contactId, dryRun: true, channel: 'whatsapp', executionId: ctx.executionId,
+          previewScopeId: scope.previewScopeId, virtualContact: ctx.virtualContact,
+          conversationModel: 'gpt-4.1-mini' }, {
+          resolveMandatoryHandoff: async () => ({ handled: false }),
+          executeAgent
+        })
+      }
+      try {
+        await db.run("INSERT INTO contacts (id, full_name) VALUES (?, 'Contacto de prueba')", [contactId])
+        await upsertLocalCalendar({ id: calendarId, name: 'Agenda datos después de confirmar',
+          source: 'ristak', slotDuration: 60, slotInterval: 60, allowBookingFor: 365,
+          allowBookingForUnit: 'days', openHours: [{ daysOfTheWeek: [1],
+            hours: [{ openHour: 10, openMinute: 0, closeHour: 12, closeMinute: 0 }] }]
+        }, { source: 'ristak', syncStatus: 'synced' })
+        const timezone = await getAccountTimezone()
+        const day = DateTime.now().setZone(timezone).plus({ days: 21 }).startOf('day')
+        const slot = day.plus({ days: (1 - day.weekday + 7) % 7 }).set({ hour: 10 })
+        const offered = await invoke(context('El lunes a las diez.'), 'offer_appointment_slot', {
+          startTime: slot.toUTC().toISO(), appointmentId: null
+        })
+        assert.equal(offered.ok, true, JSON.stringify(offered))
+        messages.push({ id: `assistant_offer_${suffix}`, role: 'assistant', content: offered.visibleReply })
+        await cleanupExpiredConversationalAppointmentPreviewOffers()
+        assert.ok(await db.get('SELECT id FROM conversational_agent_events WHERE id = ?', [
+          buildConversationalAppointmentPreviewOfferEventId(scope.previewScopeId)
+        ]), 'la limpieza periódica debe conservar el horario que el cliente todavía puede confirmar')
+
+        const confirmation = context('Sí.')
+        const missingTurn = await runTurn(confirmation, async ({ agent }) => {
+          assert.equal(agent.modelSettings.toolChoice, 'resolve_active_appointment_offer')
+          assert.equal(agent.resetToolChoice, true)
+          assert.match(agent.instructions, /Si accept devuelve needsData/)
+          const resolver = agent.tools.find((tool) => tool.name === 'resolve_active_appointment_offer')
+          const missing = await resolver.invoke(null, JSON.stringify(acceptPayload))
+          assert.equal(missing.needsData, true)
+          const continuation = await agent.toolUseBehavior(null, [{ tool: resolver, output: missing }])
+          assert.equal(continuation.isFinalOutput, false, 'faltan datos: el SDK debe permitir leer y guardar antes de cerrar')
+          return missing.visibleReply
+        })
+        assert.match(missingTurn.reply, /nombre completo, teléfono/)
+        assert.doesNotMatch(missingTurn.reply, /confirmas|te funciona|qué fecha/i)
+        messages.push({ id: `assistant_missing_${suffix}`, role: 'assistant', content: missingTurn.reply })
+
+        const dataCtx = context('Elena Martínez +526561234567')
+        const completed = await runTurn(dataCtx, async ({ agent }) => {
+          const resolver = agent.tools.find((tool) => tool.name === 'resolve_active_appointment_offer')
+          const missing = await resolver.invoke(null, JSON.stringify(acceptPayload))
+          assert.equal((await agent.toolUseBehavior(null, [{ tool: resolver, output: missing }])).isFinalOutput, false)
+          assert.match(missing.continueWith, /save_contact_data/)
+          const unchanged = await resolver.invoke(null, JSON.stringify(acceptPayload))
+          assert.equal(unchanged.code, 'appointment_offer_already_adjudicated', 'sin datos nuevos no debe repetir la prevalidación')
+          const saveData = agent.tools.find((tool) => tool.name === 'save_contact_data')
+          const saveFromMessage = (values) => saveData.invoke(null, JSON.stringify({
+            fullName: null, phone: null, alternatePhone: null, email: null,
+            company: null, address: null, customValues: [], ...values
+          }))
+          const savedName = await saveFromMessage({ fullName: 'Elena Martínez' })
+          assert.equal(savedName.ok, true, JSON.stringify(savedName))
+          const missingPhone = await resolver.invoke(null, JSON.stringify(acceptPayload))
+          assert.equal(missingPhone.needsData, true)
+          assert.deepEqual(missingPhone.requiredFields.map((field) => field.field), ['phone'])
+          assert.doesNotMatch(missingPhone.visibleReply, /nombre/)
+          assert.equal((await agent.toolUseBehavior(null, [{ tool: resolver, output: missingPhone }])).isFinalOutput, false)
+          const savedPhone = await saveFromMessage({ phone: '+526561234567' })
+          assert.equal(savedPhone.ok, true, JSON.stringify(savedPhone))
+          const result = await resolver.invoke(null, JSON.stringify(acceptPayload))
+          assert.equal(result.ok, true, JSON.stringify(result))
+          const final = await agent.toolUseBehavior(null, [{ tool: resolver, output: result }])
+          assert.equal(final.isFinalOutput, true)
+          const replay = await resolver.invoke(null, JSON.stringify(acceptPayload))
+          assert.equal(replay.code, 'appointment_offer_already_adjudicated')
+          return final.finalOutput
+        })
+        assert.doesNotMatch(completed.reply, /me falta|me pasas|confirmas|te funciona/i)
+        assert.equal(completed.appointmentOfferPostcondition.terminalActionSucceeded, true)
+        assert.equal(completed.ctx.appointmentOfferAdjudication.preflightRetryCount, 2)
+        assert.equal(completed.ctx.appointmentOfferAdjudication.output.ok, true)
+        const terminalType = bookingOwner === 'human' ? 'request_human_booking' : 'book_appointment'
+        assert.equal(completed.ctx.actions.filter((action) => action.type === terminalType).length, 1)
+        await cleanupExpiredConversationalAppointmentPreviewOffers()
+        assert.ok(await db.get('SELECT id FROM conversational_agent_events WHERE id = ?', [
+          buildConversationalAppointmentPreviewOfferEventId(scope.previewScopeId)
+        ]), 'el resultado aceptado sin vencimiento debe conservarse hasta limpiar la sesión')
+        const technical = await db.get('SELECT full_name, phone FROM contacts WHERE id = ?', [contactId])
+        assert.equal(technical.full_name, 'Contacto de prueba')
+        assert.ok(!technical.phone)
+      } finally {
+        await cleanupConversationalAppointmentPreviewOffers(scope)
+        await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId])
+        await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+        await db.run('DELETE FROM calendars WHERE id = ?', [calendarId])
+      }
+    })
+  }
+}
+
+test('limpieza conserva ofertas activas legacy y resultados sin vencimiento; elimina terminales vencidas', async () => {
+  const agentId = `agent_cleanup_${randomUUID()}`
+  const contactId = `contact_cleanup_${randomUUID()}`
+  const now = new Date()
+  const expiredAt = new Date(now.getTime() - 60_000).toISOString()
+  const fixtures = [
+    { status: 'active', expiresAt: expiredAt, retained: true },
+    { status: 'active', expiresAt: null, retained: true },
+    { status: 'accepted', expiresAt: null, retained: true },
+    { status: 'superseded', expiresAt: expiredAt, retained: false },
+    { status: 'declined', expiresAt: expiredAt, retained: false }
+  ].map((fixture) => {
+    const previewScopeId = buildConversationalAppointmentPreviewScopeId({
+      testSessionId: `session_${randomUUID()}`, requestedByUserId: 'owner', agentId
+    })
+    return { ...fixture, previewScopeId, id: buildConversationalAppointmentPreviewOfferEventId(previewScopeId) }
+  })
+  try {
+    for (const fixture of fixtures) {
+      await db.run(
+        'INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json) VALUES (?, ?, ?, ?, ?)',
+        [fixture.id, contactId, agentId, 'appointment_slot_preview_offer_created',
+          JSON.stringify({ previewScopeId: fixture.previewScopeId, status: fixture.status, expiresAt: fixture.expiresAt })]
+      )
+    }
+    await cleanupExpiredConversationalAppointmentPreviewOffers({ now })
+    for (const fixture of fixtures) {
+      assert.equal(Boolean(await db.get('SELECT id FROM conversational_agent_events WHERE id = ?', [fixture.id])),
+        fixture.retained, `${fixture.status}; vencimiento ${fixture.expiresAt}`)
+      await cleanupConversationalAppointmentPreviewOffers({ previewScopeId: fixture.previewScopeId, agentId })
+      assert.equal(await db.get('SELECT id FROM conversational_agent_events WHERE id = ?', [fixture.id]), null,
+        'el reset explícito sí elimina una oferta sin vencimiento')
+    }
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE agent_id = ?', [agentId])
+  }
+})
 
 test('memoria aislada, correcciones, campos inválidos, reset y expiración sin editar CRM', async () => {
   const agentId = `agent_${randomUUID()}`

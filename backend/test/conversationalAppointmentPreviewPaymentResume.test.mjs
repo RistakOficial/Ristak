@@ -8,7 +8,7 @@ import {
   createConversationalTools,
   loadConversationalAppointmentOfferDecisionContext
 } from '../src/agents/conversational/tools.js'
-import { runToolCallingV2Turn } from '../src/agents/conversational/runner.js'
+import { createToolCallingV2Agent, runToolCallingV2Turn } from '../src/agents/conversational/runner.js'
 import {
   getConversationalAgentTestVerifiedPaymentEvidence,
   prepareConversationalAgentTestRun,
@@ -21,7 +21,8 @@ import {
 } from '../src/services/conversationalAgentTestPaymentService.js'
 import {
   buildConversationalAppointmentPreviewOfferEventId,
-  buildConversationalAppointmentPreviewScopeId
+  buildConversationalAppointmentPreviewScopeId,
+  cleanupExpiredConversationalAppointmentPreviewOffers
 } from '../src/services/conversationalAppointmentPreviewOfferService.js'
 import { createLocalAppointment, upsertLocalCalendar } from '../src/services/localCalendarService.js'
 import { getAccountCurrency } from '../src/utils/accountLocale.js'
@@ -385,6 +386,12 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
       actions: []
     }
     const actionScopedPaymentTools = createConversationalTools(actionScopedPaymentCtx)
+    const collectionAgent = createToolCallingV2Agent({
+      model: 'gpt-4.1-mini',
+      instructions: '',
+      tools: actionScopedPaymentTools,
+      dryRun: true
+    })
     assert.equal(actionScopedPaymentTools.some((item) => item.name === 'save_contact_data'), true)
     const missingPaymentData = await actionScopedPaymentTools
       .find((item) => item.name === 'resolve_active_appointment_offer')
@@ -397,6 +404,9 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
     assert.equal(missingPaymentData.ok, false, JSON.stringify(missingPaymentData))
     assert.equal(missingPaymentData.needsData, true)
     assert.match(missingPaymentData.visibleReply, /correo/i)
+    assert.equal((await collectionAgent.toolUseBehavior(null, [{
+      tool: { name: 'resolve_active_appointment_offer' }, output: missingPaymentData
+    }])).isFinalOutput, false, 'el SDK debe permitir guardar el correo recibido antes de preparar el anticipo')
     const repeatedMissingPaymentData = await actionScopedPaymentTools
       .find((item) => item.name === 'resolve_active_appointment_offer')
       .invoke(null, JSON.stringify({
@@ -446,6 +456,10 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
     assert.equal(missingAgreedAmount.ok, false, JSON.stringify(missingAgreedAmount))
     assert.equal(missingAgreedAmount.requiredField, 'agreedAmount')
     assert.match(missingAgreedAmount.visibleReply, /monto de anticipo/i)
+    assert.match(missingAgreedAmount.continueWith, /agreedAmount/)
+    assert.equal((await collectionAgent.toolUseBehavior(null, [{
+      tool: { name: 'resolve_active_appointment_offer' }, output: missingAgreedAmount
+    }])).isFinalOutput, false, 'el monto ya confirmado debe poder completar la aceptación en esta vuelta')
     assert.equal((await db.get(
       'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
       [offerEventId]
@@ -470,10 +484,12 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
     assert.equal(concurrentAcceptanceBlocked.code, 'appointment_offer_already_adjudicated')
     assert.equal(acceptanceCtx.actions.filter((action) => action.type === 'create_payment_link').length, 1)
 
+    await cleanupExpiredConversationalAppointmentPreviewOffers()
     const boundBeforeConflictingReplay = await db.get(
       'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
       [offerEventId]
     )
+    assert.ok(boundBeforeConflictingReplay, 'la limpieza no debe borrar la evidencia del anticipo pendiente')
     const replayDecisionContext = {
       ...acceptanceCtx.appointmentOfferDecision,
       active: false
