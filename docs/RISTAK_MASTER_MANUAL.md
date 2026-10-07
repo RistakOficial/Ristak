@@ -10122,6 +10122,18 @@ marcados por los dos timeouts locales exactos de conexión QR se recuperan con C
 sólo cuando no contienen evidencia de aceptación en la parte afectada; se
 conservan las partes ya entregadas y sus identificadores.
 
+Cuando una persona responde directamente desde el teléfono o WhatsApp Web de un
+número atendido por QR, la captura de ese saliente nuevo pasa los estados activos
+del contacto a atención humana y registra la toma de mando antes de descargar
+archivos adjuntos; una descarga lenta no retrasa la intervención. El robot deja de
+responder hasta una reactivación explícita. La importación del historial, los
+mensajes ya guardados y los estados pausados o terminales no provocan esa toma.
+Los envíos de Ristak, incluidos chatbot, automatizaciones y recordatorios, reservan
+su identificador de WhatsApp antes de llamar a Baileys: su eco no puede confundirse
+con una intervención humana aunque llegue antes de terminar el envío. También se
+conserva la marca de autoría del agente si el eco completa una fila de estado de
+entrega. Este control no modifica la ruta de los números con API oficial activa.
+
 Activar, reanudar o limpiar la señal manualmente despierta el último inbound
 pendiente del canal, aunque antes atendiera una persona y todavía no exista un
 estado de IA en ese canal. Se conserva el historial humano como contexto y se

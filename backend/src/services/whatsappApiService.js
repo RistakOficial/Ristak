@@ -10220,6 +10220,7 @@ async function upsertMessage({
     profileName,
     messageText,
     messageType,
+    sentByAgent: preservedAgentMetadata.sentByAgent === true,
     providerContentUnavailable,
     contentRecovered: inboundContentRecovered,
     shouldTriggerInboundSideEffects,
@@ -10562,7 +10563,8 @@ export async function captureQrChatMessage({
   timestamp,
   raw = null,
   resolveInboundMedia = null,
-  historyImport = false
+  historyImport = false,
+  sentFromRistak = false
 } = {}) {
   const cleanDirection = direction === 'outbound' ? 'outbound' : 'inbound'
   const cleanBusinessPhone = normalizePhoneForStorage(businessPhone) || cleanString(businessPhone)
@@ -10640,41 +10642,8 @@ export async function captureQrChatMessage({
     }
   }
 
-  // Llegados aquí el número vive de la sesión QR (Baileys): el proveedor no guarda la
-  // media por nosotros, así que la descargamos y la persistimos en nuestro storage.
-  // Se resuelve de forma perezosa para no descargar nada si el mensaje se descarta arriba.
-  let inboundMedia = null
-  if (typeof resolveInboundMedia === 'function' && QR_MEDIA_MESSAGE_TYPES.has(cleanString(messageType).toLowerCase())) {
-    // Evita re-descargar/re-subir si el mensaje ya tiene su media rehospedada (p. ej. una
-    // resincronización de historial de WhatsApp Web reenvía el mismo wamid).
-    const alreadyStored = await db.get(
-      `SELECT 1 FROM whatsapp_api_messages WHERE wamid = ? AND COALESCE(media_url, '') != '' LIMIT 1`,
-      [cleanWamid]
-    ).catch(() => null)
-    if (!alreadyStored) {
-      inboundMedia = await Promise.resolve()
-        .then(() => resolveInboundMedia())
-        .catch(error => {
-          logger.warn(`[WhatsApp QR] No se pudo guardar la media entrante ${cleanWamid}: ${error.message}`)
-          return null
-        })
-    }
-  }
-
   const mediaKey = normalizeQrMediaKey(messageType)
-  const mediaNode = inboundMedia?.mediaUrl
-    ? {
-        link: inboundMedia.mediaUrl,
-        url: inboundMedia.mediaUrl,
-        publicUrl: inboundMedia.mediaUrl,
-        ...(inboundMedia.mediaMimeType ? { mimeType: inboundMedia.mediaMimeType } : {}),
-        ...(inboundMedia.mediaFilename ? { filename: inboundMedia.mediaFilename } : {}),
-        ...(inboundMedia.mediaDurationMs ? { durationMs: inboundMedia.mediaDurationMs } : {}),
-        ...(inboundMedia.mediaAssetId ? { mediaAssetId: inboundMedia.mediaAssetId } : {})
-      }
-    : null
-
-  const result = await upsertMessage({
+  const persistQrMessage = (media = null) => upsertMessage({
     payload: {
       id: cleanWamid,
       type: cleanDirection === 'inbound' ? 'whatsapp.qr.message.received' : 'whatsapp.qr.message.synced',
@@ -10689,7 +10658,15 @@ export async function captureQrChatMessage({
       to: cleanDirection === 'inbound' ? cleanBusinessPhone : cleanContactPhone,
       type: messageType,
       ...(messageText ? { text: { body: messageText } } : {}),
-      ...(mediaNode ? { [mediaKey]: mediaNode } : {}),
+      ...(media?.mediaUrl ? { [mediaKey]: {
+        link: media.mediaUrl,
+        url: media.mediaUrl,
+        publicUrl: media.mediaUrl,
+        ...(media.mediaMimeType ? { mimeType: media.mediaMimeType } : {}),
+        ...(media.mediaFilename ? { filename: media.mediaFilename } : {}),
+        ...(media.mediaDurationMs ? { durationMs: media.mediaDurationMs } : {}),
+        ...(media.mediaAssetId ? { mediaAssetId: media.mediaAssetId } : {})
+      } } : {}),
       ...(raw?.context ? { context: raw.context } : {}),
       ...(raw?.reaction ? { reaction: raw.reaction } : {}),
       ...(cleanDirection === 'inbound' && profileName ? { profileName } : {}),
@@ -10705,6 +10682,38 @@ export async function captureQrChatMessage({
     historyImport,
     deferInboundProfilePicture: cleanDirection === 'inbound' && !historyImport
   })
+
+  // La identidad y la toma humana se confirman antes de descargar un archivo:
+  // esperar una foto/audio no puede dejar al robot contestando durante esa espera.
+  const initialOutbound = cleanDirection === 'outbound' && !historyImport && sentFromRistak !== true
+    ? await persistQrMessage()
+    : null
+  if (initialOutbound?.isNew && !initialOutbound.sentByAgent && initialOutbound.contactId) {
+    const { markHumanTakeoverIfActive } = await import('./conversationalAgentService.js')
+    await markHumanTakeoverIfActive(initialOutbound.contactId, { updatedBy: 'human' })
+  }
+
+  // QR no hospeda la media por nosotros. Sólo descargamos cuando la ruta es
+  // válida y todavía no hay una copia guardada para esta misma identidad.
+  let inboundMedia = null
+  if (typeof resolveInboundMedia === 'function' && QR_MEDIA_MESSAGE_TYPES.has(cleanMessageType)) {
+    const alreadyStored = await db.get(
+      `SELECT 1 FROM whatsapp_api_messages WHERE wamid = ? AND COALESCE(media_url, '') != '' LIMIT 1`,
+      [cleanWamid]
+    ).catch(() => null)
+    if (!alreadyStored) {
+      inboundMedia = await Promise.resolve()
+        .then(() => resolveInboundMedia())
+        .catch(error => {
+          logger.warn(`[WhatsApp QR] No se pudo guardar la media ${cleanWamid}: ${error.message}`)
+          return null
+        })
+    }
+  }
+  const result = initialOutbound && !inboundMedia?.mediaUrl
+    ? initialOutbound
+    : await persistQrMessage(inboundMedia)
+  if (initialOutbound) result.isNew = initialOutbound.isNew
 
   if (!result.businessPhoneNumberId && phoneRow?.id && result.messageId) {
     await db.run(`

@@ -84,6 +84,11 @@ jobs:
       - name: Verificar aislamiento de permisos de Costos y Chatbot
         run: node --test --test-concurrency=1 backend/test/costsRouteIsolation.test.mjs backend/test/manualChatTakeoverOrdering.test.mjs
 
+      - name: Verificar toma humana desde WhatsApp QR sin detener mensajes automáticos
+        env:
+          FFMPEG_PATH: ffmpeg
+        run: node --test --test-concurrency=1 backend/test/whatsappQrHumanTakeover.test.mjs backend/test/whatsappQrSendProtection.test.mjs
+
   build-and-push:
     needs: verify-fresh-postgres
     if: github.event_name != 'pull_request'

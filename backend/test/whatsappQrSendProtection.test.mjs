@@ -77,6 +77,7 @@ function createFakeBaileysRuntime(sentMessages = [], { emitAck = true } = {}) {
       registered: true
     }),
     makeCacheableSignalKeyStore: (keys) => keys,
+    generateMessageIDV2: () => `qr_protected_msg_${++messageIndex}`,
     proto: {
       Message: {
         AppStateSyncKeyData: {
@@ -111,9 +112,8 @@ function createFakeBaileysRuntime(sentMessages = [], { emitAck = true } = {}) {
           exists: true,
           jid: `${normalizeDigits(candidate)}@s.whatsapp.net`
         })),
-        sendMessage: async (jid, payload) => {
-          messageIndex += 1
-          const id = `qr_protected_msg_${messageIndex}`
+        sendMessage: async (jid, payload, options) => {
+          const id = options.messageId
           sentMessages.push({ id, jid, payload })
           if (emitAck) {
             await emit('messages.update', [{

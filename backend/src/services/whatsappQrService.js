@@ -99,6 +99,20 @@ const connectionOpenListeners = new Set()
 const QR_SENT_MESSAGE_CACHE_LIMIT = 500
 const qrSentMessageCache = new Map()
 
+// WhatsApp puede emitir el eco saliente antes de resolver sendMessage. Reservamos
+// su identidad antes de enviar para distinguirlo de una respuesta desde el teléfono.
+const QR_RISTAK_OUTBOUND_ID_LIMIT = 1000
+const qrRistakOutboundIds = new Set()
+
+function rememberRistakQrOutboundId(phoneNumberId, messageId) {
+  const id = cleanString(messageId)
+  if (!phoneNumberId || !id) return
+  qrRistakOutboundIds.add(`${phoneNumberId}:${id}`)
+  while (qrRistakOutboundIds.size > QR_RISTAK_OUTBOUND_ID_LIMIT) {
+    qrRistakOutboundIds.delete(qrRistakOutboundIds.values().next().value)
+  }
+}
+
 function cacheSentQrMessage(response) {
   const id = cleanString(response?.key?.id)
   if (!id || !response?.message) return
@@ -1384,6 +1398,7 @@ async function handleQrIncomingMessages(phone, upsert = {}, sock = null, { histo
         businessPhone: phone.expectedPhone,
         direction: key.fromMe ? 'outbound' : 'inbound',
         wamid,
+        sentFromRistak: qrRistakOutboundIds.has(`${phone.id}:${wamid}`),
         messageType: content.type,
         text: content.text,
         profileName: cleanString(message.pushName) || cleanString(profileNames?.get(normalizeJid(message?.key?.remoteJid))),
@@ -1877,7 +1892,8 @@ async function loadBaileys() {
     const baileys = await import('@whiskeysockets/baileys')
     const makeWASocket = baileys.default || baileys.makeWASocket
 
-    if (!makeWASocket || !baileys.initAuthCreds || !baileys.makeCacheableSignalKeyStore) {
+    if (!makeWASocket || !baileys.initAuthCreds || !baileys.makeCacheableSignalKeyStore ||
+      typeof baileys.generateMessageIDV2 !== 'function') {
       throw new Error('El paquete de QR no trae los métodos esperados')
     }
 
@@ -1893,6 +1909,7 @@ async function loadBaileys() {
       initAuthCreds: baileys.initAuthCreds,
       makeCacheableSignalKeyStore: baileys.makeCacheableSignalKeyStore,
       downloadMediaMessage: baileys.downloadMediaMessage,
+      generateMessageIDV2: baileys.generateMessageIDV2,
       proto: baileys.proto
     }
     return baileysRuntime
@@ -1938,6 +1955,8 @@ export function resetWhatsAppQrServiceForTest() {
   whatsAppWebVersionRecoveryPromise = null
   lastWhatsAppWebVersionRecoveryAt = 0
   qrRecentMessageAcks.clear()
+  qrRistakOutboundIds.clear()
+  qrSentMessageCache.clear()
   qrInboundRecoveryRequests.clear()
   for (const pending of qrInboundHistoryRecoveryTimers.values()) clearTimeout(pending.timer)
   qrInboundHistoryRecoveryTimers.clear()
@@ -3558,7 +3577,14 @@ async function sendProtectedQrMessage({ sock, phone, recipient, type, payload, o
     })
   }
 
-  return sock.sendMessage(recipient.jid, payload, options)
+  const baileys = await loadBaileys()
+  const messageId = cleanString(options.messageId) || baileys.generateMessageIDV2(sock.user?.id)
+  // Un error puede ser posterior a la aceptación: conservamos la identidad para
+  // que un eco tardío tampoco se trate como una respuesta humana.
+  rememberRistakQrOutboundId(phone.id, messageId)
+  const response = await sock.sendMessage(recipient.jid, payload, { ...options, messageId })
+  rememberRistakQrOutboundId(phone.id, response?.key?.id)
+  return response
 }
 
 // Open/recover the socket before a caller takes its final database delivery
