@@ -81,6 +81,9 @@ jobs:
       - name: Verificar MCP y visor de adjuntos con PDF y Canvas reales
         run: node --test --test-concurrency=1 backend/test/mcp*.test.mjs backend/test/outboundMediaReference.test.mjs
 
+      - name: Verificar aislamiento de permisos de Costos y Chatbot
+        run: node --test --test-concurrency=1 backend/test/costsRouteIsolation.test.mjs backend/test/manualChatTakeoverOrdering.test.mjs
+
   build-and-push:
     needs: verify-fresh-postgres
     if: github.event_name != 'pull_request'
