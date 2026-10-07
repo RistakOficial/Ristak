@@ -53,8 +53,8 @@ jobs:
           cache-dependency-path: backend/package-lock.json
 
       - name: Instalar backend
-        # Evita descargar ffmpeg, que no participa en estas pruebas. El paso
-        # de historial reconstruye únicamente el módulo nativo SQLite que usa.
+        # Aplaza los binarios hasta sus pruebas: historial reconstruye SQLite y
+        # la comprobación de salida QR instala FFmpeg para convertir audio real.
         run: npm ci --prefix backend --ignore-scripts
 
       - name: Verificar arranque en PostgreSQL limpio
@@ -85,9 +85,9 @@ jobs:
         run: node --test --test-concurrency=1 backend/test/costsRouteIsolation.test.mjs backend/test/manualChatTakeoverOrdering.test.mjs
 
       - name: Verificar toma humana desde WhatsApp QR sin detener mensajes automáticos
-        env:
-          FFMPEG_PATH: ffmpeg
-        run: node --test --test-concurrency=1 backend/test/whatsappQrHumanTakeover.test.mjs backend/test/whatsappQrSendProtection.test.mjs
+        run: |
+          npm rebuild --prefix backend ffmpeg-static
+          node --test --test-concurrency=1 backend/test/whatsappQrHumanTakeover.test.mjs backend/test/whatsappQrSendProtection.test.mjs
 
   build-and-push:
     needs: verify-fresh-postgres
