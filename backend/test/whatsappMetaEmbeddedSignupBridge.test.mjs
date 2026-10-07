@@ -114,10 +114,8 @@ test('los callbacks HMAC quedan antes de auth y las rutas humanas siguen protegi
     serverSource,
     /app\.use\('\/api\/whatsapp-api', requireAuth, requireWhatsAppFeatureForWhatsAppApiRoute/
   )
-  assert.ok(
-    serverSource.indexOf("app.use('/api/whatsapp-api'") < serverSource.indexOf("app.use('/api', costsRoutes)"),
-    'WhatsApp debe montarse antes del router catch-all de costos'
-  )
+  assert.ok(serverSource.includes("app.use('/api/costs', costsRoutes)"))
+  assert.ok(!serverSource.includes("app.use('/api', costsRoutes)"))
   const callbackIndex = routesSource.indexOf("router.post('/meta/connect/complete'")
   const readinessIndex = routesSource.indexOf("router.post('/meta/connect/readiness'")
   const authIndex = routesSource.indexOf('router.use(requireAuth)')

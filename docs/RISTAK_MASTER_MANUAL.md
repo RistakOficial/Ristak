@@ -2155,6 +2155,15 @@ Hay tres capas distintas:
 3. Permisos de usuario: `requireModuleAccess(moduleKey)` valida lectura/escritura
    por modulo.
 
+El router de Costos se monta exclusivamente en `/api/costs`: autenticacion y
+`settings_costs` protegen sus lecturas, altas, cambios, bajas y calculos dentro
+de ese prefijo. No puede montarse sobre `/api`, porque sus middlewares
+interceptarian modulos ajenos. Un empleado con permiso de `ai_agent` puede
+cargar agentes, ver las señales de atencion humana y pausar, reanudar o tomar
+el mando de una conversacion segun su nivel de acceso, aunque no tenga permiso
+de Costos. El acceso a Chatbot sigue validando sesion, licencia y `ai_agent`;
+la correccion no amplía los permisos del empleado ni modifica las URLs de Costos.
+
 En instalaciones administradas existe un acceso global de soporte desde el
 login normal. El operador escribe su propio correo y contraseña vigentes de
 administrador de Ristak Installer. La app consulta

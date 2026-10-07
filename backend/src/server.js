@@ -680,17 +680,14 @@ const requireWhatsAppFeatureForWhatsAppApiRoute = (() => {
     return whatsappFeatureGate(req, res, next)
   }
 })()
-// Deben montarse antes de costsRoutes: ese router histórico cuelga de /api y su
-// router.use(requireAuth) intercepta cualquier /api/* que aparezca después.
 // Los callbacks Installer -> tenant viven antes de router.use(requireAuth) y se
 // autentican con HMAC, timestamp, nonce e installation id dentro del router.
 // El resto de /api/whatsapp-api sigue exigiendo la sesión humana ahí mismo.
 app.use('/api/whatsapp-api', requireWhatsAppFeatureForWhatsAppApiRoute, whatsappApiRoutes)
 app.use('/api/mcp/action-confirmations', mcpActionConfirmationsRoutes)
-// MCP tiene autenticación OAuth propia. Si queda después de costsRoutes, el
-// middleware de sesión humana responde primero y rompe el discovery remoto.
+// MCP tiene autenticación OAuth propia, aislada dentro de /api/mcp.
 app.use('/api/mcp', mcpRoutes)
-app.use('/api', costsRoutes)
+app.use('/api/costs', costsRoutes)
 app.use('/api/hidden-contacts', hiddenContactsRoutes)
 app.use('/api/ai-runtime', aiRuntimeRoutes)
 app.use('/api/conversational-agent', requireAuth, requireFeature('conversational_ai'), conversationalAgentRoutes) // (LIC-002) auth antes de feature
