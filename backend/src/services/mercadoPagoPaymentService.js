@@ -21,7 +21,7 @@ import { publishPaymentChangedEvent, publishSubscriptionChangedEvent } from './p
 // (PAY2-003) Encolar el comprobante automático tras un pago de Mercado Pago (igual que Conekta).
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { syncOfflinePaymentPlanFromLocalPayment } from './offlinePaymentPlanService.js'
-import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
+import { isGatewayPaymentFailureStatus, mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
   buildMetaPublicPurchasePixelEvent,
   triggerMetaPaymentPurchaseEvent
@@ -104,7 +104,7 @@ function cleanString(value) {
 }
 
 function shouldIgnorePendingWebhookRegression(payment = {}, nextStatus = '') {
-  if (nextStatus !== 'pending') return false
+  if (!['pending', 'failed'].includes(nextStatus)) return false
   const currentStatus = cleanString(payment.status).toLowerCase()
   return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) ||
     ['refunded', 'void', 'deleted'].includes(currentStatus) ||
@@ -1214,10 +1214,10 @@ export async function expireMercadoPagoTestPreference(payment, { now = new Date(
 
 /**
  * Expira la preferencia de un link individual antes de ocultarlo en Ristak.
- * El payment_mode de la fila elige la conexión correcta y un payment_id real
- * bloquea la operación antes de tocar el proveedor.
+ * El payment_mode elige la conexión correcta. Si existe un payment_id, sólo
+ * el borrado explícito de un fallo permite verificar que no se cobró dinero.
  */
-export async function expireUnusedMercadoPagoPreference(payment, { now = new Date().toISOString() } = {}) {
+export async function expireUnusedMercadoPagoPreference(payment, { now = new Date().toISOString(), allowUnpaidFailure = false } = {}) {
   const row = typeof payment === 'string'
     ? await findPaymentById(cleanString(payment))
     : payment
@@ -1225,20 +1225,37 @@ export async function expireUnusedMercadoPagoPreference(payment, { now = new Dat
     return { expired: false, reason: 'payment_not_found' }
   }
 
-  if (cleanString(row.mercadopago_payment_id)) {
+  const canArchiveFailedAttempt = allowUnpaidFailure && ['failed', 'failure', 'declined'].includes(cleanString(row.status).toLowerCase())
+  const providerPaymentId = cleanString(row.mercadopago_payment_id)
+  const preferenceId = cleanString(row.mercadopago_preference_id)
+  if (!providerPaymentId && !preferenceId) return { expired: false, reason: 'preference_missing' }
+  if (providerPaymentId && !canArchiveFailedAttempt) {
     const error = new Error('Mercado Pago ya registró actividad para este pago. No se puede eliminar; conserva el historial.')
     error.status = 422
     error.code = 'payment_has_financial_activity'
     throw error
   }
 
-  const preferenceId = cleanString(row.mercadopago_preference_id)
+  const config = await getMercadoPagoClientConfig(row.payment_mode || '')
+  if (providerPaymentId) {
+    const { payload } = await mercadoPagoApiRequest(`/v1/payments/${encodeURIComponent(providerPaymentId)}`, { config })
+    if (
+      cleanString(payload?.id) !== providerPaymentId ||
+      !isGatewayPaymentFailureStatus(payload?.status) ||
+      cleanString(payload?.date_approved) ||
+      Number(payload?.transaction_amount_refunded || 0) !== 0
+    ) {
+      const error = new Error('Mercado Pago no confirmó que este intento falló sin cobrar. No se puede eliminar el pago.')
+      error.status = 422
+      throw error
+    }
+  }
+
   if (!preferenceId) return { expired: false, reason: 'preference_missing' }
 
   const expirationDate = timestampToIso(now) || new Date().toISOString()
   const expirationDateMs = Date.parse(expirationDate)
   const expirationFrom = new Date(Math.min(Date.now(), expirationDateMs - 1000)).toISOString()
-  const config = await getMercadoPagoClientConfig(row.payment_mode || '')
   await mercadoPagoApiRequest(`/checkout/preferences/${encodeURIComponent(preferenceId)}`, {
     method: 'PUT',
     config,

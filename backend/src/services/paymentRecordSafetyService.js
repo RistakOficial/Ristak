@@ -1,6 +1,8 @@
 import { db } from '../config/database.js'
+import { isGatewayPaymentFailureStatus } from './paymentGatewayStatusPolicy.js'
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success'])
+const FAILED_PAYMENT_STATUSES = new Set(['failed', 'failure', 'declined'])
 const TEST_PAYMENT_MODES = new Set(['test', 'sandbox'])
 const DELETED_RECORD_STATUSES = new Set(['deleted'])
 const LEDGER_PAYMENT_STATUSES = new Set([
@@ -153,51 +155,63 @@ export function isTestSubscriptionRecord(subscription = {}) {
   )
 }
 
-export function paymentHasLedgerActivity(payment = {}) {
+export function paymentHasLedgerActivity(payment = {}, { allowUnpaidFailure = false } = {}) {
   const status = normalizePaymentStatus(payment.status)
   const metadata = parseJson(payment.metadata_json, {})
+  // Un fallo sigue siendo historial para planes y suscripciones. Sólo el
+  // borrado individual puede archivar el intento fallido. Sus IDs siempre
+  // conservan la fila externa; paid_at y estados financieros siguen protegidos.
+  const isUnpaidFailure = allowUnpaidFailure && (
+    FAILED_PAYMENT_STATUSES.has(status) ||
+    (DELETED_RECORD_STATUSES.has(status) && FAILED_PAYMENT_STATUSES.has(normalizePaymentStatus(metadata.transactionDeletion?.previousStatus)))
+  )
+  const statusHasActivity = (value) => Boolean(
+    value &&
+    !NON_FINANCIAL_INDIVIDUAL_PAYMENT_STATUSES.has(value) &&
+    !(isUnpaidFailure && isGatewayPaymentFailureStatus(value))
+  )
   const providerStatuses = [
     metadata?.stripe?.status,
     metadata?.mercadoPago?.status,
     metadata?.mercadopago?.status,
     metadata?.conekta?.status,
+    metadata?.conekta?.paymentStatus,
     metadata?.clip?.status,
     metadata?.rebill?.status
   ]
     .map(normalizePaymentStatus)
     .filter(Boolean)
-  const statusHasFinancialActivity = Boolean(
-    status && !NON_FINANCIAL_INDIVIDUAL_PAYMENT_STATUSES.has(status)
-  )
-  const providerStatusHasFinancialActivity = providerStatuses.some(providerStatus => (
-    !NON_FINANCIAL_INDIVIDUAL_PAYMENT_STATUSES.has(providerStatus)
-  ))
+  const statusHasFinancialActivity = statusHasActivity(status)
+  const providerStatusHasFinancialActivity = providerStatuses.some(statusHasActivity)
+  const hasAttemptIdentifier = [
+    payment.stripe_charge_id,
+    payment.mercadopago_payment_id,
+    payment.conekta_order_id,
+    payment.conekta_charge_id,
+    payment.clip_payment_id,
+    payment.rebill_payment_id,
+    metadata.stripeChargeId,
+    metadata.stripe?.chargeId,
+    metadata.stripe?.latestChargeId,
+    metadata.mercadoPagoPaymentId,
+    metadata.mercadoPago?.paymentId,
+    metadata.conektaOrderId,
+    metadata.conekta?.orderId,
+    metadata.conektaChargeId,
+    metadata.conekta?.chargeId,
+    metadata.clipPaymentId,
+    metadata.clip?.paymentId,
+    metadata.rebillPaymentId,
+    metadata.rebill?.paymentId
+  ].some(value => Boolean(cleanString(value)))
 
   return Boolean(
-    LEDGER_PAYMENT_STATUSES.has(status) ||
+    (LEDGER_PAYMENT_STATUSES.has(status) && !isUnpaidFailure) ||
     statusHasFinancialActivity ||
     providerStatusHasFinancialActivity ||
     cleanString(payment.paid_at) ||
-    cleanString(payment.stripe_charge_id) ||
-    cleanString(payment.mercadopago_payment_id) ||
-    cleanString(payment.conekta_order_id) ||
-    cleanString(payment.conekta_charge_id) ||
-    cleanString(payment.clip_payment_id) ||
     cleanString(payment.clip_receipt_no) ||
-    cleanString(payment.rebill_payment_id) ||
-    cleanString(metadata.stripeChargeId) ||
-    cleanString(metadata.stripe?.chargeId) ||
-    cleanString(metadata.stripe?.latestChargeId) ||
-    cleanString(metadata.mercadoPagoPaymentId) ||
-    cleanString(metadata.mercadoPago?.paymentId) ||
-    cleanString(metadata.conektaOrderId) ||
-    cleanString(metadata.conekta?.orderId) ||
-    cleanString(metadata.conektaChargeId) ||
-    cleanString(metadata.conekta?.chargeId) ||
-    cleanString(metadata.clipPaymentId) ||
-    cleanString(metadata.clip?.paymentId) ||
-    cleanString(metadata.rebillPaymentId) ||
-    cleanString(metadata.rebill?.paymentId)
+    (!isUnpaidFailure && hasAttemptIdentifier)
   )
 }
 
@@ -267,6 +281,7 @@ export function paymentHasExternalArtifact(payment = {}) {
     cleanString(metadata.stripeChargeId) ||
     cleanString(metadata.stripe?.paymentIntentId) ||
     cleanString(metadata.stripe?.chargeId) ||
+    cleanString(metadata.stripe?.latestChargeId) ||
     cleanString(metadata.mercadoPagoPaymentId) ||
     cleanString(metadata.mercadoPagoPreferenceId) ||
     cleanString(metadata.mercadoPago?.paymentId) ||
@@ -370,13 +385,13 @@ export async function getPaymentSubscriptionLinksForPayment(payment = {}) {
   return links
 }
 
-export async function getPaymentDeletionGuard(payment = {}) {
+export async function getPaymentDeletionGuard(payment = {}, { allowUnpaidFailure = false } = {}) {
   const [planLinks, subscriptionLinks, fiscalArtifact] = await Promise.all([
     getPaymentPlanLinksForPayment(payment.id),
     getPaymentSubscriptionLinksForPayment(payment),
     getRemoteFiscalArtifact(payment.id)
   ])
-  const hasLedgerActivity = paymentHasLedgerActivity(payment)
+  const hasLedgerActivity = paymentHasLedgerActivity(payment, { allowUnpaidFailure })
   const hasExternalArtifact = paymentHasExternalArtifact(payment)
   const isManualOffline = isManualOfflinePaymentRecord(payment)
   const isTestMode = isTestPaymentRecord(payment)

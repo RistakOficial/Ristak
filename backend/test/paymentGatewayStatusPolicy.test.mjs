@@ -37,7 +37,6 @@ test('politica pagos: solo rechazos o fallos explicitos marcan failed', () => {
   assert.equal(isGatewayPaymentFailureStatus('payment_failed'), true)
 
   assert.equal(mapConektaOrderStatus({ payment_status: 'declined' }), 'failed')
-  assert.equal(mapConektaOrderStatus({ payment_status: 'charged_back' }), 'failed')
   assert.equal(mapMercadoPagoStatus('rejected'), 'failed')
   assert.equal(mapClipStatus('rejected'), 'failed')
   assert.equal(mapRebillStatus('rejected'), 'failed')
@@ -52,4 +51,10 @@ test('politica pagos: solo rechazos o fallos explicitos marcan failed', () => {
     }),
     'failed'
   )
+})
+
+test('politica pagos: los contracargos conservan movimiento financiero', () => {
+  assert.equal(mapConektaOrderStatus({ payment_status: 'charged_back' }), 'refunded')
+  assert.equal(mapMercadoPagoStatus('charged_back'), 'refunded')
+  assert.equal(mapRebillStatus('chargeback'), 'refunded')
 })

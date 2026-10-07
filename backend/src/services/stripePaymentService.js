@@ -169,7 +169,7 @@ function getCanonicalStripeWebhookUrl() {
 }
 
 function shouldIgnorePendingWebhookRegression(payment = {}, nextStatus = '') {
-  if (nextStatus !== 'pending') return false
+  if (!['pending', 'failed'].includes(nextStatus)) return false
   const currentStatus = cleanString(payment.status).toLowerCase()
   return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) ||
     ['refunded', 'void', 'deleted'].includes(currentStatus) ||
@@ -1158,25 +1158,54 @@ export async function getStripeClient(mode = '') {
 
 /**
  * Cancela un PaymentIntent que sólo se preparó para un link individual y que
- * todavía no tiene evidencia de intento o movimiento financiero. La consulta
- * remota es obligatoria: si Stripe reporta actividad, el borrado falla cerrado.
+ * todavía no tiene movimiento financiero. El borrado explícito de un pago
+ * fallido puede tolerar un error o un cargo verificado como rechazado sin cobro;
+ * cualquier dinero recibido sigue bloqueando. La consulta remota es obligatoria.
  */
-export async function cancelUnusedStripePaymentIntent(payment = {}) {
-  const paymentIntentId = cleanString(payment.stripe_payment_intent_id)
-  if (!paymentIntentId) {
+export async function cancelUnusedStripePaymentIntent(payment = {}, { allowUnpaidFailure = false } = {}) {
+  let paymentIntentId = cleanString(payment.stripe_payment_intent_id)
+  const localChargeId = cleanString(payment.stripe_charge_id)
+  const canArchiveFailedAttempt = allowUnpaidFailure && ['failed', 'failure', 'declined'].includes(cleanString(payment.status).toLowerCase())
+  if (!paymentIntentId && !localChargeId) {
     return { cancelled: false, reason: 'payment_intent_missing' }
   }
 
   const { stripe, requestOptions } = await getStripeClient(payment.payment_mode || '')
+  const verifyFailedCharge = async (chargeId) => {
+    if (!canArchiveFailedAttempt || !stripe.charges?.retrieve) {
+      const error = new Error('Stripe no pudo comprobar que este cargo falló sin cobrar dinero. No se eliminó el pago.')
+      error.status = 422
+      throw error
+    }
+    const charge = await retrieveStripeResource(stripe.charges, chargeId, requestOptions)
+    if (
+      cleanString(charge?.id) !== chargeId ||
+      cleanString(charge?.status).toLowerCase() !== 'failed' ||
+      charge?.paid !== false ||
+      Number(charge?.amount_captured || 0) !== 0 ||
+      Number(charge?.amount_refunded || 0) !== 0 ||
+      (paymentIntentId && extractStripeObjectId(charge?.payment_intent) !== paymentIntentId)
+    ) {
+      const error = new Error('Stripe registró un cobro o no confirmó que el intento haya fallado sin cobrar. No se puede eliminar este pago.')
+      error.status = 422
+      throw error
+    }
+    return charge
+  }
+  if (!paymentIntentId) {
+    const charge = await verifyFailedCharge(localChargeId)
+    paymentIntentId = extractStripeObjectId(charge?.payment_intent)
+    if (!paymentIntentId) return { cancelled: false, verifiedFailedCharge: true }
+  }
   const intent = await retrieveStripeResource(stripe.paymentIntents, paymentIntentId, requestOptions)
   const status = cleanString(intent?.status).toLowerCase()
   const latestChargeId = extractStripeObjectId(intent?.latest_charge)
   const charges = Array.isArray(intent?.charges?.data) ? intent.charges.data : []
   const hasFinancialActivity = Boolean(
-    Number(intent?.amount_received || 0) > 0 ||
-    latestChargeId ||
-    charges.length ||
-    hasStripePaymentAttemptFailure(intent) ||
+    Number(intent?.amount_received || 0) !== 0 ||
+    Number(intent?.amount_capturable || 0) !== 0 ||
+    ((!canArchiveFailedAttempt) && (latestChargeId || charges.length || localChargeId)) ||
+    (hasStripePaymentAttemptFailure(intent) && !canArchiveFailedAttempt) ||
     ['processing', 'requires_action', 'succeeded'].includes(status)
   )
 
@@ -1186,6 +1215,9 @@ export async function cancelUnusedStripePaymentIntent(payment = {}) {
     error.code = 'payment_has_financial_activity'
     throw error
   }
+
+  const chargeIds = [...new Set([localChargeId, latestChargeId, ...charges.map(extractStripeObjectId)].filter(Boolean))]
+  for (const chargeId of chargeIds) await verifyFailedCharge(chargeId)
 
   if (['canceled', 'cancelled'].includes(status)) {
     return { cancelled: false, alreadyCancelled: true, paymentIntentId, status }
@@ -1203,11 +1235,18 @@ export async function cancelUnusedStripePaymentIntent(payment = {}) {
     { cancellation_reason: 'abandoned' },
     requestOptions
   )
+  const cancelledStatus = cleanString(cancelledIntent?.status).toLowerCase()
+  if (!['canceled', 'cancelled'].includes(cancelledStatus)) {
+    const error = new Error('Stripe no confirmó la cancelación de este pago. No se eliminó para proteger el historial.')
+    error.status = 422
+    error.code = 'payment_cancellation_unverified'
+    throw error
+  }
 
   return {
     cancelled: true,
     paymentIntentId,
-    status: cleanString(cancelledIntent?.status).toLowerCase() || 'canceled'
+    status: cancelledStatus
   }
 }
 

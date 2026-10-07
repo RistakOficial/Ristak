@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { db } from '../src/config/database.js'
-import { deleteTransaction, voidTransaction } from '../src/controllers/transactionsController.js'
+import { deleteTransaction, getTransactionById, voidTransaction } from '../src/controllers/transactionsController.js'
 import GHLClient from '../src/services/ghlClient.js'
 import { __invoicesSyncTestHooks } from '../src/services/invoicesSyncService.js'
 import {
@@ -12,6 +12,7 @@ import {
 } from '../src/services/paymentRecordSafetyService.js'
 import {
   saveStripePaymentConfig,
+  refreshStripePaymentFromIntent,
   setStripeFactoryForTest
 } from '../src/services/stripePaymentService.js'
 import { deleteSubscription } from '../src/services/subscriptionsService.js'
@@ -320,6 +321,116 @@ test('seguridad pagos: distingue intentos preparados de actividad financiera rea
   assert.equal(paymentHasLedgerActivity({ status: 'future_provider_unknown_state' }), true)
 })
 
+test('seguridad pagos: sólo el borrado individual puede ignorar un estado fallido sin cobro', () => {
+  const options = { allowUnpaidFailure: true }
+  for (const status of ['failed', 'failure', 'declined']) {
+    assert.equal(paymentHasLedgerActivity({ status }), true)
+    assert.equal(paymentHasLedgerActivity({ status }, options), false)
+    assert.equal(paymentHasLedgerActivity({ status, metadata_json: JSON.stringify({ stripe: { status: 'failed' } }) }, options), false)
+  }
+  for (const evidence of [
+    { paid_at: '2026-10-07T16:00:00Z' },
+    { clip_receipt_no: 'receipt_paid' },
+    ...['paid', 'partial', 'refunded', 'authorized', 'processing', 'unknown'].map(status => ({
+      metadata_json: JSON.stringify({ stripe: { status } })
+    }))
+  ]) {
+    assert.equal(paymentHasLedgerActivity({ status: 'failed', ...evidence }, options), true, JSON.stringify(evidence))
+  }
+  for (const attempt of [
+    { stripe_charge_id: 'ch_declined' },
+    { mercadopago_payment_id: 'mp_rejected' },
+    { conekta_order_id: 'ord_declined' },
+    { clip_payment_id: 'clip_declined' },
+    { rebill_payment_id: 'rebill_declined' },
+    { metadata_json: JSON.stringify({ stripe: { latestChargeId: 'ch_nested' } }) }
+  ]) {
+    assert.equal(paymentHasLedgerActivity({ status: 'failed', ...attempt }), true)
+    assert.equal(paymentHasLedgerActivity({ status: 'failed', ...attempt }, options), false)
+    assert.equal(paymentHasExternalArtifact({ status: 'failed', ...attempt }), true)
+  }
+})
+
+test('seguridad pagos: elimina pagos manuales fallidos o enviados sin cobro', async () => {
+  for (const status of ['failed', 'sent']) {
+    const ids = await seedSafetyRows(`unpaid_${status}`)
+    try {
+      await db.run('UPDATE payments SET status = ?, paid_at = NULL WHERE id = ?', [status, ids.paidPaymentId])
+      const detail = createResponse()
+      await getTransactionById({ params: { id: ids.paidPaymentId } }, detail)
+      assert.equal(detail.payload.data.hasProtectedPaymentActivity, false)
+
+      const res = createResponse()
+      await deleteTransaction({ params: { id: ids.paidPaymentId } }, res)
+      assert.equal(res.statusCode, 200)
+      assert.equal(await db.get('SELECT id FROM payments WHERE id = ?', [ids.paidPaymentId]), null)
+    } finally {
+      await cleanup(ids)
+    }
+  }
+})
+
+test('seguridad pagos: conserva fallidos y enviados que sí tienen un pago registrado', async () => {
+  for (const status of ['failed', 'sent']) {
+    const ids = await seedSafetyRows(`recorded_${status}`)
+    try {
+      await db.run('UPDATE payments SET status = ? WHERE id = ?', [status, ids.paidPaymentId])
+      const detail = createResponse()
+      await getTransactionById({ params: { id: ids.paidPaymentId } }, detail)
+      assert.equal(detail.payload.data.hasProtectedPaymentActivity, true)
+
+      const res = createResponse()
+      await deleteTransaction({ params: { id: ids.paidPaymentId } }, res)
+      assert.equal(res.statusCode, 422)
+      assert.equal((await db.get('SELECT status FROM payments WHERE id = ?', [ids.paidPaymentId])).status, status)
+    } finally {
+      await cleanup(ids)
+    }
+  }
+})
+
+test('seguridad pagos: un cobro concurrente impide borrar físicamente la fila', async (t) => {
+  const ids = await seedSafetyRows('concurrent_payment_delete')
+  try {
+    await db.run("UPDATE payments SET status = 'failed', paid_at = NULL WHERE id = ?", [ids.paidPaymentId])
+    const originalRun = db.run.bind(db)
+    t.mock.method(db, 'run', async (sql, params = []) => {
+      if (sql.startsWith('DELETE FROM payments') && params[0] === ids.paidPaymentId) {
+        await originalRun("UPDATE payments SET status = 'paid', paid_at = CURRENT_TIMESTAMP WHERE id = ?", [ids.paidPaymentId])
+      }
+      return originalRun(sql, params)
+    })
+    const res = createResponse()
+    await deleteTransaction({ params: { id: ids.paidPaymentId } }, res)
+    assert.equal(res.statusCode, 409)
+    const row = await db.get('SELECT status, paid_at FROM payments WHERE id = ?', [ids.paidPaymentId])
+    assert.equal(row.status, 'paid')
+    assert.ok(row.paid_at)
+  } finally {
+    t.mock.restoreAll()
+    await cleanup(ids)
+  }
+})
+
+test('seguridad pagos: archiva un link fallido sin cobro y conserva protegidos los pagos de un plan', async () => {
+  const ids = await seedSafetyRows('unpaid_failed_link')
+  try {
+    await db.run("UPDATE payments SET status = 'failed', payment_mode = 'live' WHERE id IN (?, ?)", [ids.pendingLinkPaymentId, ids.planPaymentId])
+    const deleted = createResponse()
+    await deleteTransaction({ params: { id: ids.pendingLinkPaymentId } }, deleted)
+    assert.equal(deleted.statusCode, 200)
+    assert.equal((await db.get('SELECT status FROM payments WHERE id = ?', [ids.pendingLinkPaymentId])).status, 'deleted')
+
+    const protectedPlan = createResponse()
+    await deleteTransaction({ params: { id: ids.planPaymentId } }, protectedPlan)
+    assert.equal(protectedPlan.statusCode, 422)
+    assert.match(protectedPlan.payload.error, /plan de pagos/i)
+    assert.equal((await db.get('SELECT status FROM payments WHERE id = ?', [ids.planPaymentId])).status, 'failed')
+  } finally {
+    await cleanup(ids)
+  }
+})
+
 test('seguridad pagos: no borra un pago manual con documento fiscal remoto', async () => {
   const ids = await seedSafetyRows('manual_fiscal_guard')
 
@@ -502,6 +613,78 @@ test('seguridad pagos: conserva un Stripe pendiente cuando el proveedor ya repor
 
       const row = await db.get('SELECT status FROM payments WHERE id = ?', [ids.pendingLinkPaymentId])
       assert.equal(row.status, 'pending')
+    })
+  } finally {
+    setStripeFactoryForTest(null)
+    await cleanup(ids)
+  }
+})
+
+test('seguridad pagos: cancela Stripe fallido sólo con cero cobro y cancelación confirmada', async () => {
+  const ids = await seedSafetyRows('failed_stripe_delete')
+  try {
+    await initializeMasterKey()
+    await snapshotStripeConfig(async () => {
+      await saveStripePaymentConfig({
+        enabled: true,
+        mode: 'live',
+        publishableKey: 'pk_live_payment_delete',
+        secretKey: 'sk_live_payment_delete'
+      })
+      const cases = [
+        { name: 'rechazo sin cargo', intent: {}, cancelledStatus: 'canceled', expected: 200, calls: 1 },
+        { name: 'folio de cargo rechazado', intent: { latest_charge: 'ch_failed' }, charge: { paid: false, status: 'failed' }, cancelledStatus: 'canceled', expected: 200, calls: 1 },
+        { name: 'dinero recibido', intent: { amount_received: 500 }, expected: 422, calls: 0 },
+        { name: 'cargo cobrado', intent: { latest_charge: 'ch_paid' }, charge: { paid: true, status: 'succeeded', amount_captured: 500 }, expected: 422, calls: 0 },
+        { name: 'cargo reembolsado', intent: { latest_charge: 'ch_refunded' }, charge: { paid: false, status: 'failed', amount_refunded: 500 }, expected: 422, calls: 0 },
+        { name: 'cargo de otro intento', intent: { latest_charge: 'ch_other_intent' }, charge: { paid: false, status: 'failed', payment_intent: 'pi_other' }, expected: 422, calls: 0 },
+        { name: 'en proceso', intent: { status: 'processing' }, expected: 422, calls: 0 },
+        { name: 'autenticación pendiente', intent: { status: 'requires_action' }, expected: 422, calls: 0 },
+        { name: 'cancelación sin confirmar', intent: {}, cancelledStatus: 'processing', expected: 422, calls: 1 }
+      ]
+      for (const scenario of cases) {
+        let cancelCalls = 0
+        setStripeFactoryForTest(() => ({
+          charges: {
+            retrieve: async id => ({ id, payment_intent: 'pi_failed_unpaid', amount_captured: 0, amount_refunded: 0, ...scenario.charge })
+          },
+          paymentIntents: {
+            retrieve: async () => ({
+              id: 'pi_failed_unpaid',
+              status: 'requires_payment_method',
+              amount_received: 0,
+              latest_charge: null,
+              last_payment_error: { code: 'card_declined' },
+              charges: { data: [] },
+              currency: 'mxn',
+              amount: 50000,
+              metadata: { ristak_payment_id: ids.pendingLinkPaymentId },
+              ...scenario.intent
+            }),
+            cancel: async () => {
+              cancelCalls += 1
+              return { id: 'pi_failed_unpaid', status: scenario.cancelledStatus }
+            }
+          }
+        }))
+        await db.run(
+          "UPDATE payments SET payment_mode = 'live', status = 'failed', stripe_payment_intent_id = 'pi_failed_unpaid', stripe_charge_id = ? WHERE id = ?",
+          [scenario.intent.latest_charge || null, ids.pendingLinkPaymentId]
+        )
+        const res = createResponse()
+        await deleteTransaction({ params: { id: ids.pendingLinkPaymentId } }, res)
+        assert.equal(res.statusCode, scenario.expected, scenario.name)
+        assert.equal(cancelCalls, scenario.calls, scenario.name)
+        const row = await db.get('SELECT status FROM payments WHERE id = ?', [ids.pendingLinkPaymentId])
+        assert.equal(row.status, scenario.expected === 200 ? 'deleted' : 'failed', scenario.name)
+        if (scenario.expected === 200) {
+          await refreshStripePaymentFromIntent('pi_failed_unpaid', 'live')
+          assert.equal((await db.get('SELECT status FROM payments WHERE id = ?', [ids.pendingLinkPaymentId])).status, 'deleted', `fallo tardío: ${scenario.name}`)
+          const repeated = createResponse()
+          await deleteTransaction({ params: { id: ids.pendingLinkPaymentId } }, repeated)
+          assert.equal(repeated.statusCode, 200, `borrado idempotente: ${scenario.name}`)
+        }
+      }
     })
   } finally {
     setStripeFactoryForTest(null)

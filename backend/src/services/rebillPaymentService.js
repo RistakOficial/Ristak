@@ -3964,7 +3964,7 @@ export function mapRebillStatus(status) {
 function shouldIgnoreRegression(payment = {}, nextStatus = '') {
   if (nextStatus === 'paid' || nextStatus === 'refunded') return false
   const currentStatus = cleanString(payment.status, 80).toLowerCase()
-  return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) || Boolean(payment.paid_at)
+  return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) || currentStatus === 'deleted' || Boolean(payment.paid_at)
 }
 
 function extractRebillMetadata(rebillPayment = {}) {

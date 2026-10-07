@@ -46,6 +46,7 @@ import { useAccountCurrency, useHighLevelConnected, useUrlDateRangeSync, useUrlF
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString, formatName } from '@/utils/format'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { buildPaymentTimestamp } from '@/utils/paymentDate'
+import { canDeleteUnpaidTransaction } from '@/utils/transactionDeletion'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import { hasPaymentGatewaysAccess } from '@/utils/accessControl'
 import {
@@ -576,21 +577,6 @@ const getDateRangeKeyValue = (value: unknown) => value instanceof Date ? value.g
 
 const REFUNDABLE_TRANSACTION_STATUSES = ['paid']
 const VOIDABLE_HIGHLEVEL_TRANSACTION_STATUSES = new Set(['draft', 'sent', 'pending', 'overdue', 'partial'])
-const DELETABLE_PENDING_TRANSACTION_STATUSES = new Set([
-  'draft',
-  'sent',
-  'scheduled',
-  'pending',
-  'overdue',
-  'inactive',
-  'initiated',
-  'created',
-  'open',
-  'requires_payment_method',
-  'requires_confirmation',
-  'cancelled',
-  'canceled'
-])
 
 const PAYMENT_PLAN_STATUS_ORDER = [
   'active',
@@ -627,10 +613,6 @@ const isHighLevelTransaction = (transaction: Transaction) => {
 const canVoidHighLevelTransaction = (transaction: Transaction) => (
   isHighLevelTransaction(transaction) &&
   VOIDABLE_HIGHLEVEL_TRANSACTION_STATUSES.has(String(transaction.status || '').toLowerCase())
-)
-
-const canDeletePendingTransaction = (transaction: Transaction) => (
-  DELETABLE_PENDING_TRANSACTION_STATUSES.has(String(transaction.status || '').toLowerCase())
 )
 
 const isTestPayment = (transaction: Transaction) => (
@@ -2584,12 +2566,14 @@ export const Transactions: React.FC = () => {
     setDeletingTransactions(true)
     const deletingIds = transactionsPendingDeletion.map(transaction => transaction.id)
     const failedTransactions: Transaction[] = []
+    let firstDeletionError = ''
 
     for (const transaction of transactionsPendingDeletion) {
       try {
         await transactionsService.deleteTransaction(transaction.id)
-      } catch {
+      } catch (error) {
         failedTransactions.push(transaction)
+        if (!firstDeletionError && error instanceof Error) firstDeletionError = error.message
       }
     }
 
@@ -2608,8 +2592,11 @@ export const Transactions: React.FC = () => {
     if (failedTransactions.length > 0) {
       showToast(
         'error',
-        'No se pudieron eliminar todos',
-        `Se eliminaron ${deletedIds.size} y fallaron ${failedTransactions.length}. Intenta otra vez con los pendientes.`
+        deletingIds.length === 1 ? 'No se pudo eliminar el pago' : 'No se pudieron eliminar todos',
+        [
+          deletingIds.length > 1 ? `Se eliminaron ${deletedIds.size} y fallaron ${failedTransactions.length}.` : '',
+          firstDeletionError || 'Intenta otra vez con los pendientes.'
+        ].filter(Boolean).join(' ')
       )
     } else {
       showToast(
@@ -3120,7 +3107,7 @@ export const Transactions: React.FC = () => {
         const isMercadoPagoTransaction = provider === 'mercadopago' || method.startsWith('mercadopago')
         const isGatewayTransaction = isStripeTransaction || isMercadoPagoTransaction
         const canVoidPayment = canVoidHighLevelTransaction(item)
-        const canDeletePayment = isTestPayment(item) || canDeletePendingTransaction(item)
+        const canDeletePayment = isTestPayment(item) || canDeleteUnpaidTransaction(item)
         const hasPaymentLink = Boolean(item.paymentUrl || item.publicPaymentId || item.invoiceId)
         const isTransferProofPending = item.status === 'pending_review'
         const isTransferProofRecord = isProtectedTransferProofTransaction(item)
@@ -3430,7 +3417,7 @@ export const Transactions: React.FC = () => {
   }, [selectedTransactionIds, transactions])
   const selectedDeletableTransactions = useMemo(
     () => selectedTransactions.filter(transaction => (
-      isTestPayment(transaction) || canDeletePendingTransaction(transaction)
+      isTestPayment(transaction) || canDeleteUnpaidTransaction(transaction)
     )),
     [selectedTransactions]
   )

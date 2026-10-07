@@ -23,6 +23,9 @@ import {
   syncStripePaymentPlanFromLocalPayment
 } from '../services/stripePaymentService.js'
 import { expireUnusedMercadoPagoPreference } from '../services/mercadoPagoPaymentService.js'
+import { verifyFailedConektaPayment } from '../services/conektaPaymentService.js'
+import { refreshClipPayment } from '../services/clipPaymentService.js'
+import { refreshRebillPayment } from '../services/rebillPaymentService.js'
 import {
   isOfflinePaymentPlanPayment,
   syncOfflinePaymentPlanFromLocalPayment
@@ -42,7 +45,8 @@ import { dispatchProductPostWebhooksForPaymentInBackground } from '../services/p
 import {
   getPaymentDeletionGuard,
   hardDeleteTestPaymentRecord,
-  isSuccessfulPaymentStatus
+  isSuccessfulPaymentStatus,
+  paymentHasLedgerActivity
 } from '../services/paymentRecordSafetyService.js'
 import { formatInvoiceMultilineText, formatInvoiceSingleLineText } from '../utils/invoiceTextFormatter.js'
 import { findContactByPhoneCandidates, generateContactId } from '../services/contactIdentityService.js'
@@ -655,6 +659,7 @@ const mapTransactionRow = (t, baseUrl = '') => ({
   rebillCustomerId: t.rebill_customer_id,
   rebillCardId: t.rebill_card_id,
   paidAt: t.paid_at,
+  hasProtectedPaymentActivity: paymentHasLedgerActivity(t, { allowUnpaidFailure: true }),
   ...(mapSafeFiscalInvoice(t) ? { fiscalInvoice: mapSafeFiscalInvoice(t) } : {}),
   ...(mapSafeTransferProof(t) ? { transferProof: mapSafeTransferProof(t) } : {})
 })
@@ -1465,6 +1470,7 @@ export const getTransactionById = async (req, res) => {
       rebillCustomerId: transaction.rebill_customer_id,
       rebillCardId: transaction.rebill_card_id,
       paidAt: transaction.paid_at,
+      hasProtectedPaymentActivity: paymentHasLedgerActivity(transaction, { allowUnpaidFailure: true }),
       ...(mapSafeFiscalInvoice(transaction) ? { fiscalInvoice: mapSafeFiscalInvoice(transaction) } : {}),
       ...(mapSafeTransferProof(transaction) ? { transferProof: mapSafeTransferProof(transaction) } : {}),
       contactSource: transaction.contact_source,
@@ -1893,7 +1899,7 @@ export const deleteTransaction = async (req, res) => {
       })
     }
 
-    const deletionGuard = await getPaymentDeletionGuard(transaction)
+    const deletionGuard = await getPaymentDeletionGuard(transaction, { allowUnpaidFailure: true })
     const guardResponse = sendPaymentDeletionGuardError(res, deletionGuard)
     if (guardResponse) return guardResponse
 
@@ -1906,19 +1912,63 @@ export const deleteTransaction = async (req, res) => {
       // Los tombstones externos live se conservan para bloquear links y
       // absorber webhooks/sincronizaciones tardías sin volver a mostrarlos.
     } else if (deletionGuard.shouldArchive) {
-      if (transaction.stripe_payment_intent_id) {
-        await cancelUnusedStripePaymentIntent(transaction)
-      } else if (transaction.mercadopago_preference_id) {
-        await expireUnusedMercadoPagoPreference(transaction)
+      const metadata = parseJson(transaction.metadata_json, {})
+      const providerPayment = {
+        ...transaction,
+        stripe_payment_intent_id: transaction.stripe_payment_intent_id || metadata.stripePaymentIntentId || metadata.stripe?.paymentIntentId,
+        stripe_charge_id: transaction.stripe_charge_id || metadata.stripeChargeId || metadata.stripe?.chargeId || metadata.stripe?.latestChargeId,
+        mercadopago_payment_id: transaction.mercadopago_payment_id || metadata.mercadoPagoPaymentId || metadata.mercadoPago?.paymentId,
+        mercadopago_preference_id: transaction.mercadopago_preference_id || metadata.mercadoPagoPreferenceId || metadata.mercadoPago?.preferenceId,
+        conekta_order_id: transaction.conekta_order_id || metadata.conektaOrderId || metadata.conekta?.orderId,
+        conekta_charge_id: transaction.conekta_charge_id || metadata.conektaChargeId || metadata.conekta?.chargeId,
+        clip_payment_id: transaction.clip_payment_id || metadata.clipPaymentId || metadata.clip?.paymentId,
+        rebill_payment_id: transaction.rebill_payment_id || metadata.rebillPaymentId || metadata.rebill?.paymentId
+      }
+      const providerGroups = [
+        providerPayment.stripe_payment_intent_id || providerPayment.stripe_charge_id,
+        providerPayment.mercadopago_preference_id || providerPayment.mercadopago_payment_id,
+        providerPayment.conekta_order_id || providerPayment.conekta_charge_id,
+        providerPayment.clip_payment_id,
+        providerPayment.rebill_payment_id,
+        transaction.ghl_invoice_id
+      ].filter(Boolean)
+      if (providerGroups.length > 1) {
+        return res.status(422).json({ success: false, error: 'Este pago tiene folios de varias pasarelas. Revisa su historial antes de eliminarlo.' })
+      }
+      if (providerPayment.stripe_payment_intent_id || providerPayment.stripe_charge_id) {
+        await cancelUnusedStripePaymentIntent(providerPayment, { allowUnpaidFailure: true })
+      } else if (providerPayment.mercadopago_preference_id || providerPayment.mercadopago_payment_id) {
+        await expireUnusedMercadoPagoPreference(providerPayment, { allowUnpaidFailure: true })
+      } else if (providerPayment.conekta_order_id || providerPayment.conekta_charge_id) {
+        await verifyFailedConektaPayment(providerPayment)
+      } else if (providerPayment.clip_payment_id || providerPayment.rebill_payment_id) {
+        const updated = providerPayment.clip_payment_id
+          ? await refreshClipPayment(providerPayment.clip_payment_id, { mode: transaction.payment_mode })
+          : await refreshRebillPayment(providerPayment.rebill_payment_id, { mode: transaction.payment_mode })
+        if (!updated || updated.id !== id || normalizeStatus(updated.status) !== 'failed' || updated.paid_at) {
+          return res.status(422).json({ success: false, error: 'La pasarela no confirmó que este intento falló sin cobrar. No se eliminó el pago.' })
+        }
       } else if (transaction.ghl_invoice_id) {
         const ghlClient = await getGHLClient()
         await ghlClient.voidInvoice(transaction.ghl_invoice_id)
       }
 
-      await db.run(
-        "UPDATE payments SET status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        [id]
+      const currentTransaction = await db.get('SELECT * FROM payments WHERE id = ?', [id])
+      if (!currentTransaction) return res.status(409).json({ success: false, error: 'Este pago cambió mientras lo eliminabas. Actualiza la tabla.' })
+      const currentGuard = await getPaymentDeletionGuard(currentTransaction, { allowUnpaidFailure: true })
+      const currentGuardResponse = sendPaymentDeletionGuardError(res, currentGuard)
+      if (currentGuardResponse) return currentGuardResponse
+      const archivedMetadata = {
+        ...parseJson(currentTransaction.metadata_json, {}),
+        transactionDeletion: { previousStatus: currentTransaction.status }
+      }
+      const archived = await db.run(
+        `UPDATE payments SET status = 'deleted', metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND status = ? AND (paid_at IS NULL OR CAST(paid_at AS TEXT) = '')
+           AND COALESCE(metadata_json, '') = ?`,
+        [JSON.stringify(archivedMetadata), id, currentTransaction.status, currentTransaction.metadata_json || '']
       )
+      if (!archived.changes) return res.status(409).json({ success: false, error: 'Este pago cambió mientras lo eliminabas. Actualiza la tabla.' })
       dispatchProductPostWebhooksForPaymentInBackground(id, {
         status: 'deleted',
         previousStatus: transaction.status || ''
@@ -1929,7 +1979,11 @@ export const deleteTransaction = async (req, res) => {
       })
       await syncPaymentPlanFromLocalTransaction(transaction, id)
     } else {
-      await db.run('DELETE FROM payments WHERE id = ?', [id])
+      const deleted = await db.run(
+        "DELETE FROM payments WHERE id = ? AND status = ? AND (paid_at IS NULL OR CAST(paid_at AS TEXT) = '')",
+        [id, transaction.status]
+      )
+      if (!deleted.changes) return res.status(409).json({ success: false, error: 'Este pago cambió mientras lo eliminabas. Actualiza la tabla.' })
     }
 
     if (transaction.contact_id) {

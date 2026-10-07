@@ -55,6 +55,7 @@
     "test:phone-date-field-viewport": "node scripts/test-phone-date-field-viewport.mjs",
     "test:web-analytics-plan-access": "node --test scripts/test-web-analytics-plan-access.cjs",
     "test:payment-links-plan-access": "node --test scripts/test-payment-links-plan-access.cjs",
+    "test:transaction-deletion": "node --experimental-strip-types --test scripts/test-transaction-deletion.mjs",
     "test:highlevel-chat-send": "node scripts/test-highlevel-chat-send.mjs",
     "test:chat-composer-availability": "node scripts/test-chat-composer-availability.mjs",
     "test:mcp-developers-ui": "node scripts/test-mcp-developers-ui.mjs",

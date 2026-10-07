@@ -25,7 +25,8 @@ import {
   setConektaFetchForTest,
   cancelConektaRecurringSubscription,
   testConektaPaymentConfig,
-  verifyConektaWebhookSignature
+  verifyConektaWebhookSignature,
+  verifyFailedConektaPayment
 } from '../src/services/conektaPaymentService.js'
 
 async function snapshotConektaConfig(callback) {
@@ -396,10 +397,56 @@ test('Conekta pagos: expirado o cancelado queda reintentable y solo rechazo real
 
     const declinedRow = await db.get('SELECT status FROM payments WHERE id = ?', [paymentId])
     assert.equal(declinedRow.status, 'failed')
+
+    await db.run("UPDATE payments SET status = 'deleted' WHERE id = ?", [paymentId])
+    const lateFailure = await reconcileConektaOrderFromWebhook({
+      type: 'order.declined',
+      data: { object: { id: orderId, payment_status: 'declined', charges: { data: [{ id: chargeId, status: 'declined' }] } } }
+    })
+    assert.equal(lateFailure.status, 'deleted')
+    const lateSuccess = await reconcileConektaOrderFromWebhook({
+      type: 'order.paid',
+      data: { object: { id: orderId, payment_status: 'paid', charges: { data: [{ id: chargeId, status: 'paid' }] } } }
+    })
+    assert.equal(lateSuccess.status, 'paid')
+    await db.run("UPDATE payments SET status = 'deleted', paid_at = NULL WHERE id = ?", [paymentId])
+    const lateChargeback = await reconcileConektaOrderFromWebhook({
+      type: 'order.charged_back',
+      data: { object: { id: orderId, payment_status: 'charged_back', charges: { data: [{ id: chargeId, status: 'charged_back' }] } } }
+    })
+    assert.equal(lateChargeback.status, 'refunded')
   } finally {
     await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }
+})
+
+test('Conekta verifica que una orden fallida no tenga cargos pagados antes de retirarla', async () => {
+  await initializeMasterKey()
+  await snapshotConektaConfig(async () => {
+    await saveConektaPaymentConfig({ enabled: true, mode: 'test', publicKey: 'key_test_delete_public', privateKey: 'key_test_delete_private' })
+    for (const scenario of [
+      { status: 'declined', chargeStatus: 'declined', allowed: true },
+      { status: 'declined', chargeStatus: 'paid', allowed: false },
+      { status: 'paid', chargeStatus: 'paid', allowed: false },
+      { status: 'charged_back', chargeStatus: 'charged_back', allowed: false },
+      { status: 'declined', chargeStatus: 'declined', localChargeId: 'charge_from_other_order', allowed: false },
+      { status: 'pending_payment', chargeStatus: 'pending_payment', allowed: false }
+    ]) {
+      setConektaFetchForTest(async (url, options) => {
+        assert.equal(url, 'https://api.conekta.io/orders/ord_delete_guard')
+        assert.equal(options.method, 'GET')
+        return jsonResponse({ id: 'ord_delete_guard', payment_status: scenario.status, charges: { data: [{ id: 'charge_delete_guard', status: scenario.chargeStatus }] } })
+      })
+      const operation = () => verifyFailedConektaPayment({
+        conekta_order_id: 'ord_delete_guard',
+        conekta_charge_id: scenario.localChargeId || 'charge_delete_guard',
+        payment_mode: 'test'
+      })
+      if (scenario.allowed) assert.equal((await operation()).verifiedFailedPayment, true)
+      else await assert.rejects(operation, /sin cobrar/i)
+    }
+  })
 })
 
 test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta guardada', async () => {

@@ -847,9 +847,9 @@ export function mapClipStatus(status) {
 }
 
 function shouldIgnorePendingRegression(payment = {}, nextStatus = '') {
-  if (nextStatus !== 'pending') return false
+  if (!['pending', 'failed'].includes(nextStatus)) return false
   const currentStatus = cleanString(payment.status).toLowerCase()
-  return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) || Boolean(payment.paid_at)
+  return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) || currentStatus === 'deleted' || Boolean(payment.paid_at)
 }
 
 async function activateSubscriptionStartIfNeeded(payment, nextStatus) {

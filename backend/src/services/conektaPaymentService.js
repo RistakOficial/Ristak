@@ -16,7 +16,7 @@ import { resolvePaymentContactForGatewayPayment } from './paymentContactLinkServ
 import { sendPaymentNotification } from './pushNotificationsService.js'
 import { publishPaymentChangedEvent, publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
 import { getPaymentPlanAuditSummary, hardDeleteRemovablePaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
-import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
+import { isGatewayPaymentFailureStatus, mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
   assertPaymentPlanNamingChangeAllowed,
   paymentPlanNamingFromMetadata
@@ -1157,14 +1157,41 @@ function extractCharge(order = {}) {
   return charges || null
 }
 
+export async function verifyFailedConektaPayment(payment = {}) {
+  const orderId = cleanString(payment.conekta_order_id)
+  const chargeId = cleanString(payment.conekta_charge_id)
+  if (!orderId) {
+    const error = new Error('Falta el folio de la orden para comprobar en Conekta que este intento no se cobró.')
+    error.status = 422
+    throw error
+  }
+  const config = await getConektaPaymentConfig({ includeSecrets: true, mode: payment.payment_mode || '' })
+  const { payload: order } = await conektaApiRequest(`/orders/${encodeURIComponent(orderId)}`, { config })
+  const charges = Array.isArray(order?.charges)
+    ? order.charges
+    : Array.isArray(order?.charges?.data) ? order.charges.data : [extractCharge(order)].filter(Boolean)
+  const status = order?.payment_status || order?.status || extractCharge(order)?.status
+  if (
+    cleanString(order?.id) !== orderId ||
+    !isGatewayPaymentFailureStatus(status) ||
+    (chargeId && !charges.some(charge => cleanString(charge?.id) === chargeId)) ||
+    charges.some(charge => !isGatewayPaymentFailureStatus(charge?.status))
+  ) {
+    const error = new Error('Conekta no confirmó que esta orden falló sin cobrar. No se puede eliminar el pago.')
+    error.status = 422
+    throw error
+  }
+  return { verifiedFailedPayment: true, orderId }
+}
+
 export function mapOrderStatus(order = {}) {
   const charge = extractCharge(order)
   const status = cleanString(order.payment_status || charge?.status || order.status).toLowerCase()
   return mapGatewayPaymentStatus(status, {
     paidStatuses: ['paid', 'succeeded', 'completed', 'captured'],
     pendingStatuses: ['pending_payment', 'expired', 'canceled', 'cancelled'],
-    failedStatuses: ['declined', 'failed', 'payment_failed', 'charged_back'],
-    refundedStatuses: ['refunded'],
+    failedStatuses: ['declined', 'failed', 'payment_failed'],
+    refundedStatuses: ['refunded', 'charged_back'],
     voidStatuses: ['void']
   })
 }
@@ -1546,7 +1573,7 @@ export async function reconcileConektaWebhookEvent(event = {}) {
 }
 
 function shouldIgnorePendingWebhookRegression(payment = {}, nextStatus = '') {
-  if (nextStatus !== 'pending') return false
+  if (!['pending', 'failed'].includes(nextStatus)) return false
   const currentStatus = cleanString(payment.status).toLowerCase()
   return SUCCESSFUL_PAYMENT_STATUSES.has(currentStatus) ||
     ['refunded', 'void', 'deleted'].includes(currentStatus) ||

@@ -5420,27 +5420,59 @@ un fallback honesto como `Tarjeta`, `Pendiente de seleccion` o
 La eliminacion desde Transacciones distingue el origen real del pago. Un pago
 manual/offline (`payment_provider=manual` u `offline`) sin IDs, liga, invoice,
 plan, suscripcion ni documento fiscal externo puede borrarse fisicamente aunque
-su estado local sea `draft`, `sent`, `scheduled`, `pending`, `overdue` o
+su estado local sea `draft`, `sent`, `failed`, `scheduled`, `pending`, `overdue` o
 `inactive`; despues se recalculan las estadisticas del contacto. Un pago
-individual `draft`/`sent`/`scheduled`/
-`pending`/`overdue` que nunca registro un cobro, intento real, rechazo, cargo,
-documento fiscal, plan ni suscripcion tambien se puede eliminar. Si el link ya
+individual `draft`/`sent`/`failed`/`scheduled`/
+`pending`/`overdue` sin cobro registrado, cargo cobrado, documento fiscal, plan ni
+suscripcion tambien se puede eliminar. `failed` por si solo no demuestra que
+se recibio dinero: el borrado individual puede retirar un intento rechazado
+aunque tenga folio, pero nunca ignora `paid_at`, un recibo CLIP ni estados
+externos pagados, parciales, autorizados, reembolsados, en proceso o desconocidos.
+Los planes y las suscripciones siguen
+considerando los intentos fallidos como historial protegido. Si el link ya
 preparo un PaymentIntent de Stripe o una preferencia de Mercado Pago, ese ID por
 si solo no cuenta como transaccion: Ristak verifica el estado remoto y cancela o
 expira el recurso antes de ocultarlo. Un invoice pendiente de HighLevel se anula
-remotamente antes de quedar eliminado localmente.
+remotamente antes de quedar eliminado localmente. Para un pago Stripe fallido,
+un error de intento o un cargo confirmado como `failed`, `paid=false`, sin
+captura ni reembolso permite cancelar el PaymentIntent. Ristak consulta los
+folios del cargo y exige que Stripe confirme `canceled` antes de retirarlo
+de la tabla. Un cargo autorizado, cobrado, reembolsado o en proceso sigue bloqueando el borrado.
+La cancelacion usa el contrato oficial de
+[PaymentIntent de Stripe](https://docs.stripe.com/api/payment_intents/cancel).
+Mercado Pago verifica el resultado del payment y expira la preferencia; Conekta
+verifica la orden y todos sus cargos; CLIP y Rebill refrescan el pago antes de
+autorizar el retiro. Un resultado ambiguo, un folio que no corresponde o una
+conexion ausente bloquean la operacion. Si hay folios de varias pasarelas en
+la misma fila, exige revisar el historial. Estas lecturas usan las conexiones
+guardadas en la cuenta, sin agregar secrets o configuraciones de arranque.
+
+En escritorio, **Acciones > Eliminar pago** y la seleccion de varias filas
+incluyen los pagos fallidos y enviados sin actividad protegida. La respuesta
+de Transacciones incluye `hasProtectedPaymentActivity` para que la tabla no
+ofrezca borrar una fila con cobro registrado aunque su estado visible haya
+quedado `failed` o `sent`. El usuario confirma escribiendo `ELIMINAR`; al
+completarse, las filas se retiran y se recargan tabla, filtros y resumen. Si
+el backend o la pasarela bloquea el borrado, la fila permanece y el aviso muestra
+la razon concreta.
 
 Los pagos externos eliminados conservan un tombstone `status='deleted'` para
 desactivar links, absorber webhooks tardios y evitar que una sincronizacion los
 reviva; la tabla y sus facets los excluyen salvo una consulta de auditoria que
 pida `deleted` explicitamente. Si el proveedor confirma un pago real pese a una
 carrera, el estado exitoso vuelve a ganar para no perder historial financiero.
-Un cargo, rechazo, procesamiento, autorizacion, reembolso o cualquier estado
+Los avisos tardios de fallo tampoco reviven una fila retirada. El tombstone
+conserva `metadata_json.transactionDeletion.previousStatus` y repetir el borrado
+devuelve exito sin borrar los folios. Antes del write local se vuelve a validar
+el registro, y una modificacion concurrente de estado, pago o metadata provoca
+conflicto en lugar de pisar el pago nuevo.
+Un cargo cobrado, procesamiento, autorizacion, reembolso o cualquier estado
 externo desconocido falla cerrado y no se puede borrar. Los comprobantes de
 transferencia sujetos a revision humana y los pagos con documento fiscal emitido
 tambien permanecen protegidos por auditoria. La misma regla protege pagos
-manuales: si ya quedaron `paid`, `void`, `refunded`, fallidos o con cualquier
-otra actividad financiera, se conserva el registro aunque no use pasarela.
+manuales: si ya quedaron `paid`, `void`, `refunded` o tienen otra evidencia
+financiera, se conserva el registro aunque no use pasarela. Un fallo sin esa
+evidencia ya no impide eliminar el pago individual.
 
 ### Estados de links de pago
 
@@ -5456,10 +5488,13 @@ que lo archive.
 Los rechazos reales de tarjeta o proveedor siguen visibles como `failed`. Una
 pasarela solo puede marcar `failed` cuando el payload externo trae una senal
 explicita de rechazo/fallo, por ejemplo `declined`, `rejected`, `payment_failed`,
-`charged_back`, `last_payment_error` en Stripe o el evento
+`last_payment_error` en Stripe o el evento
 `payment_intent.payment_failed`. Las integraciones nuevas deben mapear estados
 con `backend/src/services/paymentGatewayStatusPolicy.js` y cubrir en pruebas el
 caso de abandono/reintento y el caso de rechazo real.
+Un contracargo (`charged_back` en Conekta/Mercado Pago o `chargeback` en Rebill)
+es movimiento financiero y se conserva como `refunded`, nunca como un intento
+fallido eliminable.
 
 ### Contacto asociado a pagos publicos
 

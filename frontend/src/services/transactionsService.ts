@@ -35,6 +35,7 @@ export interface Transaction {
   paymentUrl?: string
   stripePaymentIntentId?: string
   paidAt?: string
+  hasProtectedPaymentActivity?: boolean
   metadata?: Record<string, unknown>
   fiscalInvoice?: {
     provider: 'gigstack'

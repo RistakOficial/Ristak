@@ -8,6 +8,7 @@ import {
   createMercadoPagoPaymentPlan,
   createMercadoPagoRecurringSubscription,
   ensurePublicMercadoPagoPreference,
+  expireUnusedMercadoPagoPreference,
   createPublicMercadoPagoCardPayment,
   getMercadoPagoPaymentConfig,
   handleMercadoPagoWebhookEvent,
@@ -318,6 +319,39 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
       assert.ok(!String(saved.metadata_json).includes('tok_card_test'))
     } finally {
       await cleanup(ids)
+    }
+  })
+})
+
+test('Mercado Pago verifica un intento rechazado antes de expirar su preferencia', async () => {
+  await initializeMasterKey()
+  await snapshotMercadoPagoConfig(async () => {
+    for (const scenario of [
+      { status: 'rejected', allowed: true },
+      { status: 'approved', date_approved: '2026-10-07T16:00:00Z', allowed: false },
+      { status: 'in_process', allowed: false },
+      { status: 'charged_back', allowed: false },
+      { status: 'rejected', date_approved: '2026-10-07T16:00:00Z', allowed: false },
+      { status: 'rejected', transaction_amount_refunded: 500, allowed: false }
+    ]) {
+      let expirationCalls = 0
+      setMercadoPagoFetchForTest(async (url, options) => {
+        if (options.method === 'GET') {
+          assert.equal(url, 'https://api.mercadopago.com/v1/payments/mp_delete_guard')
+          return { ok: true, status: 200, json: async () => ({ id: 'mp_delete_guard', ...scenario }) }
+        }
+        assert.equal(url, 'https://api.mercadopago.com/checkout/preferences/pref_delete_guard')
+        assert.equal(options.method, 'PUT')
+        expirationCalls += 1
+        return { ok: true, status: 200, json: async () => ({ id: 'pref_delete_guard' }) }
+      })
+      const operation = () => expireUnusedMercadoPagoPreference({
+        id: 'payment_delete_guard', status: 'failed', payment_mode: 'test',
+        mercadopago_payment_id: 'mp_delete_guard', mercadopago_preference_id: 'pref_delete_guard'
+      }, { allowUnpaidFailure: true })
+      if (scenario.allowed) assert.equal((await operation()).expired, true)
+      else await assert.rejects(operation, /sin cobrar/i)
+      assert.equal(expirationCalls, scenario.allowed ? 1 : 0)
     }
   })
 })
