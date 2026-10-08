@@ -10176,7 +10176,10 @@ afirman una asignacion actual, y nunca pintarles el robot en el avatar o header.
 Las bandejas historicas `Omitidos` y `Meta cumplida` pueden conservarlos con su
 estado textual, pero no deben presentarlos como si el bot siguiera ahi. Una
 asignacion `paused` conserva el robot y agrega una marca de pausa para comunicar
-que sigue ligada al agente aunque no este respondiendo. Si un estado terminal
+que sigue ligada al agente aunque no este respondiendo. En escritorio, tocar el
+robot pausado abre las acciones con `Reactivar`; el selector de agentes se abre
+solamente cuando no queda ninguna asignacion actual, sin exigir recargar el chat.
+Si un estado terminal
 conserva una senal pendiente para el humano, la interfaz puede mostrar la alerta
 y permitir descartarla, pero esa alerta no cuenta como asignacion ni usa robot.
 

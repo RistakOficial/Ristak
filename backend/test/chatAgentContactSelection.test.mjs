@@ -26,6 +26,47 @@ async function importPrimaryStateSelector(path) {
   return import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
 }
 
+async function importDesktopComposerMenuAction() {
+  const path = 'frontend/src/pages/DesktopChat/DesktopChat.tsx'
+  const text = await readFile(new URL(`../../${path}`, import.meta.url), 'utf8')
+  const parsed = typescript.createSourceFile(path, text, typescript.ScriptTarget.ES2022, true, typescript.ScriptKind.TSX)
+  let declaration
+  const visit = (node) => {
+    if (typescript.isVariableDeclaration(node) && node.name.getText(parsed) === 'handleOpenComposerAgentMenu') declaration = node
+    typescript.forEachChild(node, visit)
+  }
+  visit(parsed)
+  assert.ok(declaration, 'Debe existir el control real del menú del compositor')
+  const code = typescript.transpileModule(`
+    export function openMenu(states, menuOpen = false) {
+      const activeContact = { id: 'contact-1' };
+      const activeContactAgentStates = states;
+      const conversationAgentState = states[0] || null;
+      const conversationAgentActive = states.some((state) => state.status === 'active');
+      const conversationAgentBusy = false;
+      const closeTemplatePanel = () => {};
+      const setComposerMenuOpen = () => {};
+      let pickerOpen = null;
+      const setAgentPickerOpen = (value) => { pickerOpen = value; };
+      const setAgentComposerMenuOpen = (update) => { menuOpen = update(menuOpen); };
+      const useCallback = (fn) => fn;
+      const ${declaration.getText(parsed)};
+      handleOpenComposerAgentMenu();
+      return { menuOpen, pickerOpen };
+    }
+  `, { compilerOptions: { module: typescript.ModuleKind.ES2022 } }).outputText
+  return import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
+}
+
+test('el control real abre Reactivar para un agente pausado y sólo pide asignar cuando no hay ninguno', async () => {
+  const { openMenu } = await importDesktopComposerMenuAction()
+  const paused = { id: 'state-1', contactId: 'contact-1', agentId: 'agent-1', status: 'paused' }
+  assert.deepEqual(openMenu([paused]), { menuOpen: true, pickerOpen: false })
+  assert.deepEqual(openMenu([{ ...paused, status: 'active' }]), { menuOpen: true, pickerOpen: false })
+  assert.deepEqual(openMenu([]), { menuOpen: true, pickerOpen: true })
+  assert.deepEqual(openMenu([paused], true), { menuOpen: false, pickerOpen: false })
+})
+
 for (const [label, path] of [
   ['escritorio', 'frontend/src/pages/DesktopChat/DesktopChat.tsx'],
   ['móvil', 'frontend/src/pages/PhoneChat/PhoneChat.tsx']

@@ -6475,10 +6475,11 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     closeTemplatePanel()
     setAgentComposerMenuOpen((current) => {
       const nextOpen = !current
-      setAgentPickerOpen(nextOpen && (!conversationAgentActive || !conversationAgentState?.agentId))
+      // Una pausa conserva la asignación: su menú debe ofrecer Reactivar.
+      setAgentPickerOpen(nextOpen && activeContactAgentStates.length === 0)
       return nextOpen
     })
-  }, [activeContact?.id, closeTemplatePanel, conversationAgentActive, conversationAgentBusy, conversationAgentState?.agentId])
+  }, [activeContact?.id, activeContactAgentStates, closeTemplatePanel, conversationAgentBusy])
 
   const closeScheduleModal = useCallback(() => {
     if (schedulingMessage) return
