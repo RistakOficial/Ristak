@@ -81,8 +81,10 @@ jobs:
       - name: Verificar MCP y visor de adjuntos con PDF y Canvas reales
         run: node --test --test-concurrency=1 backend/test/mcp*.test.mjs backend/test/outboundMediaReference.test.mjs
 
-      - name: Verificar aislamiento de permisos de Costos y Chatbot
-        run: node --test --test-concurrency=1 backend/test/costsRouteIsolation.test.mjs backend/test/manualChatTakeoverOrdering.test.mjs
+      - name: Verificar permisos de Chatbot y cancelación de respuestas tras intervención humana
+        env:
+          TEST_POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/ristak_bootstrap
+        run: node --test --test-concurrency=1 backend/test/costsRouteIsolation.test.mjs backend/test/manualChatTakeoverOrdering.test.mjs backend/test/conversationalInboundBatching.test.mjs backend/test/conversationalInboundCommitLockPostgres.test.mjs
 
       - name: Verificar pausa de 24 horas desde WhatsApp Business y envíos automáticos
         run: |

@@ -9926,6 +9926,18 @@ termina su único envío y después entra el humano; si la toma humana ganó pri
 la pregunta automática queda suprimida. Si no puede persistirse la toma, el
 envío manual falla cerrado en vez de permitir que ambas voces respondan a la vez.
 
+Responder desde Ristak también retira el claim de cualquier ejecución automática
+pendiente antes de enviar el mensaje humano, incluso si el robot ya confirmó su
+propio cierre y todavía falta entregar su mensaje final. La toma humana usa los
+mismos candados de commit de contacto/canal que cada globo automático; si un
+globo ya estaba enviándose, termina antes del envío humano y los siguientes se
+suprimen. La excepción que permite confirmar una terminal propia sólo vale
+mientras el estado siga perteneciendo al agente. No autoriza mensajes tras una
+pausa o toma manual. Se conservan las metas, señales y plazos existentes, sin
+marcar como contestado un inbound que el robot no llegó a responder. La
+cancelación queda auditada como `reply_cancelled_by_human`. Un error al leer o
+guardar la toma bloquea el envío manual, incluido el fallback por teléfono.
+
 Las reglas automáticas de salida y los cambios de alcance tampoco pueden liberar
 al agente antes de esta revisión. Cuando hay condiciones de handoff configuradas,
 la liberacion queda diferida durante la compuerta previa, la ejecución de tools de

@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import test from 'node:test'
+import { db } from '../src/config/database.js'
+import {
+  assignAgentToConversation,
+  claimConversationInboundMessage,
+  getConversationState,
+  setConversationSignal,
+  setConversationStatus
+} from '../src/services/conversationalAgentService.js'
 
 import {
   runManualChatSendAfterHumanTakeover
@@ -93,6 +102,64 @@ test('sin contactId usa el teléfono como identidad antes del envío', async () 
     'provider_send'
   ])
 })
+
+test('un error real al buscar el contacto por teléfono bloquea el envío manual', async () => {
+  const originalGet = db.get
+  let sent = false
+  db.get = async (sql, ...args) => {
+    if (sql.includes('FROM contacts WHERE phone LIKE')) throw new Error('phone lookup unavailable')
+    return originalGet(sql, ...args)
+  }
+  try {
+    await assert.rejects(runManualChatSendAfterHumanTakeover({
+      toPhone: '+525500000002', send: async () => { sent = true }
+    }), /phone lookup unavailable/)
+    assert.equal(sent, false)
+  } finally {
+    db.get = originalGet
+  }
+})
+
+for (const status of ['active', 'human', 'completed', 'paused']) {
+  test(`responder desde Ristak cancela la ejecución pendiente incluso en estado ${status}`, async (t) => {
+    const contactId = `manual_reply_${randomUUID()}`
+    const agentId = `manual_agent_${randomUUID()}`
+    t.after(async () => {
+      await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId])
+      await db.run('DELETE FROM conversational_agent_manual_assignments WHERE contact_id = ?', [contactId])
+      await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId])
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    })
+    await db.run('INSERT INTO contacts (id, full_name) VALUES (?, ?)', [contactId, 'Prueba de intervención humana'])
+    await assignAgentToConversation(contactId, agentId, { channel: 'whatsapp', updatedBy: 'user' })
+    const claim = await claimConversationInboundMessage(contactId, 'inbound_pending', { agentId, channel: 'whatsapp' })
+    assert.equal(claim.claimed, true)
+    if (['human', 'completed'].includes(status)) {
+      await setConversationSignal(contactId, status === 'human' ? 'ready_for_human' : 'appointment_booked', {
+        status, agentId, channel: 'whatsapp', reason: 'Terminal propia del robot'
+      })
+    } else if (status === 'paused') {
+      await setConversationStatus(contactId, 'paused', { agentId, channel: 'whatsapp', updatedBy: 'user' })
+    }
+    const before = await getConversationState(contactId, { agentId, channel: 'whatsapp' })
+    assert.equal(before.inboundProcessingClaimToken, claim.claimToken)
+    let sends = 0
+    await runManualChatSendAfterHumanTakeover({
+      contactId,
+      send: async () => {
+        const state = await getConversationState(contactId, { agentId, channel: 'whatsapp' })
+        assert.equal(state.status, status === 'active' ? 'human' : status)
+        assert.equal(state.signal, before.signal)
+        assert.equal(state.pausedUntilAt, before.pausedUntilAt)
+        assert.equal(state.inboundProcessingClaimToken, null)
+        assert.equal(state.inboundProcessingStatus, 'completed')
+        assert.equal(state.lastAnsweredInboundMessageId, before.lastAnsweredInboundMessageId)
+        sends += 1
+      }
+    })
+    assert.equal(sends, 1)
+  })
+}
 
 test('todos los endpoints manuales conocidos pasan por la compuerta ordenada', async () => {
   const whatsappSource = await readFile(

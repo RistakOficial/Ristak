@@ -8897,8 +8897,10 @@ export async function sendCurrentConversationalReply({
   return database.transaction(async (tx) => {
     await (dependencies.acquireLock || acquireConversationalInboundCommitLock)({ contactId, channel, database: tx })
     const state = await (dependencies.getState || getConversationState)(contactId, { agentId, channel })
+    const mayDeliverOwnTerminal = ownsTerminalState && state?.updatedBy === 'agent' &&
+      ['human', 'completed'].includes(state?.status)
     if (!state || state.agentId !== agentId ||
-      (!ownsTerminalState && (state.status !== 'active' || state.signal)) ||
+      (!mayDeliverOwnTerminal && (state.status !== 'active' || state.signal)) ||
       state.inboundProcessingClaimToken !== inboundClaim?.claimToken ||
       state.inboundProcessingMessageId !== sourceMessageId) {
       return { allowed: false, reason: 'conversation_state_changed' }

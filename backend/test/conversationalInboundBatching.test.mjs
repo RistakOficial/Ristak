@@ -234,6 +234,83 @@ test('una respuesta vigente se envía una vez; pausa y takeover bloquean el env�
   }
 })
 
+test('el permiso de cierre del robot nunca permite responder después de una toma humana', async () => {
+  const fixture = fenceFixture({ status: 'human' })
+  fixture.dependencies.getState = async () => ({
+    agentId: 'agent', status: 'human', updatedBy: 'human',
+    inboundProcessingClaimToken: 'claim', inboundProcessingMessageId: 'source'
+  })
+  let sent = 0
+  const result = await sendCurrentConversationalReply({
+    contactId: 'human_before_terminal_reply', agentId: 'agent', channel: 'whatsapp',
+    sourceMessageId: 'source', inboundClaim: { claimToken: 'claim' },
+    ownsTerminalState: true, send: async () => { sent += 1 }
+  }, fixture.dependencies)
+  assert.equal(sent, 0)
+  assert.equal(result.allowed, false)
+})
+
+test('el cierre propio conserva su confirmación, pero una pausa o cierre humano manda', async () => {
+  for (const variant of [
+    { status: 'human', updatedBy: 'agent', allowed: true },
+    { status: 'completed', updatedBy: 'agent', allowed: true },
+    { status: 'completed', updatedBy: 'user', allowed: false },
+    { status: 'paused', updatedBy: 'user', allowed: false },
+    { status: 'paused', updatedBy: 'agent', allowed: false },
+    { status: 'skipped', updatedBy: 'user', allowed: false }
+  ]) {
+    const fixture = fenceFixture(variant)
+    fixture.dependencies.getState = async () => ({
+      agentId: 'agent', ...variant,
+      inboundProcessingClaimToken: 'claim', inboundProcessingMessageId: 'source'
+    })
+    let sent = 0
+    const result = await sendCurrentConversationalReply({
+      contactId: 'terminal_reply_owner', agentId: 'agent', channel: 'whatsapp',
+      sourceMessageId: 'source', inboundClaim: { claimToken: 'claim' },
+      ownsTerminalState: true, send: async () => { sent += 1 }
+    }, fixture.dependencies)
+    assert.equal(result.allowed, variant.allowed, `${variant.status}:${variant.updatedBy}`)
+    assert.equal(sent, variant.allowed ? 1 : 0)
+  }
+})
+
+test('intervenir entre globos cancela los siguientes, también durante un cierre propio', async () => {
+  for (const ownsTerminalState of [false, true]) {
+    const fixture = fenceFixture()
+    const state = {
+      agentId: 'agent', status: ownsTerminalState ? 'completed' : 'active', updatedBy: 'agent',
+      inboundProcessingClaimToken: 'claim', inboundProcessingMessageId: 'source'
+    }
+    fixture.dependencies.getState = async () => state
+    const delivered = []
+    let marked = false
+    const result = await sendReplyParts({
+      contactId: 'manual_between_bubbles', latest: { id: 'source' }, reply: 'Primera. Segunda.',
+      agentConfig: { id: 'agent', replyDelivery: { mode: 'split', minSplitLength: 1 } },
+      dependencies: {
+        splitter: async () => ({ messages: ['Primera.', 'Segunda.'], source: 'test' }),
+        loadNewerInbound: async () => null, wait: async () => {}, recordEvent: async () => {},
+        markReplyComplete: async () => { marked = true },
+        sendTextMessage: async ({ text }) => {
+          delivered.push(text)
+          state.status = 'human'
+          state.updatedBy = 'human'
+          state.inboundProcessingClaimToken = null
+        },
+        beforeSendFence: ({ send }) => sendCurrentConversationalReply({
+          contactId: 'manual_between_bubbles', agentId: 'agent', channel: 'whatsapp',
+          sourceMessageId: 'source', inboundClaim: { claimToken: 'claim' }, ownsTerminalState, send
+        }, fixture.dependencies)
+      }
+    })
+    assert.deepEqual(delivered, ['Primera.'])
+    assert.equal(result.sentParts, 1)
+    assert.equal(result.suppressedByDeliveryFence, true)
+    assert.equal(marked, false)
+  }
+})
+
 test('activar manualmente un chat nunca atendido despierta su último inbound y crea el estado de ese canal', async () => {
   const operations = []
   const result = await queueManuallyActivatedConversation({ contactId: 'manual', agentId: 'agent', channel: 'messenger' }, {

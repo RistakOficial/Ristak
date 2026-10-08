@@ -51,7 +51,10 @@ import {
   upsertHandoffRuleLatch
 } from './conversationalHandoffRuleService.js'
 import { findNewerSubstantiveConversationalInbound } from './conversationalInboundAuthorityService.js'
-import { acquireConversationalInboundCommitLock } from './conversationalInboundCommitLockService.js'
+import {
+  acquireConversationalInboundCommitLock,
+  acquireConversationalInboundCommitLocks
+} from './conversationalInboundCommitLockService.js'
 import { msiEligibility } from '../../../shared/sites/paymentGateContract.js'
 import {
   mergeConversationalRequiredContactData,
@@ -17992,23 +17995,54 @@ export async function clearConversationSignal(contactId, { updatedBy = 'user', a
 /**
  * Marca que un humano tomó la conversación (envío manual desde la app).
  * Solo cambia el estado si el agente la tenía activa, para no pisar
- * estados explícitos (skipped, paused, etc.).
+ * estados explícitos (skipped, paused, etc.). Retira también cualquier permiso
+ * de ejecución pendiente, incluso si el propio agente ya dejó una terminal.
  */
 export async function markHumanTakeoverIfActive(contactId, { updatedBy = 'human' } = {}) {
   if (!contactId) return null
-  const states = await listConversationStatesForContact(contactId)
-  const activeStates = states.filter((state) => state.status === 'active')
-  if (!activeStates.length) return states[0] || null
-  logger.info(`[Agente conversacional] Humano tomó la conversación de ${contactId}; el agente deja de responder`)
-  const updatedStates = []
-  for (const state of activeStates) {
-    updatedStates.push(await setConversationStatus(contactId, 'human', {
-      updatedBy,
-      agentId: state.agentId || null,
-      channel: state.channel || 'whatsapp'
-    }))
-  }
-  return updatedStates[0] || states[0] || null
+  return db.transaction(async (transaction) => {
+    // El envío humano compite por los mismos candados que cada globo del robot.
+    // Si ya salió un globo, termina antes del humano; los siguientes pierden
+    // autoridad. La lectura no puede fallar abierta y permitir ambas voces.
+    await acquireConversationalInboundCommitLocks({ contactIds: [contactId], database: transaction })
+    const rows = await transaction.all(`
+      SELECT s.* FROM conversational_agent_state s
+      WHERE s.contact_id = ? ORDER BY ${conversationStateSortSql()}
+    `, [contactId])
+    for (const row of rows) {
+      if (row.status === 'active') {
+        await setConversationStatus(contactId, 'human', {
+          updatedBy, agentId: row.agent_id || null, channel: row.channel || 'whatsapp'
+        })
+      }
+      // Una terminal del propio robot puede tener aún su despedida pendiente.
+      // Cancelamos ese permiso sin borrar la meta, señal o pausa ya guardada.
+      const cancelled = await transaction.run(`
+        UPDATE conversational_agent_state
+        SET inbound_processing_status = 'completed',
+            inbound_processing_claim_token = NULL,
+            inbound_processing_lease_until_at = NULL,
+            inbound_processing_last_error = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND (
+          inbound_processing_status = 'processing' OR inbound_processing_claim_token IS NOT NULL
+        )
+      `, [row.id])
+      if (dbMutationCount(cancelled) > 0) {
+        await recordConversationalAgentEvent({
+          contactId, eventType: 'reply_cancelled_by_human', throwOnError: true,
+          detail: {
+            updatedBy, agentId: row.agent_id || null, channel: row.channel || 'whatsapp',
+            messageId: row.inbound_processing_message_id || null
+          }
+        })
+      }
+    }
+    const first = rows.find(row => row.status === 'active') || rows[0]
+    return first
+      ? getConversationState(contactId, { agentId: first.agent_id || null, channel: first.channel || 'whatsapp' })
+      : null
+  })
 }
 
 /**
@@ -18092,7 +18126,7 @@ export async function markHumanTakeoverByPhone(phone, { updatedBy = 'human' } = 
   const contact = await db.get(
     "SELECT id FROM contacts WHERE phone LIKE ? ORDER BY updated_at DESC LIMIT 1",
     [`%${suffix}`]
-  ).catch(() => null)
+  )
   if (!contact?.id) return null
   return markHumanTakeoverIfActive(contact.id, { updatedBy })
 }
