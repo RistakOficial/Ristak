@@ -9,8 +9,9 @@ import {
 } from '../src/services/whatsappApiService.js'
 import {
   expirePausedConversationStates, getConversationState,
-  pauseConversationForExternalWhatsAppReply, setConversationStatus
+  pauseConversationForExternalWhatsAppReply, setConversationStatus, assignAgentToContactManually
 } from '../src/services/conversationalAgentService.js'
+import { resolveInboundAgentForContact } from '../src/agents/conversational/runner.js'
 import {
   QR_CONSENT_TEXT,
   prepareWhatsAppQrTextDelivery,
@@ -101,6 +102,35 @@ test('una respuesta nueva desde WhatsApp pausa al robot 24 horas y registra el p
   const event = await db.get(`SELECT detail_json FROM conversational_agent_events
     WHERE contact_id = ? AND event_type = 'status_changed'`, [contactId])
   assert.equal(JSON.parse(event.detail_json).reason, 'external_whatsapp_reply')
+})
+
+test('durante la pausa externa ningún otro agente automático toma WhatsApp; otro canal y el vencimiento siguen funcionando', async t => {
+  const { capture, contactId, agentId } = await fixture(t)
+  const otherAgentId = `cagent_qr_alternative_${randomUUID()}`
+  t.after(() => db.run('DELETE FROM conversational_agents WHERE id = ?', [otherAgentId]))
+  await db.run('UPDATE conversational_agents SET enabled = 1 WHERE id = ?', [agentId])
+  await db.run('INSERT INTO conversational_agents (id, name, enabled) VALUES (?, ?, 1)', [otherAgentId, 'Automatic alternative'])
+  await assignAgentToContactManually(contactId, agentId, { channel: 'whatsapp' })
+  await db.run(`INSERT INTO conversational_agent_state (contact_id, agent_id, status, channel, assignment_source)
+    VALUES (?, ?, 'active', 'instagram', 'manual')`, [contactId, agentId])
+  await capture()
+
+  const ruleContext = { contact: { id: contactId }, channel: 'whatsapp' }
+  const paused = await resolveInboundAgentForContact({ contactId, channel: 'whatsapp', ruleContext })
+  assert.equal(paused.agentConfig, null, 'la pausa del chat no debe dejar que entre un robot alternativo')
+  assert.equal(paused.state.status, 'paused')
+  const alternateState = await db.get('SELECT id FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ?', [contactId, otherAgentId])
+  assert.equal(Boolean(alternateState), false)
+
+  const instagram = await resolveInboundAgentForContact({ contactId, channel: 'instagram', ruleContext: { ...ruleContext, channel: 'instagram' } })
+  assert.equal(instagram.agentConfig?.id, agentId)
+  assert.equal(instagram.state.status, 'active')
+
+  const row = await db.get('SELECT paused_until_at FROM conversational_agent_state WHERE contact_id = ? AND channel = ?', [contactId, 'whatsapp'])
+  await expirePausedConversationStates({ nowIso: new Date(Date.parse(row.paused_until_at) + 1).toISOString() })
+  const resumed = await resolveInboundAgentForContact({ contactId, channel: 'whatsapp', ruleContext })
+  assert.equal(resumed.agentConfig?.id, agentId)
+  assert.equal(resumed.state.status, 'active')
 })
 
 test('una respuesta humana con archivo detiene al robot antes de esperar su descarga', async t => {

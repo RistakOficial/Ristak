@@ -11396,6 +11396,16 @@ export async function resolveInboundAgentForContact({
     return { agentConfig, state, assigned: false }
   }
 
+  // Una respuesta desde WhatsApp Business pausa el chat de este canal. No
+  // sustituimos al agente pausado por otro automático. Los estados activos
+  // reanudados explícitamente ya pudieron resolverse en el bucle anterior.
+  const externalWhatsAppPause = states.find((state) => (
+    state.status === 'paused' && state.updatedBy === 'whatsapp_business'
+  ))
+  if (externalWhatsAppPause) {
+    return { agentConfig: null, state: externalWhatsAppPause, assigned: false }
+  }
+
   const agentConfig = await matchAgentForMessage({
     contactId,
     channel: normalizedChannel,

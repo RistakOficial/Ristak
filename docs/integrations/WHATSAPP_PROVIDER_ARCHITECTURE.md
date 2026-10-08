@@ -765,7 +765,9 @@ nuevo sigue el flujo estándar de Cloud API.
    propios reservan número emisor + ID de protocolo antes de tocar Baileys, de
    modo que su eco oficial de Coexistence tampoco dispara la pausa. Al vencer,
    el mecanismo existente de estados pausados reactiva al chatbot; los controles
-   manuales dentro de Ristak conservan su comportamiento.
+   manuales dentro de Ristak conservan su comportamiento. Si no queda un agente
+   activo en ese canal, no se asigna otro automático durante una pausa de origen
+   `whatsapp_business`; una reactivación humana explícita sigue teniendo efecto.
 4. El historial puede llegar por lotes grandes, duplicado o fuera de orden. El
    procesamiento debe ser idempotente y asíncrono cuando el volumen lo exija.
 5. No existe un endpoint Graph genérico para volver a descargar toda la cuenta

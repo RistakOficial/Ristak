@@ -10140,7 +10140,10 @@ desde el mensaje externo; cada respuesta humana nueva renueva únicamente una
 pausa de ese mismo origen (`updated_by=whatsapp_business`) y un mensaje fuera de
 orden nunca acorta el plazo. El mecanismo existente de vencimiento reactiva al
 agente automáticamente, incluso después de reiniciar el servicio. Un mensaje
-externo que ya tiene más de 24 horas no inicia una pausa nueva.
+externo que ya tiene más de 24 horas no inicia una pausa nueva. Si todos los
+agentes de WhatsApp quedaron pausados por esa respuesta, el selector de entrada
+no permite que otro agente automático tome su lugar. Una reactivación explícita
+en Ristak sigue siendo válida y los demás canales conservan su funcionamiento.
 La captura QR confirma y registra la pausa antes de descargar archivos adjuntos
 y antes del evento live del chat; una descarga lenta no retrasa la intervención.
 Se respetan las pausas manuales, las tomas de mando y los estados terminales, así
