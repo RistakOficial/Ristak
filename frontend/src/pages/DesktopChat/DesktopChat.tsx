@@ -93,7 +93,7 @@ import {
 } from '@/utils/timezone'
 import { hasLicenseFeature, hasPaymentPlansAccess, hasSubscriptionsAccess } from '@/utils/accessControl'
 import { optimizeChatImageFile } from '@/utils/chatMedia'
-import { includeSelectedChat, preserveSelectedChat } from '@/utils/chatSelection'
+import { includeSelectedChat, preserveSelectedChat, upsertChatAgentState as upsertAgentStateList } from '@/utils/chatSelection'
 import {
   getChatSendResponseIds,
   reconcileServerMessageIntoOptimistic
@@ -1157,14 +1157,6 @@ function mapAgentStateListsByContactId(states: ConversationAgentState[] = []) {
   return next
 }
 
-function upsertAgentStateList(current: ConversationAgentState[] = [], state: ConversationAgentState) {
-  const sameState = (item: ConversationAgentState) => (
-    item.id && state.id
-      ? item.id === state.id
-      : item.contactId === state.contactId && (item.agentId || '') === (state.agentId || '')
-  )
-  return [state, ...current.filter((item) => !sameState(item))]
-}
 
 function isAgentInboxContactVisible(
   contact: DesktopChatContact,
@@ -6453,16 +6445,28 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     if (activeContactId) await loadConversation(activeContactId)
   }
 
-  const updateActiveConversationAgentState = useCallback((nextState: ConversationAgentState) => {
-    setConversationAgentState((current) => selectPrimaryAgentState([nextState, current].filter(Boolean) as ConversationAgentState[]))
+  const updateActiveConversationAgentState = useCallback(async (nextState: ConversationAgentState) => {
+    if (activeContactIdRef.current === nextState.contactId) {
+      setConversationAgentState((current) => selectPrimaryAgentState(upsertAgentStateList([current].filter(Boolean) as ConversationAgentState[], nextState)))
+    }
     setAgentStates((current) => ({
       ...current,
-      [nextState.contactId]: selectPrimaryAgentState([nextState, current[nextState.contactId]].filter(Boolean) as ConversationAgentState[]) || nextState
+      [nextState.contactId]: selectPrimaryAgentState(upsertAgentStateList([current[nextState.contactId]].filter(Boolean) as ConversationAgentState[], nextState)) || nextState
     }))
     setAgentStateLists((current) => ({
       ...current,
       [nextState.contactId]: upsertAgentStateList(current[nextState.contactId] || [], nextState)
     }))
+    // Una asignación manual puede afectar varios canales. Relee el conjunto
+    // confirmado sin reconstruir mensajes, agenda ni cobros de la conversación.
+    const confirmedStates = await conversationalAgentService.getStates(nextState.contactId).catch(() => null)
+    if (!confirmedStates) return
+    const primaryState = selectPrimaryAgentState(confirmedStates)
+    setAgentStateLists((current) => ({ ...current, [nextState.contactId]: confirmedStates }))
+    setAgentStates((current) => ({ ...current, [nextState.contactId]: primaryState }))
+    if (activeContactIdRef.current === nextState.contactId) {
+      setConversationAgentState(primaryState)
+    }
   }, [])
 
   const handleOpenComposerAgentMenu = useCallback(() => {
@@ -6715,7 +6719,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     setConversationAgentBusy(true)
     try {
       const nextState = await conversationalAgentService.updateState(activeContact.id, action, options)
-      updateActiveConversationAgentState(nextState)
+      await updateActiveConversationAgentState(nextState)
       showToast('success', 'Chatbot', successMessage)
       closeComposerAgentMenu()
     } catch (error: any) {
@@ -6783,10 +6787,10 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
 	        }))
 	        setAgentStates((current) => ({
 	          ...current,
-	          [contactId]: selectPrimaryAgentState([nextState, current[contactId]].filter(Boolean) as ConversationAgentState[]) || nextState
+	          [contactId]: selectPrimaryAgentState(upsertAgentStateList([current[contactId]].filter(Boolean) as ConversationAgentState[], nextState)) || nextState
 	        }))
 	        if (contactId === activeContactId) {
-	          setConversationAgentState((current) => selectPrimaryAgentState([nextState, current].filter(Boolean) as ConversationAgentState[]))
+	          setConversationAgentState((current) => selectPrimaryAgentState(upsertAgentStateList([current].filter(Boolean) as ConversationAgentState[], nextState)))
 	        }
 	      })
       .catch((error: any) => {
@@ -7015,7 +7019,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
 	        setAgentStates((current) => {
 	          const next = { ...current }
 	          updatedStates.forEach((state) => {
-	            next[state.contactId] = selectPrimaryAgentState([state, next[state.contactId]].filter(Boolean) as ConversationAgentState[]) || state
+	            next[state.contactId] = selectPrimaryAgentState(upsertAgentStateList([next[state.contactId]].filter(Boolean) as ConversationAgentState[], state)) || state
 	          })
 	          return next
 	        })
@@ -7029,7 +7033,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
 
 	        const activeState = updatedStates.find((state) => state.contactId === activeContactId)
 	        if (activeState) {
-	          setConversationAgentState((current) => selectPrimaryAgentState([activeState, current].filter(Boolean) as ConversationAgentState[]))
+	          setConversationAgentState((current) => selectPrimaryAgentState(upsertAgentStateList([current].filter(Boolean) as ConversationAgentState[], activeState)))
 	        }
 
         setSelectedChatIds([])

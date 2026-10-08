@@ -19,3 +19,20 @@ export function preserveSelectedChat<T extends IdentifiedChat>(
   const selected = current.find((contact) => contact.id === selectedId)
   return includeSelectedChat(rows, selected && matchesScope(selected) ? selected : null)
 }
+
+interface ChatAgentStateIdentity {
+  id?: string | null
+  contactId: string
+  agentId?: string | null
+}
+
+// Una respuesta confirmada reemplaza la versión anterior del mismo estado.
+// Comparar ambas por prioridad haría ganar al viejo "activo" sobre "pausado".
+export function upsertChatAgentState<T extends ChatAgentStateIdentity>(current: T[] = [], state: T): T[] {
+  const sameState = (item: T) => (
+    item.id && state.id
+      ? item.id === state.id
+      : item.contactId === state.contactId && (item.agentId || '') === (state.agentId || '')
+  )
+  return [state, ...current.filter((item) => !sameState(item))]
+}

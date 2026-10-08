@@ -4103,7 +4103,12 @@ un contacto asignado al robot sin mensajes también abre su conversación y sus
 controles. La selección se conserva si llega después una página del historial
 que no contiene ese contacto, siempre que siga perteneciendo a la búsqueda;
 cuando el servidor lo devuelve, su ficha canónica reemplaza los datos iniciales
-sin duplicar la fila. El robot de la esquina sigue
+sin duplicar la fila. Al pausar, tomar, omitir o reactivar un agente, la respuesta
+confirmada reemplaza su estado anterior antes de elegir el agente principal del
+chat. La bandeja y el menú muestran la misma decisión inmediatamente; un estado
+viejo activo no puede ocultar el botón de reactivación. La actualización conserva
+los demás agentes y relee el conjunto canónico cuando una asignación manual
+cambia varios canales. El robot de la esquina sigue
 presente y abre la configuración operativa del agente; filtro y robot tienen
 responsabilidades distintas y deben coexistir.
 

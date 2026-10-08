@@ -93,7 +93,7 @@ import type { PhoneSection } from '@/components/phone/phoneNavigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { hasLicenseFeature, hasModuleAccess } from '@/utils/accessControl'
 import { optimizeChatImageFile } from '@/utils/chatMedia'
-import { includeSelectedChat, preserveSelectedChat } from '@/utils/chatSelection'
+import { includeSelectedChat, preserveSelectedChat, upsertChatAgentState as upsertAgentStateList } from '@/utils/chatSelection'
 import { stripRistakAdIdMarkersFromText } from '@/utils/whatsappAttributionText'
 import {
   buildChatActivityMarkers,
@@ -2167,14 +2167,6 @@ function mapAgentStateListsByContactId(states: ConversationAgentState[] = []) {
   return next
 }
 
-function upsertAgentStateList(current: ConversationAgentState[] = [], state: ConversationAgentState) {
-  const sameState = (item: ConversationAgentState) => (
-    item.id && state.id
-      ? item.id === state.id
-      : item.contactId === state.contactId && (item.agentId || '') === (state.agentId || '')
-  )
-  return [state, ...current.filter((item) => !sameState(item))]
-}
 
 function isStateForKnownConversationAgent(state: ConversationAgentState | null | undefined, knownAgentIds: ReadonlySet<string>) {
   if (!state) return false
@@ -8413,8 +8405,13 @@ export const PhoneChat: React.FC = () => {
       }))
       setAgentStates((current) => ({
         ...current,
-        [contactId]: selectPrimaryAgentState([state, current[contactId]].filter(Boolean) as ConversationAgentState[]) || state
+        [contactId]: selectPrimaryAgentState(upsertAgentStateList([current[contactId]].filter(Boolean) as ConversationAgentState[], state)) || state
       }))
+      const confirmedStates = await conversationalAgentService.getStates(contactId).catch(() => null)
+      if (confirmedStates) {
+        setAgentStateLists((current) => ({ ...current, [contactId]: confirmedStates }))
+        setAgentStates((current) => ({ ...current, [contactId]: selectPrimaryAgentState(confirmedStates) }))
+      }
     } catch (error: any) {
       showToast('error', 'Agente conversacional', error?.message || 'No se pudo actualizar la conversación')
     }
@@ -8509,7 +8506,7 @@ export const PhoneChat: React.FC = () => {
         }))
         setAgentStates((current) => ({
           ...current,
-          [contactId]: selectPrimaryAgentState([nextState, current[contactId]].filter(Boolean) as ConversationAgentState[]) || nextState
+          [contactId]: selectPrimaryAgentState(upsertAgentStateList([current[contactId]].filter(Boolean) as ConversationAgentState[], nextState)) || nextState
         }))
       })
       .catch((error: any) => {
@@ -14661,7 +14658,7 @@ export const PhoneChat: React.FC = () => {
         }))
         setAgentStates((current) => ({
           ...current,
-          [state.contactId]: selectPrimaryAgentState([state, current[state.contactId]].filter(Boolean) as ConversationAgentState[]) || state
+          [state.contactId]: selectPrimaryAgentState(upsertAgentStateList([current[state.contactId]].filter(Boolean) as ConversationAgentState[], state)) || state
         }))
       })
 
