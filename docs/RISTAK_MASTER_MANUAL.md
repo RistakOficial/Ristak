@@ -4098,7 +4098,12 @@ seleccionarlo, debajo de los filtros normales aparece un bloque separado con
 `Todos`, `Activos`, `Pausados 24 horas` y `Meta cumplida`. La union `Todos` de
 ese bloque contiene solamente chats activos, pausados o con meta pendiente de
 abrir; nunca se rellena con toda la bandeja ni con omitidos/no asignados. Esta
-seleccion tampoco pinta el panel de otro color. El robot de la esquina sigue
+seleccion tampoco pinta el panel de otro color. En escritorio y `/movil`, abrir
+un contacto asignado al robot sin mensajes también abre su conversación y sus
+controles. La selección se conserva si llega después una página del historial
+que no contiene ese contacto, siempre que siga perteneciendo a la búsqueda;
+cuando el servidor lo devuelve, su ficha canónica reemplaza los datos iniciales
+sin duplicar la fila. El robot de la esquina sigue
 presente y abre la configuración operativa del agente; filtro y robot tienen
 responsabilidades distintas y deben coexistir.
 
@@ -10123,16 +10128,27 @@ sólo cuando no contienen evidencia de aceptación en la parte afectada; se
 conservan las partes ya entregadas y sus identificadores.
 
 Cuando una persona responde directamente desde el teléfono o WhatsApp Web de un
-número atendido por QR, la captura de ese saliente nuevo pasa los estados activos
-del contacto a atención humana y registra la toma de mando antes de descargar
-archivos adjuntos; una descarga lenta no retrasa la intervención. El robot deja de
-responder hasta una reactivación explícita. La importación del historial, los
-mensajes ya guardados y los estados pausados o terminales no provocan esa toma.
+número atendido por QR, o llega su eco de WhatsApp Business por Meta directo/YCloud,
+el saliente humano nuevo pausa por 24 horas al agente asignado en el canal WhatsApp
+del contacto. El plazo se guarda como instante UTC en `paused_until_at`, contado
+desde el mensaje externo; cada respuesta humana nueva renueva únicamente una
+pausa de ese mismo origen (`updated_by=whatsapp_business`) y un mensaje fuera de
+orden nunca acorta el plazo. El mecanismo existente de vencimiento reactiva al
+agente automáticamente, incluso después de reiniciar el servicio. Un mensaje
+externo que ya tiene más de 24 horas no inicia una pausa nueva.
+La captura QR confirma y registra la pausa antes de descargar archivos adjuntos
+y antes del evento live del chat; una descarga lenta no retrasa la intervención.
+Se respetan las pausas manuales, las tomas de mando y los estados terminales, así
+como los estados de otros canales. Responder dentro de Ristak conserva sus controles
+actuales de toma de mando y reactivación explícita. La importación del historial,
+los mensajes duplicados y los recibos técnicos no provocan pausas automáticas.
 Los envíos de Ristak, incluidos chatbot, automatizaciones y recordatorios, reservan
-su identificador de WhatsApp antes de llamar a Baileys: su eco no puede confundirse
-con una intervención humana aunque llegue antes de terminar el envío. También se
+su identificador de WhatsApp y número emisor antes de llamar a Baileys: ni el eco
+QR ni el eco oficial de Coexistence pueden confundirse con una intervención humana
+aunque lleguen antes de terminar el envío. También se
 conserva la marca de autoría del agente si el eco completa una fila de estado de
-entrega. Este control no modifica la ruta de los números con API oficial activa.
+entrega. Este control no modifica la ruta de los números con API oficial activa
+ni crea un agente donde no existe uno asignado.
 
 Activar, reanudar o limpiar la señal manualmente despierta el último inbound
 pendiente del canal, aunque antes atendiera una persona y todavía no exista un

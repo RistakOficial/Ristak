@@ -104,13 +104,20 @@ const qrSentMessageCache = new Map()
 const QR_RISTAK_OUTBOUND_ID_LIMIT = 1000
 const qrRistakOutboundIds = new Set()
 
-function rememberRistakQrOutboundId(phoneNumberId, messageId) {
+function rememberRistakQrOutboundId(phone, messageId) {
   const id = cleanString(messageId)
-  if (!phoneNumberId || !id) return
-  qrRistakOutboundIds.add(`${phoneNumberId}:${id}`)
+  const businessPhone = normalizePhoneForStorage(phone?.expectedPhone)
+  if (!businessPhone || !id) return
+  qrRistakOutboundIds.add(`${businessPhone}:${id}`)
   while (qrRistakOutboundIds.size > QR_RISTAK_OUTBOUND_ID_LIMIT) {
     qrRistakOutboundIds.delete(qrRistakOutboundIds.values().next().value)
   }
+}
+
+export function isRistakQrOutboundMessage({ businessPhone, messageId } = {}) {
+  const phone = normalizePhoneForStorage(businessPhone)
+  const id = cleanString(messageId)
+  return Boolean(phone && id && qrRistakOutboundIds.has(`${phone}:${id}`))
 }
 
 function cacheSentQrMessage(response) {
@@ -1398,7 +1405,7 @@ async function handleQrIncomingMessages(phone, upsert = {}, sock = null, { histo
         businessPhone: phone.expectedPhone,
         direction: key.fromMe ? 'outbound' : 'inbound',
         wamid,
-        sentFromRistak: qrRistakOutboundIds.has(`${phone.id}:${wamid}`),
+        sentFromRistak: isRistakQrOutboundMessage({ businessPhone: phone.expectedPhone, messageId: wamid }),
         messageType: content.type,
         text: content.text,
         profileName: cleanString(message.pushName) || cleanString(profileNames?.get(normalizeJid(message?.key?.remoteJid))),
@@ -3581,9 +3588,9 @@ async function sendProtectedQrMessage({ sock, phone, recipient, type, payload, o
   const messageId = cleanString(options.messageId) || baileys.generateMessageIDV2(sock.user?.id)
   // Un error puede ser posterior a la aceptación: conservamos la identidad para
   // que un eco tardío tampoco se trate como una respuesta humana.
-  rememberRistakQrOutboundId(phone.id, messageId)
+  rememberRistakQrOutboundId(phone, messageId)
   const response = await sock.sendMessage(recipient.jid, payload, { ...options, messageId })
-  rememberRistakQrOutboundId(phone.id, response?.key?.id)
+  rememberRistakQrOutboundId(phone, response?.key?.id)
   return response
 }
 

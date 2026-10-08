@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { databaseDialect, db } from '../config/database.js'
 import { PUBLIC_URL } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
-import { DEFAULT_TIMEZONE, getAccountTimezone } from '../utils/dateUtils.js'
+import { DEFAULT_TIMEZONE, getAccountTimezone, parseStoredUtcDateTime } from '../utils/dateUtils.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import {
   normalizeContactLifecycleStage,
@@ -64,7 +64,7 @@ import {
  *
  * Estados por conversación:
  * - active:    el agente atiende la conversación
- * - paused:    pausado manualmente en esa conversación
+ * - paused:    pausado por 24 horas en esa conversación
  * - human:     un humano tomó la conversación (el agente no responde)
  * - skipped:   chatbot omitido para ese contacto
  * - completed: el agente cumplió el objetivo (dejó señal interna)
@@ -18009,6 +18009,61 @@ export async function markHumanTakeoverIfActive(contactId, { updatedBy = 'human'
     }))
   }
   return updatedStates[0] || states[0] || null
+}
+
+/**
+ * Una respuesta humana externa conserva al agente asignado, pero lo silencia
+ * durante 24 horas desde el último mensaje. Sólo renueva pausas de este origen;
+ * las decisiones explícitas tomadas en Ristak y otros canales se respetan.
+ */
+export async function pauseConversationForExternalWhatsAppReply(contactId, { messageAt = null } = {}) {
+  if (!contactId) return []
+  const nowMs = Date.now()
+  const repliedAtMs = Math.min(parseStoredUtcDateTime(messageAt)?.toMillis() ?? nowMs, nowMs)
+  const pausedUntilMs = repliedAtMs + CONVERSATION_PAUSE_DURATION_MS
+  if (pausedUntilMs <= nowMs) return []
+  const pausedUntilAt = new Date(pausedUntilMs).toISOString()
+  const updatedBy = 'whatsapp_business'
+
+  return db.transaction(async transaction => {
+    const rows = await transaction.all(`
+      SELECT id, agent_id, channel
+      FROM conversational_agent_state
+      WHERE contact_id = ? AND agent_id IS NOT NULL
+        AND COALESCE(NULLIF(channel, ''), 'whatsapp') = 'whatsapp'
+        AND (status = 'active' OR (status = 'paused' AND updated_by = ?))
+    `, [contactId, updatedBy])
+    const pausedStates = []
+    for (const row of rows) {
+      // La condición vive en el UPDATE: una omisión o toma de mando concurrente
+      // no puede ser sustituida por una pausa automática leída antes de ella.
+      const result = await transaction.run(`
+        UPDATE conversational_agent_state
+        SET status = 'paused', paused_until_at = ?, updated_by = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND agent_id = ?
+          AND (status = 'active' OR (
+            status = 'paused' AND updated_by = ?
+            AND (paused_until_at IS NULL OR paused_until_at < ?)
+          ))
+      `, [pausedUntilAt, updatedBy, row.id, row.agent_id, updatedBy, pausedUntilAt])
+      if (dbMutationCount(result) !== 1) continue
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'status_changed',
+        detail: {
+          status: 'paused', updatedBy, pausedUntilAt,
+          reason: 'external_whatsapp_reply', agentId: row.agent_id,
+          channel: row.channel || 'whatsapp'
+        },
+        throwOnError: true
+      })
+      pausedStates.push(mapStateRow(await transaction.get(
+        'SELECT * FROM conversational_agent_state WHERE id = ?', [row.id]
+      )))
+    }
+    return pausedStates
+  })
 }
 
 export async function shouldSuppressChatNotificationForConversationalAgent(contactId) {

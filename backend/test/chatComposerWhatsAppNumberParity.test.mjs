@@ -8,10 +8,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, '..', '..')
 const readSource = (path) => readFile(join(repoRoot, path), 'utf8')
 
-test('el selector inferior de desktop lista cada WhatsApp y fija el numero en el contacto', async () => {
+test('el selector inferior de desktop lista los WhatsApp conectados y fija el numero en el contacto', async () => {
   const source = await readSource('frontend/src/pages/DesktopChat/DesktopChat.tsx')
 
-  assert.match(source, /whatsappComposerPhones\.map\(\(phone\) => \(\{[\s\S]*?value: `whatsapp:\$\{phone\.id\}`/)
+  assert.match(source, /connectedWhatsappComposerPhones\.map\(\(phone\) => \(\{[\s\S]*?value: `whatsapp:\$\{phone\.id\}`/)
   assert.match(source, /void handleUpdatePreferredWhatsAppPhoneNumber\(nextBusinessPhoneId, 'composer'\)/)
   assert.match(source, /routingReason:[\s\S]*?'Cambio desde selector inferior del chat'/)
   assert.match(source, /preferred_whatsapp_phone_number_id: nextPreferredId/)
@@ -20,7 +20,7 @@ test('el selector inferior de desktop lista cada WhatsApp y fija el numero en el
 test('el selector inferior de movil web persiste y revierte el numero si falla', async () => {
   const source = await readSource('frontend/src/pages/PhoneChat/PhoneChat.tsx')
 
-  assert.match(source, /businessPhones\.map\(\(phone, index\) => \(\{[\s\S]*?value: `whatsapp:\$\{phone\.id\}`/)
+  assert.match(source, /connectedComposerBusinessPhones\.map\(\(phone, index\) => \(\{[\s\S]*?value: `whatsapp:\$\{phone\.id\}`/)
   assert.match(source, /const handleComposerMessageChannelSelect = async/)
   assert.match(source, /contactsService\.updateContact\(contactId,[\s\S]*?routingReason: 'Cambio desde selector inferior del chat'/)
   assert.match(source, /const rollbackPatch = \{[\s\S]*?preferredWhatsAppPhoneNumberId: previousPreferredPhoneId/)

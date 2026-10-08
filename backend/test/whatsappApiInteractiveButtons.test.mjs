@@ -1,3 +1,4 @@
+import { generateMessageIDV2 } from '@whiskeysockets/baileys'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
@@ -41,6 +42,7 @@ function normalizeDigits(value = '') {
 function createFakeBaileysRuntime(connectedJid, sentMessages = []) {
   let messageIndex = 0
   return {
+    generateMessageIDV2,
     DisconnectReason: {
       loggedOut: 401,
       badSession: 500,

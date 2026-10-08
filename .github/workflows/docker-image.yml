@@ -84,10 +84,15 @@ jobs:
       - name: Verificar aislamiento de permisos de Costos y Chatbot
         run: node --test --test-concurrency=1 backend/test/costsRouteIsolation.test.mjs backend/test/manualChatTakeoverOrdering.test.mjs
 
-      - name: Verificar toma humana desde WhatsApp QR sin detener mensajes automáticos
+      - name: Verificar pausa de 24 horas desde WhatsApp Business y envíos automáticos
         run: |
           npm rebuild --prefix backend ffmpeg-static
-          node --test --test-concurrency=1 backend/test/whatsappQrHumanTakeover.test.mjs backend/test/whatsappQrSendProtection.test.mjs
+          node --test --test-concurrency=1 backend/test/whatsappQrHumanTakeover.test.mjs backend/test/whatsappQrSendProtection.test.mjs backend/test/appointmentRemindersService.test.mjs backend/test/paymentAutomationsService.test.mjs backend/test/whatsappApiContactIdentity.test.mjs backend/test/whatsappApiInteractiveButtons.test.mjs backend/test/whatsappApiProviderMedia.test.mjs
+
+      - name: Verificar apertura de contactos de Chatbot sin historial
+        run: |
+          npm ci --prefix frontend --ignore-scripts
+          node --test backend/test/chatAgentContactSelection.test.mjs
 
   build-and-push:
     needs: verify-fresh-postgres

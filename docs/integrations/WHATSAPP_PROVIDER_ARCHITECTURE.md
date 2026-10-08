@@ -756,6 +756,16 @@ nuevo sigue el flujo estándar de Cloud API.
    `fromMe` de Baileys se omite antes de persistir. La identidad
    `protocol_message_key_id` queda para reconciliar históricos demostrables;
    nunca se compara texto, minuto, tipo de media o parecido visual.
+   Un eco humano nuevo de Meta directo/YCloud pausa por 24 horas al chatbot
+   asignado en WhatsApp. QR aplica la misma regla cuando es el transporte activo,
+   antes de descargar media. El plazo durable se cuenta desde el mensaje en UTC
+   y se renueva con cada respuesta externa nueva, únicamente si la pausa anterior
+   también vino de WhatsApp Business. Historial, duplicados, controles técnicos,
+   pausas manuales, tomas de mando y cierres no alteran ese plazo. Los envíos QR
+   propios reservan número emisor + ID de protocolo antes de tocar Baileys, de
+   modo que su eco oficial de Coexistence tampoco dispara la pausa. Al vencer,
+   el mecanismo existente de estados pausados reactiva al chatbot; los controles
+   manuales dentro de Ristak conservan su comportamiento.
 4. El historial puede llegar por lotes grandes, duplicado o fuera de orden. El
    procesamiento debe ser idempotente y asíncrono cuando el volumen lo exija.
 5. No existe un endpoint Graph genérico para volver a descargar toda la cuenta
@@ -937,9 +947,9 @@ Los callbacks Installer -> tenant (`/meta/connect/complete`,
 humana del router porque usan HMAC, timestamp, nonce e installation ID. Todas las
 rutas operadas por una persona están después de `router.use(requireAuth)`. No se
 debe volver a montar `requireAuth` sobre todo `/api/whatsapp-api`, porque eso
-bloquea los callbacks firmados antes de validarlos. El mount también debe quedar
-antes del router histórico `costsRoutes` montado sobre `/api`, ya que su
-`router.use(requireAuth)` actúa como catch-all para cualquier ruta posterior.
+bloquea los callbacks firmados antes de validarlos. `costsRoutes` se monta sólo
+en `/api/costs`: su autenticación y permiso de costos no pueden bloquear rutas
+de WhatsApp, chatbot ni callbacks de otros módulos.
 
 Al finalizar, `meta_direct` pasa a ser el proveedor API activo. La configuración
 YCloud permanece guardada para un cambio explícito posterior; nunca se hacen dos

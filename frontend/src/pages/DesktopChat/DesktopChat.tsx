@@ -93,6 +93,7 @@ import {
 } from '@/utils/timezone'
 import { hasLicenseFeature, hasPaymentPlansAccess, hasSubscriptionsAccess } from '@/utils/accessControl'
 import { optimizeChatImageFile } from '@/utils/chatMedia'
+import { includeSelectedChat, preserveSelectedChat } from '@/utils/chatSelection'
 import {
   getChatSendResponseIds,
   reconcileServerMessageIntoOptimistic
@@ -4632,13 +4633,16 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
         chatListCursorRef.current = getChatListKeysetCursor(pageChats, cursorScope)
         chatListHasAppendedRef.current = false
         chatListHasMoreRef.current = pageChats.length >= CHAT_LIST_PAGE_SIZE && Boolean(chatListCursorRef.current)
-        const searchRows = dedupeChatsById([
+        const searchRows = preserveSelectedChat(dedupeChatsById([
           ...pageChats,
           ...(goalCompletedUnreviewed
             ? chatsRef.current
               .map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
             : [])
-        ])
+        ]), chatsRef.current, activeContactIdRef.current, (contact) => (
+          contactMatchesQuery(contact, normalizedSearch) &&
+          !isChatRemovedFromList(contact, getRemovedChatState(removedChatStatesRef.current, contact.id))
+        ))
         setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, searchRows))
         setChats(searchRows)
         setActiveContactId((current) => {
@@ -4721,13 +4725,15 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
           chatListLoadedGoalCompletedFilterRef.current !== goalCompletedUnreviewed
         chatListLoadedGoalCompletedFilterRef.current = goalCompletedUnreviewed
         const replaceList = fromSearch || serverScopeChanged || goalCompletedUnreviewed
-        const merged = dedupeChatsById([
+        const merged = preserveSelectedChat(dedupeChatsById([
           ...freshPage,
           ...(goalCompletedUnreviewed
             ? chatsRef.current.map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
             : []),
           ...(replaceList ? [] : reconcileLoadedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE))
-        ])
+        ]), chatsRef.current, activeContactIdRef.current, (contact) => (
+          !isChatRemovedFromList(contact, getRemovedChatState(removedChatStatesRef.current, contact.id))
+        ))
 
         // La frontera keyset representa la última página real, no las filas ya visibles.
         const currentCursor = chatListCursorRef.current
@@ -4745,13 +4751,15 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
         setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, merged))
         // setChats funcional: no pisar un "cargar más" que el usuario haya disparado al hacer
         // scroll mientras llegaba esta primera página.
-        setChats((current) => dedupeChatsById([
+        setChats((current) => preserveSelectedChat(dedupeChatsById([
           ...freshPage,
           ...(goalCompletedUnreviewed
             ? current.map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
             : []),
           ...(replaceList ? [] : reconcileLoadedChatTail(freshPage, current, CHAT_LIST_PAGE_SIZE))
-        ]))
+        ]), current, activeContactIdRef.current, (contact) => (
+          !isChatRemovedFromList(contact, getRemovedChatState(removedChatStatesRef.current, contact.id))
+        )))
         setActiveContactId((current) => {
           const removedStates = removedChatStatesRef.current
           if (current && merged.some((contact) => contact.id === current && !isChatRemovedFromList(contact, getRemovedChatState(removedStates, contact.id)))) {
@@ -6788,6 +6796,11 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
   }, [activeContactId, agentStates, showToast])
 
   const handleSelectChat = useCallback((contact: DesktopChatContact) => {
+    // Chatbot también lista contactos sin historial: abrirlos debe hidratar el
+    // panel igual que abrir una conversación de la página principal.
+    chatsRef.current = includeSelectedChat(chatsRef.current, contact)
+    activeContactIdRef.current = contact.id
+    setChats((current) => includeSelectedChat(current, contact))
     setActiveContactId(contact.id)
     acknowledgeAgentPriorityOnOpen(contact.id)
     if (Number(contact.unreadCount || 0) > 0 || contact.agentGoalCompletedUnreviewed === true) {

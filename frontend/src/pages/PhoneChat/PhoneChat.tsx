@@ -93,6 +93,7 @@ import type { PhoneSection } from '@/components/phone/phoneNavigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { hasLicenseFeature, hasModuleAccess } from '@/utils/accessControl'
 import { optimizeChatImageFile } from '@/utils/chatMedia'
+import { includeSelectedChat, preserveSelectedChat } from '@/utils/chatSelection'
 import { stripRistakAdIdMarkersFromText } from '@/utils/whatsappAttributionText'
 import {
   buildChatActivityMarkers,
@@ -7617,8 +7618,10 @@ export const PhoneChat: React.FC = () => {
   }, [showToast])
 
   const applyLoadedChats = useCallback((loadedChats: ChatContact[], requestedContact?: ChatContact | null) => {
-    const readState = ensureReadBaselines(loadedChats, readChatReadState())
-    let nextChats = loadedChats.map((contact) => applyLocalUnreadState(contact, readState))
+    const selectedRows = preserveSelectedChat(loadedChats, chatsRef.current, activeContactIdRef.current,
+      (contact) => contactMatchesQuery(contact, chatQuery.trim()))
+    const readState = ensureReadBaselines(selectedRows, readChatReadState())
+    let nextChats = selectedRows.map((contact) => applyLocalUnreadState(contact, readState))
     const currentActiveContactId = activeContactIdRef.current
     const currentConversationOpen = conversationOpenRef.current
 
@@ -7650,7 +7653,7 @@ export const PhoneChat: React.FC = () => {
     }
 
     return nextChats
-  }, [persistChatsRead, runConversationOpenBottomScrollSequence, startConversationBottomLock])
+  }, [chatQuery, persistChatsRead, runConversationOpenBottomScrollSequence, startConversationBottomLock])
 
   const loadChats = useCallback(async (options: { append?: boolean; showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean } = {}) => {
     const silentRefresh = options.silent === true
@@ -10547,8 +10550,11 @@ export const PhoneChat: React.FC = () => {
     setManualUnreadChatIds((current) => current.filter((id) => id !== nextContact.id))
     startConversationBottomLock(nextContact.id)
     runConversationOpenBottomScrollSequence()
+    const selectedChat = { ...nextContact, unreadCount: 0, agentGoalCompletedUnreviewed: false }
+    chatsRef.current = includeSelectedChat(chatsRef.current, selectedChat)
+    activeContactIdRef.current = nextContact.id
     setActiveContactId(nextContact.id)
-    setChats((current) => current.map((item) => (
+    setChats((current) => includeSelectedChat(current, selectedChat).map((item) => (
       item.id === nextContact.id ? { ...item, unreadCount: 0, agentGoalCompletedUnreviewed: false } : item
     )))
     setConversationReturnTarget(options?.returnTarget || 'chats')

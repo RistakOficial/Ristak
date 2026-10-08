@@ -1,3 +1,4 @@
+import { generateMessageIDV2 } from '@whiskeysockets/baileys'
 import test, { mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
@@ -172,6 +173,7 @@ function createFakeBaileysRuntime({ connectedJid, sentMessages = [], ackDelayMs 
   let messageIndex = 0
 
   return {
+    generateMessageIDV2,
     DisconnectReason: {
       loggedOut: 401,
       badSession: 500,

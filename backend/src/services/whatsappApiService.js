@@ -9474,7 +9474,8 @@ async function upsertMessage({
   contactId = null,
   historyImport = false,
   deferInboundProfilePicture = false,
-  onInboundPersisted = null
+  onInboundPersisted = null,
+  externalHumanReply = false
 }) {
   let normalizedMessage = normalizeWebhookMessage(message)
   const identity = getMessageIdentity({ payload, direction, message: normalizedMessage, businessPhoneHints })
@@ -9700,7 +9701,8 @@ async function upsertMessage({
       { businessPhoneNumberId, messageId }
     )
   }
-  const businessEcho = identity.direction === 'business_echo' || normalizedMessage.businessEcho === true || normalizedMessage.business_echo === true
+  const businessEcho = identity.direction === 'business_echo' || normalizedMessage.businessEcho === true ||
+    normalizedMessage.business_echo === true || cleanString(payload.type) === 'whatsapp.smb.message.echoes'
   const relayEventId = cleanString(payload.relayEventId || payload.relay_event_id)
   const storedTransport = existingQrFallbackApplied ? 'qr' : cleanTransport
   const storedSourceAdapter = existingQrFallbackApplied
@@ -10195,6 +10197,18 @@ async function upsertMessage({
     ? Boolean(inboundClaim?.claimed)
     : (insertedByThisCall || !existingRenderableMessage)
 
+  if (isNewMessage && !historyImport && (externalHumanReply || businessEcho) &&
+      identity.direction !== 'inbound' && !preservedAgentMetadata.sentByAgent &&
+      !['status', 'system', 'edit', 'revoke'].includes(messageType)) {
+    // Coexistence puede entregar el eco oficial de un envío por nuestro QR
+    // antes de que termine sendMessage. Usa la identidad exacta, nunca el texto.
+    const { isRistakQrOutboundMessage } = await import('./whatsappQrService.js')
+    if (!isRistakQrOutboundMessage({ businessPhone: identity.businessPhone, messageId: protocolMessageKeyId })) {
+      const { pauseConversationForExternalWhatsAppReply } = await import('./conversationalAgentService.js')
+      await pauseConversationForExternalWhatsAppReply(localContact.id, { messageAt: messageTimestamp })
+    }
+  }
+
   const buildResult = () => ({
     messageId,
     contactId: localContact.id,
@@ -10680,7 +10694,8 @@ export async function captureQrChatMessage({
     businessPhoneHints: [cleanBusinessPhone].filter(Boolean),
     transport: 'qr',
     historyImport,
-    deferInboundProfilePicture: cleanDirection === 'inbound' && !historyImport
+    deferInboundProfilePicture: cleanDirection === 'inbound' && !historyImport,
+    externalHumanReply: cleanDirection === 'outbound' && sentFromRistak !== true
   })
 
   // La identidad y la toma humana se confirman antes de descargar un archivo:
@@ -10688,11 +10703,6 @@ export async function captureQrChatMessage({
   const initialOutbound = cleanDirection === 'outbound' && !historyImport && sentFromRistak !== true
     ? await persistQrMessage()
     : null
-  if (initialOutbound?.isNew && !initialOutbound.sentByAgent && initialOutbound.contactId) {
-    const { markHumanTakeoverIfActive } = await import('./conversationalAgentService.js')
-    await markHumanTakeoverIfActive(initialOutbound.contactId, { updatedBy: 'human' })
-  }
-
   // QR no hospeda la media por nosotros. Sólo descargamos cuando la ruta es
   // válida y todavía no hay una copia guardada para esta misma identidad.
   let inboundMedia = null
