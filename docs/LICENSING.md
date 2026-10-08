@@ -175,6 +175,18 @@ ninguna superficie. El límite se valida en backend en
 
 ### Gates por superficie
 
+El plan Medio (`medium`) y Profesional incluyen **Configuración → Developers →
+Conectar con MCP** para autorizar conexiones de ChatGPT, Codex u otros clientes
+compatibles. El permiso `developers` y su dependencia `settings_api_access`
+deben estar habilitados en la matriz del Installer para ambos canales, Test y
+En vivo (`stable`). La matriz vive en la clave `plan_feature_access` de
+`app_settings` del Installer; un bloqueo allí oculta la sección y rechaza MCP
+aunque el plan lo incluya por defecto. No hace falta desplegar otra imagen para corregir ese
+permiso. La instalación recoge los cambios en su siguiente revalidación de
+licencia (por defecto, cada cinco minutos mientras hay actividad). Después,
+recargar la app actualiza los permisos del menú. Los permisos individuales del
+usuario y las features de cada herramienta siguen aplicando.
+
 - API tokens legacy (`/api/auth/api-token`) y la pantalla nueva de Developers
   requieren `settings_api_access`/`developers`.
 - `/api/external` requiere `developers` y además valida cada endpoint o tabla:
