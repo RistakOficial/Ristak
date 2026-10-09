@@ -1302,8 +1302,10 @@ telefono de otro mensaje.
 
 La selección de transporte es idéntica en `/movil`, React Native Android y iOS:
 si la fila elegida tiene API disponible, el envío usa `transport=api` aunque el
-mismo número tenga QR conectado. Una ventana cerrada abre/solicita plantillas y
-nunca cambia a QR. `transport=qr` sólo se resuelve cuando la API de esa fila está
+mismo número tenga QR conectado. Cuando la ventana está cerrada/desconocida y
+ese mismo número tiene QR listo, el cliente permite el request y el backend
+aplica el respaldo autorizado; sin ese QR abre/solicita plantillas.
+`transport=qr` sólo se resuelve en el cliente cuando la API de esa fila está
 indisponible o el número es QR standalone. La UI no debe pintar un globo QR
 optimista para después ocultarlo: el transporte se decide antes del request y el
 backend vuelve a validarlo.
@@ -1844,10 +1846,17 @@ de subir. Esos archivos salen por WhatsApp QR/Baileys y por Messenger nativo.
 Android e iOS usan `/api/whatsapp-api/meta/social/messages/attachment` para
 imagen, video y archivo de Messenger/Instagram, manteniendo `/audio` para audio;
 Instagram bloquea documentos antes de Graph. Si el numero elegido resuelve a
-WhatsApp API oficial o el canal HighLevel es `whatsapp_api`, XML/ZIP se detienen
-antes de preparar el envio y el usuario recibe la instruccion de cambiar a QR,
-Messenger u otro canal compatible. No se cambia de API a QR por un rechazo de
-contenido.
+WhatsApp API oficial y tiene QR listo del mismo número, los clientes permiten
+preparar el envío y el backend manda XML/ZIP por ese respaldo sin intentar el
+upload oficial. Sin QR compatible, o si el canal HighLevel es `whatsapp_api`,
+se detienen antes de preparar el envío y se explica el canal compatible requerido.
+Fotos, videos y documentos propios de Chat/Media se envían por bytes y Media ID;
+la URL del preview no condiciona el envío oficial. Los rechazos multimedia y el
+respaldo sin duplicados siguen
+[el contrato de proveedores](./integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md).
+El cambio de preflight XML/ZIP en `mobile/` e `ios/app` requiere recompilar los
+binarios instalados; el arreglo de envío en backend aplica también a clientes
+existentes.
 
 Las previews nativas deben diferenciar cada
 tipo como `/movil`: fotos dentro de un canvas estable 4:3 y `contain`, stickers
@@ -2142,7 +2151,9 @@ APNS_PRIVATE_KEY=
 APNS_ENV=production
 ```
 
-Para enviar fotos por WhatsApp, el backend debe estar publicado en HTTPS porque WhatsApp/YCloud necesita descargar la imagen desde una URL pública.
+Las URLs externas legacy de fotos deben ser públicas HTTPS. Los adjuntos propios
+se cargan por bytes al proveedor; el preview de Storage es independiente del
+envío oficial.
 
 ## Gotchas (no repetir)
 

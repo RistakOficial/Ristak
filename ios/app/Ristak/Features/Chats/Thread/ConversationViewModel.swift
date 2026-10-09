@@ -1655,7 +1655,7 @@ final class ConversationViewModel {
                 )
                 return
             }
-            if resolveWhatsAppTransport() == .api,
+            if resolveWhatsAppTransport() == .api, !selectedPhoneQRReady,
                pendingAttachments.contains(where: { $0.media.isUnsupportedByWhatsAppAPI }) {
                 alert = ConversationAlert(
                     title: "WhatsApp API no admite ZIP ni XML",

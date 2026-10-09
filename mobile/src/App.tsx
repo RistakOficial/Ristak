@@ -22966,7 +22966,7 @@ function NativeConversationScreen({
     const whatsAppSend = sendingWhatsApp ? resolveWhatsAppSendTransport() : null;
     if (unsupportedWhatsAppDocument && (
       selectedHighLevelChannel === 'whatsapp_api'
-      || whatsAppSend?.sender.transport === 'api'
+      || (whatsAppSend?.sender.transport === 'api' && !whatsAppSend.qrReady)
     )) {
       Alert.alert(
         'WhatsApp API no admite ZIP ni XML',
