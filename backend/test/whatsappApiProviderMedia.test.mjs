@@ -1,6 +1,7 @@
 import { generateMessageIDV2 } from '@whiskeysockets/baileys'
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { execFile as execFileCallback } from 'node:child_process'
 import fs from 'node:fs/promises'
@@ -41,6 +42,7 @@ const MEDIA_STORAGE_ENV_KEYS = [
   'BUNNY_STORAGE_ENDPOINT',
   'BUNNY_STORAGE_API_KEY',
   'BUNNY_CDN_BASE_URL',
+  'BUNNY_STREAM_ENABLED',
   'LICENSE_SERVER_URL',
   'CLIENT_ID',
   'LICENSE_KEY',
@@ -522,6 +524,135 @@ async function withMetaDirectAudioCapture(callback) {
     }
   })
 }
+
+async function withMetaDirectInlineMediaCapture(callback) {
+  const previousEnv = snapshotMediaStorageEnv()
+  const mediaStorage = await import('../src/services/mediaStorageService.js')
+  forceLocalMediaStorageForProviderPreview()
+  mediaStorage.resetCentralStorageConfigCache()
+
+  try {
+    return await withMetaDirectAudioCapture(async (capture) => {
+      const suffix = randomUUID()
+      const to = `+52158${Date.now().toString().slice(-8)}`
+      const contactId = `meta_inline_media_contact_${suffix}`
+      const inboundId = `meta_inline_media_inbound_${suffix}`
+      await db.run(`
+        INSERT INTO contacts (id, phone, full_name, first_name, source, created_at, updated_at)
+        VALUES (?, ?, 'Cliente Meta Adjunto', 'Cliente', 'WhatsApp_API', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [contactId, to])
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, meta_message_id, contact_id, phone, from_phone, to_phone,
+          business_phone, business_phone_number_id, transport, direction, message_type,
+          message_text, status, message_timestamp, created_at, updated_at
+        ) VALUES (?, 'meta_direct', ?, ?, ?, ?, ?, ?, ?, 'api', 'inbound', 'text',
+          'Ventana abierta', 'received', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [inboundId, inboundId, contactId, to, to, capture.businessPhone, capture.businessPhone, capture.phoneNumberId])
+
+      try {
+        return await callback({ ...capture, to, contactId })
+      } finally {
+        await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR phone = ? OR to_phone = ?', [contactId, to, to])
+        await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
+        await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, to])
+      }
+    })
+  } finally {
+    restoreMediaStorageEnv(previousEnv)
+    mediaStorage.resetCentralStorageConfigCache()
+  }
+}
+
+test('Meta Direct envía una foto recién adjuntada usando la URL HTTPS que devolvió Bunny', async () => {
+  await withMetaDirectInlineMediaCapture(async ({ captures, uploads, to, contactId, businessPhone, phoneNumberId }) => {
+    const storedFiles = new Map()
+    const server = http.createServer((req, res) => {
+      assert.equal(req.method, 'PUT')
+      const chunks = []
+      req.on('data', chunk => chunks.push(chunk))
+      req.on('end', () => {
+        storedFiles.set(req.url, Buffer.concat(chunks))
+        res.statusCode = 201
+        res.end('ok')
+      })
+    })
+    await new Promise((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', resolve)
+    })
+    process.env.MEDIA_STORAGE_PROVIDER = 'bunny'
+    process.env.MEDIA_STORAGE_REQUIRE_BUNNY = 'true'
+    process.env.BUNNY_STORAGE_ZONE = 'inline-media-test'
+    process.env.BUNNY_STORAGE_API_KEY = 'inline-media-test-key'
+    process.env.BUNNY_STORAGE_ENDPOINT = `http://127.0.0.1:${server.address().port}`
+    process.env.BUNNY_CDN_BASE_URL = 'https://cdn.example.test'
+    process.env.BUNNY_STREAM_ENABLED = 'false'
+
+    try {
+      const response = await sendWhatsAppApiImageMessage({
+        to, from: businessPhone, contactId, phoneNumberId,
+        imageDataUrl: ONE_PIXEL_PNG_DATA_URL,
+        caption: 'Foto recién adjuntada',
+        publicBaseUrl: 'http://localhost:3001',
+        allowQrFallback: false
+      })
+      assert.equal(captures.length, 1)
+      assert.equal(uploads.length, 0)
+      assert.equal(response.provider, 'meta_direct')
+      assert.equal(response.transport, 'api')
+      const asset = await db.get('SELECT public_url, bunny_path FROM media_assets WHERE id = ?', [response.image.previewMediaAssetId])
+      assert.match(asset.public_url, /^https:\/\/cdn\.example\.test\//)
+      assert.deepEqual(captures[0].image, { link: asset.public_url, caption: 'Foto recién adjuntada' })
+      const bytes = storedFiles.get(`/inline-media-test/${asset.bunny_path}`)
+      assert.ok(bytes?.length)
+      assert.equal(bytes.subarray(0, 2).toString('hex'), 'ffd8')
+      const message = await db.get('SELECT media_url, provider, transport FROM whatsapp_api_messages WHERE id = ?', [response.localMessageId])
+      assert.equal(message.media_url, asset.public_url)
+      assert.equal(message.provider, 'meta_direct')
+      assert.equal(message.transport, 'api')
+    } finally {
+      await new Promise(resolve => server.close(resolve))
+    }
+  })
+})
+
+test('Meta Direct resuelve fotos y videos adjuntos desde la ruta pública de una instalación HTTPS', async () => {
+  await withFakeFfmpeg(async () => {
+    await withMetaDirectInlineMediaCapture(async ({ captures, to, contactId, businessPhone, phoneNumberId }) => {
+      for (const type of ['image', 'video']) {
+        const send = type === 'image' ? sendWhatsAppApiImageMessage : sendWhatsAppApiVideoMessage
+        const response = await send({
+          to, from: businessPhone, contactId, phoneNumberId,
+          [`${type}DataUrl`]: type === 'image' ? ONE_PIXEL_PNG_DATA_URL : WEBM_VIDEO_DATA_URL,
+          caption: 'Adjunto HTTPS',
+          publicBaseUrl: 'https://ristak.test',
+          allowQrFallback: false
+        })
+        const asset = await db.get('SELECT public_url FROM media_assets WHERE id = ?', [response[type].previewMediaAssetId])
+        assert.match(asset.public_url, /^\/media\/assets\/.+\/file$/)
+        assert.equal(captures.at(-1)[type].link, `https://ristak.test${asset.public_url}`)
+        assert.equal(response.transport, 'api')
+        const message = await db.get('SELECT media_url FROM whatsapp_api_messages WHERE id = ?', [response.localMessageId])
+        assert.equal(message.media_url, asset.public_url)
+      }
+      assert.deepEqual(captures.map(message => message.type), ['image', 'video'])
+    })
+  })
+})
+
+test('Meta Direct bloquea una foto local sin URL pública HTTPS antes de enviar', async () => {
+  await withMetaDirectInlineMediaCapture(async ({ captures, uploads, to, contactId, businessPhone, phoneNumberId }) => {
+    await assert.rejects(() => sendWhatsAppApiImageMessage({
+      to, from: businessPhone, contactId, phoneNumberId,
+      imageDataUrl: ONE_PIXEL_PNG_DATA_URL,
+      publicBaseUrl: 'http://localhost:3001',
+      allowQrFallback: false
+    }), /URL HTTPS/)
+    assert.equal(captures.length, 0)
+    assert.equal(uploads.length, 0)
+  })
+})
 
 test('envío QR de imagen con dataUrl conserva preview interno en historial', async () => {
   const previousMediaStorageEnv = snapshotMediaStorageEnv()

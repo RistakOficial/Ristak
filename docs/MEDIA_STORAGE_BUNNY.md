@@ -28,6 +28,17 @@ la persiste como asset público de `module=chat` mediante `mediaStorageService`.
 El mensaje sólo expone la URL estable resultante. Si el negocio conectó su propia
 cuenta Bunny.net, esa cuenta recibe estas cargas por tener prioridad de runtime.
 
+Las fotos y videos recién adjuntados en el chat se preparan como bytes y guardan
+su preview mediante `savePreparedMediaForChatPreview`. Ese resultado conserva
+`publicPath` con la misma URL de `publicUrl`, que es el contrato que
+`requirePublicMediaUrl` utiliza para el envío de Meta directo. Un enlace HTTPS
+absoluto de Bunny se reutiliza sin exigir que el origen del navegador sea HTTPS;
+una ruta `/media/assets/:id/file` necesita una base pública HTTPS de Ristak.
+Un archivo guardado sólo en localhost sigue bloqueado para la API, mientras QR
+puede enviar sus bytes y conservar el preview interno. YCloud mantiene su carga
+binaria por Media ID y su preview independiente. Este flujo no cambia el
+proveedor elegido, la ventana de respuesta ni las reglas de respaldo QR.
+
 Las subidas entrantes usan una clave idempotente basada en proveedor, mensaje y
 media para que un webhook, HistorySync o reintento no duplique el archivo. Los
 envíos de imagen también conservan como preview la copia estable ya almacenada y

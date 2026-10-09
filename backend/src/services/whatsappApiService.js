@@ -2200,6 +2200,7 @@ async function savePreparedMediaForChatPreview(media = {}, { type = '', mediaLab
     if (!publicUrl) return null
 
     return {
+      publicPath: publicUrl,
       publicUrl,
       mediaUrl: publicUrl,
       url: publicUrl,
