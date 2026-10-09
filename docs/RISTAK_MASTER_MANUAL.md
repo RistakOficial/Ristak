@@ -2919,13 +2919,16 @@ respaldo QR listo, el mensaje puede salir por QR únicamente cuando la solicitud
 lo autorizó. La ventana de 24 horas cerrada o desconocida para contenido libre
 también autoriza Baileys del mismo número; el preflight evita tocar la API y un
 `131047` posterior usa un claim `at-most-once` durante 15 minutos. Una plantilla
-no aprobada, errores de contenido o destinatario bloqueado/opt-out, `131053`,
-timeout, red o HTTP 5xx jamás autorizan Baileys. También permite el respaldo una
+no aprobada o destinatario bloqueado/opt-out no autorizan Baileys. Tampoco una
+respuesta ambigua, timeout, red o HTTP 5xx después de solicitar el envío. Para
+fotos, videos y documentos, una carga fallida antes de mandar el mensaje o un
+rechazo multimedia definitivo sí permiten el QR autorizado del mismo número,
+como se detalla en el contrato de adjuntos. También permite el respaldo una
 indisponibilidad
 inequívoca del transporte (desconexión, autorización perdida,
 suspensión/restricción o límite confirmado). Cuando Meta pierde permisos, sólo
 su fila queda inactiva y YCloud/QR continúan operando. La
-única excepción de contenido es una plantilla aceptada y luego rechazada por una
+excepción adicional de contenido es una plantilla aceptada y luego rechazada por una
 validación estructural inequívoca de variables, cuerpo, componentes o idioma.
 Como ese mensaje nunca pudo entregarse, Ristak puede enviar su texto renderizado
 por QR si la solicitud original lo autorizó, el QR está listo y no han pasado
@@ -3634,6 +3637,14 @@ La cuenta Bunny.net conectada por el negocio tiene prioridad. Las claves de
 idempotencia por mensaje evitan duplicados ante webhooks o HistorySync repetidos,
 y una URL temporal devuelta después de un envío no puede reemplazar el preview
 estable que Ristak ya almacenó.
+En WhatsApp nativo con Meta directo o YCloud, fotos, videos y documentos adjuntos
+se cargan por bytes al proveedor y se envían con su Media ID. El enlace del
+preview es independiente y no condiciona el envío oficial. Una foto guardada en
+Media como WebP se convierte a JPEG antes de cargarla; el video se normaliza a
+MP4 H.264/AAC. Las referencias por `mediaAssetId` admiten archivos públicos de
+Chat y de Media listos del mismo negocio. Los de Media exigen lectura del módulo
+y licencia; los privados conservan su permiso específico y viajan por bytes sin
+publicarse. Una URL externa legacy conserva sus validaciones HTTPS/SSRF.
 M4A nativo de iPhone puede ser detectado por magic bytes como `audio/x-m4a`;
 `mediaStorageService` debe normalizar ese alias a `audio/mp4` antes de validar y
 guardar el preview compartido por los envios WhatsApp API y QR. En
@@ -3689,16 +3700,17 @@ del canal real, no solo de que el archivo haya podido seleccionarse:
 - WhatsApp QR/Baileys los envia como documento conservando bytes, nombre y MIME.
 - Messenger nativo los envia como `file` por Send API; texto y archivo viajan
   como mensajes separados porque Meta no admite caption dentro del adjunto.
-- WhatsApp API oficial, tanto Meta directo como YCloud y la ruta WhatsApp de
-  HighLevel, los detiene antes del upload: el catalogo oficial de documentos no
-  incluye XML ni ZIP. La UI explica que debe elegirse un numero conectado solo
-  por QR, Messenger u otro canal compatible.
+- WhatsApp API oficial de Meta directo o YCloud los manda por el QR autorizado
+  del mismo número cuando está conectado, sin intentar el upload oficial. Sin
+  ese respaldo explica que se necesita QR u otro canal compatible.
+- La ruta WhatsApp de HighLevel los detiene antes del upload: no se desvía al
+  QR nativo de otro canal. El catálogo oficial no incluye XML ni ZIP.
 - Instagram nativo no admite documentos. Sus imagenes, videos y audios conservan
   las rutas multimedia normales.
 
-Un rechazo por formato nunca autoriza fallback silencioso de API a QR. Solo la
-indisponibilidad real del proveedor oficial puede activar el fallback estricto
-ya documentado. Storage normaliza `text/xml` a `application/xml` y
+La excepción multimedia conserva siempre el número emisor y registra el motivo
+del respaldo. No convierte una respuesta incierta de envío en permiso para
+reenviar. Storage normaliza `text/xml` a `application/xml` y
 `application/x-zip-compressed` a `application/zip`; XML se sirve como descarga
 con `Content-Disposition: attachment` y `nosniff`, no como contenido ejecutable.
 
@@ -4406,7 +4418,8 @@ el QR asociado al mismo teléfono sólo si esa solicitud tenía
 `allowQrFallback=true`. La decisión y el envío ocurren dentro de esa única
 solicitud y ninguna capa superior vuelve a interpretar texto de errores. Si el
 proveedor aceptó la solicitud y después reporta `failed`, se conserva el fallo
-API, salvo una plantilla con un rechazo estructural definitivo de variables,
+API, salvo ventana cerrada, rechazo multimedia definitivo o una plantilla con
+un rechazo estructural definitivo de variables,
 cuerpo, componentes o idioma. El número del error puede cambiar; el texto debe
 demostrar el tipo de validación y que fue un rechazo inequívoco. En esa excepción,
 el webhook puede mandar el texto renderizado por QR dentro de los primeros 15
@@ -4416,9 +4429,15 @@ muestra un solo globo.
 
 Una ventana cerrada/desconocida y el error `131047` sí cambian contenido libre a
 QR cuando el respaldo del mismo número está listo y autorizado. Una plantilla
-pendiente/rechazada, errores de contenido o media (`131053`), timeout, errores de
-red, HTTP 408/429/5xx o respuestas temporales/reintentables no cambian a QR; la
-validación estructural definitiva anterior es la única excepción de contenido.
+pendiente/rechazada, timeout, errores de red, HTTP 408/429/5xx o respuestas
+temporales/reintentables al envío no cambian a QR. Fotos, videos y documentos
+tienen una excepción segura: si falla el upload antes de `/messages`, no pudo
+salir un mensaje y Ristak usa el QR autorizado. Si el envío o webhook confirma
+`131052`/`131053`, también puede rescatar el archivo. Graph `100` HTTP 400 sólo
+aplica cuando identifica un MIME/formato multimedia inválido. Un webhook exige
+autorización guardada, archivo original recuperable, menos de 15 minutos y claim
+`at-most-once`, por lo que duplicarlo no manda otra copia ni otra burbuja. Las
+notas de voz conservan su prohibición de respaldo por `131053`.
 El `131000` de Meta tampoco basta por sí solo: Ristak consulta una vez y sin
 escribir el `Phone Number ID`. Sólo si esa comprobación demuestra que el activo
 perdió autorización marca la API para reconexión y usa el QR autorizado del mismo
@@ -4448,8 +4467,9 @@ canal ya no depende de un switch manual: si el mismo número tiene API y QR,
 Ristak usa API primero y habilita su QR como respaldo estricto de forma
 automática. `sendViaQr` y `qr_fallback_enabled` sólo sobreviven para leer flujos
 viejos; no pueden forzar QR, apagar el respaldo seguro ni seleccionar un QR de
-otro teléfono. Plantilla no aprobada, ventana cerrada y contenido inválido siguen
-siendo errores de API y no provocan fallback.
+otro teléfono. Una plantilla no aprobada sigue siendo un error de API; una
+ventana cerrada y los rechazos multimedia anteriores respetan el respaldo
+autorizado del mismo teléfono.
 
 En automatizaciones de pago, si la plantilla configurada esta pendiente,
 rechazada, pausada o no sincronizada, Ristak no debe brincar directo a QR. Primero

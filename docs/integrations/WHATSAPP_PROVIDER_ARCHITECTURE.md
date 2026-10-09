@@ -148,9 +148,17 @@ ventana de 24 horas cerrada/desconocida para contenido libre. El preflight evita
 tocar la API cuando la evidencia local ya lo demuestra; si el proveedor devuelve
 `131047` después de aceptar el request, Ristak conserva la autorización original,
 reclama el mensaje con una barrera `at-most-once` y lo manda por QR durante los
-primeros 15 minutos. No aplica a plantilla no aprobada, destinatario bloqueado u
-opt-out, contenido, `131053`, timeout, red ni HTTP 5xx. Campañas/broadcasts
-siempre usan `allowQrFallback=false`. Existe otra excepción deliberadamente
+primeros 15 minutos. Fotos, videos y documentos también pueden usar ese respaldo
+cuando falla su carga al proveedor, antes de intentar `/messages`: un upload no
+envía nada al destinatario y una respuesta perdida ahí no puede duplicar el
+mensaje. Después de `/messages` sólo un rechazo multimedia definitivo
+(`131052`/`131053`, o Graph `100` HTTP 400 que identifica un formato/MIME inválido)
+autoriza esta excepción. Un webhook `failed` con `131052`/`131053` aplica el mismo
+claim durante 15 minutos, con la autorización original y el archivo recuperable.
+No aplica a plantilla no aprobada, destinatario bloqueado/opt-out ni a respuestas
+ambiguas, timeout, red o HTTP 5xx del envío del mensaje. Las notas de voz conservan
+su contrato propio y no usan la excepción multimedia. Campañas/broadcasts siempre
+usan `allowQrFallback=false`. Existe otra excepción deliberadamente
 estrecha para una plantilla que la API aceptó y el proveedor después rechazó por
 validación estructural de variables, cuerpo, componentes o idioma. En esa
 clasificación semántica el código numérico no decide porque cambia entre
@@ -191,9 +199,9 @@ conservan su prohibición explícita de fallback.
 
 El webhook es un observador: persiste estados y puede marcar la API restringida
 para solicitudes futuras; un `failed` posterior normalmente se conserva como
-fallo API. Las dos excepciones demostrables son `131047` para texto libre con
-autorización original y el rechazo estructural definitivo de plantilla descrito
-arriba. `whatsapp_api_qr_fallback_attempts` reclama el mensaje antes de tocar
+fallo API. Las excepciones demostrables son `131047` para contenido libre, los
+rechazos multimedia anteriores y el rechazo estructural definitivo de plantilla.
+Siempre requieren autorización original. `whatsapp_api_qr_fallback_attempts` reclama el mensaje antes de tocar
 Baileys y deja una barrera `at-most-once`: webhooks duplicados o concurrentes no
 pueden mandar una segunda copia. Un intento QR que falla después del claim no se
 reintenta automáticamente porque ya no se puede probar con certeza que WhatsApp
@@ -308,8 +316,11 @@ Compatibilidad histórica:
 - `whatsapp_api_template_sends.qr_fallback_authorized` congela la autorización
   de la solicitud original; nunca se infiere después por tener un QR conectado.
 - `whatsapp_api_qr_fallback_attempts` es el claim y auditoría durable de los
-  fallbacks asíncronos demostrables: `131047` de texto libre y validación
-  estructural definitiva de plantilla. Su PK es el mensaje API canónico.
+  fallbacks asíncronos demostrables: `131047` de contenido libre,
+  `131052`/`131053` de fotos/videos/documentos y validación estructural definitiva
+  de plantilla. Su PK es el mensaje API canónico. `raw_payload_json.qrFallbackPolicy`
+  conserva la autorización y, cuando existe, el ID del asset original; nunca los
+  bytes del archivo ni credenciales.
 - `whatsapp_api_contacts` conserva teléfono y, cuando el proveedor los entregue,
   `whatsapp_user_id`, `parent_whatsapp_user_id` y `username`.
 - Después del rollout de BSUID, no se debe asumir que el teléfono es el único
@@ -643,16 +654,30 @@ foto, documento, video y audio seleccionados para Meta Direct salen por Graph y
 nunca usan el endpoint de mensajes ni el upload de YCloud. El fallback QR aplica
 con las mismas reglas estrictas de indisponibilidad que YCloud.
 
+Las fotos, videos y documentos recién adjuntados se cargan como bytes al endpoint
+de media del proveedor seleccionado y `/messages` recibe su Media ID. La foto se
+normaliza a JPEG y el video a MP4 H.264/AAC. El preview del historial se guarda
+por separado: que Storage no pueda dar una URL pública HTTPS no bloquea un upload
+oficial exitoso. Las referencias públicas externas legacy conservan su envío por
+enlace HTTPS validado. Un `mediaAssetId` de Chat o de Media se lee desde Storage
+para enviar los bytes, evitando que un WebP generado por la biblioteca termine
+como un enlace de imagen incompatible para Meta. Media exige usuario autenticado,
+lectura de `settings_media` y licencia del módulo; Chat conserva su acceso propio.
+Los assets deben estar listos, pertenecer al negocio y no estar eliminados.
+Automatizaciones/Sites no se convierten en referencias de Chat por este cambio.
+Los documentos privados mantienen su resolver autorizado y nunca se publican
+para enviarse; su ID permite recuperar los bytes para un respaldo posterior.
+
 El formato de un documento tambien forma parte de la frontera de proveedor. La
 lista oficial de WhatsApp Business Platform incluye TXT, PDF y formatos de
 Microsoft Office, pero no XML ni ZIP. Ristak permite seleccionar esos dos
 formatos porque WhatsApp QR/Baileys y otros canales si pueden transportarlos;
-cuando la fila seleccionada resuelve a Meta directo o YCloud, los bloquea antes
-del upload con un error accionable. La ruta `whatsapp_api` de HighLevel aplica la
-misma compuerta. Un error de MIME/extension no es indisponibilidad y jamas debe
-provocar fallback de contenido hacia QR. Si la API oficial ya estaba realmente
-indisponible y el fallback estricto eligio QR, Baileys conserva bytes, filename y
-MIME `application/xml` o `application/zip`.
+cuando la fila seleccionada resuelve a Meta directo o YCloud y autoriza respaldo,
+Ristak envía XML/ZIP por el QR conectado del mismo teléfono sin intentar el upload
+oficial. Conserva bytes, filename y MIME `application/xml`/`application/zip`, y
+registra el motivo del transporte. Sin ese QR o con `allowQrFallback=false`, se
+detiene con un error accionable. La ruta `whatsapp_api` de HighLevel conserva su
+bloqueo: no puede desviarse a un QR nativo de otro canal por reflejo.
 
 Meta directo también conserva el contrato conversacional nativo. Una respuesta
 saliente usa `context.message_id`; una reacción usa `type=reaction` con

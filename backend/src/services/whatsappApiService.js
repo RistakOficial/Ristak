@@ -2709,6 +2709,9 @@ async function uploadPreparedMediaToMetaDirect({ media, type } = {}) {
     error.statusCode = Number(response?.status) || 502
     error.graphCode = graphError.code
     error.graphSubcode = graphError.error_subcode
+    if (await markMetaDirectAuthorizationRequired({ error, phoneNumberId: config.phoneNumberId })) {
+      error.message = getMetaDirectReconnectMessage(error)
+    }
     throw error
   }
 
@@ -4661,6 +4664,65 @@ async function getOfficialApiFallbackDecision({
   }
 }
 
+async function getOfficialApiMediaFallbackDecision({ beforeMessageSend = false, ...options } = {}) {
+  const decision = await getOfficialApiFallbackDecision(options)
+  if (decision.shouldFallback || !options.error) return decision
+
+  const error = options.error
+  const code = cleanString(error.graphCode || extractWhatsAppProviderError(error).code)
+  const text = getOfficialApiErrorText(error)
+  const rejectedMedia = ['131052', '131053'].includes(code) || (
+    Number(error.statusCode) === 400 && code === '100' &&
+    /mime|media.*(type|format|invalid|unsupported)|unsupported.*(file|image|video|document)/i.test(text)
+  )
+  // Un upload no manda mensajes: incluso si se pierde su respuesta es seguro
+  // usar QR. Después de /messages sólo un rechazo multimedia definitivo sirve.
+  if ((!beforeMessageSend && !rejectedMedia) || isWhatsAppBillingError(error) ||
+      API_FALLBACK_RECIPIENT_ERROR_PATTERN.test(text)) return decision
+
+  const fallbackPhoneRow = await findQrFallbackPhoneRowForSender({
+    phoneNumberId: options.phoneNumberId,
+    fromPhone: options.fromPhone,
+    phoneRow: decision.phoneRow
+  })
+  return {
+    ...decision,
+    fallbackPhoneRow,
+    reason: beforeMessageSend
+      ? 'La API no pudo recibir el archivo; Ristak usó el respaldo QR del mismo número.'
+      : 'La API rechazó el formato del archivo; Ristak usó el respaldo QR del mismo número.',
+    shouldFallback: Boolean(fallbackPhoneRow?.id)
+  }
+}
+
+async function uploadOfficialApiMediaOrFallback({
+  config, fromPhone, toPhone, phoneNumberId, contactId, externalId,
+  media, type, allowQrFallback, content, sendQrFallback
+} = {}) {
+  try {
+    const providerMedia = config.provider === META_DIRECT_PROVIDER_NAME
+      ? await uploadPreparedMediaToMetaDirect({ media, type })
+      : await uploadPreparedMediaToYCloud({ config, fromPhone, media, type })
+    return { providerMedia }
+  } catch (error) {
+    const decision = await getOfficialApiMediaFallbackDecision({
+      config, fromPhone, phoneNumberId, error, beforeMessageSend: true
+    })
+    if (allowQrFallback && decision.shouldFallback) {
+      return { qrResponse: await sendQrFallback({
+        phoneNumberId: decision.fallbackPhoneRow.id,
+        fallbackReason: decision.reason,
+        originalError: error
+      }) }
+    }
+    await persistFailedOutboundApiMessage({
+      fromPhone, toPhone, type, content, externalId, contactId,
+      error, provider: config.provider
+    })
+    throw error
+  }
+}
+
 async function shouldPreferOfficialApiOverRequestedQr({
   cleanTransport,
   forceRequestedTransport = false,
@@ -4827,13 +4889,12 @@ async function readCompletedQrFallback({ messageId, attempt } = {}) {
 }
 
 /**
- * Si un texto libre fue aceptado por el request pero el proveedor confirma
- * después que la ventana de 24 horas estaba cerrada, el fallo ya demuestra que
- * la API no lo entregó. La autorización original viaja en la fila del mensaje y
+ * Si el proveedor confirma una ventana cerrada o un rechazo multimedia, sabemos
+ * que no entregó el mensaje. La autorización original viaja en su fila y
  * este claim durable permite mandar exactamente una copia por el QR del mismo
  * número, incluso si llegan webhooks duplicados o concurrentes.
  */
-async function maybeFallbackFailedReplyWindowTextViaQr({
+async function maybeFallbackFailedFreeformMessageViaQr({
   messageId,
   status,
   errorCode,
@@ -4846,28 +4907,33 @@ async function maybeFallbackFailedReplyWindowTextViaQr({
   const replyWindowReason = getOfficialApiConversationWindowReason({
     message: `${cleanString(errorCode)} ${cleanString(errorMessage)}`.trim()
   })
-  if (!replyWindowReason) return { applied: false, pending: false }
+  const mediaRejected = ['131052', '131053'].includes(cleanString(errorCode))
+  if (!replyWindowReason && !mediaRejected) return { applied: false, pending: false }
 
   const stored = await db.get(`
     SELECT id, provider, provider_message_id, ycloud_message_id, meta_message_id,
            wamid, business_phone_number_id, contact_id, phone, from_phone, to_phone,
            business_phone, direction, message_type, message_text, status, transport,
-           raw_payload_json, error_code, error_message, message_timestamp, created_at
+           raw_payload_json, media_url, media_mime_type, media_filename,
+           error_code, error_message, message_timestamp, created_at
     FROM whatsapp_api_messages
     WHERE id = ?
     LIMIT 1
   `, [messageId]).catch(() => null)
 
-  const storedPolicy = parseJsonValue(stored?.raw_payload_json, {})?.qrFallbackPolicy
+  const originalPayload = parseJsonValue(stored?.raw_payload_json, {}) || {}
+  const storedPolicy = originalPayload.qrFallbackPolicy
+  const messageType = cleanString(stored?.message_type).toLowerCase()
+  const isMedia = ['image', 'video', 'document'].includes(messageType)
   if (
     !stored?.id ||
     cleanString(stored.direction).toLowerCase() !== 'outbound' ||
-    cleanString(stored.message_type).toLowerCase() !== 'text' ||
+    (messageType !== 'text' && !isMedia) ||
     cleanString(stored.transport).toLowerCase() !== 'api' ||
     normalizeMessageDeliveryStatus(stored.status) !== 'failed' ||
-    !cleanString(stored.message_text) ||
+    (messageType === 'text' && (!replyWindowReason || !cleanString(stored.message_text))) ||
     storedPolicy?.authorized !== true ||
-    storedPolicy?.replyWindow !== true
+    (replyWindowReason ? storedPolicy?.replyWindow !== true : storedPolicy?.media !== true)
   ) {
     return { applied: false, pending: false }
   }
@@ -4889,7 +4955,9 @@ async function maybeFallbackFailedReplyWindowTextViaQr({
     return { applied: false, pending: false }
   }
 
-  const fallbackReason = getReplyWindowQrFallbackReason(replyWindowReason)
+  const fallbackReason = replyWindowReason
+    ? getReplyWindowQrFallbackReason(replyWindowReason)
+    : 'La API rechazó el archivo; Ristak usó el respaldo QR del mismo número.'
   const cleanProvider = cleanString(stored.provider).toLowerCase() || PROVIDER_NAME
   const cleanProviderMessageId = cleanString(
     stored.ycloud_message_id ||
@@ -4932,16 +5000,52 @@ async function maybeFallbackFailedReplyWindowTextViaQr({
   }
 
   try {
-    const qrResponse = await sendTextViaQrFallback({
+    const qrOptions = {
       phoneNumberId: fallbackPhoneRow.id,
       fromPhone,
       toPhone,
-      body: stored.message_text,
-      externalId: `reply-window-qr-fallback:${messageId}`,
+      externalId: `${messageType === 'text' ? 'reply-window' : 'media'}-qr-fallback:${messageId}`,
       contactId: stored.contact_id,
       fallbackReason,
       persist: false
-    })
+    }
+    let qrResponse
+    if (messageType === 'text') {
+      qrResponse = await sendTextViaQrFallback({ ...qrOptions, body: stored.message_text })
+    } else {
+      const media = originalPayload[messageType] || {}
+      const assetId = cleanString(storedPolicy.mediaAssetId || media.previewMediaAssetId)
+      let dataUrl = ''
+      if (assetId) {
+        const asset = await db.get(`
+          SELECT id, mime_type, module, media_type, is_public FROM media_assets
+          WHERE id = ? AND business_id = ? AND status = 'ready' AND deleted_at IS NULL
+        `, [assetId, cleanString(process.env.RISTAK_BUSINESS_ID) || 'default'])
+        const matchingType = messageType === 'document'
+          ? ['document', 'audio', 'video', 'other'].includes(asset?.media_type)
+          : asset?.media_type === messageType
+        const privateDocument = messageType === 'document' && asset?.media_type === 'document' &&
+          hasRistakPrivateMediaMarker(originalPayload)
+        if (!asset || !['chat', 'media'].includes(asset.module) || !matchingType ||
+            (Number(asset.is_public) !== 1 && !privateDocument)) {
+          throw new Error('El archivo original ya no está disponible para el respaldo QR.')
+        }
+        const { readOutboundMediaAssetDataUrl } = await import('./outboundMediaReferenceService.js')
+        dataUrl = await readOutboundMediaAssetDataUrl(asset, { maxBytes: (messageType === 'document' ? 20 : 25) * 1024 * 1024 })
+      }
+      const sensitive = hasRistakPrivateMediaMarker(originalPayload)
+      const link = dataUrl || sensitive ? '' : cleanString(stored.media_url || media.link || media.url)
+      if (!dataUrl && !link) throw new Error('No se pudo recuperar el archivo original para el respaldo QR.')
+      const requestMedia = {
+        ...(link ? { link } : {}),
+        ...(sensitive ? { ristakPrivateMedia: true } : {}),
+        caption: cleanString(media.caption),
+        mimeType: stored.media_mime_type || media.mimeType,
+        filename: stored.media_filename || media.filename
+      }
+      const send = { image: sendImageViaQrFallback, video: sendVideoViaQrFallback, document: sendDocumentViaQrFallback }[messageType]
+      qrResponse = await send({ ...qrOptions, [`request${messageType[0].toUpperCase()}${messageType.slice(1)}`]: requestMedia, [`${messageType}DataUrl`]: dataUrl })
+    }
     const qrMessageId = cleanString(qrResponse.id || qrResponse.wamid)
     const qrWamid = cleanString(qrResponse.wamid || qrResponse.id)
     const qrStatus = normalizeMessageDeliveryStatus(qrResponse.status) || 'sent'
@@ -4949,7 +5053,6 @@ async function maybeFallbackFailedReplyWindowTextViaQr({
       transport: 'qr',
       wamid: qrWamid
     })
-    const originalPayload = parseJsonValue(stored.raw_payload_json, {}) || {}
     const rawPayload = safeJson({
       ...originalPayload,
       apiFailure: {
@@ -4984,7 +5087,7 @@ async function maybeFallbackFailedReplyWindowTextViaQr({
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
           AND LOWER(COALESCE(direction, '')) = 'outbound'
-          AND LOWER(COALESCE(message_type, '')) = 'text'
+          AND LOWER(COALESCE(message_type, '')) = ?
           AND COALESCE(status, '') != 'removed'
       `, [
         qrMessageId || null,
@@ -4993,7 +5096,8 @@ async function maybeFallbackFailedReplyWindowTextViaQr({
         fallbackReason,
         qrStatus,
         rawPayload,
-        messageId
+        messageId,
+        messageType
       ])
       await transactionDatabase.run(`
         UPDATE whatsapp_api_qr_fallback_attempts
@@ -5021,7 +5125,7 @@ async function maybeFallbackFailedReplyWindowTextViaQr({
           updated_at = CURRENT_TIMESTAMP
       WHERE api_message_id = ?
     `, [cleanString(error?.message).slice(0, 2000) || 'El respaldo QR falló', messageId]).catch(() => undefined)
-    logger.error(`[WhatsApp API] El respaldo QR por ventana cerrada ${messageId} falló: ${error.message}`)
+    logger.error(`[WhatsApp API] El respaldo QR del mensaje ${messageId} falló: ${error.message}`)
     return { applied: false, pending: false, failed: true }
   }
 }
@@ -9660,7 +9764,9 @@ async function upsertMessage({
     ? {
         qrFallbackPolicy: {
           authorized: qrFallbackPolicy.authorized === true,
-          replyWindow: qrFallbackPolicy.replyWindow === true
+          replyWindow: qrFallbackPolicy.replyWindow === true,
+          ...(qrFallbackPolicy.media === true ? { media: true } : {}),
+          ...(cleanString(qrFallbackPolicy.mediaAssetId) ? { mediaAssetId: cleanString(qrFallbackPolicy.mediaAssetId) } : {})
         }
       }
     : {}
@@ -10104,7 +10210,7 @@ async function upsertMessage({
 
   const replyWindowFallback = canonicalQrFallbackApplied
     ? { applied: false, pending: false }
-    : await maybeFallbackFailedReplyWindowTextViaQr({
+    : await maybeFallbackFailedFreeformMessageViaQr({
         messageId,
         status: canonicalStatus,
         errorCode: effectiveErrorCode,
@@ -16211,6 +16317,7 @@ export async function sendWhatsAppApiImageMessage({
   from,
   imageDataUrl,
   imageUrl,
+  mediaAssetId,
   caption,
   externalId,
   transport = 'api',
@@ -16318,28 +16425,21 @@ export async function sendWhatsAppApiImageMessage({
 
   if (!link) {
     const optimizedImage = await getPreparedImage()
-    if (config.provider === META_DIRECT_PROVIDER_NAME) {
-      providerPreviewImage = await savePreparedMediaForChatPreview(optimizedImage, {
-        type: 'image',
-        mediaLabel: 'foto de WhatsApp API'
+    const uploaded = await uploadOfficialApiMediaOrFallback({
+      config, fromPhone, toPhone, phoneNumberId, contactId, externalId,
+      media: optimizedImage, type: 'image', allowQrFallback,
+      content: { image: { caption: cleanCaption, mimeType: optimizedImage.mimeType } },
+      sendQrFallback: fallback => sendImageViaQrFallback({
+        ...fallback, fromPhone, toPhone, imageDataUrl, preparedImage: optimizedImage,
+        requestImage: { ...(cleanCaption ? { caption: cleanCaption } : {}) },
+        externalId, contactId, publicBaseUrl, skipQrSendProtection
       })
-      link = requirePublicMediaUrl(providerPreviewImage, publicBaseUrl, 'fotos')
-    } else {
-      const uploads = await Promise.all([
-        uploadPreparedMediaToYCloud({
-          config,
-          fromPhone,
-          media: optimizedImage,
-          type: 'image'
-        }),
-        savePreparedMediaForChatPreview(optimizedImage, {
-          type: 'image',
-          mediaLabel: 'foto de WhatsApp API'
-        })
-      ])
-      providerImage = uploads[0]
-      providerPreviewImage = uploads[1]
-    }
+    })
+    if (uploaded.qrResponse) return uploaded.qrResponse
+    providerImage = uploaded.providerMedia
+    providerPreviewImage = await savePreparedMediaForChatPreview(optimizedImage, {
+      type: 'image', mediaLabel: 'foto de WhatsApp API'
+    })
   }
 
   if (cleanTransport !== 'qr' && link && !/^https:\/\//i.test(link)) {
@@ -16402,7 +16502,7 @@ export async function sendWhatsAppApiImageMessage({
     const deliveryError = config.provider === META_DIRECT_PROVIDER_NAME
       ? await resolveMetaDirectAmbiguousSendError(error, { phoneNumberId: phoneNumberId || config.phoneNumberId })
       : error
-    const retryDecision = await getOfficialApiFallbackDecision({
+    const retryDecision = await getOfficialApiMediaFallbackDecision({
       config,
       fromPhone,
       phoneNumberId,
@@ -16475,6 +16575,10 @@ export async function sendWhatsAppApiImageMessage({
       type: response.type || 'image',
       image: finalStoredImage,
       transport: 'api',
+      qrFallbackPolicy: {
+        authorized: allowQrFallback === true, replyWindow: true, media: true,
+        ...(cleanString(mediaAssetId) ? { mediaAssetId: cleanString(mediaAssetId) } : {})
+      },
       createTime: response.createTime || nowIso()
     },
     direction: 'outbound',
@@ -16502,6 +16606,7 @@ export async function sendWhatsAppApiDocumentMessage({
   from,
   documentDataUrl,
   documentUrl,
+  mediaAssetId,
   filename,
   mimeType,
   caption,
@@ -16614,31 +16719,41 @@ export async function sendWhatsAppApiDocumentMessage({
     filename,
     url: cleanDocumentUrl
   })) {
+    const fallbackPhoneRow = allowQrFallback
+      ? await findQrFallbackPhoneRowForSender({ phoneNumberId, fromPhone, phoneRow: config.selectedPhoneRow })
+      : null
+    if (fallbackPhoneRow?.id) {
+      return sendDocumentViaQrFallback({
+        phoneNumberId: fallbackPhoneRow.id, fromPhone, toPhone,
+        requestDocument: {
+          ...(link ? { link } : {}), ...privateDocumentMarker,
+          filename: fallbackFilename, mimeType,
+          ...(cleanCaption ? { caption: cleanCaption } : {})
+        },
+        documentDataUrl, externalId, contactId, publicBaseUrl, skipQrSendProtection,
+        fallbackReason: 'La API oficial no admite este tipo de archivo; Ristak usó el respaldo QR del mismo número.'
+      })
+    }
     throw new Error('La API oficial de WhatsApp no admite archivos ZIP ni XML. Usa un número conectado sólo por QR o envíalo por Messenger u otro canal compatible.')
   }
 
   if (!link) {
     const preparedDocument = await prepareWhatsAppDocumentForProviderUpload(documentDataUrl, filename, mimeType)
-    if (config.provider === META_DIRECT_PROVIDER_NAME) {
-      // Los documentos fiscales y otros adjuntos sensibles se suben directo a
-      // Meta como binario. No se publican en nuestro CDN sólo para que Meta los
-      // pueda descargar por URL.
-      providerDocument = await uploadPreparedMediaToMetaDirect({
-        media: preparedDocument,
-        type: 'document'
+    const uploaded = await uploadOfficialApiMediaOrFallback({
+      config, fromPhone, toPhone, phoneNumberId, contactId, externalId,
+      media: preparedDocument, type: 'document', allowQrFallback,
+      content: { document: { ...privateDocumentMarker, filename: fallbackFilename, mimeType: preparedDocument.mimeType, caption: cleanCaption } },
+      sendQrFallback: fallback => sendDocumentViaQrFallback({
+        ...fallback, fromPhone, toPhone, documentDataUrl,
+        requestDocument: { ...privateDocumentMarker, filename: fallbackFilename, mimeType: preparedDocument.mimeType, ...(cleanCaption ? { caption: cleanCaption } : {}) },
+        externalId, contactId, publicBaseUrl, skipQrSendProtection
       })
-      if (!sensitive) {
-        providerDocumentPreview = await savePreparedMediaForChatPreview(preparedDocument, {
-          type: 'document',
-          mediaLabel: 'documento de WhatsApp API'
-        })
-      }
-    } else {
-      providerDocument = await uploadPreparedMediaToYCloud({
-        config,
-        fromPhone,
-        media: preparedDocument,
-        type: 'document'
+    })
+    if (uploaded.qrResponse) return uploaded.qrResponse
+    providerDocument = uploaded.providerMedia
+    if (config.provider === META_DIRECT_PROVIDER_NAME && !sensitive) {
+      providerDocumentPreview = await savePreparedMediaForChatPreview(preparedDocument, {
+        type: 'document', mediaLabel: 'documento de WhatsApp API'
       })
     }
   }
@@ -16705,7 +16820,7 @@ export async function sendWhatsAppApiDocumentMessage({
     const deliveryError = config.provider === META_DIRECT_PROVIDER_NAME
       ? await resolveMetaDirectAmbiguousSendError(error, { phoneNumberId: phoneNumberId || config.phoneNumberId })
       : error
-    const retryDecision = await getOfficialApiFallbackDecision({
+    const retryDecision = await getOfficialApiMediaFallbackDecision({
       config,
       fromPhone,
       phoneNumberId,
@@ -16760,6 +16875,10 @@ export async function sendWhatsAppApiDocumentMessage({
         ...(response.document || {})
       },
       transport: 'api',
+      qrFallbackPolicy: {
+        authorized: allowQrFallback === true, replyWindow: true, media: true,
+        ...(cleanString(mediaAssetId) ? { mediaAssetId: cleanString(mediaAssetId) } : {})
+      },
       createTime: response.createTime || nowIso()
     },
     direction: 'outbound',
@@ -16790,6 +16909,7 @@ export async function sendWhatsAppApiVideoMessage({
   from,
   videoDataUrl,
   videoUrl,
+  mediaAssetId,
   caption,
   externalId,
   transport = 'api',
@@ -16909,18 +17029,21 @@ export async function sendWhatsAppApiVideoMessage({
 
   if (!link) {
     const media = await getPreparedVideo()
+    const uploaded = await uploadOfficialApiMediaOrFallback({
+      config, fromPhone, toPhone, phoneNumberId, contactId, externalId,
+      media, type: 'video', allowQrFallback,
+      content: { video: { caption: cleanCaption, mimeType: media.mimeType } },
+      sendQrFallback: async fallback => sendVideoViaQrFallback({
+        ...fallback, fromPhone, toPhone, videoDataUrl: qrVideoDataUrl,
+        requestVideo: await buildQrRequestVideo(),
+        externalId, contactId, publicBaseUrl, skipQrSendProtection
+      })
+    })
+    if (uploaded.qrResponse) return uploaded.qrResponse
+    providerVideo = uploaded.providerMedia
     if (config.provider === META_DIRECT_PROVIDER_NAME) {
       providerVideoPreview = await savePreparedMediaForChatPreview(media, {
-        type: 'video',
-        mediaLabel: 'video de WhatsApp API'
-      })
-      link = requirePublicMediaUrl(providerVideoPreview, publicBaseUrl, 'videos')
-    } else {
-      providerVideo = await uploadPreparedMediaToYCloud({
-        config,
-        fromPhone,
-        media,
-        type: 'video'
+        type: 'video', mediaLabel: 'video de WhatsApp API'
       })
     }
   }
@@ -16988,7 +17111,7 @@ export async function sendWhatsAppApiVideoMessage({
     const deliveryError = config.provider === META_DIRECT_PROVIDER_NAME
       ? await resolveMetaDirectAmbiguousSendError(error, { phoneNumberId: phoneNumberId || config.phoneNumberId })
       : error
-    const retryDecision = await getOfficialApiFallbackDecision({
+    const retryDecision = await getOfficialApiMediaFallbackDecision({
       config,
       fromPhone,
       phoneNumberId,
@@ -17040,6 +17163,10 @@ export async function sendWhatsAppApiVideoMessage({
         ...(response.video || {})
       },
       transport: 'api',
+      qrFallbackPolicy: {
+        authorized: allowQrFallback === true, replyWindow: true, media: true,
+        ...(cleanString(mediaAssetId) ? { mediaAssetId: cleanString(mediaAssetId) } : {})
+      },
       createTime: response.createTime || nowIso()
     },
     direction: 'outbound',

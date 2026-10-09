@@ -7377,7 +7377,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
       (sendAttachmentsThroughHighLevel && activeConversationChannel === 'whatsapp_api') ||
       (!sendAttachmentsThroughHighLevel && !sendAttachmentsThroughNativeMeta && nativeWhatsAppTransport === 'api')
     )
-    if (hasWhatsAppApiUnsupportedDocument && sendsAttachmentsThroughWhatsAppApi) {
+    if (hasWhatsAppApiUnsupportedDocument && sendsAttachmentsThroughWhatsAppApi && (sendAttachmentsThroughHighLevel || !selectedQrReady)) {
       showToast(
         'warning',
         'WhatsApp API no admite ZIP ni XML',

@@ -75,13 +75,14 @@ function cleanString(value) {
   return String(value).trim()
 }
 
-async function resolveRequestChatMedia(req, { type, urlField, expectedMediaTypes }) {
+async function resolveRequestChatMedia(req, { type, urlField, expectedMediaTypes, readBinary = false }) {
   const body = req.body || {}
   const resolveReference = type === 'document' ? resolveOutboundWhatsAppDocumentReference : resolveOutboundChatMediaReference
   return resolveReference({
     mediaAssetId: body[`${type}MediaAssetId`] || body.mediaAssetId,
     legacyUrl: body[urlField],
     expectedMediaTypes,
+    readBinary,
     user: req.user,
     licenseState: req.license
   })
@@ -1056,7 +1057,8 @@ export async function sendWhatsAppApiImageMessageView(req, res) {
     const media = await resolveRequestChatMedia(req, {
       type: 'image',
       urlField: 'imageUrl',
-      expectedMediaTypes: ['image']
+      expectedMediaTypes: ['image'],
+      readBinary: true
     })
     const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
@@ -1064,8 +1066,9 @@ export async function sendWhatsAppApiImageMessageView(req, res) {
       send: () => sendWhatsAppApiImageMessage({
         to: req.body?.to,
         from: req.body?.from,
-        imageDataUrl: req.body?.imageDataUrl,
+        imageDataUrl: media?.dataUrl || req.body?.imageDataUrl,
         imageUrl: media?.url,
+        mediaAssetId: media?.mediaAssetId,
         caption: req.body?.caption,
         externalId: req.body?.externalId,
         transport: req.body?.transport,
@@ -1080,8 +1083,9 @@ export async function sendWhatsAppApiImageMessageView(req, res) {
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando foto WhatsApp_API: ${error.message}`)
-    res.status(400).json({
+    res.status(error.status || 400).json({
       success: false,
+      code: error.code,
       error: error.message || 'No se pudo enviar la foto por WhatsApp_API'
     })
   }
@@ -1092,7 +1096,8 @@ export async function sendWhatsAppApiDocumentMessageView(req, res) {
     const media = await resolveRequestChatMedia(req, {
       type: 'document',
       urlField: 'documentUrl',
-      expectedMediaTypes: ['document', 'audio', 'video', 'other']
+      expectedMediaTypes: ['document', 'audio', 'video', 'other'],
+      readBinary: true
     })
     const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
@@ -1100,8 +1105,9 @@ export async function sendWhatsAppApiDocumentMessageView(req, res) {
       send: () => sendWhatsAppApiDocumentMessage({
         to: req.body?.to,
         from: req.body?.from,
-        documentDataUrl: media?.documentDataUrl || req.body?.documentDataUrl,
+        documentDataUrl: media?.documentDataUrl || media?.dataUrl || req.body?.documentDataUrl,
         documentUrl: media?.url,
+        mediaAssetId: media?.mediaAssetId,
         sensitive: media?.sensitive === true,
         filename: media?.filename || req.body?.filename,
         mimeType: media?.mimeType || req.body?.mimeType,
@@ -1132,7 +1138,8 @@ export async function sendWhatsAppApiVideoMessageView(req, res) {
     const media = await resolveRequestChatMedia(req, {
       type: 'video',
       urlField: 'videoUrl',
-      expectedMediaTypes: ['video']
+      expectedMediaTypes: ['video'],
+      readBinary: true
     })
     const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
@@ -1140,8 +1147,9 @@ export async function sendWhatsAppApiVideoMessageView(req, res) {
       send: () => sendWhatsAppApiVideoMessage({
         to: req.body?.to,
         from: req.body?.from,
-        videoDataUrl: req.body?.videoDataUrl,
+        videoDataUrl: media?.dataUrl || req.body?.videoDataUrl,
         videoUrl: media?.url,
+        mediaAssetId: media?.mediaAssetId,
         caption: req.body?.caption,
         externalId: req.body?.externalId,
         transport: req.body?.transport,
@@ -1156,8 +1164,9 @@ export async function sendWhatsAppApiVideoMessageView(req, res) {
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando video WhatsApp_API: ${error.message}`)
-    res.status(400).json({
+    res.status(error.status || 400).json({
       success: false,
+      code: error.code,
       error: error.message || 'No se pudo enviar el video por WhatsApp_API'
     })
   }

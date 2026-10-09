@@ -33,7 +33,7 @@ export async function resolveOutboundWhatsAppDocumentReference({
   ) : null
 
   if (!asset || Number(asset.is_public) !== 0) {
-    return resolveOutboundChatMediaReference({ ...publicOptions, mediaAssetId: assetId, businessId: tenant })
+    return resolveOutboundChatMediaReference({ ...publicOptions, mediaAssetId: assetId, businessId: tenant, user, licenseState })
   }
   if (asset.deleted_at || asset.status !== 'ready' || !['media', 'chat'].includes(asset.module)) {
     throw referenceError('El archivo ya no está disponible para enviarse desde este chat.', 404, 'chat_media_asset_unavailable')

@@ -9,11 +9,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import ffmpegPath from 'ffmpeg-static'
-import { db, databaseDialect, setAppConfig } from '../src/config/database.js'
+import { db, databaseDialect, getAppConfig, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import { serveMediaAssetFileHandler } from '../src/controllers/mediaController.js'
 import {
   getWhatsAppApiConfigKeys,
+  processMetaDirectWebhookPayload,
   sendWhatsAppApiAudioMessage,
   sendWhatsAppApiDocumentMessage,
   sendWhatsAppApiImageMessage,
@@ -27,6 +28,7 @@ import {
   resetWhatsAppQrServiceForTest,
   setBaileysRuntimeForTest
 } from '../src/services/whatsappQrService.js'
+import { resetWhatsAppQrDripRuntimeForTest, setWhatsAppQrDripSleepForTest } from '../src/services/whatsappQrDripService.js'
 
 const ONE_PIXEL_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWP4//8/AAX+Av5Y8msOAAAAAElFTkSuQmCC'
 const PDF_DATA_URL = 'data:application/pdf;base64,JVBERi0xLjQKJcTl8uXrp/Og0MTGCjEgMCBvYmoKPDwvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlIC9QYWdlcyAvQ291bnQgMD4+CmVuZG9iago='
@@ -197,13 +199,15 @@ function readMultipartUploadFile(options = {}) {
   const boundary = /boundary=([^;\s]+)/i.exec(contentType)?.[1]
   if (!boundary || !body.length) return null
 
-  const headerEnd = body.indexOf(Buffer.from('\r\n\r\n'))
+  const fileHeaderStart = body.indexOf(Buffer.from('Content-Disposition: form-data; name="file"'))
+  if (fileHeaderStart < 0) return null
+  const headerEnd = body.indexOf(Buffer.from('\r\n\r\n'), fileHeaderStart)
   const closing = Buffer.from(`\r\n--${boundary}`)
   const contentStart = headerEnd + 4
   const contentEnd = body.indexOf(closing, contentStart)
   if (headerEnd < 0 || contentEnd < contentStart) return null
 
-  const header = body.subarray(0, headerEnd).toString('utf8')
+  const header = body.subarray(fileHeaderStart, headerEnd).toString('utf8')
   const filename = /filename="([^"]*)"/i.exec(header)?.[1] || ''
   const mimeType = /(?:^|\r\n)Content-Type:\s*([^\r\n]+)/i.exec(header)?.[1] || ''
   const bytes = body.subarray(contentStart, contentEnd)
@@ -564,7 +568,260 @@ async function withMetaDirectInlineMediaCapture(callback) {
   }
 }
 
-test('Meta Direct envía una foto recién adjuntada usando la URL HTTPS que devolvió Bunny', async () => {
+async function withCompatibleQr({ phoneNumberId, businessPhone }, callback) {
+  const sentMessages = []
+  const connectedJid = `${normalizeDigits(businessPhone)}@s.whatsapp.net`
+  resetWhatsAppQrServiceForTest()
+  resetWhatsAppQrDripRuntimeForTest()
+  setWhatsAppQrDripSleepForTest(async () => {})
+  await db.run(`
+    INSERT INTO whatsapp_api_phone_numbers (
+      id, provider, waba_id, phone_number, display_phone_number,
+      api_send_enabled, qr_send_enabled, qr_status, status
+    ) VALUES (?, 'meta_direct', 'waba_meta_direct_audio_test', ?, ?, 1, 1, 'connected', 'CONNECTED')
+  `, [phoneNumberId, businessPhone, businessPhone])
+  await db.run(`
+    INSERT INTO whatsapp_qr_sessions (
+      id, phone_number_id, expected_phone, connected_phone, status,
+      consent_accepted, consent_text, consent_accepted_at, last_connected_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'connected', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [`qr_${phoneNumberId}`, phoneNumberId, businessPhone, businessPhone, QR_CONSENT_TEXT])
+  await db.run(`
+    INSERT INTO whatsapp_qr_auth_state (phone_number_id, auth_key, value_json, updated_at)
+    VALUES (?, 'creds', ?, CURRENT_TIMESTAMP)
+  `, [phoneNumberId, JSON.stringify({ me: { id: connectedJid }, registered: true })])
+  setBaileysRuntimeForTest(createFakeQrRuntime(sentMessages, connectedJid))
+  try {
+    return await callback(sentMessages)
+  } finally {
+    resetWhatsAppQrServiceForTest()
+    resetWhatsAppQrDripRuntimeForTest()
+    await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`])
+    await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId])
+    await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId])
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+  }
+}
+
+function mediaFailurePayload(capture, wamid, code = 131053) {
+  return {
+    object: 'whatsapp_business_account',
+    entry: [{ id: 'waba_meta_direct_audio_test', changes: [{ field: 'messages', value: {
+      messaging_product: 'whatsapp',
+      metadata: { phone_number_id: capture.phoneNumberId, display_phone_number: normalizeDigits(capture.businessPhone) },
+      statuses: [{ id: wamid, recipient_id: normalizeDigits(capture.to), timestamp: String(Math.floor(Date.now() / 1000)), status: 'failed', errors: [{ code, message: 'Media upload or download failed' }] }]
+    } }] }]
+  }
+}
+
+test('rechazos multimedia confirmados por Meta usan QR una sola vez aunque se repita el webhook', async () => {
+  await withFakeFfmpeg(async () => {
+    await withMetaDirectInlineMediaCapture(async capture => {
+      await withCompatibleQr(capture, async sentMessages => {
+        for (const type of ['image', 'video', 'document']) {
+          const send = { image: sendWhatsAppApiImageMessage, video: sendWhatsAppApiVideoMessage, document: sendWhatsAppApiDocumentMessage }[type]
+          const dataUrl = { image: ONE_PIXEL_PNG_DATA_URL, video: WEBM_VIDEO_DATA_URL, document: PDF_DATA_URL }[type]
+          const response = await send({
+            to: capture.to, from: capture.businessPhone, contactId: capture.contactId,
+            phoneNumberId: capture.phoneNumberId, [`${type}DataUrl`]: dataUrl,
+            filename: 'documento.pdf', mimeType: 'application/pdf', caption: `Prueba ${type}`
+          })
+          assert.equal(response.transport, 'api')
+          const payload = mediaFailurePayload(capture, response.wamid, type === 'video' ? 131052 : 131053)
+          await Promise.all([
+            processMetaDirectWebhookPayload({ payload, eventRowId: `media-failure-a-${randomUUID()}` }),
+            processMetaDirectWebhookPayload({ payload, eventRowId: `media-failure-b-${randomUUID()}` })
+          ])
+          await processMetaDirectWebhookPayload({ payload, eventRowId: `media-failure-c-${randomUUID()}` })
+          const stored = await db.get('SELECT id, status, transport, routing_reason, error_code FROM whatsapp_api_messages WHERE id = ?', [response.localMessageId])
+          assert.equal(stored.transport, 'qr')
+          assert.ok(['sent', 'delivered', 'read'].includes(stored.status))
+          assert.equal(stored.error_code, null)
+          assert.match(stored.routing_reason, /respaldo QR del mismo número/)
+          const attempt = await db.get('SELECT status, attempt_count FROM whatsapp_api_qr_fallback_attempts WHERE api_message_id = ?', [stored.id])
+          assert.deepEqual(attempt, { status: 'sent', attempt_count: 1 })
+          assert.equal(sentMessages.at(-1).payload[type] instanceof Buffer, true)
+        }
+        assert.equal(sentMessages.length, 3)
+        const rows = await db.all("SELECT id FROM whatsapp_api_messages WHERE contact_id = ? AND direction = 'outbound'", [capture.contactId])
+        assert.equal(rows.length, 3)
+      })
+    })
+  })
+})
+
+test('un webhook multimedia no autoriza QR si el envío original lo deshabilitó', async () => {
+  await withMetaDirectInlineMediaCapture(async capture => {
+    await withCompatibleQr(capture, async sentMessages => {
+      const response = await sendWhatsAppApiImageMessage({
+        to: capture.to, from: capture.businessPhone, contactId: capture.contactId,
+        phoneNumberId: capture.phoneNumberId, imageDataUrl: ONE_PIXEL_PNG_DATA_URL, allowQrFallback: false
+      })
+      await processMetaDirectWebhookPayload({ payload: mediaFailurePayload(capture, response.wamid) })
+      assert.equal(sentMessages.length, 0)
+      const stored = await db.get('SELECT transport, status, error_code FROM whatsapp_api_messages WHERE id = ?', [response.localMessageId])
+      assert.deepEqual(stored, { transport: 'api', status: 'failed', error_code: '131053' })
+    })
+  })
+})
+
+test('un documento privado rechazado después por Meta sale por QR sin publicar sus bytes', async () => {
+  await withMetaDirectInlineMediaCapture(async capture => {
+    await withCompatibleQr(capture, async sentMessages => {
+      const { uploadMediaAssetFromDataUrl, softDeleteMediaAsset } = await import('../src/services/mediaStorageService.js')
+      const asset = await uploadMediaAssetFromDataUrl({ dataUrl: PDF_DATA_URL, filename: 'privado.pdf', module: 'chat', isPublic: false, skipCompression: true })
+      try {
+        const before = await db.get('SELECT COUNT(*) AS total FROM media_assets')
+        const response = await sendWhatsAppApiDocumentMessage({
+          to: capture.to, from: capture.businessPhone, contactId: capture.contactId,
+          phoneNumberId: capture.phoneNumberId, documentDataUrl: PDF_DATA_URL,
+          mediaAssetId: asset.id, filename: 'privado.pdf', mimeType: 'application/pdf', sensitive: true
+        })
+        await processMetaDirectWebhookPayload({ payload: mediaFailurePayload(capture, response.wamid) })
+        assert.equal(sentMessages.length, 1)
+        assert.deepEqual(sentMessages[0].payload.document, Buffer.from(PDF_DATA_URL.split(',')[1], 'base64'))
+        const stored = await db.get('SELECT transport, media_url, raw_payload_json FROM whatsapp_api_messages WHERE id = ?', [response.localMessageId])
+        assert.equal(stored.transport, 'qr')
+        assert.equal(stored.media_url, null)
+        assert.equal(stored.raw_payload_json.includes(PDF_DATA_URL), false)
+        assert.equal(JSON.parse(stored.raw_payload_json).ristakPrivateMedia, true)
+        assert.deepEqual(await db.get('SELECT COUNT(*) AS total FROM media_assets'), before)
+        assert.equal(Number((await db.get('SELECT is_public FROM media_assets WHERE id = ?', [asset.id])).is_public), 0)
+      } finally {
+        await softDeleteMediaAsset(asset.id)
+        await db.run('DELETE FROM media_assets WHERE id = ?', [asset.id])
+      }
+    })
+  })
+})
+
+test('foto, video y documento usan el QR del mismo número cuando falla el upload oficial', async () => {
+  await withFakeFfmpeg(async () => {
+    await withMetaDirectInlineMediaCapture(async capture => {
+      await withCompatibleQr(capture, async sentMessages => {
+        let uploads = 0
+        let messagePosts = 0
+        setMetaDirectFetchForTest(async (url, options = {}) => {
+          if (String(url).endsWith('/media')) {
+            uploads += 1
+            if (uploads === 2) throw Object.assign(new Error('Upload connection lost'), { code: 'ECONNRESET' })
+            return ycloudJsonResponse({ error: { code: 2, message: 'Media upload unavailable' } }, { status: 503 })
+          }
+          if (String(url).endsWith('/messages')) messagePosts += 1
+          return ycloudJsonResponse({ ok: true })
+        })
+        for (const type of ['image', 'video', 'document']) {
+          const send = { image: sendWhatsAppApiImageMessage, video: sendWhatsAppApiVideoMessage, document: sendWhatsAppApiDocumentMessage }[type]
+          const dataUrl = { image: ONE_PIXEL_PNG_DATA_URL, video: WEBM_VIDEO_DATA_URL, document: PDF_DATA_URL }[type]
+          const response = await send({
+            to: capture.to, from: capture.businessPhone, phoneNumberId: capture.phoneNumberId,
+            contactId: capture.contactId, [`${type}DataUrl`]: dataUrl,
+            caption: 'Respaldo del adjunto', filename: 'privado.pdf', mimeType: 'application/pdf',
+            sensitive: type === 'document', skipQrSendProtection: true
+          })
+          assert.equal(response.transport, 'qr')
+          assert.equal(response.fallback, true)
+          assert.match(response.fallbackReason, /no pudo recibir el archivo/)
+          assert.equal(sentMessages.at(-1).payload[type] instanceof Buffer, true)
+          assert.equal(sentMessages.at(-1).payload.caption, 'Respaldo del adjunto')
+          const stored = await db.get('SELECT provider, source_adapter, transport, media_url, raw_payload_json FROM whatsapp_api_messages WHERE id = ?', [response.localMessageId])
+          assert.equal(stored.source_adapter, 'baileys')
+          assert.equal(stored.transport, 'qr')
+          if (type === 'document') {
+            assert.equal(stored.media_url, null)
+            assert.equal(JSON.parse(stored.raw_payload_json).ristakPrivateMedia, true)
+          }
+        }
+        assert.equal(uploads, 3)
+        assert.equal(messagePosts, 0)
+        assert.equal(sentMessages.length, 3)
+      })
+    })
+  })
+})
+
+test('no usa QR después de un error ambiguo al mandar el mensaje ni cuando el respaldo está desautorizado', async () => {
+  await withMetaDirectInlineMediaCapture(async capture => {
+    await withCompatibleQr(capture, async sentMessages => {
+      let failUpload = false
+      let messagePosts = 0
+      setMetaDirectFetchForTest(async url => {
+        if (String(url).endsWith('/media')) {
+          if (failUpload) return ycloudJsonResponse({ error: { code: 2, message: 'Upload unavailable' } }, { status: 503 })
+          return ycloudJsonResponse({ id: 'uploaded_image' })
+        }
+        if (String(url).endsWith('/messages')) {
+          messagePosts += 1
+          throw Object.assign(new Error('Response lost'), { code: 'ECONNRESET' })
+        }
+        return ycloudJsonResponse({ ok: true })
+      })
+      const args = { to: capture.to, from: capture.businessPhone, contactId: capture.contactId, phoneNumberId: capture.phoneNumberId, imageDataUrl: ONE_PIXEL_PNG_DATA_URL, skipQrSendProtection: true }
+      await assert.rejects(() => sendWhatsAppApiImageMessage(args), /Response lost/)
+      assert.equal(messagePosts, 1)
+      failUpload = true
+      await assert.rejects(() => sendWhatsAppApiImageMessage({ ...args, allowQrFallback: false }), /Upload unavailable/)
+      assert.equal(sentMessages.length, 0)
+      const failed = await db.all("SELECT status, error_message FROM whatsapp_api_messages WHERE contact_id = ? AND direction = 'outbound'", [capture.contactId])
+      assert.equal(failed.length, 2)
+      assert.equal(failed.every(row => row.status === 'failed' && row.error_message), true)
+    })
+  })
+})
+
+test('un QR de otro remitente no rescata el upload fallido', async () => {
+  await withMetaDirectInlineMediaCapture(async capture => {
+    await withCompatibleQr({ phoneNumberId: `other_qr_${randomUUID()}`, businessPhone: '+526562222222' }, async sentMessages => {
+      setMetaDirectFetchForTest(async () => ycloudJsonResponse({ error: { code: 2, message: 'Upload unavailable' } }, { status: 503 }))
+      await assert.rejects(() => sendWhatsAppApiImageMessage({
+        to: capture.to, from: capture.businessPhone, contactId: capture.contactId,
+        phoneNumberId: capture.phoneNumberId, imageDataUrl: ONE_PIXEL_PNG_DATA_URL, skipQrSendProtection: true
+      }), /Upload unavailable/)
+      assert.equal(sentMessages.length, 0)
+    })
+  })
+})
+
+test('un token Meta revocado durante el upload pide reconexión y conserva el respaldo QR', async () => {
+  await withMetaDirectInlineMediaCapture(async capture => {
+    await withCompatibleQr(capture, async sentMessages => {
+      setMetaDirectFetchForTest(async () => ycloudJsonResponse({ error: { code: 190, message: 'Access token expired' } }, { status: 401 }))
+      const response = await sendWhatsAppApiImageMessage({
+        to: capture.to, from: capture.businessPhone, contactId: capture.contactId,
+        phoneNumberId: capture.phoneNumberId, imageDataUrl: ONE_PIXEL_PNG_DATA_URL, skipQrSendProtection: true
+      })
+      assert.equal(response.transport, 'qr')
+      assert.equal(sentMessages.length, 1)
+      const row = await db.get('SELECT status, api_send_enabled, qr_send_enabled FROM whatsapp_api_phone_numbers WHERE id = ?', [capture.phoneNumberId])
+      assert.deepEqual(row, { status: 'AUTHORIZATION_REQUIRED', api_send_enabled: 0, qr_send_enabled: 1 })
+      assert.equal(await getAppConfig(getWhatsAppApiConfigKeys().metaStatus), 'reconnect_required')
+    })
+  })
+})
+
+test('ZIP y XML van por el QR compatible sin intentar el upload oficial', async () => {
+  await withMetaDirectInlineMediaCapture(async capture => {
+    await withCompatibleQr(capture, async sentMessages => {
+      for (const [mimeType, filename] of [['application/zip', 'archivos.zip'], ['application/xml', 'factura.xml']]) {
+        const response = await sendWhatsAppApiDocumentMessage({
+          to: capture.to, from: capture.businessPhone, contactId: capture.contactId,
+          phoneNumberId: capture.phoneNumberId,
+          documentDataUrl: `data:${mimeType};base64,${Buffer.from('archivo de prueba').toString('base64')}`,
+          mimeType, filename, caption: 'Archivo QR', skipQrSendProtection: true
+        })
+        assert.equal(response.transport, 'qr')
+        assert.equal(sentMessages.at(-1).payload.fileName, filename)
+        assert.equal(sentMessages.at(-1).payload.mimetype, mimeType)
+        assert.match(response.routingReason, /no admite este tipo/)
+      }
+      assert.equal(capture.uploads.length, 0)
+      assert.equal(capture.captures.length, 0)
+      assert.equal(sentMessages.length, 2)
+    })
+  })
+})
+
+test('Meta Direct sube la foto por bytes y conserva Bunny únicamente para su preview', async () => {
   await withMetaDirectInlineMediaCapture(async ({ captures, uploads, to, contactId, businessPhone, phoneNumberId }) => {
     const storedFiles = new Map()
     const server = http.createServer((req, res) => {
@@ -598,12 +855,12 @@ test('Meta Direct envía una foto recién adjuntada usando la URL HTTPS que devo
         allowQrFallback: false
       })
       assert.equal(captures.length, 1)
-      assert.equal(uploads.length, 0)
+      assert.equal(uploads.length, 1)
       assert.equal(response.provider, 'meta_direct')
       assert.equal(response.transport, 'api')
       const asset = await db.get('SELECT public_url, bunny_path FROM media_assets WHERE id = ?', [response.image.previewMediaAssetId])
       assert.match(asset.public_url, /^https:\/\/cdn\.example\.test\//)
-      assert.deepEqual(captures[0].image, { link: asset.public_url, caption: 'Foto recién adjuntada' })
+      assert.deepEqual(captures[0].image, { id: 'meta_provider_media_1', caption: 'Foto recién adjuntada' })
       const bytes = storedFiles.get(`/inline-media-test/${asset.bunny_path}`)
       assert.ok(bytes?.length)
       assert.equal(bytes.subarray(0, 2).toString('hex'), 'ffd8')
@@ -617,9 +874,9 @@ test('Meta Direct envía una foto recién adjuntada usando la URL HTTPS que devo
   })
 })
 
-test('Meta Direct resuelve fotos y videos adjuntos desde la ruta pública de una instalación HTTPS', async () => {
+test('Meta Direct envía fotos y videos por Media ID conservando sus previews internos', async () => {
   await withFakeFfmpeg(async () => {
-    await withMetaDirectInlineMediaCapture(async ({ captures, to, contactId, businessPhone, phoneNumberId }) => {
+    await withMetaDirectInlineMediaCapture(async ({ captures, uploads, to, contactId, businessPhone, phoneNumberId }) => {
       for (const type of ['image', 'video']) {
         const send = type === 'image' ? sendWhatsAppApiImageMessage : sendWhatsAppApiVideoMessage
         const response = await send({
@@ -631,27 +888,57 @@ test('Meta Direct resuelve fotos y videos adjuntos desde la ruta pública de una
         })
         const asset = await db.get('SELECT public_url FROM media_assets WHERE id = ?', [response[type].previewMediaAssetId])
         assert.match(asset.public_url, /^\/media\/assets\/.+\/file$/)
-        assert.equal(captures.at(-1)[type].link, `https://ristak.test${asset.public_url}`)
+        assert.equal(captures.at(-1)[type].id, `meta_provider_media_${uploads.length}`)
+        assert.equal(captures.at(-1)[type].link, undefined)
         assert.equal(response.transport, 'api')
         const message = await db.get('SELECT media_url FROM whatsapp_api_messages WHERE id = ?', [response.localMessageId])
         assert.equal(message.media_url, asset.public_url)
       }
       assert.deepEqual(captures.map(message => message.type), ['image', 'video'])
+      assert.equal(uploads.length, 2)
     })
   })
 })
 
-test('Meta Direct bloquea una foto local sin URL pública HTTPS antes de enviar', async () => {
+test('Meta Direct envía una foto aunque el preview no tenga una URL pública HTTPS', async () => {
   await withMetaDirectInlineMediaCapture(async ({ captures, uploads, to, contactId, businessPhone, phoneNumberId }) => {
-    await assert.rejects(() => sendWhatsAppApiImageMessage({
+    const response = await sendWhatsAppApiImageMessage({
       to, from: businessPhone, contactId, phoneNumberId,
       imageDataUrl: ONE_PIXEL_PNG_DATA_URL,
       publicBaseUrl: 'http://localhost:3001',
       allowQrFallback: false
-    }), /URL HTTPS/)
-    assert.equal(captures.length, 0)
-    assert.equal(uploads.length, 0)
+    })
+    assert.equal(response.transport, 'api')
+    assert.equal(captures.length, 1)
+    assert.deepEqual(captures[0].image, { id: 'meta_provider_media_1' })
+    assert.equal(uploads.length, 1)
   })
+})
+
+test('Meta Direct recibe un MP4 reproducible después de convertir un video WebM real', async () => {
+  const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-real-video-'))
+  const inputPath = join(folder, 'original.webm')
+  const uploadedPath = join(folder, 'uploaded.mp4')
+  try {
+    await execFile(ffmpegPath, ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=160x120:d=0.2', '-c:v', 'libvpx', inputPath])
+    const input = await fs.readFile(inputPath)
+    await withMetaDirectInlineMediaCapture(async capture => {
+      const result = await sendWhatsAppApiVideoMessage({
+        to: capture.to, from: capture.businessPhone, contactId: capture.contactId,
+        phoneNumberId: capture.phoneNumberId, videoDataUrl: `data:video/webm;base64,${input.toString('base64')}`, allowQrFallback: false
+      })
+      assert.equal(result.transport, 'api')
+      const file = readMultipartUploadFile(capture.uploads[0])
+      assert.equal(file.type, 'video/mp4')
+      const bytes = Buffer.from(await file.arrayBuffer())
+      assert.equal(bytes.subarray(4, 8).toString('ascii'), 'ftyp')
+      await fs.writeFile(uploadedPath, bytes)
+      await execFile(ffmpegPath, ['-v', 'error', '-i', uploadedPath, '-f', 'null', '-'])
+      assert.deepEqual(capture.captures[0].video, { id: 'meta_provider_media_1' })
+    })
+  } finally {
+    await fs.rm(folder, { recursive: true, force: true })
+  }
 })
 
 test('envío QR de imagen con dataUrl conserva preview interno en historial', async () => {
@@ -1519,6 +1806,50 @@ test('MCP envía un PDF privado de Media por bytes sin publicarlo ni duplicar el
       await db.run('DELETE FROM users WHERE id = ?', [actor.id])
       await db.run('DELETE FROM oauth_clients WHERE client_id = ?', [client.client_id])
       await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+    }
+  })
+})
+
+test('MCP envía una foto WebP de Media como JPEG por API respetando permisos e idempotencia', async () => {
+  await withMetaDirectInlineMediaCapture(async capture => {
+    const { uploadMediaAssetFromDataUrl, softDeleteMediaAsset } = await import('../src/services/mediaStorageService.js')
+    const { callRegisteredMcpTool } = await import('../src/mcp/toolRegistry.js')
+    const { invokeController } = await import('../src/mcp/controllerInvoker.js')
+    const { registerOAuthClient } = await import('../src/utils/oauthTokens.js')
+    const client = await registerOAuthClient({ clientName: 'Public media test', redirectUris: ['https://ristak.example.test/callback'] })
+    const username = `public_image_${randomUUID()}`
+    await db.run("INSERT INTO users (username, password_hash, role, is_active) VALUES (?, 'fixture-not-used-for-login', 'admin', 1)", [username])
+    const actor = await db.get('SELECT id FROM users WHERE username = ?', [username])
+    await db.run("INSERT INTO whatsapp_api_phone_numbers (id, phone_number, provider, api_send_enabled) VALUES (?, ?, 'meta_direct', 1)", [capture.phoneNumberId, capture.businessPhone])
+    const asset = await uploadMediaAssetFromDataUrl({ dataUrl: ONE_PIXEL_PNG_DATA_URL, filename: 'foto.png', module: 'media', businessId: 'default', userId: actor.id, isPublic: true })
+    assert.equal(asset.mimeType, 'image/webp')
+    const context = { user: { id: actor.id, userId: actor.id, role: 'admin' }, scopes: ['ristak.execute'], license: { allowed: true, enforced: false }, baseUrl: 'http://localhost:3001', clientId: client.client_id }
+    context.invoke = function (handler, request) { return invokeController(handler, this, request) }
+    const args = { contactId: capture.contactId, to: capture.to, from: capture.businessPhone, phoneNumberId: capture.phoneNumberId, transport: 'api', mediaAssetId: asset.id, idempotencyKey: `public-image-${randomUUID()}` }
+    try {
+      await assert.rejects(() => callRegisteredMcpTool({ ...context, user: { ...context.user, role: 'employee', access_config: { chat: 'write' } } }, 'chat_send_whatsapp_image', { ...args, idempotencyKey: `denied-image-${randomUUID()}` }), error => error.status === 403 && error.code === 'media_read_access_required')
+      assert.equal(capture.uploads.length, 0)
+      const result = await callRegisteredMcpTool(context, 'chat_send_whatsapp_image', args)
+      assert.equal(result.success, true)
+      assert.equal(result.data.transport, 'api')
+      assert.equal(capture.uploads.length, 1)
+      const file = readMultipartUploadFile(capture.uploads[0])
+      assert.equal(file.type, 'image/jpeg')
+      const bytes = Buffer.from(await file.arrayBuffer())
+      assert.equal(bytes.subarray(0, 2).toString('hex'), 'ffd8')
+      assert.deepEqual(capture.captures[0].image, { id: 'meta_provider_media_1' })
+      assert.equal(JSON.stringify(result).includes('data:image/'), false)
+      const replay = await callRegisteredMcpTool(context, 'chat_send_whatsapp_image', args)
+      assert.equal(replay.data.localMessageId, result.data.localMessageId)
+      assert.equal(capture.captures.length, 1)
+      assert.equal(capture.uploads.length, 1)
+    } finally {
+      await db.run('DELETE FROM mcp_idempotency_keys WHERE client_id = ?', [client.client_id])
+      await softDeleteMediaAsset(asset.id)
+      await db.run('DELETE FROM media_assets WHERE id = ?', [asset.id])
+      await db.run('DELETE FROM users WHERE id = ?', [actor.id])
+      await db.run('DELETE FROM oauth_clients WHERE client_id = ?', [client.client_id])
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [capture.phoneNumberId])
     }
   })
 })

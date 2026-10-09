@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 import { db } from '../src/config/database.js'
 import {
@@ -101,5 +104,43 @@ test('mediaAssetId manda sobre la URL del cliente y exige asset chat listo del t
     )
   } finally {
     await db.run('DELETE FROM media_assets WHERE id = ?', [id])
+  }
+})
+
+test('Media pública exige permiso y licencia, y puede entregar bytes sin depender del URL de preview', async () => {
+  const id = `library_media_${randomUUID()}`
+  const folder = await mkdtemp(join(tmpdir(), 'ristak-public-media-'))
+  const localPath = join(folder, 'foto.webp')
+  const bytes = Buffer.from('stored-image-bytes')
+  await writeFile(localPath, bytes)
+  await db.run(`INSERT INTO media_assets (
+    id, business_id, original_filename, public_url, mime_type, media_type,
+    status, storage_provider, module, is_public, size_processed, metadata_json
+  ) VALUES (?, 'default', 'foto.webp', ?, 'image/webp', 'image',
+    'ready', 'local', 'media', 1, ?, ?)`, [id, `/media/assets/${id}/file`, bytes.length, JSON.stringify({ localPath })])
+  const options = { mediaAssetId: id, expectedMediaTypes: ['image'], readBinary: true, user: { id: 1, role: 'employee', access_config: { settings_media: 'read' } }, licenseState: { allowed: true, enforced: false } }
+  try {
+    for (const denied of [
+      { user: null }, { user: { role: 'admin' } },
+      { user: { id: 1, role: 'employee', access_config: { chat: 'write' } } },
+      { licenseState: { allowed: false, enforced: true } }
+    ]) {
+      await assert.rejects(() => resolveOutboundChatMediaReference({ ...options, ...denied }), error => error.status === 403 && error.code === 'media_read_access_required')
+    }
+    const result = await resolveOutboundChatMediaReference(options)
+    assert.equal(result.url, '')
+    assert.equal(result.mediaAssetId, id)
+    assert.deepEqual(Buffer.from(result.dataUrl.split(',')[1], 'base64'), bytes)
+    await assert.rejects(() => resolveOutboundChatMediaReference({ ...options, businessId: 'another-account' }), error => error.status === 404)
+    for (const [column, invalid, original] of [['module', 'automations', 'media'], ['status', 'pending', 'ready'], ['is_public', 0, 1]]) {
+      await db.run(`UPDATE media_assets SET ${column} = ? WHERE id = ?`, [invalid, id])
+      await assert.rejects(() => resolveOutboundChatMediaReference(options), error => error.status === 404)
+      await db.run(`UPDATE media_assets SET ${column} = ? WHERE id = ?`, [original, id])
+    }
+    await writeFile(localPath, Buffer.alloc(25 * 1024 * 1024 + 1))
+    await assert.rejects(() => resolveOutboundChatMediaReference(options), error => error.status === 413 && error.code === 'media_download_too_large')
+  } finally {
+    await db.run('DELETE FROM media_assets WHERE id = ?', [id])
+    await rm(folder, { recursive: true, force: true })
   }
 })

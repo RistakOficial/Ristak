@@ -14279,7 +14279,7 @@ export const PhoneChat: React.FC = () => {
     }
 
     if (
-      resolvedTransport === 'api' &&
+      resolvedTransport === 'api' && !selectedQrReady &&
       attachmentsToSend.some(isWhatsAppApiUnsupportedDocumentAttachment)
     ) {
       showToast(

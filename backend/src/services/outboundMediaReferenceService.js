@@ -4,6 +4,8 @@ import { isIP } from 'net'
 import fetch from 'node-fetch'
 
 import { db } from '../config/database.js'
+import { hasUserAccess } from '../utils/userAccess.js'
+import { hasFeature } from './licenseService.js'
 
 function cleanString(value = '') {
   return String(value || '').trim()
@@ -325,14 +327,20 @@ function normalizeExpectedTypes(expectedMediaTypes = []) {
   )
 }
 
-function assertUsableAsset(row, expectedTypes) {
+async function assertUsableAsset(row, expectedTypes, { user, licenseState } = {}) {
   if (!row || row.deleted_at || cleanString(row.status).toLowerCase() !== 'ready' ||
-      cleanString(row.module).toLowerCase() !== 'chat' || Number(row.is_public) !== 1) {
+      !['chat', 'media'].includes(cleanString(row.module).toLowerCase()) || Number(row.is_public) !== 1) {
     throw mediaReferenceError(
       'El archivo ya no está disponible para enviarse desde este chat.',
       404,
       'chat_media_asset_unavailable'
     )
+  }
+  if (cleanString(row.module).toLowerCase() === 'media' && (
+    !(user?.id || user?.userId) || !hasUserAccess(user, 'settings_media', 'read') ||
+    !(await hasFeature('settings_media', { state: licenseState, email: user?.email || user?.username }))
+  )) {
+    throw mediaReferenceError('Necesitas acceso de lectura a Media para enviar este archivo.', 403, 'media_read_access_required')
   }
   if (expectedTypes.size && !expectedTypes.has(cleanString(row.media_type).toLowerCase())) {
     throw mediaReferenceError(
@@ -347,6 +355,33 @@ function assertUsableAsset(row, expectedTypes) {
       409,
       'chat_media_asset_not_public'
     )
+  }
+}
+
+export async function readOutboundMediaAssetDataUrl(asset, { maxBytes = 25 * 1024 * 1024 } = {}) {
+  const { getMediaAssetDownloadFile } = await import('./mediaStorageService.js')
+  const file = await getMediaAssetDownloadFile(asset.id)
+  try {
+    if (Number(file.contentLength) > maxBytes) {
+      throw mediaReferenceError('El archivo supera el límite permitido para Chat.', 413, 'media_download_too_large')
+    }
+    const chunks = []
+    let size = 0
+    for await (const chunk of file.stream) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      size += bytes.length
+      if (size > maxBytes) {
+        throw mediaReferenceError('El archivo supera el límite permitido para Chat.', 413, 'media_download_too_large')
+      }
+      chunks.push(bytes)
+    }
+    if (!size || (Number.isSafeInteger(file.contentLength) && size !== file.contentLength)) {
+      throw mediaReferenceError('No se pudo leer completo el archivo.', 502, 'media_download_incomplete')
+    }
+    return `data:${asset.mime_type};base64,${Buffer.concat(chunks, size).toString('base64')}`
+  } finally {
+    file.stream?.destroy?.()
+    await file.cleanup?.()
   }
 }
 
@@ -381,7 +416,10 @@ export async function resolveOutboundChatMediaReference({
   mediaAssetId = '',
   legacyUrl = '',
   businessId = '',
-  expectedMediaTypes = []
+  expectedMediaTypes = [],
+  user = null,
+  licenseState = null,
+  readBinary = false
 } = {}) {
   const cleanBusinessId = normalizeBusinessId(businessId)
   const cleanAssetId = cleanString(mediaAssetId)
@@ -391,17 +429,19 @@ export async function resolveOutboundChatMediaReference({
   let asset = null
   if (cleanAssetId) {
     asset = await findAssetById({ businessId: cleanBusinessId, mediaAssetId: cleanAssetId })
-    assertUsableAsset(asset, expectedTypes)
+    await assertUsableAsset(asset, expectedTypes, { user, licenseState })
   } else if (cleanLegacyUrl) {
     asset = await findAssetByUrl({ businessId: cleanBusinessId, url: cleanLegacyUrl })
-    if (asset) assertUsableAsset(asset, expectedTypes)
+    if (asset) await assertUsableAsset(asset, expectedTypes, { user, licenseState })
   } else {
     return null
   }
 
-  const url = await assertSafeOutboundMediaUrl(asset?.public_url || cleanLegacyUrl)
+  const dataUrl = asset && readBinary ? await readOutboundMediaAssetDataUrl(asset) : ''
+  const url = dataUrl ? '' : await assertSafeOutboundMediaUrl(asset?.public_url || cleanLegacyUrl)
   return {
     url,
+    ...(dataUrl ? { dataUrl } : {}),
     mediaAssetId: asset?.id || null,
     mimeType: cleanString(asset?.mime_type),
     mediaType: cleanString(asset?.media_type),
