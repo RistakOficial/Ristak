@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import ffmpegPath from 'ffmpeg-static'
-import { db, setAppConfig } from '../src/config/database.js'
+import { db, databaseDialect, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import { serveMediaAssetFileHandler } from '../src/controllers/mediaController.js'
 import {
@@ -1441,6 +1441,84 @@ test('Meta Direct sube documentos binarios al proveedor sin crear una URL públi
       await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR id = ? OR phone = ? OR to_phone = ?', [contactId, inboundId, to, to]).catch(() => undefined)
       await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to]).catch(() => undefined)
       await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, to]).catch(() => undefined)
+    }
+  })
+})
+
+test('MCP envía un PDF privado de Media por bytes sin publicarlo ni duplicar el envío', async () => {
+  await withMetaDirectInlineMediaCapture(async ({ captures, uploads, to, contactId, businessPhone, phoneNumberId }) => {
+    const { uploadMediaAssetFromDataUrl, softDeleteMediaAsset } = await import('../src/services/mediaStorageService.js')
+    const { callRegisteredMcpTool } = await import('../src/mcp/toolRegistry.js')
+    const { invokeController } = await import('../src/mcp/controllerInvoker.js')
+    if (databaseDialect === 'sqlite') {
+      const controlPlane = await db.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mcp_idempotency_keys'")
+      if (!controlPlane) await db.exec(await fs.readFile(new URL('../migrations/versioned/129_mcp_oauth_control_plane.sqlite.sql', import.meta.url), 'utf8'))
+    }
+    const { registerOAuthClient } = await import('../src/utils/oauthTokens.js')
+    const client = await registerOAuthClient({ clientName: 'Private document test', redirectUris: ['https://ristak.example.test/callback'] })
+    await db.run("INSERT INTO whatsapp_api_phone_numbers (id, phone_number, provider, api_send_enabled) VALUES (?, ?, 'meta_direct', 1)", [phoneNumberId, businessPhone])
+    const username = `private_document_${randomUUID()}`
+    await db.run("INSERT INTO users (username, password_hash, role, is_active) VALUES (?, 'fixture-not-used-for-login', 'admin', 1)", [username])
+    const actor = await db.get('SELECT id FROM users WHERE username = ?', [username])
+    const asset = await uploadMediaAssetFromDataUrl({
+      dataUrl: PDF_DATA_URL, filename: 'capacitacion.pdf', module: 'media',
+      businessId: 'default', userId: actor.id, isPublic: false, skipCompression: true
+    })
+    const before = await db.get('SELECT COUNT(*) AS total FROM media_assets')
+    const context = {
+      user: { id: actor.id, userId: actor.id, role: 'admin' },
+      scopes: ['ristak.execute'], license: { allowed: true, enforced: false },
+      baseUrl: 'https://ristak.example.test', clientId: client.client_id
+    }
+    context.invoke = function (handler, request) { return invokeController(handler, this, request) }
+    const args = {
+      contactId, to, from: businessPhone, phoneNumberId, transport: 'api',
+      mediaAssetId: asset.id, idempotencyKey: `private-pdf-${randomUUID()}`
+    }
+    try {
+      await assert.rejects(
+        () => callRegisteredMcpTool({ ...context, user: { ...context.user, role: 'employee', access_config: { chat: 'write' } } }, 'chat_send_whatsapp_document', {
+          ...args, idempotencyKey: `denied-private-pdf-${randomUUID()}`
+        }),
+        error => error.status === 403 && error.code === 'private_media_read_access_required'
+      )
+      await assert.rejects(
+        () => callRegisteredMcpTool({ ...context, license: { allowed: false, enforced: true } }, 'chat_send_whatsapp_document', {
+          ...args, idempotencyKey: `denied-license-pdf-${randomUUID()}`
+        }),
+        error => error.status === 403 && error.code === 'private_media_read_access_required'
+      )
+      assert.equal(captures.length, 0)
+      assert.equal(uploads.length, 0)
+      const result = await callRegisteredMcpTool(context, 'chat_send_whatsapp_document', args)
+      assert.equal(result.success, true)
+      assert.equal(uploads.length, 1)
+      assert.equal(uploads[0].body.includes(Buffer.from(PDF_DATA_URL.split(',')[1], 'base64')), true)
+      assert.deepEqual(captures[0].document, { id: 'meta_provider_media_1', filename: 'capacitacion.pdf' })
+      assert.equal(result.data.document.ristakPrivateMedia, true)
+      const row = await db.get('SELECT is_public, status FROM media_assets WHERE id = ?', [asset.id])
+      assert.equal(Number(row.is_public), 0)
+      assert.equal(row.status, 'ready')
+      assert.deepEqual(await db.get('SELECT COUNT(*) AS total FROM media_assets'), before)
+      const message = await db.get('SELECT media_url, raw_payload_json FROM whatsapp_api_messages WHERE id = ?', [result.data.localMessageId])
+      assert.equal(message.media_url, null)
+      assert.equal(JSON.parse(message.raw_payload_json).ristakPrivateMedia, true)
+      for (const value of [JSON.stringify(result), message.raw_payload_json]) {
+        if (asset.publicUrl) assert.equal(value.includes(asset.publicUrl), false)
+        assert.equal(value.includes(PDF_DATA_URL), false)
+      }
+      const replay = await callRegisteredMcpTool(context, 'chat_send_whatsapp_document', args)
+      assert.equal(replay.success, true)
+      assert.equal(replay.data.localMessageId, result.data.localMessageId)
+      assert.equal(captures.length, 1)
+      assert.equal(uploads.length, 1)
+    } finally {
+      await db.run('DELETE FROM mcp_idempotency_keys WHERE client_id = ?', [context.clientId])
+      await softDeleteMediaAsset(asset.id)
+      await db.run('DELETE FROM media_assets WHERE id = ?', [asset.id])
+      await db.run('DELETE FROM users WHERE id = ?', [actor.id])
+      await db.run('DELETE FROM oauth_clients WHERE client_id = ?', [client.client_id])
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
     }
   })
 })

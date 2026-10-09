@@ -355,7 +355,7 @@ const whatsAppTools = [
     ['audio', whatsappController.sendWhatsAppApiAudioMessageView, 'audio', { durationMs: { type: 'integer', minimum: 0, maximum: 86400000 }, voice: { type: 'boolean' } }]
   ].map(([kind, handler, label, extra]) => executeTool({
     name: `chat_send_whatsapp_${kind}`,
-    description: `Envía ${label} por WhatsApp usando un asset de Media ya autorizado; no acepta bytes ni credenciales en la llamada.`,
+    description: `Envía ${label} por WhatsApp usando un asset de Media ya autorizado; no acepta bytes ni credenciales en la llamada.${kind === 'document' ? ' Los documentos privados requieren lectura de Media y se entregan por bytes sin publicarlos.' : ''}`,
     module: 'chat',
     featureKeys: ['whatsapp_api'],
     connectionPrerequisites: ['whatsapp'],

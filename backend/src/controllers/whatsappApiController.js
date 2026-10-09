@@ -62,6 +62,7 @@ import { logger } from '../utils/logger.js'
 import { formatWhatsAppProviderError } from '../utils/whatsappProviderError.js'
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 import { resolveOutboundChatMediaReference } from '../services/outboundMediaReferenceService.js'
+import { resolveOutboundWhatsAppDocumentReference } from '../services/whatsappDocumentMediaReferenceService.js'
 import { getInstallerSignatureHeaders } from '../services/installerSignatureService.js'
 import { resolvePublicServiceBaseUrl } from '../utils/publicUrl.js'
 import { runManualChatSendAfterHumanTakeover } from './manualChatTakeover.js'
@@ -76,10 +77,13 @@ function cleanString(value) {
 
 async function resolveRequestChatMedia(req, { type, urlField, expectedMediaTypes }) {
   const body = req.body || {}
-  return resolveOutboundChatMediaReference({
+  const resolveReference = type === 'document' ? resolveOutboundWhatsAppDocumentReference : resolveOutboundChatMediaReference
+  return resolveReference({
     mediaAssetId: body[`${type}MediaAssetId`] || body.mediaAssetId,
     legacyUrl: body[urlField],
-    expectedMediaTypes
+    expectedMediaTypes,
+    user: req.user,
+    licenseState: req.license
   })
 }
 
@@ -1096,8 +1100,9 @@ export async function sendWhatsAppApiDocumentMessageView(req, res) {
       send: () => sendWhatsAppApiDocumentMessage({
         to: req.body?.to,
         from: req.body?.from,
-        documentDataUrl: req.body?.documentDataUrl,
+        documentDataUrl: media?.documentDataUrl || req.body?.documentDataUrl,
         documentUrl: media?.url,
+        sensitive: media?.sensitive === true,
         filename: media?.filename || req.body?.filename,
         mimeType: media?.mimeType || req.body?.mimeType,
         caption: req.body?.caption,
@@ -1114,8 +1119,9 @@ export async function sendWhatsAppApiDocumentMessageView(req, res) {
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando documento WhatsApp_API: ${error.message}`)
-    res.status(400).json({
+    res.status(error.statusCode || error.status || 400).json({
       success: false,
+      code: error.code,
       error: error.message || 'No se pudo enviar el documento por WhatsApp_API'
     })
   }

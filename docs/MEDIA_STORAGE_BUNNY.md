@@ -39,6 +39,16 @@ puede enviar sus bytes y conservar el preview interno. YCloud mantiene su carga
 binaria por Media ID y su preview independiente. Este flujo no cambia el
 proveedor elegido, la ventana de respuesta ni las reglas de respaldo QR.
 
+Los documentos privados de `module=media` o `module=chat` pueden enviarse desde
+Chat/MCP sólo por `mediaAssetId`, dentro del negocio de la instalación y con
+autenticación, permiso de lectura de Media y la función de Media incluida en la
+licencia. `whatsappDocumentMediaReferenceService` comprueba que el asset esté
+listo, activo y sea un documento; lee su archivo mediante Storage con el límite
+binario de 20 MB. Entrega los bytes a Meta directo/YCloud o al transporte QR y
+marca el mensaje `ristakPrivateMedia`, sin modificar `is_public`, devolver su URL
+privada ni crear un preview público. El resolver general de enlaces de Chat
+conserva su requisito de asset público y las comprobaciones HTTPS/DNS.
+
 Las subidas entrantes usan una clave idempotente basada en proveedor, mensaje y
 media para que un webhook, HistorySync o reintento no duplique el archivo. Los
 envíos de imagen también conservan como preview la copia estable ya almacenada y

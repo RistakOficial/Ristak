@@ -79,7 +79,7 @@ jobs:
         run: node --test --test-concurrency=1 backend/test/whatsappMetaDirectMessages.test.mjs backend/test/whatsappQrInboundMedia.test.mjs backend/test/chatInboundMessageContent.test.mjs
 
       - name: Verificar MCP y visor de adjuntos con PDF y Canvas reales
-        run: node --test --test-concurrency=1 backend/test/mcp*.test.mjs backend/test/outboundMediaReference.test.mjs
+        run: node --test --test-concurrency=1 backend/test/mcp*.test.mjs backend/test/outboundMediaReference.test.mjs backend/test/whatsappDocumentMediaReference.test.mjs
 
       - name: Verificar permisos de Chatbot y cancelación de respuestas tras intervención humana
         env:
