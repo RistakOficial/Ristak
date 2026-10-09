@@ -41,6 +41,26 @@ test('documento privado sin URL se resuelve por bytes; el resolver general de Ch
   })
 })
 
+test('la biblioteca privada default pertenece a la instalación y conserva su autorización y privacidad', async () => {
+  await withPrivateDocument(async ({ id, resolve, bytes }) => {
+    const previousTenant = process.env.RISTAK_BUSINESS_ID
+    process.env.RISTAK_BUSINESS_ID = `installation_${randomUUID()}`
+    try {
+      const result = await resolve()
+      assert.equal(result.sensitive, true)
+      assert.equal(result.url, '')
+      assert.deepEqual(Buffer.from(result.documentDataUrl.split(',')[1], 'base64'), bytes)
+      await assert.rejects(() => resolve({ user: null }), error => error.code === 'private_media_read_access_required')
+      await assert.rejects(() => resolve({ businessId: 'another-business' }), error => error.status === 404)
+      await assert.rejects(() => resolveOutboundChatMediaReference({ mediaAssetId: id, user, licenseState }), error => error.status === 404)
+      assert.equal(Number((await db.get('SELECT is_public FROM media_assets WHERE id = ?', [id])).is_public), 0)
+    } finally {
+      if (previousTenant === undefined) delete process.env.RISTAK_BUSINESS_ID
+      else process.env.RISTAK_BUSINESS_ID = previousTenant
+    }
+  })
+})
+
 test('no permite leer documentos privados de otro negocio, eliminados, pendientes o de otro módulo/tipo', async () => {
   await withPrivateDocument(async ({ id, resolve }) => {
     await assert.rejects(() => resolve({ businessId: 'another-business' }), error => error.status === 404)

@@ -3645,6 +3645,11 @@ MP4 H.264/AAC. Las referencias por `mediaAssetId` admiten archivos públicos de
 Chat y de Media listos del mismo negocio. Los de Media exigen lectura del módulo
 y licencia; los privados conservan su permiso específico y viajan por bytes sin
 publicarse. Una URL externa legacy conserva sus validaciones HTTPS/SSRF.
+La biblioteca administrativa `module=media` guardada históricamente bajo
+`business_id=default` se reconoce dentro de la base aislada de la instalación
+actual. Este alcance no incluye archivos de otro negocio ni Chat/Sites/
+Automatizaciones en ese namespace; también rige la recuperación del archivo
+para un respaldo QR posterior.
 M4A nativo de iPhone puede ser detectado por magic bytes como `audio/x-m4a`;
 `mediaStorageService` debe normalizar ese alias a `audio/mp4` antes de validar y
 guardar el preview compartido por los envios WhatsApp API y QR. En

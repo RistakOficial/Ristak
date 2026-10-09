@@ -665,11 +665,13 @@ test('un webhook multimedia no autoriza QR si el envío original lo deshabilitó
   })
 })
 
-test('un documento privado rechazado después por Meta sale por QR sin publicar sus bytes', async () => {
+test('un documento privado de la biblioteca default sale por QR sin publicar sus bytes en una instalación', async () => {
   await withMetaDirectInlineMediaCapture(async capture => {
     await withCompatibleQr(capture, async sentMessages => {
       const { uploadMediaAssetFromDataUrl, softDeleteMediaAsset } = await import('../src/services/mediaStorageService.js')
-      const asset = await uploadMediaAssetFromDataUrl({ dataUrl: PDF_DATA_URL, filename: 'privado.pdf', module: 'chat', isPublic: false, skipCompression: true })
+      const asset = await uploadMediaAssetFromDataUrl({ dataUrl: PDF_DATA_URL, filename: 'privado.pdf', module: 'media', businessId: 'default', isPublic: false, skipCompression: true })
+      const previousTenant = process.env.RISTAK_BUSINESS_ID
+      process.env.RISTAK_BUSINESS_ID = `installation_${randomUUID()}`
       try {
         const before = await db.get('SELECT COUNT(*) AS total FROM media_assets')
         const response = await sendWhatsAppApiDocumentMessage({
@@ -688,6 +690,8 @@ test('un documento privado rechazado después por Meta sale por QR sin publicar 
         assert.deepEqual(await db.get('SELECT COUNT(*) AS total FROM media_assets'), before)
         assert.equal(Number((await db.get('SELECT is_public FROM media_assets WHERE id = ?', [asset.id])).is_public), 0)
       } finally {
+        if (previousTenant === undefined) delete process.env.RISTAK_BUSINESS_ID
+        else process.env.RISTAK_BUSINESS_ID = previousTenant
         await softDeleteMediaAsset(asset.id)
         await db.run('DELETE FROM media_assets WHERE id = ?', [asset.id])
       }
@@ -1826,6 +1830,8 @@ test('MCP envía una foto WebP de Media como JPEG por API respetando permisos e 
     const context = { user: { id: actor.id, userId: actor.id, role: 'admin' }, scopes: ['ristak.execute'], license: { allowed: true, enforced: false }, baseUrl: 'http://localhost:3001', clientId: client.client_id }
     context.invoke = function (handler, request) { return invokeController(handler, this, request) }
     const args = { contactId: capture.contactId, to: capture.to, from: capture.businessPhone, phoneNumberId: capture.phoneNumberId, transport: 'api', mediaAssetId: asset.id, idempotencyKey: `public-image-${randomUUID()}` }
+    const previousTenant = process.env.RISTAK_BUSINESS_ID
+    process.env.RISTAK_BUSINESS_ID = `installation_${randomUUID()}`
     try {
       await assert.rejects(() => callRegisteredMcpTool({ ...context, user: { ...context.user, role: 'employee', access_config: { chat: 'write' } } }, 'chat_send_whatsapp_image', { ...args, idempotencyKey: `denied-image-${randomUUID()}` }), error => error.status === 403 && error.code === 'media_read_access_required')
       assert.equal(capture.uploads.length, 0)
@@ -1844,6 +1850,8 @@ test('MCP envía una foto WebP de Media como JPEG por API respetando permisos e 
       assert.equal(capture.captures.length, 1)
       assert.equal(capture.uploads.length, 1)
     } finally {
+      if (previousTenant === undefined) delete process.env.RISTAK_BUSINESS_ID
+      else process.env.RISTAK_BUSINESS_ID = previousTenant
       await db.run('DELETE FROM mcp_idempotency_keys WHERE client_id = ?', [client.client_id])
       await softDeleteMediaAsset(asset.id)
       await db.run('DELETE FROM media_assets WHERE id = ?', [asset.id])

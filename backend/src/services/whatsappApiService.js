@@ -5017,20 +5017,18 @@ async function maybeFallbackFailedFreeformMessageViaQr({
       const assetId = cleanString(storedPolicy.mediaAssetId || media.previewMediaAssetId)
       let dataUrl = ''
       if (assetId) {
-        const asset = await db.get(`
-          SELECT id, mime_type, module, media_type, is_public FROM media_assets
-          WHERE id = ? AND business_id = ? AND status = 'ready' AND deleted_at IS NULL
-        `, [assetId, cleanString(process.env.RISTAK_BUSINESS_ID) || 'default'])
+        const { findOutboundMediaAssetById, readOutboundMediaAssetDataUrl } = await import('./outboundMediaReferenceService.js')
+        const asset = await findOutboundMediaAssetById({ mediaAssetId: assetId })
         const matchingType = messageType === 'document'
           ? ['document', 'audio', 'video', 'other'].includes(asset?.media_type)
           : asset?.media_type === messageType
         const privateDocument = messageType === 'document' && asset?.media_type === 'document' &&
           hasRistakPrivateMediaMarker(originalPayload)
-        if (!asset || !['chat', 'media'].includes(asset.module) || !matchingType ||
+        if (!asset || asset.status !== 'ready' || asset.deleted_at ||
+            !['chat', 'media'].includes(asset.module) || !matchingType ||
             (Number(asset.is_public) !== 1 && !privateDocument)) {
           throw new Error('El archivo original ya no está disponible para el respaldo QR.')
         }
-        const { readOutboundMediaAssetDataUrl } = await import('./outboundMediaReferenceService.js')
         dataUrl = await readOutboundMediaAssetDataUrl(asset, { maxBytes: (messageType === 'document' ? 20 : 25) * 1024 * 1024 })
       }
       const sensitive = hasRistakPrivateMediaMarker(originalPayload)

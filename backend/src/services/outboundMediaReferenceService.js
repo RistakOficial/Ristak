@@ -385,26 +385,40 @@ export async function readOutboundMediaAssetDataUrl(asset, { maxBytes = 25 * 102
   }
 }
 
-async function findAssetById({ businessId, mediaAssetId }) {
+function mediaAssetBusinessScope(businessId) {
+  const tenant = normalizeBusinessId(businessId)
+  const installationTenant = normalizeBusinessId()
+  // La biblioteca administrativa histórica usa `default` en la DB aislada de
+  // cada instalación. Sólo ese módulo puede compartir ese namespace con el
+  // tenant configurado; nunca Chat ni un businessId alterno solicitado.
+  const allowDefaultLibrary = tenant !== 'default' && tenant === installationTenant
+  return { tenant, allowDefaultLibrary: allowDefaultLibrary ? 1 : 0 }
+}
+
+export async function findOutboundMediaAssetById({ businessId = '', mediaAssetId }) {
+  const { tenant, allowDefaultLibrary } = mediaAssetBusinessScope(businessId)
   return db.get(
     `SELECT id, business_id, original_filename, public_url, mime_type, media_type,
-            module, status, is_public, deleted_at
+            module, status, is_public, deleted_at, size_processed
      FROM media_assets
-     WHERE business_id = ? AND id = ?
+     WHERE (business_id = ? OR (? = 1 AND business_id = 'default' AND module = 'media'))
+       AND id = ?
      LIMIT 1`,
-    [businessId, mediaAssetId]
+    [tenant, allowDefaultLibrary, cleanString(mediaAssetId)]
   )
 }
 
 async function findAssetByUrl({ businessId, url }) {
+  const { tenant, allowDefaultLibrary } = mediaAssetBusinessScope(businessId)
   return db.get(
     `SELECT id, business_id, original_filename, public_url, mime_type, media_type,
             module, status, is_public, deleted_at
      FROM media_assets
-     WHERE business_id = ? AND (public_url = ? OR private_url = ?)
+     WHERE (business_id = ? OR (? = 1 AND business_id = 'default' AND module = 'media'))
+       AND (public_url = ? OR private_url = ?)
      ORDER BY created_at DESC
      LIMIT 1`,
-    [businessId, url, url]
+    [tenant, allowDefaultLibrary, url, url]
   )
 }
 
@@ -428,7 +442,7 @@ export async function resolveOutboundChatMediaReference({
 
   let asset = null
   if (cleanAssetId) {
-    asset = await findAssetById({ businessId: cleanBusinessId, mediaAssetId: cleanAssetId })
+    asset = await findOutboundMediaAssetById({ businessId: cleanBusinessId, mediaAssetId: cleanAssetId })
     await assertUsableAsset(asset, expectedTypes, { user, licenseState })
   } else if (cleanLegacyUrl) {
     asset = await findAssetByUrl({ businessId: cleanBusinessId, url: cleanLegacyUrl })

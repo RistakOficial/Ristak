@@ -1,7 +1,6 @@
-import { db } from '../config/database.js'
 import { hasUserAccess } from '../utils/userAccess.js'
 import { hasFeature } from './licenseService.js'
-import { resolveOutboundChatMediaReference } from './outboundMediaReferenceService.js'
+import { findOutboundMediaAssetById, resolveOutboundChatMediaReference } from './outboundMediaReferenceService.js'
 
 // Igual que el límite del documento binario en whatsappApiService.
 const MAX_PRIVATE_DOCUMENT_BYTES = 20 * 1024 * 1024
@@ -25,12 +24,7 @@ export async function resolveOutboundWhatsAppDocumentReference({
   const assetId = String(mediaAssetId || '').trim()
   const tenant = String(businessId || process.env.RISTAK_BUSINESS_ID || 'default')
     .trim().replace(/[^a-zA-Z0-9_.-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 120) || 'default'
-  const asset = assetId ? await db.get(
-    `SELECT id, module, status, deleted_at, is_public, media_type, mime_type,
-            original_filename, size_processed
-     FROM media_assets WHERE business_id = ? AND id = ? LIMIT 1`,
-    [tenant, assetId]
-  ) : null
+  const asset = assetId ? await findOutboundMediaAssetById({ businessId: tenant, mediaAssetId: assetId }) : null
 
   if (!asset || Number(asset.is_public) !== 0) {
     return resolveOutboundChatMediaReference({ ...publicOptions, mediaAssetId: assetId, businessId: tenant, user, licenseState })
@@ -71,6 +65,6 @@ export async function resolveOutboundWhatsAppDocumentReference({
     }
   } finally {
     file.stream?.destroy?.()
-    file.cleanup?.()
+    await file.cleanup?.()
   }
 }

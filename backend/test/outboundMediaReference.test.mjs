@@ -144,3 +144,38 @@ test('Media pública exige permiso y licencia, y puede entregar bytes sin depend
     await rm(folder, { recursive: true, force: true })
   }
 })
+
+test('la instalación resuelve su biblioteca default sin admitir Chat legacy ni otro negocio', async () => {
+  const id = `library_scope_${randomUUID()}`
+  const folder = await mkdtemp(join(tmpdir(), 'ristak-library-scope-'))
+  const localPath = join(folder, 'foto.webp')
+  const bytes = Buffer.from('same-installation-library')
+  await writeFile(localPath, bytes)
+  await db.run(`INSERT INTO media_assets (
+    id, business_id, original_filename, public_url, mime_type, media_type,
+    status, storage_provider, module, is_public, size_processed, metadata_json
+  ) VALUES (?, 'default', 'foto.webp', ?, 'image/webp', 'image',
+    'ready', 'local', 'media', 1, ?, ?)`, [id, `/media/assets/${id}/file`, bytes.length, JSON.stringify({ localPath })])
+  const previousTenant = process.env.RISTAK_BUSINESS_ID
+  process.env.RISTAK_BUSINESS_ID = `installation_${randomUUID()}`
+  const options = { mediaAssetId: id, readBinary: true, expectedMediaTypes: ['image'], user: { id: 1, role: 'admin' }, licenseState: { allowed: true, enforced: false } }
+  try {
+    const result = await resolveOutboundChatMediaReference(options)
+    assert.deepEqual(Buffer.from(result.dataUrl.split(',')[1], 'base64'), bytes)
+    const byUrl = await resolveOutboundChatMediaReference({ ...options, mediaAssetId: '', legacyUrl: `/media/assets/${id}/file` })
+    assert.equal(byUrl.mediaAssetId, id)
+    await assert.rejects(() => resolveOutboundChatMediaReference({ ...options, user: null }), error => error.status === 403)
+    await assert.rejects(() => resolveOutboundChatMediaReference({ ...options, businessId: 'another-business' }), error => error.status === 404)
+    for (const module of ['chat', 'sites', 'automations']) {
+      await db.run('UPDATE media_assets SET module = ? WHERE id = ?', [module, id])
+      await assert.rejects(() => resolveOutboundChatMediaReference(options), error => error.status === 404)
+    }
+    await db.run("UPDATE media_assets SET module = 'media', business_id = 'foreign-business' WHERE id = ?", [id])
+    await assert.rejects(() => resolveOutboundChatMediaReference(options), error => error.status === 404)
+  } finally {
+    if (previousTenant === undefined) delete process.env.RISTAK_BUSINESS_ID
+    else process.env.RISTAK_BUSINESS_ID = previousTenant
+    await db.run('DELETE FROM media_assets WHERE id = ?', [id])
+    await rm(folder, { recursive: true, force: true })
+  }
+})

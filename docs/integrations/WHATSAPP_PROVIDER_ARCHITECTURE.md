@@ -664,6 +664,11 @@ para enviar los bytes, evitando que un WebP generado por la biblioteca termine
 como un enlace de imagen incompatible para Meta. Media exige usuario autenticado,
 lectura de `settings_media` y licencia del módulo; Chat conserva su acceso propio.
 Los assets deben estar listos, pertenecer al negocio y no estar eliminados.
+La biblioteca administrativa histórica `module=media, business_id=default` de
+la base aislada también pertenece a la instalación actual; sólo se admite ese
+namespace al resolver el negocio configurado, nunca otro negocio ni Chat en
+`default`. El resolver de documentos privados y el respaldo QR posterior usan
+la misma frontera de propiedad y mantienen sus respectivas autorizaciones.
 Automatizaciones/Sites no se convierten en referencias de Chat por este cambio.
 Los documentos privados mantienen su resolver autorizado y nunca se publican
 para enviarse; su ID permite recuperar los bytes para un respaldo posterior.

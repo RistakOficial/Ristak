@@ -29,15 +29,23 @@ El mensaje sólo expone la URL estable resultante. Si el negocio conectó su pro
 cuenta Bunny.net, esa cuenta recibe estas cargas por tener prioridad de runtime.
 
 Las fotos y videos recién adjuntados en el chat se preparan como bytes y guardan
-su preview mediante `savePreparedMediaForChatPreview`. Ese resultado conserva
-`publicPath` con la misma URL de `publicUrl`, que es el contrato que
-`requirePublicMediaUrl` utiliza para el envío de Meta directo. Un enlace HTTPS
-absoluto de Bunny se reutiliza sin exigir que el origen del navegador sea HTTPS;
-una ruta `/media/assets/:id/file` necesita una base pública HTTPS de Ristak.
-Un archivo guardado sólo en localhost sigue bloqueado para la API, mientras QR
-puede enviar sus bytes y conservar el preview interno. YCloud mantiene su carga
-binaria por Media ID y su preview independiente. Este flujo no cambia el
-proveedor elegido, la ventana de respuesta ni las reglas de respaldo QR.
+su preview mediante `savePreparedMediaForChatPreview`. Meta directo y YCloud
+cargan los bytes compatibles al endpoint de media y envían su Media ID; no
+dependen de que el preview tenga una URL pública HTTPS. Las fotos se normalizan
+a JPEG y los videos a MP4 H.264/AAC. Los assets de Chat o Media se leen mediante
+Storage antes de enviarse; sólo las URLs externas legacy conservan el requisito
+HTTPS/DNS. El proveedor elegido, la ventana de respuesta y el respaldo QR siguen
+[el contrato de WhatsApp](./integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md).
+
+La biblioteca administrativa histórica vive en `business_id=default` dentro de
+la base aislada de cada instalación; los archivos de Chat usan el tenant
+configurado. `findOutboundMediaAssetById` admite ese namespace de biblioteca
+únicamente para `module=media` cuando el negocio solicitado es el de la
+instalación actual. No admite otro negocio, Chat legacy en `default` ni módulos
+de Sites/Automatizaciones. Enviar desde Media exige usuario autenticado, lectura
+de `settings_media` y licencia incluso si el archivo es público. La misma
+resolución se aplica al respaldo QR posterior autorizado, sin cambiar la
+propiedad ni publicar documentos privados.
 
 Los documentos privados de `module=media` o `module=chat` pueden enviarse desde
 Chat/MCP sólo por `mediaAssetId`, dentro del negocio de la instalación y con
@@ -283,9 +291,11 @@ wait for the same result; reusing the key with different bytes or destination is
 a conflict. Failed processing releases the lease for a controlled retry.
 
 The upload response includes the asset id and public URL. Messaging endpoints
-prefer `mediaAssetId`, resolve it server-side, require an active `module=chat`
-asset owned by the current installation and replace any client URL with the
-stored URL. Legacy raw URLs remain compatibility-only and must be public HTTPS;
+prefer `mediaAssetId` and resolve it server-side. Direct chat uploads require an
+active `module=chat` asset owned by the current installation; authorized Media
+library references use the scope described above. Native WhatsApp sends read
+the stored bytes instead of trusting a client URL. Legacy raw URLs remain
+compatibility-only and must be public HTTPS;
 loopback, link-local, private/reserved IPs, NAT64/reserved IPv6 ranges and unsafe
 DNS resolutions are rejected before Meta, HighLevel or the local QR transport
 can fetch them. Standard NAT64 ranges are denied automatically; an installation
