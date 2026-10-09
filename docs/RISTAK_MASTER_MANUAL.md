@@ -4409,6 +4409,11 @@ decidir que dos globos son el mismo: dos mensajes iguales o dos envios del mismo
 archivo siguen separados cuando WhatsApp les dio IDs distintos. Al arrancar, la
 reparacion historica fusiona exclusivamente pares QR + `smb.message.echoes`
 demostrables y activa la unicidad que cierra carreras simultaneas.
+Si Meta sincroniza el eco de un respaldo QR ya enviado, el mismo globo conserva
+la etiqueta QR y el motivo del respaldo; recibir el eco no lo convierte en un
+envío API. Los acuses QR se ligan también por la identidad interna y una entrega
+o lectura confirmada limpia un error transitorio anterior. Un error tardío no
+puede volver a marcar como fallido ese archivo ya entregado/leído.
 
 Los mensajes entrantes estructurados de WhatsApp (plantillas, botones, listas,
 OTP/copy-code e interactivos) no deben degradarse a la etiqueta generica

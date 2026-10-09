@@ -274,9 +274,9 @@ function createFakeQrRuntime(sentMessages = [], connectedJid) {
           exists: true,
           jid: `${normalizeDigits(candidate)}@s.whatsapp.net`
         })),
-        sendMessage: async (jid, payload) => {
+        sendMessage: async (jid, payload, options = {}) => {
           messageIndex += 1
-          const id = `qr_provider_media_msg_${messageIndex}`
+          const id = options.messageId || `qr_provider_media_msg_${messageIndex}`
           sentMessages.push({ id, jid, payload })
           await emit('messages.update', [{
             key: { id, remoteJid: jid, fromMe: true },
@@ -661,6 +661,45 @@ test('un webhook multimedia no autoriza QR si el envío original lo deshabilitó
       assert.equal(sentMessages.length, 0)
       const stored = await db.get('SELECT transport, status, error_code FROM whatsapp_api_messages WHERE id = ?', [response.localMessageId])
       assert.deepEqual(stored, { transport: 'api', status: 'failed', error_code: '131053' })
+    })
+  })
+})
+
+test('el eco de Meta conserva el transporte QR y el motivo del respaldo multimedia', async () => {
+  await withFakeFfmpeg(async () => {
+    await withMetaDirectInlineMediaCapture(async capture => {
+      await withCompatibleQr(capture, async sentMessages => {
+        setMetaDirectFetchForTest(async () => ycloudJsonResponse({ error: { code: 2, message: 'Media upload unavailable' } }, { status: 503 }))
+        for (const type of ['image', 'video', 'document']) {
+          const send = { image: sendWhatsAppApiImageMessage, video: sendWhatsAppApiVideoMessage, document: sendWhatsAppApiDocumentMessage }[type]
+          const response = await send({
+            to: capture.to, from: capture.businessPhone, phoneNumberId: capture.phoneNumberId,
+            contactId: capture.contactId, [`${type}DataUrl`]: { image: ONE_PIXEL_PNG_DATA_URL, video: WEBM_VIDEO_DATA_URL, document: PDF_DATA_URL }[type],
+            filename: 'archivo.pdf', mimeType: 'application/pdf', caption: 'Adjunto por respaldo QR', skipQrSendProtection: true
+          })
+          assert.equal(response.transport, 'qr')
+          const key = response.wamid
+          const wamid = `wamid.${Buffer.from(`coexistence:${key}`).toString('base64')}`
+          const [echo] = await processMetaDirectWebhookPayload({ payload: {
+            object: 'whatsapp_business_account',
+            entry: [{ id: 'waba_meta_direct_audio_test', changes: [{ field: 'smb_message_echoes', value: {
+              messaging_product: 'whatsapp',
+              metadata: { phone_number_id: capture.phoneNumberId, display_phone_number: normalizeDigits(capture.businessPhone) },
+              smb_message_echoes: [{ id: wamid, to: normalizeDigits(capture.to), timestamp: String(Math.floor(Date.now() / 1000)), type,
+                [type]: { mime_type: response[type]?.mimeType, caption: 'Adjunto por respaldo QR' } }]
+            } }] }]
+          } })
+          assert.equal(echo.transport, 'qr')
+          assert.equal(echo.sourceAdapter, 'baileys')
+          const stored = await db.get('SELECT transport, source_adapter, routing_reason, protocol_message_key_id FROM whatsapp_api_messages WHERE id = ?', [response.localMessageId])
+          assert.equal(stored.transport, 'qr')
+          assert.equal(stored.source_adapter, 'baileys')
+          assert.equal(stored.routing_reason, response.fallbackReason)
+          assert.equal(stored.protocol_message_key_id, key)
+        }
+        assert.equal(sentMessages.length, 3)
+        assert.equal(Number((await db.get("SELECT COUNT(*) AS count FROM whatsapp_api_messages WHERE contact_id = ? AND direction != 'inbound'", [capture.contactId])).count), 3)
+      })
     })
   })
 })

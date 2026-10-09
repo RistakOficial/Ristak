@@ -9772,6 +9772,11 @@ async function upsertMessage({
     incomingAgentMarker.sentByAgent ? incomingAgentMarker : existingAgentMarker
   )
   const incomingStatus = normalizeMessageDeliveryStatus(normalizedMessage.status)
+  const businessEcho = identity.direction === 'business_echo' || normalizedMessage.businessEcho === true ||
+    normalizedMessage.business_echo === true || cleanString(payload.type) === 'whatsapp.smb.message.echoes'
+  const preserveQrFallbackTransport = cleanString(existingMessage?.transport).toLowerCase() === 'qr' &&
+    cleanString(existingMessage?.source_adapter).toLowerCase() === 'baileys' &&
+    Boolean(cleanString(existingMessage?.routing_reason)) && cleanTransport === 'api' && businessEcho
   const existingQrFallbackApplied = cleanString(existingMessage?.transport).toLowerCase() === 'qr' &&
     Boolean(cleanString(existingMessage?.routing_reason)) &&
     cleanTransport === 'api' &&
@@ -9806,14 +9811,13 @@ async function upsertMessage({
       { businessPhoneNumberId, messageId }
     )
   }
-  const businessEcho = identity.direction === 'business_echo' || normalizedMessage.businessEcho === true ||
-    normalizedMessage.business_echo === true || cleanString(payload.type) === 'whatsapp.smb.message.echoes'
   const relayEventId = cleanString(payload.relayEventId || payload.relay_event_id)
-  const storedTransport = existingQrFallbackApplied ? 'qr' : cleanTransport
-  const storedSourceAdapter = existingQrFallbackApplied
+  const preserveQrTransport = existingQrFallbackApplied || preserveQrFallbackTransport
+  const storedTransport = preserveQrTransport ? 'qr' : cleanTransport
+  const storedSourceAdapter = preserveQrTransport
     ? (cleanString(existingMessage?.source_adapter) || 'baileys')
     : sourceAdapter
-  const storedRoutingReason = existingQrFallbackApplied
+  const storedRoutingReason = preserveQrTransport
     ? existingMessage?.routing_reason
     : routingReason
   const keepExistingInboundContent = `
@@ -10233,12 +10237,12 @@ async function upsertMessage({
     : deterministicTemplateFallback
   const fallbackApplied = Boolean(appliedQrFallback.applied)
   const fallbackResponse = fallbackApplied ? appliedQrFallback.response : null
-  const finalTransport = canonicalQrFallbackApplied || fallbackApplied ? 'qr' : cleanTransport
+  const finalTransport = canonicalQrFallbackApplied || preserveQrFallbackTransport || fallbackApplied ? 'qr' : cleanTransport
   const finalSourceAdapter = resolveWhatsAppSourceAdapter({ provider, transport: finalTransport })
   const finalRoutingReason = cleanString(
     fallbackResponse?.fallbackReason ||
     fallbackResponse?.routingReason ||
-    (canonicalQrFallbackApplied ? existingMessage?.routing_reason : routingReason)
+    (canonicalQrFallbackApplied || preserveQrFallbackTransport ? existingMessage?.routing_reason : routingReason)
   )
   const finalStatus = fallbackApplied
     ? (normalizeMessageDeliveryStatus(fallbackResponse?.status) || 'sent')

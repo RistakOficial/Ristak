@@ -6,6 +6,7 @@ import { db } from '../src/config/database.js'
 import { prepareWhatsAppApiTextDelivery } from '../src/services/whatsappApiService.js'
 import {
   QR_CONSENT_TEXT,
+  handleQrMessageUpdates,
   resetWhatsAppQrServiceForTest,
   sendWhatsAppQrAudioMessage,
   sendWhatsAppQrDocumentMessage,
@@ -258,6 +259,47 @@ test('WhatsApp QR responde al aceptar el mensaje sin esperar el ACK de entrega',
     assert.equal(sentMessages.length, 1)
     assert.ok(Date.now() - startedAt < 1_000, 'el request no debe quedarse esperando hasta 20 s por delivered/read')
   })
+})
+
+test('QR confirma entrega tras un rechazo transitorio y no deja errores viejos ni regresa de leído', async () => {
+  const id = `qr_receipt_${randomUUID()}`
+  const key = `3EB0${randomUUID().replaceAll('-', '').slice(0, 20).toUpperCase()}`
+  await db.run(`INSERT INTO whatsapp_api_messages (
+    id, provider, source_adapter, wamid, protocol_message_key_id, transport,
+    direction, message_type, status
+  ) VALUES (?, 'meta_direct', 'baileys', ?, ?, 'qr', 'outbound', 'image', 'sent')`,
+  [id, `wamid.${Buffer.from(key).toString('base64')}`, key])
+  const phone = { id: 'qr_receipt_test', expectedPhone: BUSINESS_PHONE }
+  const update = (status, error) => handleQrMessageUpdates(phone, [{
+    key: { id: key, remoteJid: `${normalizeDigits(CONTACT_PHONE)}@s.whatsapp.net`, fromMe: true },
+    update: { status, ...(error ? { messageStubParameters: [error] } : {}) }
+  }])
+  const waitFor = async expected => {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const row = await db.get('SELECT status, error_code, error_message FROM whatsapp_api_messages WHERE id = ?', [id])
+      if (row.status === expected) return row
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    assert.fail(`No llegó el acuse ${expected}`)
+  }
+  try {
+    await update(0, '479')
+    assert.equal((await waitFor('failed')).error_code, '479')
+    await Promise.all([update(3), update(0, '479')])
+    assert.deepEqual(await waitFor('delivered'), { status: 'delivered', error_code: null, error_message: null })
+    await Promise.all([update(4), update(0, '479'), update(2)])
+    assert.deepEqual(await waitFor('read'), { status: 'read', error_code: null, error_message: null })
+    await update(0, '479')
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.deepEqual(await waitFor('read'), { status: 'read', error_code: null, error_message: null })
+    await db.run("UPDATE whatsapp_api_messages SET status = 'removed' WHERE id = ?", [id])
+    await update(4)
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal((await db.get('SELECT status FROM whatsapp_api_messages WHERE id = ?', [id])).status, 'removed')
+  } finally {
+    resetWhatsAppQrServiceForTest()
+    await db.run('DELETE FROM whatsapp_api_messages WHERE id = ?', [id])
+  }
 })
 
 test('WhatsApp QR aplica pausas automáticas a todos los tipos de mensaje QR', async () => {

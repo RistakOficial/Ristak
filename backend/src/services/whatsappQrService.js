@@ -616,37 +616,26 @@ function mapBaileysAckToMessageStatus(statusCode) {
   return 'pending'
 }
 
+const QR_STORED_STATUS_PRIORITIES = {
+  read: 80, played: 80, delivered: 70,
+  failed: 65, error: 65, undelivered: 65, rejected: 65,
+  sent: 60, accepted: 50, pending: 20, queued: 20, scheduled: 20
+}
+const QR_STORED_STATUS_PRIORITY_SQL = `CASE LOWER(COALESCE(status, '')) ${Object.entries(QR_STORED_STATUS_PRIORITIES)
+  .map(([status, priority]) => `WHEN '${status}' THEN ${priority}`).join(' ')} ELSE 0 END`
+
 function getStoredStatusPriority(status) {
-  switch (cleanString(status).toLowerCase()) {
-    case 'failed':
-    case 'error':
-      return 100
-    case 'read':
-      return 80
-    case 'delivered':
-      return 70
-    case 'sent':
-      return 60
-    case 'pending':
-    case 'queued':
-    case 'scheduled':
-      return 20
-    default:
-      return 0
-  }
+  return QR_STORED_STATUS_PRIORITIES[cleanString(status).toLowerCase()] || 0
 }
 
 function shouldUpdateStoredStatus(currentStatus, nextStatus) {
   const next = cleanString(nextStatus).toLowerCase()
   if (!next || cleanString(currentStatus).toLowerCase() === 'removed') return false
-  if (next === 'failed') return true
   return getStoredStatusPriority(next) >= getStoredStatusPriority(currentStatus)
 }
 
 function getQrAckPriority(ack = {}) {
-  const status = cleanString(ack.status).toLowerCase()
-  if (status === 'failed') return 100
-  return getStoredStatusPriority(status)
+  return getStoredStatusPriority(ack.status)
 }
 
 function pickBestQrAck(current, next) {
@@ -788,8 +777,8 @@ async function updateStoredQrMessageAck(ack, retryAttempt = 0) {
     SELECT id, status
     FROM whatsapp_api_messages
     WHERE transport = 'qr'
-      AND (ycloud_message_id = ? OR wamid = ?)
-  `, [ack.messageId, ack.messageId])
+      AND (ycloud_message_id = ? OR wamid = ? OR protocol_message_key_id = ?)
+  `, [ack.messageId, ack.messageId, ack.messageId])
 
   // Al responder de forma optimista el ACK puede ganarle por milisegundos al
   // INSERT del mensaje. Reintentamos en background para no perder delivered/read
@@ -809,17 +798,21 @@ async function updateStoredQrMessageAck(ack, retryAttempt = 0) {
     .map(row => db.run(`
       UPDATE whatsapp_api_messages
       SET status = ?,
-          error_code = CASE WHEN ? != '' THEN ? ELSE error_code END,
-          error_message = CASE WHEN ? != '' THEN ? ELSE error_message END,
+          error_code = CASE WHEN ? = 1 THEN NULL WHEN ? != '' THEN ? ELSE error_code END,
+          error_message = CASE WHEN ? = 1 THEN NULL WHEN ? != '' THEN ? ELSE error_message END,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND COALESCE(status, '') != 'removed'
+        AND ${QR_STORED_STATUS_PRIORITY_SQL} <= ?
     `, [
       ack.status,
+      isConfirmedQrSendAck(ack) ? 1 : 0,
       ack.errorCode || '',
       ack.errorCode || '',
+      isConfirmedQrSendAck(ack) ? 1 : 0,
       ack.errorMessage || '',
       ack.errorMessage || '',
-      row.id
+      row.id,
+      getStoredStatusPriority(ack.status)
     ])))
 }
 

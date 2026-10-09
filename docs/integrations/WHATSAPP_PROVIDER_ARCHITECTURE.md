@@ -295,6 +295,16 @@ neutrales son:
 - `origin`: evento concreto (`whatsapp.message.updated`, `messages`, `history`,
   `smb_message_echoes`, etc.).
 
+Un eco SMB de Meta observa un envío; no prueba que Graph lo haya realizado. Si
+la fila existente salió por el respaldo QR y conserva su motivo, el eco agrega
+la identidad oficial pero mantiene `transport=qr`, `source_adapter=baileys` y
+`routing_reason`, también en la respuesta/SSE. Los acuses de Baileys pueden
+encontrarla por `protocol_message_key_id` aunque su WAMID ya sea el del eco.
+En QR, `delivered/read` prevalecen sobre un fallo transitorio como `479` y borran
+el error anterior. Un `sent/pending` no borra un rechazo y un error tardío no
+revierte una entrega/lectura probada; el UPDATE aplica esa prioridad de forma
+atómica para acuses concurrentes. Un mensaje eliminado sigue siendo terminal.
+
 Compatibilidad histórica:
 
 - `ycloud_message_id` solo guarda IDs de YCloud por transporte API.
