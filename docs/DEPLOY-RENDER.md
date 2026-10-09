@@ -186,6 +186,12 @@ imagen no inicia y el Installer no recibe una versión defectuosa. Las
 credenciales de esa base son locales al runner y desechables; no son secretos de
 producción.
 
+Las imágenes de PostgreSQL y BuildKit se obtienen de la caché pública de Google
+`mirror.gcr.io` para evitar el límite anónimo de Docker Hub. El builder también
+consulta esa caché para las imágenes base de Node. Se conservan las versiones,
+permisos y validaciones del pipeline, sin credenciales nuevas. La caché no
+garantiza retención permanente; véase la [documentación de Google](https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images).
+
 El backend escucha el puerto para que Render pueda observar el proceso, pero no
 publica readiness hasta completar las migraciones versionadas. PostgreSQL
 serializa la cadena completa con el advisory lock `versioned-migrations`; los
