@@ -40,6 +40,8 @@ interface ModalProps {
    * propio layout de borde a borde (listas full-bleed, footers sticky propios);
    * el resto hereda el padding estándar automáticamente. */
   flushContent?: boolean
+  /** Ajusta el marco al contenido, con límites de viewport y scroll interno. */
+  fitContent?: boolean
   children?: React.ReactNode
 }
 
@@ -110,6 +112,7 @@ export const Modal: React.FC<ModalProps> = ({
   draggableSheet = false,
   typeToConfirm,
   flushContent = false,
+  fitContent = false,
   children
 }) => {
   const [typedConfirmation, setTypedConfirmation] = useState('')
@@ -286,7 +289,7 @@ export const Modal: React.FC<ModalProps> = ({
     >
       <div
         ref={modalRef}
-        className={`${styles.modal} ${styles[type]} ${styles[size]} ${isDestructiveConfirm ? styles.destructive : ''} ${draggableSheet ? styles.bottomSheetModal : ''} ${draggableSheet && bottomSheetMoving ? styles.bottomSheetModalInteractive : ''} ${sheetExiting ? styles.bottomSheetModalExiting : ''} ${className}`.trim()}
+        className={`${styles.modal} ${styles[type]} ${styles[size]} ${fitContent ? styles.fitContent : ''} ${isDestructiveConfirm ? styles.destructive : ''} ${draggableSheet ? styles.bottomSheetModal : ''} ${draggableSheet && bottomSheetMoving ? styles.bottomSheetModalInteractive : ''} ${sheetExiting ? styles.bottomSheetModalExiting : ''} ${className}`.trim()}
         style={draggableSheet ? bottomSheetDismiss.sheetStyle : undefined}
         role="dialog"
         aria-modal="true"
@@ -295,6 +298,7 @@ export const Modal: React.FC<ModalProps> = ({
         data-modal=""
         data-modal-size={size}
         data-modal-type={type}
+        data-modal-fit={fitContent ? 'content' : undefined}
         {...(draggableSheet ? bottomSheetDismiss.sheetDragProps : {})}
       >
         {draggableSheet && (

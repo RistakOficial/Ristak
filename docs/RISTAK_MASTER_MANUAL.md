@@ -2836,6 +2836,9 @@ y conservan la descarga, sin inventar contenido. El límite del visor web es
 20 MB; sus lectores y workers se cancelan al cerrar o cambiar de archivo.
 `Configuración > Media > Abrir` reutiliza este visor con la descarga autenticada
 del asset, incluidos documentos privados y los permisos/licencia existentes.
+El marco se adapta al archivo y a cada página del PDF, sin una altura fija ni
+ampliar archivos pequeños. El texto largo y el zoom conservan desplazamiento
+interno; la cabecera y las acciones de descarga permanecen accesibles.
 El contrato detallado vive en [MEDIA_STORAGE_BUNNY.md](./MEDIA_STORAGE_BUNNY.md).
 
 Cuando el proveedor avisa que se anuló un mensaje de WhatsApp, Instagram DM o

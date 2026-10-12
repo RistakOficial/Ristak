@@ -7,6 +7,7 @@ import { getApiBaseUrl } from '@/services/apiBaseUrl'
 import { decodeDocumentText, documentArchiveText, documentPreviewKind, documentRequestHeaders,
   hasPdfSignature, readDocumentArchive, readDocumentBytes, type DocumentPreviewKind } from './documentPreviewUtils'
 import styles from './DocumentPreview.module.css'
+import { useContentFocusSpace } from './useContentFocusSpace'
 
 interface DocumentPreviewProps {
   url: string
@@ -80,13 +81,13 @@ function PdfPreview({ bytes, title }: { bytes: Uint8Array; title: string }) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [page, setPage] = useState(1)
   const [zoom, setZoom] = useState(1)
-  const [width, setWidth] = useState(800)
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState('')
   const [text, setText] = useState('')
   const [showText, setShowText] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
+  const space = useContentFocusSpace(viewportRef, true, true)
   useEffect(() => {
     let active = true
     let timedOut = false
@@ -122,14 +123,6 @@ function PdfPreview({ bytes, title }: { bytes: Uint8Array; title: string }) {
     return () => { active = false; clearTimeout(timer); void task?.destroy().catch(() => {}) }
   }, [bytes])
   useEffect(() => {
-    const viewport = viewportRef.current
-    if (!viewport) return
-    const observer = new ResizeObserver(() => setWidth(Math.max(160, viewport.clientWidth - 32)))
-    observer.observe(viewport)
-    setWidth(Math.max(160, viewport.clientWidth - 32))
-    return () => observer.disconnect()
-  }, [])
-  useEffect(() => {
     if (!pdf) return
     let active = true
     let timedOut = false
@@ -144,14 +137,13 @@ function PdfPreview({ bytes, title }: { bytes: Uint8Array; title: string }) {
     }, 30_000)
     setBusy(true)
     setError('')
-    setText('')
     const draw = async () => {
       try {
         const documentPage = await pdf.getPage(page)
         const canvas = canvasRef.current
         if (!active || timedOut || !canvas) return
         const natural = documentPage.getViewport({ scale: 1 })
-        const scale = Math.min(width / natural.width, 1400 / natural.height) * zoom
+        const scale = Math.min(1, space.width / natural.width, space.height / natural.height) * zoom
         const viewport = documentPage.getViewport({ scale })
         const resolution = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(4_000_000 / (viewport.width * viewport.height)))
         canvas.width = Math.max(1, Math.floor(viewport.width * resolution))
@@ -176,9 +168,9 @@ function PdfPreview({ bytes, title }: { bytes: Uint8Array; title: string }) {
     }
     void draw()
     return () => { active = false; clearTimeout(timer); render?.cancel() }
-  }, [pdf, page, zoom, width])
+  }, [pdf, page, zoom, space])
 
-  return <div className={styles.document}>
+  return <div className={`${styles.document} ${styles.pdfDocument}`}>
     <div className={styles.toolbar} aria-label="Controles del PDF">
       <Button variant="ghost" size="sm" iconOnly aria-label="Página anterior" disabled={!pdf || page === 1 || busy} onClick={() => setPage(value => value - 1)}><ChevronLeft size={18} /></Button>
       <span className={styles.pageNumber} aria-live="polite">Página {page} de {pdf?.numPages || '…'}</span>
@@ -189,9 +181,9 @@ function PdfPreview({ bytes, title }: { bytes: Uint8Array; title: string }) {
       <Button variant="ghost" size="sm" disabled={!pdf || busy} onClick={() => setShowText(value => !value)}>{showText ? 'Ver PDF' : 'Ver texto'}</Button>
     </div>
     <div className={styles.pdfViewport} ref={viewportRef} aria-busy={busy}>
-      {error ? <PreviewNotice message={error} /> : busy ? <Loading compact message="Preparando página…" /> : null}
-      <canvas ref={canvasRef} className={styles.pdfCanvas} hidden={Boolean(error) || busy || showText} role="img" aria-label={`${title}, página ${page}`} />
-      {showText && !busy && !error ? <pre className={styles.text} tabIndex={0} aria-label={`Texto de la página ${page}`}>{text || 'Esta página contiene imágenes o texto escaneado. Usa Ver PDF para consultarla.'}</pre> : null}
+      {error ? <PreviewNotice message={error} /> : busy ? <div className={styles.pdfStatus}><Loading compact message="Preparando página…" /></div> : null}
+      <canvas ref={canvasRef} className={styles.pdfCanvas} hidden={Boolean(error) || showText} data-loading={busy ? 'true' : undefined} role="img" aria-label={`${title}, página ${page}`} />
+      {showText && !error ? <pre className={styles.text} data-loading={busy ? 'true' : undefined} tabIndex={0} aria-label={`Texto de la página ${page}`}>{text || 'Esta página contiene imágenes o texto escaneado. Usa Ver PDF para consultarla.'}</pre> : null}
     </div>
   </div>
 }

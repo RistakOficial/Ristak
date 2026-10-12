@@ -100,6 +100,16 @@ Microsoft u otro visor externo. Fuentes, CMaps y decodificadores se incluyen en
 `public/pdfjs` durante `predev`/`prebuild`; el worker PDF se empaqueta con Vite.
 No hace falta configurar servicios, llaves ni variables nuevas.
 
+El marco se ajusta al contenido: el texto corto usa una ventana compacta y cada
+página PDF conserva su proporción y cambia el tamaño del visor. Fotos y videos
+también conservan sus dimensiones naturales hasta el espacio disponible. El
+visor reserva sólo el espacio de cabecera, controles y descarga, con un ancho
+mínimo para poder usarlos. No amplía archivos pequeños automáticamente ni
+recorta márgenes que pertenecen al documento original. En pantallas chicas,
+texto largo o zoom, el contenido se desplaza dentro del visor y las acciones
+permanecen visibles. El espacio se calcula desde la ventana y sus controles,
+nunca desde el tamaño del archivo ya dibujado, para evitar ciclos de reducción.
+
 TXT, CSV/TSV, XML, JSON, Markdown, YAML y HTML se muestran como texto escapado;
 ningún script del archivo se ejecuta. DOCX, PPTX y OpenDocument muestran texto,
 XLSX muestra referencias y valores sin formato (hasta cinco hojas y 500 filas

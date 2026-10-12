@@ -603,6 +603,25 @@
   padding: clamp(16px, 4vw, 32px);
 }
 
+/* Opt-in para visores: el contenido decide el tamaño; la ventana pone el límite. */
+.modal.fitContent {
+  align-self: center;
+  width: fit-content;
+  min-width: min(320px, calc(100vw - 48px));
+  max-width: min(var(--modal-fit-max-width, 1200px), calc(100vw - 48px));
+  max-height: calc(100dvh - 48px);
+}
+
+.fitContent > .header { flex-shrink: 0; contain: inline-size; }
+.fitContent .title { overflow-wrap: anywhere; }
+
+.modal.fitContent.custom > .content {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+
 .modal.confirm,
 .modal.alert,
 .modal.info {

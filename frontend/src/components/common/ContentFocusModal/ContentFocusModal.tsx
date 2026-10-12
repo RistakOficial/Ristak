@@ -1,9 +1,10 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useRef, useState } from 'react'
 import { Download, ExternalLink, FileText, Image as ImageIcon, Link2, Video } from 'lucide-react'
 import { Modal } from '../Modal'
 import { Button } from '../Button'
 import { DocumentPreview } from './DocumentPreview'
 import { documentActionUrl } from './documentPreviewUtils'
+import { useContentFocusSpace } from './useContentFocusSpace'
 import styles from './ContentFocusModal.module.css'
 
 export type ContentFocusKind = 'image' | 'video' | 'document' | 'file' | 'link'
@@ -39,6 +40,8 @@ function getContentIcon(kind: ContentFocusKind) {
 }
 
 export const ContentFocusModal: React.FC<ContentFocusModalProps> = ({ item, onClose, onDownload }) => {
+  const stageRef = useRef<HTMLDivElement>(null)
+  const space = useContentFocusSpace(stageRef, Boolean(item))
   const [localFile, setLocalFile] = useState({ source: '', url: '' })
   const handleFileReady = useCallback((source: string, url: string) => setLocalFile({ source, url }), [])
   const title = item?.title?.trim() || (item ? getContentKindLabel(item.kind) : 'Contenido')
@@ -56,12 +59,14 @@ export const ContentFocusModal: React.FC<ContentFocusModalProps> = ({ item, onCl
       size="xl"
       type="custom"
       flushContent
+      fitContent={item?.kind !== 'link'}
       contentClassName={styles.content}
       className={styles.shell}
     >
       {item ? (
-        <div className={styles.viewer}>
-          <div className={styles.stage}>
+        <div className={`${styles.viewer} ${item.kind === 'link' ? styles.linkViewer : ''}`}>
+          <div className={styles.stage} data-content-focus-stage="" ref={stageRef}
+            style={{ '--content-focus-media-height': `${space.height}px` } as React.CSSProperties}>
             {item.kind === 'image' ? (
               <img className={styles.image} src={item.url} alt={title} />
             ) : item.kind === 'video' ? (
@@ -93,7 +98,7 @@ export const ContentFocusModal: React.FC<ContentFocusModalProps> = ({ item, onCl
             )}
           </div>
 
-          <div className={styles.details}>
+          <div className={styles.details} data-content-focus-details="">
             <span className={styles.kind}>
               {getContentIcon(item.kind)}
               {kindLabel}
