@@ -2824,6 +2824,20 @@ Ristak maneja varias superficies de comunicacion:
 La mensajeria usa servicios especializados para plantillas, media, atribucion,
 sincronizacion de conversaciones, read states, presencia y eventos.
 
+Al abrir un documento en Chat de escritorio o Chat móvil web, el visor compartido
+`ContentFocusModal` muestra el contenido dentro de Ristak. Los PDF usan PDF.js,
+con páginas, zoom y lectura del texto disponible; no usan el plugin PDF del
+navegador dentro de un iframe. TXT, CSV, XML, JSON, Markdown y HTML se muestran
+como texto inerte. DOCX, XLSX, PPTX y OpenDocument ofrecen una vista del texto o
+valores, y ZIP lista sus archivos. La vista de Office puede omitir diseño,
+imágenes y fórmulas; **Descargar** conserva siempre el original. Los formatos
+binarios sin lector, PDFs protegidos o archivos dañados muestran una explicación
+y conservan la descarga, sin inventar contenido. El límite del visor web es
+20 MB; sus lectores y workers se cancelan al cerrar o cambiar de archivo.
+`Configuración > Media > Abrir` reutiliza este visor con la descarga autenticada
+del asset, incluidos documentos privados y los permisos/licencia existentes.
+El contrato detallado vive en [MEDIA_STORAGE_BUNNY.md](./MEDIA_STORAGE_BUNNY.md).
+
 Cuando el proveedor avisa que se anuló un mensaje de WhatsApp, Instagram DM o
 Messenger, la misma burbuja queda como *Mensaje eliminado*, en gris tenue con
 un icono de mensaje retirado, y deja de mostrar el texto, foto, audio, video,

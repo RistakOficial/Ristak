@@ -158,6 +158,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Menú | `<DropdownMenu>`; se portalea, evita colisiones y cambia arriba/abajo según el espacio real | posicionar `DropdownMenuContent` con `top`/`right`/`bottom`/`left` desde CSS local |
 | Centro de notificaciones del topbar | `<NotificationCenter>`; usa `<DropdownMenu>`, lista plana con divisores, acciones de lectura e historial en el mismo panel | dropdown manual, cards anidadas o estado leído en `localStorage` |
 | Modal / overlay | `<Modal>` (recipe `[data-overlay]`/`[data-modal]`) | un `position:fixed` a mano |
+| Ver fotos, videos o documentos | `<ContentFocusModal>`; PDF con páginas/zoom, texto escapado y vista del contenido de Office; conserva descarga | duplicar overlays, incrustar el PDF en el plugin del navegador o enviar archivos a un visor externo |
 | Elegir tipo de cobro | `<PaymentFlowSelectorModal>`; alimenta licencia y pasarelas disponibles | repetir opciones de cobro dentro de Chat o Pagos |
 | Crear suscripción | `<CreateSubscriptionModal>`; reutiliza contacto, moneda, zona y pasarelas | copiar el alta de suscripciones dentro de otra pantalla |
 | Elegir impuesto de suscripción | `<PaymentTaxFields>`; usa `<TabList>` para la elección explícita, modo de cálculo y total recurrente con la moneda recibida | duplicar los selectores fiscales entre alta y edición |

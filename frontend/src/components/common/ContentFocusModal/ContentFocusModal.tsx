@@ -1,6 +1,9 @@
-import React from 'react'
+import React, { useCallback, useState } from 'react'
 import { Download, ExternalLink, FileText, Image as ImageIcon, Link2, Video } from 'lucide-react'
 import { Modal } from '../Modal'
+import { Button } from '../Button'
+import { DocumentPreview } from './DocumentPreview'
+import { documentActionUrl } from './documentPreviewUtils'
 import styles from './ContentFocusModal.module.css'
 
 export type ContentFocusKind = 'image' | 'video' | 'document' | 'file' | 'link'
@@ -17,6 +20,7 @@ export interface ContentFocusItem {
 interface ContentFocusModalProps {
   item: ContentFocusItem | null
   onClose: () => void
+  onDownload?: () => void | Promise<void>
 }
 
 function getContentKindLabel(kind: ContentFocusKind) {
@@ -34,20 +38,14 @@ function getContentIcon(kind: ContentFocusKind) {
   return <FileText size={18} />
 }
 
-function canEmbedInline(item: ContentFocusItem) {
-  const value = `${item.mimeType || ''} ${item.url || ''} ${item.title || ''}`.toLowerCase()
-  return (
-    item.kind === 'link' ||
-    value.includes('pdf') ||
-    value.includes('text/') ||
-    value.includes('.pdf') ||
-    value.includes('.txt')
-  )
-}
-
-export const ContentFocusModal: React.FC<ContentFocusModalProps> = ({ item, onClose }) => {
+export const ContentFocusModal: React.FC<ContentFocusModalProps> = ({ item, onClose, onDownload }) => {
+  const [localFile, setLocalFile] = useState({ source: '', url: '' })
+  const handleFileReady = useCallback((source: string, url: string) => setLocalFile({ source, url }), [])
   const title = item?.title?.trim() || (item ? getContentKindLabel(item.kind) : 'Contenido')
   const kindLabel = item ? getContentKindLabel(item.kind) : ''
+  const sourceUrl = localFile.source === item?.url && localFile.url ? localFile.url : item?.url
+  const fileUrl = item && (item.kind === 'document' || item.kind === 'file') && sourceUrl
+    ? documentActionUrl(sourceUrl, location.origin) : sourceUrl
 
   return (
     <Modal
@@ -77,7 +75,9 @@ export const ContentFocusModal: React.FC<ContentFocusModalProps> = ({ item, onCl
                 playsInline
                 preload={item.isGif ? 'auto' : 'metadata'}
               />
-            ) : canEmbedInline(item) ? (
+            ) : item.kind === 'document' || item.kind === 'file' ? (
+              <DocumentPreview key={`${item.url}|${item.mimeType}|${title}`} url={item.url} title={title} mimeType={item.mimeType} onFileReady={handleFileReady} />
+            ) : item.kind === 'link' ? (
               <iframe
                 className={styles.frame}
                 src={item.url}
@@ -100,14 +100,14 @@ export const ContentFocusModal: React.FC<ContentFocusModalProps> = ({ item, onCl
             </span>
             {item.caption ? <p>{item.caption}</p> : null}
             <div className={styles.actions}>
-              <a className={styles.actionButton} data-btn="" data-v="secondary" data-size="sm" href={item.url} download={item.kind !== 'link' ? title : undefined}>
+              {onDownload ? <Button variant="secondary" size="sm" onClick={() => void onDownload()} leftIcon={<Download size={15} />}>Descargar</Button> : !fileUrl ? <Button variant="secondary" size="sm" disabled leftIcon={<Download size={15} />}>Descargar</Button> : <a className={styles.actionButton} data-btn="" data-v="secondary" data-size="sm" href={fileUrl} download={item.kind !== 'link' ? title : undefined}>
                 <Download size={15} />
                 Descargar
-              </a>
-              <a className={styles.actionButton} data-btn="" data-v="ghost" data-size="sm" href={item.url} target="_blank" rel="noreferrer">
+              </a>}
+              {!fileUrl || (onDownload && !(localFile.source === item.url && localFile.url)) ? <Button variant="ghost" size="sm" disabled leftIcon={<ExternalLink size={15} />}>Abrir fuera</Button> : <a className={styles.actionButton} data-btn="" data-v="ghost" data-size="sm" href={fileUrl} target="_blank" rel="noreferrer">
                 <ExternalLink size={15} />
                 Abrir fuera
-              </a>
+              </a>}
             </div>
           </div>
         </div>

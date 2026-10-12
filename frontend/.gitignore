@@ -1,1 +1,2 @@
 # Keep package-lock.json committed so Render can use npm ci reliably.
+/public/pdfjs/

@@ -37,6 +37,7 @@ import {
   AreaChart,
   Button,
   Card,
+  ContentFocusModal,
   DateRangePicker,
   DropdownMenu,
   DropdownMenuContent,
@@ -594,6 +595,7 @@ export const MediaSettings: React.FC = () => {
   const [uploading, setUploading] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [focusedDocument, setFocusedDocument] = useState<ExplorerFile | null>(null)
   const [bulkAction, setBulkAction] = useState<'download' | 'delete' | null>(null)
   const [moving, setMoving] = useState(false)
   const [error, setError] = useState('')
@@ -1569,6 +1571,10 @@ export const MediaSettings: React.FC = () => {
   }
 
   const handleOpenAsset = (asset: MediaAsset) => {
+    if (asset.mediaType === 'document' || asset.mediaType === 'other') {
+      setFocusedDocument(toExplorerFile(asset))
+      return
+    }
     window.open(getOpenUrl(asset), '_blank', 'noopener,noreferrer')
   }
 
@@ -2378,7 +2384,7 @@ export const MediaSettings: React.FC = () => {
                     <Button variant="secondary" size="sm" leftIcon={<Pencil size={15} />} onClick={() => openRenameFileDialog(selectedFile)}>
                       Renombrar
                     </Button>
-                    <Button variant="secondary" size="sm" leftIcon={<ExternalLink size={15} />} onClick={() => handleOpenAsset(selectedFile.asset)}>
+                    <Button variant="secondary" size="sm" leftIcon={<Eye size={15} />} onClick={() => handleOpenAsset(selectedFile.asset)}>
                       Abrir
                     </Button>
                     <Button
@@ -2438,6 +2444,17 @@ export const MediaSettings: React.FC = () => {
           </div>
         )}
       </Card>
+
+      <ContentFocusModal
+        item={focusedDocument ? {
+          url: `${getApiBaseUrl()}/api/media/assets/${encodeURIComponent(focusedDocument.asset.id)}/download`,
+          title: focusedDocument.fileName,
+          kind: 'document',
+          mimeType: focusedDocument.asset.mimeType
+        } : null}
+        onClose={() => setFocusedDocument(null)}
+        onDownload={focusedDocument ? () => handleDownloadAsset(focusedDocument) : undefined}
+      />
 
       <Modal
         isOpen={createFolderOpen}

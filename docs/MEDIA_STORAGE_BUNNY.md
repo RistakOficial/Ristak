@@ -90,6 +90,43 @@ actuales, las reutiliza y marca la migración como completada sin duplicar ni mo
 archivos. Una rotación de llave sólo se acepta si la nueva llave todavía puede ver
 la misma Storage Zone; cambiar a otro propietario exige desconectar primero.
 
+## Vista previa de documentos en la app web
+
+Chat desktop, Chat móvil web y `Configuración > Media > Abrir` comparten
+`ContentFocusModal` y `DocumentPreview`. Los PDF se dibujan con PDF.js en canvas,
+con navegación por página, zoom y una opción para consultar el texto extraíble.
+No se incrustan en el visor PDF nativo de Edge/Chrome ni se mandan a Google,
+Microsoft u otro visor externo. Fuentes, CMaps y decodificadores se incluyen en
+`public/pdfjs` durante `predev`/`prebuild`; el worker PDF se empaqueta con Vite.
+No hace falta configurar servicios, llaves ni variables nuevas.
+
+TXT, CSV/TSV, XML, JSON, Markdown, YAML y HTML se muestran como texto escapado;
+ningún script del archivo se ejecuta. DOCX, PPTX y OpenDocument muestran texto,
+XLSX muestra referencias y valores sin formato (hasta cinco hojas y 500 filas
+por hoja), y ZIP lista hasta 100 nombres. Esto es una vista de contenido, no una
+reproducción completa del diseño de Office; imágenes, macros, fórmulas y enlaces
+externos no se ejecutan. El archivo original conserva sus bytes y nombre al
+descargarlo. Los formatos no soportados (por ejemplo DOC/XLS/PPT antiguos), PDF
+protegidos o archivos dañados muestran una explicación y conservan el original.
+
+La lectura web comprueba tamaño declarado y real con un máximo de 20 MB y un
+timeout de 30 segundos. El texto visible se limita a 150.000 caracteres y avisa
+cuando se recorta. Office/ZIP se procesa en un worker descartable con máximo de
+2.000 entradas, 60 partes leídas, 2 MB por parte, 8 MB descomprimidos y timeout de
+15 segundos. El visor termina workers, cancela streams y revoca URLs blob al
+cerrar o cambiar de archivo. Las URLs blob de texto/HTML/XML son `text/plain`,
+nunca contenido activo bajo el origen de la app.
+La apertura de un PDF y el dibujo de cada página tienen timeout de 30 segundos
+para conservar las acciones de descarga si un archivo no responde.
+
+Media lee el asset mediante `GET /api/media/assets/:id/download`, con la sesión,
+permisos y licencia existentes; no convierte un documento privado en público.
+El token de sesión sólo acompaña esa ruta del origen configurado de la
+instalación; nunca se envía al CDN ni a una URL arbitraria. Chat sigue leyendo
+las URLs de adjuntos que ya expone la conversación. El visor MCP de ChatGPT
+conserva su contrato y límite independiente de 15 MB; este cambio tampoco
+publica nuevos binarios Android/iOS.
+
 ## Render variables
 
 En una instalación gestionada o en un Blueprint standalone, la configuración central de Bunny
