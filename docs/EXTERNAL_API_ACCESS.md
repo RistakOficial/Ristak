@@ -120,10 +120,19 @@ OAuth discovery advertises PKCE `S256`, Dynamic Client Registration and
 `authorization_response_iss_parameter_supported=true`. Every successful or
 error authorization callback includes the exact `iss` published in the
 authorization-server metadata. Unauthenticated MCP responses publish the
-protected-resource metadata URL, the minimum discovery scope and the OAuth
+protected-resource metadata URL, the operational connection scopes and the OAuth
 error in `WWW-Authenticate`, so ChatGPT and other clients can restart discovery
 without guessing endpoints. Ristak does not advertise OpenID Connect: the MCP
 needs delegated OAuth authorization, not profile claims or a userinfo endpoint.
+
+The initial `WWW-Authenticate` challenge requests all four operational scopes.
+An authorization request that omits `scope` or sends it empty presents those
+same four permissions in the normal consent screen. This avoids accidentally
+creating a read-only ChatGPT/Codex connection during discovery. An explicit
+limited request, such as `scope=ristak.read`, remains limited. Grant/token
+normalization stays restrictive; no existing token or refresh token gains scopes
+silently. Existing read-only connections must reconnect and approve the wider
+permissions, and clients that cache tools must refresh their catalog afterward.
 
 Ristak Installer also has a private support delegation endpoint at
 `POST /api/internal/customer-operations/mcp`. It is not a customer-facing MCP
@@ -486,6 +495,12 @@ secrets do not enter the audit trail.
 
 The external API and MCP are backend-gated. Hiding buttons in the UI is not the
 security boundary.
+
+Developers/MCP is included by default in Basic, Medium and Professional on both
+Installer channels. The persisted `plan_feature_access` matrix and explicit
+customer/user restrictions still apply. Read and write access is identical for
+ChatGPT, Codex and other compatible clients; each tool remains limited to the
+account's licensed modules, granted OAuth scopes and current user permissions.
 
 - `/api/external` requires a valid API token and the `developers` feature.
 - Individual endpoints also require the feature of the resource being accessed:

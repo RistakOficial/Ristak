@@ -175,8 +175,8 @@ ninguna superficie. El límite se valida en backend en
 
 ### Gates por superficie
 
-El plan Medio (`medium`) y Profesional incluyen **Configuración → Developers →
-Conectar con MCP** para autorizar conexiones de ChatGPT, Codex u otros clientes
+Los planes Básico (`basic`), Medio (`medium`) y Profesional incluyen
+**Configuración → Developers → Conectar con MCP** para autorizar conexiones de ChatGPT, Codex u otros clientes
 compatibles. El permiso `developers` y su dependencia `settings_api_access`
 deben estar habilitados en la matriz del Installer para ambos canales, Test y
 En vivo (`stable`). La matriz vive en la clave `plan_feature_access` de
@@ -186,6 +186,13 @@ permiso. La instalación recoge los cambios en su siguiente revalidación de
 licencia (por defecto, cada cinco minutos mientras hay actividad). Después,
 recargar la app actualiza los permisos del menú. Los permisos individuales del
 usuario y las features de cada herramienta siguen aplicando.
+
+El paquete no convierte MCP en una conexión de sólo lectura. Todos ofrecen
+lectura, creación, edición y acciones dentro de los módulos incluidos en su plan,
+si el usuario tiene esos permisos y los autoriza por OAuth. La conexión usa el
+mismo catálogo para ChatGPT y Codex; las funciones de otros paquetes no se
+desbloquean por conectarse desde una IA. Una conexión anterior con sólo
+`ristak.read` requiere reconexión y consentimiento para ampliar sus permisos.
 
 - API tokens legacy (`/api/auth/api-token`) y la pantalla nueva de Developers
   requieren `settings_api_access`/`developers`.

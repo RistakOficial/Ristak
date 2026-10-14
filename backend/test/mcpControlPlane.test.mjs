@@ -307,7 +307,7 @@ test('grant ampliado invalida el token viejo y publica el catálogo de control',
   })
   assert.equal(stale.statusCode, 401)
   assert.match(stale.headers['www-authenticate'], /resource_metadata=/)
-  assert.match(stale.headers['www-authenticate'], /scope="ristak\.read"/)
+  assert.ok(stale.headers['www-authenticate'].includes(`scope="${MCP_SCOPE_VALUES.join(' ')}"`))
   assert.match(stale.headers['www-authenticate'], /error="invalid_token"/)
 
   const response = await requestMcp(fixture.fullToken, {

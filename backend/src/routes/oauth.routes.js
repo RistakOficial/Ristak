@@ -303,7 +303,10 @@ async function resolveAuthorizationRequest(req, suppliedSource = null) {
 
   let scopes
   try {
-    scopes = normalizeRequestedScopes(source.scope)
+    // Los clientes MCP pueden omitir scope al iniciar OAuth. El consentimiento
+    // debe ofrecer la operación completa; los grants/tokens conservan su default
+    // restrictivo y una solicitud explícita de sólo lectura sigue siendo válida.
+    scopes = normalizeRequestedScopes(source.scope, { defaultScopes: MCP_SCOPE_VALUES })
   } catch (error) {
     error.safeRedirectUri = redirectUri
     error.state = state

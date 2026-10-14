@@ -7,6 +7,7 @@ import express from 'express'
 
 import { databaseReady, db } from '../src/config/database.js'
 import oauthRoutes from '../src/routes/oauth.routes.js'
+import mcpRoutes from '../src/routes/mcp.routes.js'
 import {
   getMcpAccessStatus,
   listMcpConnections,
@@ -39,6 +40,8 @@ const fixture = {
   sessionToken: '',
   deniedSessionToken: '',
   clientId: '',
+  extraClientIds: [],
+  contactIds: [],
   redirectUri: 'https://client.example.test/oauth/callback',
   resource: 'https://ristak.example.test/api/mcp',
   issuer: 'https://ristak.example.test',
@@ -117,6 +120,59 @@ async function authorizeGrant(scopes = MCP_SCOPE_VALUES) {
   return grant
 }
 
+async function authorizeHttpConnection({ clientName, scope }) {
+  const registration = await requestServer('/api/oauth/register', {
+    method: 'POST',
+    body: { client_name: clientName, redirect_uris: [fixture.redirectUri] }
+  })
+  assert.equal(registration.statusCode, 201)
+  const clientId = JSON.parse(registration.text).client_id
+  fixture.extraClientIds.push(clientId)
+  const { verifier, challenge } = pkcePair()
+  const parameters = new URLSearchParams({
+    response_type: 'code',
+    client_id: clientId,
+    redirect_uri: fixture.redirectUri,
+    code_challenge: challenge,
+    code_challenge_method: 'S256'
+  })
+  if (scope !== undefined) parameters.set('scope', scope)
+  const start = await requestServer(`/api/oauth/authorize?${parameters}`)
+  assert.equal(start.statusCode, 302)
+  const requestId = new URL(start.headers.location, `http://127.0.0.1:${fixture.port}`).searchParams.get('request_id')
+  const cookie = [].concat(start.headers['set-cookie'] || [])
+    .map(value => value.split(';', 1)[0]).join('; ')
+  const headers = { Authorization: `Bearer ${fixture.sessionToken}`, Cookie: cookie }
+  const context = await requestServer(`/api/oauth/authorize/context?request_id=${requestId}`, { headers })
+  assert.equal(context.statusCode, 200)
+  const authorization = JSON.parse(context.text).authorization
+  const consent = await requestServer('/api/oauth/authorize/consent', {
+    method: 'POST', headers, body: { request_id: requestId, decision: 'approve' }
+  })
+  assert.equal(consent.statusCode, 200)
+  const code = new URL(JSON.parse(consent.text).redirectUrl).searchParams.get('code')
+  const exchange = await requestServer('/api/oauth/token', {
+    method: 'POST',
+    body: {
+      grant_type: 'authorization_code', client_id: clientId,
+      redirect_uri: fixture.redirectUri, code_verifier: verifier, code
+    }
+  })
+  assert.equal(exchange.statusCode, 200)
+  return { authorization, tokens: JSON.parse(exchange.text) }
+}
+
+async function callMcp(accessToken, method, params = {}) {
+  const response = await requestServer('/api/mcp', {
+    method: 'POST', headers: { Authorization: `Bearer ${accessToken}` },
+    body: { jsonrpc: '2.0', id: 1, method, params }
+  })
+  assert.equal(response.statusCode, 200)
+  const payload = JSON.parse(response.text)
+  assert.equal(payload.error, undefined)
+  return payload.result
+}
+
 before(async () => {
   await databaseReady
   const migration = await readFile(
@@ -169,6 +225,7 @@ before(async () => {
   app.use(express.json())
   app.use(express.urlencoded({ extended: false }))
   app.use(oauthRoutes)
+  app.use('/api/mcp', mcpRoutes)
   fixture.server = http.createServer(app)
   await new Promise((resolve, reject) => {
     fixture.server.once('error', reject)
@@ -181,6 +238,9 @@ after(async () => {
   if (fixture.server) {
     fixture.server.closeAllConnections?.()
     await new Promise(resolve => fixture.server.close(resolve))
+  }
+  for (const contactId of fixture.contactIds) {
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
   }
   if (fixture.userId) {
     await db.run('DELETE FROM mcp_action_confirmations WHERE user_id = ?', [fixture.userId]).catch(() => undefined)
@@ -198,6 +258,9 @@ after(async () => {
   }
   if (fixture.clientId) {
     await db.run('DELETE FROM oauth_clients WHERE client_id = ?', [fixture.clientId]).catch(() => undefined)
+  }
+  for (const clientId of fixture.extraClientIds) {
+    await db.run('DELETE FROM oauth_clients WHERE client_id = ?', [clientId])
   }
 })
 
@@ -547,6 +610,66 @@ test('flujo HTTP completo usa la sesión normal, autoriza con PKCE, canjea códi
     issuer: localIssuer,
     audience: localResource
   }))
+})
+
+for (const clientName of ['ChatGPT', 'Codex']) {
+  test(`${clientName}: OAuth sin scope permite consultar, crear y editar después del consentimiento`, async () => {
+    const { authorization, tokens } = await authorizeHttpConnection({ clientName })
+    assert.equal(authorization.clientName, clientName)
+    assert.deepEqual(authorization.scopes.map(scope => scope.value), MCP_SCOPE_VALUES)
+    assert.equal(tokens.scope, MCP_SCOPE_VALUES.join(' '))
+
+    const catalog = await callMcp(tokens.access_token, 'tools/list')
+    const names = new Set(catalog.tools.map(tool => tool.name))
+    for (const name of ['contacts_get', 'contacts_create', 'contacts_update', 'contacts_archive']) {
+      assert.equal(names.has(name), true, `${clientName} debe descubrir ${name}`)
+    }
+
+    const created = await callMcp(tokens.access_token, 'tools/call', {
+      name: 'contacts_create', arguments: {
+        name: `Contacto ${clientName}`, email: `oauth-${crypto.randomUUID()}@example.test`,
+        idempotencyKey: `oauth-default-create-${clientName}`
+      }
+    })
+    assert.equal(created.isError, undefined)
+    const contactId = created.structuredContent.data.id
+    fixture.contactIds.push(contactId)
+    const fullName = 'Contacto Editado'
+    const updated = await callMcp(tokens.access_token, 'tools/call', {
+      name: 'contacts_update', arguments: {
+        contactId, full_name: fullName, idempotencyKey: `oauth-default-edit-${clientName}`
+      }
+    })
+    assert.equal(updated.isError, undefined)
+    const read = await callMcp(tokens.access_token, 'tools/call', {
+      name: 'contacts_get', arguments: { contactId }
+    })
+    assert.equal(read.isError, undefined)
+    assert.equal(read.structuredContent.data.name, fullName)
+    assert.equal((await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId])).full_name, fullName)
+  })
+}
+
+test('OAuth con scope vacío ofrece el mismo consentimiento completo', async () => {
+  const { authorization, tokens } = await authorizeHttpConnection({ clientName: 'Empty scope', scope: '' })
+  assert.deepEqual(authorization.scopes.map(scope => scope.value), MCP_SCOPE_VALUES)
+  assert.equal(tokens.scope, MCP_SCOPE_VALUES.join(' '))
+})
+
+test('una conexión explícita de sólo lectura conserva su límite al descubrir y ejecutar', async () => {
+  const { authorization, tokens } = await authorizeHttpConnection({ clientName: 'Read only', scope: MCP_SCOPES.READ })
+  assert.deepEqual(authorization.scopes.map(scope => scope.value), [MCP_SCOPES.READ])
+  assert.equal(tokens.scope, MCP_SCOPES.READ)
+  const catalog = await callMcp(tokens.access_token, 'tools/list')
+  assert.ok(catalog.tools.some(tool => tool.name === 'contacts_get'))
+  assert.equal(catalog.tools.some(tool => tool.name === 'contacts_create'), false)
+  const denied = await callMcp(tokens.access_token, 'tools/call', {
+    name: 'contacts_create', arguments: {
+      name: 'No debe crearse', idempotencyKey: 'oauth-read-only-denied'
+    }
+  })
+  assert.equal(denied.isError, true)
+  assert.equal(denied.structuredContent.code, 'insufficient_scope')
 })
 
 test('consentimiento OAuth deniega a un usuario sin permiso de Developers', async () => {

@@ -15,7 +15,7 @@ import {
 import { getLicenseState, hasFeature, isLicenseEnforced } from '../services/licenseService.js'
 import { getGHLClient } from '../services/ghlClient.js'
 import { getHighLevelConfig } from '../config/database.js'
-import { validateOAuthAccessContext } from '../utils/oauthTokens.js'
+import { MCP_SCOPE_VALUES, serializeOAuthScopes, validateOAuthAccessContext } from '../utils/oauthTokens.js'
 import { resolveMcpResource, resolveOAuthOrigin } from '../utils/oauthOrigin.js'
 import { hasUserAccess } from '../utils/userAccess.js'
 import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
@@ -164,7 +164,7 @@ async function requireMcpAuth(req, res, next) {
     if (!access) {
       res.set(
         'WWW-Authenticate',
-        `Bearer resource_metadata="${metadataUrlFor(req)}", scope="ristak.read", error="invalid_token", error_description="OAuth access token requerido"`
+        `Bearer resource_metadata="${metadataUrlFor(req)}", scope="${serializeOAuthScopes(MCP_SCOPE_VALUES)}", error="invalid_token", error_description="OAuth access token requerido"`
       )
       return res.status(401).json({
         error: 'unauthorized',
