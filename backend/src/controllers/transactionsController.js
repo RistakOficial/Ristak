@@ -34,7 +34,8 @@ import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { triggerMetaPaymentPurchaseEvent } from '../services/metaConversionEventsService.js'
 import { sendPaymentNotification } from '../services/pushNotificationsService.js'
-import { queuePaymentAutomationMessage } from '../services/paymentAutomationsService.js'
+import { queuePaymentAutomationMessage, sendPaymentAutomationMessage } from '../services/paymentAutomationsService.js'
+import { ensureManualPaymentReceiptLink } from '../services/manualPaymentReceiptService.js'
 import {
   getGigstackInvoiceFileDownload,
   inspectGigstackPaymentForTransaction,
@@ -2533,8 +2534,31 @@ export const sendTransaction = async (req, res) => {
 }
 
 /**
- * Obtiene el enlace de pago
+ * Prepara el recibo de una transferencia manual pagada sin enviar mensajes.
  */
+export const preparePaymentReceiptLink = async (req, res) => {
+  try {
+    const baseUrl = getRequestBaseUrl(req)
+    const payment = await ensureManualPaymentReceiptLink(req.params.id, { baseUrl })
+    const link = appendReceiptQuery(buildPaymentUrlFromBase(baseUrl, payment.public_payment_id))
+    return res.json({ success: true, data: { paymentId: payment.id, link } })
+  } catch (error) {
+    return res.status(Number(error.status) || 500).json({ success: false, error: error.message })
+  }
+}
+
+export const sendPaymentReceipt = async (req, res) => {
+  try {
+    const publicBaseUrl = getRequestBaseUrl(req)
+    const payment = await ensureManualPaymentReceiptLink(req.params.id, { baseUrl: publicBaseUrl })
+    const result = await sendPaymentAutomationMessage('receipt', payment.id, { publicBaseUrl, channel: 'email' })
+    return res.json({ success: true, data: result })
+  } catch (error) {
+    return res.status(Number(error.status) || 500).json({ success: false, error: error.message })
+  }
+}
+
+/** Obtiene un enlace existente; las lecturas no preparan ni envían recibos. */
 export const getPaymentLink = async (req, res) => {
   try {
     const { id } = req.params

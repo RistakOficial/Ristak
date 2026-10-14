@@ -22,6 +22,11 @@ import {
 } from './whatsappApiService.js'
 import { sendEmailToContact } from './emailService.js'
 import {
+  ensureManualPaymentReceiptLink,
+  isManualTransferPayment,
+  isPaidManualTransferPayment
+} from './manualPaymentReceiptService.js'
+import {
   isOfflinePaymentPlanPayment,
   markOfflinePaymentReminderSent
 } from './offlinePaymentPlanService.js'
@@ -1186,6 +1191,7 @@ export async function sendPaymentAutomationMessage(type, paymentInput, options =
   const definition = getAutomationDefinition(type, settings)
   if (!definition) return { sent: false, skipped: true, reason: 'unknown_type' }
   if (!definition.enabled) return { sent: false, skipped: true, reason: 'disabled' }
+  if (type === 'receipt' && options.channel === 'email') definition.channel = 'email'
   const sendWhatsApp = channelUsesWhatsApp(definition.channel)
   const sendEmail = channelUsesEmail(definition.channel)
   if (!sendWhatsApp && !sendEmail) return { sent: false, skipped: true, reason: 'channel_not_supported' }
@@ -1195,6 +1201,13 @@ export async function sendPaymentAutomationMessage(type, paymentInput, options =
   if (!paymentId) return { sent: false, skipped: true, reason: 'missing_payment' }
 
   const publicBaseUrl = resolvePublicBaseUrl(payment, options.publicBaseUrl)
+  if (type === 'receipt' && isManualTransferPayment(payment)) {
+    if (!isPaidManualTransferPayment(payment)) {
+      return { sent: false, skipped: true, reason: 'manual_payment_not_paid' }
+    }
+    const repaired = await ensureManualPaymentReceiptLink(paymentId, { baseUrl: publicBaseUrl })
+    Object.assign(payment, repaired)
+  }
   const extraVariables = buildPaymentVariableMap(payment, { publicBaseUrl, timezone, fallbackCurrency })
   const hasPaymentTarget = Boolean(extraVariables['payment.public_id'] || /^https?:\/\//i.test(extraVariables['payment.url']))
   if (shouldRequirePaymentLink(type) && !hasPaymentTarget) {

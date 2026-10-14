@@ -33,6 +33,7 @@ import {
   updateOfflinePaymentPlanSchedule
 } from '../src/services/offlinePaymentPlanService.js'
 import { syncStripePaymentPlanFromLocalPayment } from '../src/services/stripePaymentService.js'
+import { sendPaymentReceipt } from '../src/controllers/transactionsController.js'
 import {
   ACCOUNT_TIMEZONE_CONFIG_KEY,
   businessTodayDateOnly,
@@ -815,6 +816,65 @@ test('cobro fallido usa texto API cuando la plantilla esta pendiente y la conver
     } finally {
       await cleanupFixtures([fixture.paymentId])
     }
+  })
+})
+
+test('manual transfer receipt repairs its link and sends email only once across concurrent retries', async () => {
+  await withEmailCapture(async (captures) => {
+    const fixture = await createPaymentFixture({ status: 'paid', suffix: 'manual_transfer_receipt' })
+    try {
+      await db.run(`UPDATE payments SET payment_provider = 'manual', payment_method = 'bank_transfer',
+        public_payment_id = NULL, payment_url = NULL, reference = 'TEST-TRANSFER' WHERE id = ?`, [fixture.paymentId])
+      await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+        automations: { receiptDeliveryEnabled: true, receiptDeliveryChannel: 'both' }
+      })
+      const request = { params: { id: fixture.paymentId }, headers: { host: 'pagos.example.test' }, protocol: 'https' }
+      const response = () => ({ statusCode: 200, status(code) { this.statusCode = code; return this }, json(payload) { this.payload = payload; return this } })
+      const responses = [response(), response()]
+      await Promise.all(responses.map(res => sendPaymentReceipt(request, res)))
+      assert.ok(responses.every(res => res.statusCode === 200))
+      assert.equal(responses.filter(res => res.payload.data.sent).length, 1)
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].to, `${fixture.contactId}@example.test`)
+      const row = await db.get('SELECT * FROM payments WHERE id = ?', [fixture.paymentId])
+      assert.equal(row.status, 'paid')
+      assert.equal(row.payment_provider, 'manual')
+      assert.equal(row.reference, 'TEST-TRANSFER')
+      assert.match(row.public_payment_id, /^rstk_pay_/)
+      assert.ok(captures[0].html.includes(`${row.payment_url}?receipt=1`))
+      assert.equal((await getPublicOfflinePayment(row.public_payment_id, { baseUrl: PUBLIC_BASE_URL })).id, fixture.paymentId)
+      const dispatches = await db.all('SELECT channel, status FROM payment_automation_dispatches WHERE payment_id = ?', [fixture.paymentId])
+      assert.deepEqual(dispatches, [{ channel: 'email', status: 'sent' }])
+      const replay = await sendPaymentAutomationMessage('receipt', fixture.paymentId, { channel: 'email' })
+      assert.equal(replay.reason, 'already_sent')
+      assert.equal(captures.length, 1)
+    } finally { await cleanupFixtures([fixture.paymentId]) }
+  })
+})
+
+test('automatic receipt creates the missing manual transfer link and refuses an unpaid transfer', async () => {
+  await withEmailCapture(async (captures) => {
+    const paid = await createPaymentFixture({ status: 'paid', suffix: 'auto_manual_receipt' })
+    const unpaid = await createPaymentFixture({ status: 'pending', suffix: 'auto_manual_unpaid' })
+    try {
+      for (const fixture of [paid, unpaid]) {
+        await db.run(`UPDATE payments SET payment_provider = 'manual', payment_method = 'bank_transfer',
+          public_payment_id = NULL, payment_url = NULL WHERE id = ?`, [fixture.paymentId])
+      }
+      await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+        automations: { receiptDeliveryEnabled: true, receiptDeliveryChannel: 'email' }
+      })
+      const blocked = await sendPaymentAutomationMessage('receipt', unpaid.paymentId, { publicBaseUrl: PUBLIC_BASE_URL })
+      assert.equal(blocked.reason, 'manual_payment_not_paid')
+      assert.equal(captures.length, 0)
+      const result = await sendPaymentAutomationMessage('receipt', paid.paymentId, { publicBaseUrl: PUBLIC_BASE_URL })
+      assert.equal(result.sent, true)
+      assert.equal(captures.length, 1)
+      const row = await db.get('SELECT * FROM payments WHERE id = ?', [paid.paymentId])
+      assert.match(row.public_payment_id, /^rstk_pay_/)
+      assert.ok(captures[0].html.includes(`${row.payment_url}?receipt=1`))
+      assert.equal((await db.get('SELECT * FROM payments WHERE id = ?', [unpaid.paymentId])).public_payment_id, null)
+    } finally { await cleanupFixtures([paid.paymentId, unpaid.paymentId]) }
   })
 })
 

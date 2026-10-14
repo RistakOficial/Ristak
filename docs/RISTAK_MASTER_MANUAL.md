@@ -5733,6 +5733,18 @@ Esta sección y todo su despacho en segundo plano requieren
 - Si falta contacto de correo, telefono, conexion del canal o URL publica de pago,
   el despacho se omite o queda fallido con razon explicita; no se inventan datos ni
   se manda un comprobante sin enlace descargable.
+- Las transferencias manuales ya pagadas (`manual` con `bank_transfer` o
+  `transfer`) preparan su identificador y enlace publico de recibo antes del
+  despacho. Se reusa la misma transaccion, importe, moneda, fecha y referencia;
+  no se crea un cobro ni una factura. El lector publico offline muestra solamente
+  el comprobante pagado y deja de exponerlo si el pago se revoca.
+- Para reparar un recibo historico sin enviar mensajes usa
+  `POST /api/transactions/:id/receipt-link` o MCP `payments_prepare_receipt`.
+  `POST /api/transactions/:id/send-receipt` y MCP `payments_send_receipt` usan el
+  contacto del pago y envian solo por email, con el despacho unico existente por
+  pago/canal. Las herramientas requieren clave de idempotencia y los permisos
+  actuales de Pagos. Preparar el enlace no reejecuta automatizaciones de pagos
+  historicos. Un envio aceptado por SMTP no confirma entrega al buzon.
 
 ### Recordatorios de citas
 

@@ -629,6 +629,20 @@ const paymentTools = [
     params: (args) => ({ id: args.paymentId })
   }),
   controllerSpec({
+    name: 'payments_prepare_receipt', description: 'Prepara de forma idempotente el recibo de una transferencia manual ya pagada, sin crear cobros, facturas ni enviar mensajes.',
+    module: 'payments', access: 'write', scope: 'ristak.write', risk: 'medium', handler: transactionsController.preparePaymentReceiptLink, method: 'POST',
+    idempotencyRequired: true,
+    inputSchema: schema({ paymentId: ID, ...controls({ idempotency: true }) }, requiredWith(['paymentId'], { idempotency: true })),
+    params: (args) => ({ id: args.paymentId })
+  }),
+  controllerSpec({
+    name: 'payments_send_receipt', description: 'Envía por email el recibo de una transferencia manual pagada al contacto del pago. Conserva un despacho único por pago y canal.',
+    module: 'payments', access: 'write', scope: 'ristak.execute', risk: 'high', handler: transactionsController.sendPaymentReceipt, method: 'POST',
+    idempotencyRequired: true,
+    inputSchema: schema({ paymentId: ID, ...controls({ idempotency: true }) }, requiredWith(['paymentId'], { idempotency: true })),
+    params: (args) => ({ id: args.paymentId })
+  }),
+  controllerSpec({
     name: 'payments_get_link', description: 'Obtiene el enlace de cobro disponible para una transacción.',
     module: 'payments', access: 'read', scope: 'ristak.read', risk: 'low', handler: transactionsController.getPaymentLink,
     inputSchema: schema({ paymentId: ID }, ['paymentId']), params: (args) => ({ id: args.paymentId })

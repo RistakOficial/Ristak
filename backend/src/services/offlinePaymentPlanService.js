@@ -7,6 +7,7 @@ import {
   getAccountTimezone
 } from '../utils/dateUtils.js'
 import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
+import { isPaidManualTransferPayment } from './manualPaymentReceiptService.js'
 import { publishPaymentChangedEvent } from './paymentLiveEventsService.js'
 import {
   calculatePaymentTax,
@@ -1239,11 +1240,14 @@ export async function getPublicOfflinePayment(publicPaymentId, { baseUrl = '' } 
     `SELECT p.*, c.full_name AS contact_name, c.email AS contact_email, c.phone AS contact_phone
      FROM payments p
      LEFT JOIN contacts c ON c.id = p.contact_id
-     WHERE p.public_payment_id = ? AND p.payment_provider = ?
+     WHERE p.public_payment_id = ? AND p.payment_provider IN (?, 'manual')
      LIMIT 1`,
     [publicId, OFFLINE_PROVIDER]
   )
   if (!row) return null
+
+  const manualReceipt = row.payment_provider === 'manual'
+  if (manualReceipt && !isPaidManualTransferPayment(row)) return null
 
   const metadata = parseJson(row.metadata_json)
   const flowId = cleanString(metadata.paymentPlan?.flowId, 200)
@@ -1261,14 +1265,14 @@ export async function getPublicOfflinePayment(publicPaymentId, { baseUrl = '' } 
     id: row.id,
     publicPaymentId: publicId,
     paymentUrl,
-    status: row.status || 'pending',
+    status: manualReceipt ? 'paid' : row.status || 'pending',
     amount: Number(row.amount || 0),
     currency: row.currency,
     title: row.title || mirror?.title || 'Pago offline',
     description: row.description || mirror?.description || '',
     dueDate: row.due_date || null,
     sentAt: row.sent_at || null,
-    paidAt: row.paid_at || null,
+    paidAt: row.paid_at || (manualReceipt ? row.date : null),
     timezone,
     timeZone: timezone,
     paymentMode: row.payment_mode === 'test' ? 'test' : 'live',
