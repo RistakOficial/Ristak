@@ -404,7 +404,9 @@ function appointmentOfferPreflightResult(result = {}, fallbackReply = '') {
     terminal: !canCollectData,
     visibleReply: dataReply || fallbackReply,
     ...(canCollectData ? {
-      continueWith: result.requiredField === 'agreedAmount'
+      continueWith: result.needsParticipantData === true
+        ? 'Revisa primero para quién es la cita. Si la persona no pidió un titular distinto ni invitados, usa el contacto del hilo: primaryAttendee=null, attendeeName=null, attendeeContext=null y guests=[]. No conviertas su nombre propio en un tercero. Si sí pidió otra persona, conserva esa identidad y busca sólo los datos faltantes ya confirmados en el historial; los teléfonos y correos de terceros requieren su cita literal. Completa primaryAttendee o guests, nunca guardes esos datos en save_contact_data del solicitante, y reintenta resolve_active_appointment_offer decision="accept" en este mismo turno. Si todavía falta un dato, pregunta únicamente ese dato sin volver a ofrecer ni pedir confirmación del horario.'
+        : result.requiredField === 'agreedAmount'
         ? 'Revisa si la conversación ya contiene un monto de anticipo confirmado. Si lo tiene, vuelve a resolve_active_appointment_offer con decision="accept" y ese agreedAmount. Si falta, pregunta sólo el monto; no vuelvas a pedir confirmación del horario.'
         : 'Antes de repetir la pregunta, consulta get_contact_profile y revisa los datos que la persona ya confirmó en la conversación. Guarda los datos propios del solicitante con save_contact_data; los del titular distinto o invitados van únicamente en primaryAttendee/guests. Después de completar o corregir los datos, vuelve a resolve_active_appointment_offer con decision="accept" en este mismo turno. Si todavía falta algo, pregunta sólo esos datos. No vuelvas a ofrecer ni a pedir confirmación del horario.'
     } : {})
@@ -731,6 +733,24 @@ async function resolveAppointmentParticipantEvidenceMessages({ ctx, primaryAtten
   return messages
 }
 
+function missingAppointmentParticipantData(missing, { role, guestIndex = 0 } = {}) {
+  const labels = { name: 'nombre', phone: 'teléfono', email: 'correo' }
+  const primary = role === 'primary'
+  const ownerLabel = primary ? 'del titular distinto' : 'de un invitado'
+  const fieldPrefix = primary ? 'primaryAttendee' : `guests[${guestIndex}]`
+  return {
+    ok: false,
+    needsData: true,
+    needsParticipantData: true,
+    code: 'appointment_participant_data_required',
+    requiredFields: missing.map((field) => ({
+      field: `${fieldPrefix}.${field}`,
+      label: `${labels[field] || field} ${ownerLabel}`
+    })),
+    error: `Faltan datos configurados ${ownerLabel}: ${missing.join(', ')}. Pide únicamente esos datos antes de agendar.`
+  }
+}
+
 function buildAppointmentParticipants({
   contact,
   primaryAttendee = null,
@@ -796,14 +816,11 @@ function buildAppointmentParticipants({
     }
     const missing = [...requiredGuestFields].filter((field) => !requestedPrimary[field])
     if (missing.length) {
-      return {
-        ok: false,
-        error: `Faltan datos configurados del titular distinto: ${missing.join(', ')}. Pide únicamente esos datos antes de agendar.`
-      }
+      return missingAppointmentParticipantData(missing, { role: 'primary' })
     }
   }
   const normalizedGuests = []
-  for (const rawGuest of rawGuests) {
+  for (const [guestIndex, rawGuest] of rawGuests.entries()) {
     const rawGuestParticipant = cleanParticipant(rawGuest)
     if (!rawGuestParticipant) continue
     const guest = removeUnverifiedParticipantContactData(rawGuestParticipant, conversationMessages)
@@ -815,10 +832,7 @@ function buildAppointmentParticipants({
     }
     const missing = [...requiredGuestFields].filter((field) => !guest[field])
     if (missing.length) {
-      return {
-        ok: false,
-        error: `Faltan datos configurados de un invitado: ${missing.join(', ')}. Pide únicamente esos datos antes de agendar.`
-      }
+      return missingAppointmentParticipantData(missing, { role: 'guest', guestIndex })
     }
     normalizedGuests.push({ ...publicAppointmentParticipant(guest), role: 'guest', contactId: null })
   }
@@ -9815,7 +9829,7 @@ export function createConversationalTools(ctx) {
         requirements: dataRequirements,
         conversationMessages: participantEvidenceMessages
       })
-      if (!participants.ok) return { ok: false, actionCompleted: false, error: participants.error }
+      if (!participants.ok) return { ...participants, actionCompleted: false }
       const requiredDataError = await enforceRequiredContactData({
         ctx,
         scope: 'appointment',
@@ -11276,7 +11290,7 @@ export function createConversationalTools(ctx) {
         requirements: dataRequirements,
         conversationMessages: participantEvidenceMessages
       })
-      if (!participants.ok) return { ok: false, actionCompleted: false, error: participants.error }
+      if (!participants.ok) return { ...participants, actionCompleted: false }
       const requiredDataError = await enforceRequiredContactData({
         ctx,
         scope: 'appointment',

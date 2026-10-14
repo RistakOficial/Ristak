@@ -10334,6 +10334,21 @@ completar los datos o el monto acordado de un anticipo sin repetir la
 confirmación; los errores de configuración, evidencia o disponibilidad
 conservan sus bloqueos.
 
+Los datos obligatorios faltantes del titular distinto o de un invitado también
+son una prevalidación recuperable (`appointment_participant_data_required`):
+conservan la oferta y permiten completar la misma aceptación, sin una reserva
+parcial ni una salida genérica a revisión humana. El agente distingue primero
+los datos propios de quien escribe de los de terceros; si confundió al
+solicitante con un titular distinto, corrige los argumentos y usa el contacto
+del hilo. Si realmente hay otra persona, pide sólo sus campos faltantes o usa
+los ya confirmados con su evidencia literal. Esos datos no se guardan en la
+ficha del solicitante. Las reglas de teléfono, correo, identidad, cupo y el
+límite de reintentos siguen vigentes, tanto al reservar como al entregar una
+solicitud de agenda humana.
+Si el dato llega en un mensaje posterior, se conserva el mismo horario ofrecido
+y se valida de nuevo antes de guardar. La confirmación exitosa exige una cita
+canónica guardada; repetirla no debe crear una segunda cita.
+
 Cada burbuja de usuario o asistente del tester conserva un ID de transcript
 estable tanto en el editor como en el wizard. El backend lo valida y lo aisla
 dentro del `previewScopeId`; para clientes anteriores que todavía no mandan IDs,

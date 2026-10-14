@@ -174,6 +174,66 @@ async function selectDate(fixture, localDate, executionId = `select-date-${fixtu
   return { ctx, availability, response }
 }
 
+for (const participantType of ['primary', 'guest', 'requester']) {
+  const testName = participantType === 'requester'
+    ? 'un solicitante tratado como tercero se corrige en la misma aceptación sin pedir datos extra'
+    : `datos faltantes del ${participantType === 'primary' ? 'titular distinto' : 'invitado'} mantienen la oferta y permiten completar la misma aceptación`
+  test(testName, async () => {
+    const fixture = await createFixture(`participant_preflight_${participantType}`)
+    fixture.config.capabilitiesConfig.dataRequirements = {
+      fields: [{ field: 'full_name', level: 'required', scope: 'any_action' }],
+      participants: { guestFields: ['name', 'phone'], maxGuests: 1 }
+    }
+    try {
+      const offerExecutionId = `offer-${fixture.suffix}`
+      const offerMessages = [{ id: offerExecutionId, role: 'user', content: 'Quiero una cita a las once.' }]
+      const offerCtx = previewContext({ config: fixture.config, contactId: fixture.contactId, scopeId: fixture.scopeId, executionId: offerExecutionId, messages: offerMessages })
+      offerCtx.virtualContact.fullName = 'Solicitante Soporte'
+      const availability = await toolNamed(offerCtx, 'get_free_slots').invoke(null, JSON.stringify(freeSlotsInput(fixture.firstDate)))
+      assert.equal(availability.ok, true, JSON.stringify(availability))
+      const offered = await toolNamed(offerCtx, 'offer_appointment_slot').invoke(null, JSON.stringify({ startTime: availability.slots[0].options[0].startTime, appointmentId: null, selectionContext: 'exact_preference' }))
+      assert.equal(offered.ok, true, JSON.stringify(offered))
+
+      const confirmationId = `confirm-${fixture.suffix}`
+      const quote = participantType === 'requester'
+        ? 'Confirmo el horario para mí. Mi nombre completo es Solicitante Soporte.'
+        : 'Confirmo el horario. Mi familiar se llama Persona Visitante y su teléfono es +526560000000.'
+      const ctx = previewContext({ config: fixture.config, contactId: fixture.contactId, scopeId: fixture.scopeId, executionId: confirmationId, messages: [...offerMessages, { id: `assistant-${fixture.suffix}`, role: 'assistant', content: offered.visibleReply }, { id: confirmationId, role: 'user', content: quote }] })
+      ctx.virtualContact.fullName = 'Solicitante Soporte'
+      ctx.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({ ctx, config: fixture.config })
+      assert.equal(ctx.appointmentOfferDecision?.active, true)
+      const resolver = toolNamed(ctx, 'resolve_active_appointment_offer')
+      const person = { name: participantType === 'requester' ? 'Solicitante Soporte' : 'Persona Visitante', phone: null, email: null, relation: participantType === 'requester' ? null : 'familiar', phoneSourceQuote: null, emailSourceQuote: null }
+      const incompleteInput = { ...offerDecisionInput('accept'), ...(participantType === 'guest' ? { guests: [person] } : { primaryAttendee: person }) }
+      const incomplete = await resolver.invoke(null, JSON.stringify(incompleteInput))
+      assert.equal(incomplete.ok, false)
+      assert.equal(incomplete.needsData, true, JSON.stringify(incomplete))
+      assert.equal(incomplete.needsParticipantData, true)
+      assert.equal(incomplete.terminal, false)
+      assert.match(incomplete.visibleReply, /teléfono/)
+      assert.doesNotMatch(incomplete.visibleReply, /equipo lo revise|qué día|qué horario/)
+      assert.equal(ctx.actions.some(action => action.type === 'book_appointment'), false)
+      const offerRow = await db.get('SELECT detail_json FROM conversational_agent_events WHERE id = ?', [offered.offerEventId])
+      assert.equal(JSON.parse(offerRow.detail_json).status, 'active')
+
+      const completePerson = { ...person, phone: '+526560000000', phoneSourceQuote: quote }
+      const correction = participantType === 'requester'
+        ? { primaryAttendee: null }
+        : participantType === 'guest'
+          ? { guests: [completePerson] }
+          : { primaryAttendee: completePerson }
+      const complete = await resolver.invoke(null, JSON.stringify({ ...incompleteInput, ...correction }))
+      assert.equal(complete.ok, true, JSON.stringify(complete))
+      assert.equal(complete.simulated, true)
+      assert.equal(complete.terminal, true)
+      assert.equal(ctx.actions.filter(action => action.type === 'book_appointment').length, 1)
+      assert.equal((await db.get('SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ?', [fixture.calendarId])).total, 0)
+    } finally {
+      await cleanupFixture(fixture)
+    }
+  })
+}
+
 async function insertOriginMainPreviewOffer({
   fixture,
   startTime,

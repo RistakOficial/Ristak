@@ -24,7 +24,7 @@ import {
   getOrCreateConversationalReplyDeliveryPlan,
   settleConversationalReplyDelivery
 } from '../src/services/conversationalAgentService.js'
-import { getAccountTimezone, invalidateTimezoneCache } from '../src/utils/dateUtils.js'
+import { getAccountTimezone, invalidateTimezoneCache, parseStoredUtcDateTime } from '../src/utils/dateUtils.js'
 
 function liveContext({ fixture, executionId, messages = [] }) {
   return {
@@ -512,6 +512,107 @@ async function insertLiveInboundAuthorityClaim(fixture, id, messageTimestamp, cl
        claimed_at = excluded.claimed_at`,
     [id, fixture.contactId, messageTimestamp, claimedAt]
   )
+}
+
+for (const participantType of ['primary', 'guest', 'requester']) {
+  for (const recoveryTurn of ['same_turn', 'next_turn']) {
+    test(`live: datos de ${participantType} se recuperan en ${recoveryTurn} y guardan una sola cita`, async () => {
+      const fixture = await createFixture(`participant_${participantType}_${recoveryTurn}`)
+      fixture.config.capabilitiesConfig.dataRequirements = {
+        enabled: true,
+        fields: [{ field: 'full_name', level: 'required', scope: 'any_action' }],
+        participants: { enabled: true, guestFields: ['name', 'phone'], maxGuests: 1 }
+      }
+      try {
+        await db.run('UPDATE contacts SET full_name = ?, phone = ? WHERE id = ?', [
+          'Solicitante Soporte', '+526560000001', fixture.contactId
+        ])
+        await db.run('UPDATE conversational_agents SET capabilities_config = ? WHERE id = ?', [
+          JSON.stringify(fixture.config.capabilitiesConfig), fixture.agentId
+        ])
+        const { exact, confirmation, resolver } = await prepareLiveAppointmentConfirmation(fixture)
+        const completeQuote = participantType === 'requester'
+          ? 'La cita es para mí. Mi nombre completo es Solicitante Soporte.'
+          : 'La persona se llama Persona Visitante y su teléfono es +526560000000.'
+        if (recoveryTurn === 'same_turn') {
+          confirmation.conversationMessages.at(-1).content += ` ${completeQuote}`
+        }
+        const person = {
+          name: participantType === 'requester' ? 'Solicitante Soporte' : 'Persona Visitante',
+          phone: null, email: null,
+          relation: participantType === 'requester' ? null : 'familiar',
+          phoneSourceQuote: null, emailSourceQuote: null
+        }
+        const incompleteInput = {
+          ...acceptOfferInput(),
+          ...(participantType === 'guest' ? { guests: [person] } : { primaryAttendee: person })
+        }
+        const incomplete = await resolver.invoke(null, JSON.stringify(incompleteInput))
+        assert.equal(incomplete.ok, false, JSON.stringify(incomplete))
+        assert.equal(incomplete.needsData, true)
+        assert.equal(incomplete.needsParticipantData, true)
+        assert.equal(incomplete.terminal, false)
+        assert.equal(incomplete.code, 'appointment_participant_data_required')
+        assert.match(incomplete.visibleReply, /teléfono/)
+        assert.doesNotMatch(incomplete.visibleReply, /equipo lo revise|qué día|qué horario/)
+        assert.equal(await appointmentCount(fixture), 0)
+        assert.equal(confirmation.actions.some(action => action.type === 'book_appointment'), false)
+
+        let recovery = confirmation
+        if (recoveryTurn === 'next_turn') {
+          const executionId = `participant-data-${fixture.suffix}`
+          recovery = liveContext({
+            fixture, executionId,
+            messages: [
+              ...confirmation.conversationMessages,
+              { id: `data-question-${fixture.suffix}`, role: 'assistant', content: incomplete.visibleReply },
+              { id: executionId, role: 'user', content: completeQuote }
+            ]
+          })
+          recovery.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+            ctx: recovery, config: fixture.config
+          })
+          assert.equal(recovery.appointmentOfferDecision?.active, true)
+          assert.equal(recovery.appointmentOfferDecision.startTime, exact.startTime)
+        }
+        const phoneSourceQuote = recovery.conversationMessages.at(-1).content
+        const completePerson = { ...person, phone: '+526560000000', phoneSourceQuote }
+        const correction = participantType === 'requester'
+          ? { primaryAttendee: null }
+          : participantType === 'guest'
+            ? { guests: [completePerson] }
+            : { primaryAttendee: completePerson }
+        const recoveryResolver = toolNamed(recovery, 'resolve_active_appointment_offer')
+        const complete = await recoveryResolver.invoke(null, JSON.stringify({ ...incompleteInput, ...correction }))
+        collectClientRequestIds(fixture, recovery)
+        assert.equal(complete.ok, true, JSON.stringify(complete))
+        assert.equal(complete.actionCompleted, true)
+        assert.equal(complete.terminal, true)
+        assert.match(complete.visibleReply, /cita quedó confirmada/i)
+        singleBookAppointmentAction(recovery)
+        assert.equal(await appointmentCount(fixture), 1)
+        const appointment = await db.get('SELECT id, start_time FROM appointments WHERE calendar_id = ?', [fixture.calendarId])
+        assert.equal(parseStoredUtcDateTime(appointment.start_time).toISO(), exact.startTime)
+        const participants = await db.all(
+          'SELECT role, contact_id, name_snapshot, phone_snapshot FROM appointment_participants WHERE appointment_id = ?',
+          [appointment.id]
+        )
+        const savedPerson = participants.find(p => p.role === (participantType === 'guest' ? 'guest' : 'primary_attendee'))
+        assert.ok(savedPerson, JSON.stringify(participants))
+        assert.equal(savedPerson.name_snapshot, person.name)
+        assert.equal(savedPerson.phone_snapshot, participantType === 'requester' ? '+526560000001' : '+526560000000')
+        assert.equal(savedPerson.contact_id, participantType === 'requester' ? fixture.contactId : null)
+        const requester = await db.get('SELECT full_name, phone FROM contacts WHERE id = ?', [fixture.contactId])
+        assert.equal(requester.full_name, 'Solicitante Soporte')
+        assert.equal(requester.phone, '+526560000001')
+
+        await recoveryResolver.invoke(null, JSON.stringify({ ...incompleteInput, ...correction }))
+        assert.equal(await appointmentCount(fixture), 1, 'Repetir la confirmación no puede duplicar la cita')
+      } finally {
+        await cleanupFixture(fixture)
+      }
+    })
+  }
 }
 
 test('live: el copy v2 enlaza la oferta con el hilo y un replay conserva el primer texto durable', async () => {
