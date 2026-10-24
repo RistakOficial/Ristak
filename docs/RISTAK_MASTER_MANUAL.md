@@ -6541,6 +6541,18 @@ requiere env vars nuevas para arrancar el servicio. La UI solo pide `pk_` y
 `sk_`; el nombre visible de la organizacion se deriva de
 `GET /v3/organizations/me` o del modo configurado, no de un campo manual.
 
+El SDK embebido de compatibilidad en `PublicPayment.tsx` se carga con
+`import('rebill')`; `frontend/package.json` y su lockfile fijan la version
+`1.17.39`. Esta version adelanta la visualizacion del formulario hasta antes de
+actualizar el metodo de pago, reconoce aprobaciones 3DS sin desafio y permite
+biometria/passkeys en el iframe bancario cuando el banco las soporta, sin cambiar
+atributos ni eventos de la integracion
+([anuncio de Rebill](https://product.rebill.com/changelog)). La actualizacion no
+requiere reconectar cuentas: el checkout sigue recibiendo la public key de la
+instalacion y del modo del pago; la secret key sigue exclusivamente en backend.
+Los Payment Links normales abren `pay.rebill.com`, cuya version de checkout
+administra Rebill y no depende del paquete instalado en Ristak.
+
 Alcance:
 
 - Cobros unicos por link publico: Ristak crea una fila local, crea un Payment
