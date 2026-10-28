@@ -7952,7 +7952,7 @@ function getStoredContactDisplayName(existing = {}, fallbackName = '', phone = '
   return phone
 }
 
-async function upsertLocalContact({ contactId, phone, profileName, messageTimestamp, attribution }) {
+async function upsertLocalContact({ contactId, phone, profileName, messageTimestamp, attribution, rejectBlockedInbound = false }) {
   const canonicalPhone = normalizePhoneForStorage(phone) || cleanString(phone)
   if (!canonicalPhone) return { id: null, created: false }
 
@@ -7968,6 +7968,11 @@ async function upsertLocalContact({ contactId, phone, profileName, messageTimest
       `, [cleanContactId]).catch(() => null)
     : null
   const existing = existingById || await findContactByPhoneCandidates(canonicalPhone)
+  // Recheck after resolving an existing alias, before touching its identity or
+  // persisting a message. This does not add the alias as an identity-wide rule.
+  if (rejectBlockedInbound && await findContactBlock({ contactId: existing?.id, phone: canonicalPhone })) {
+    return { id: existing?.id || null, created: false, blocked: true }
+  }
   const contactName = normalizeWhatsAppProfileName(profileName, canonicalPhone)
   const fullName = contactName || GENERIC_CONTACT_NAME
   const cleanMessageTimestamp = toDateTime(messageTimestamp) || null
@@ -8009,7 +8014,8 @@ async function upsertLocalContact({ contactId, phone, profileName, messageTimest
             phone,
             profileName,
             messageTimestamp,
-            attribution
+            attribution,
+            rejectBlockedInbound
           })
         }
       }
@@ -9714,8 +9720,12 @@ async function upsertMessage({
     phone: identity.phone,
     profileName,
     messageTimestamp,
-    attribution
+    attribution,
+    rejectBlockedInbound: identity.direction === 'inbound'
   })
+  if (localContact.blocked) {
+    return { saved: false, isNew: false, shouldTriggerInboundSideEffects: false, skipped: true, blocked: true, reason: 'contact_blocked' }
+  }
   const apiContactId = await upsertWhatsAppApiContact({
     contactId: localContact.id,
     phone: identity.phone,

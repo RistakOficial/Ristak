@@ -405,6 +405,12 @@ export async function findContactByPhoneCandidates(phone, { excludeId = null } =
  * histórica anterior al borrado deshaga una eliminación intencional.
  */
 export async function restoreSoftDeletedContactForNewInbound(options = {}) {
+  const contactId = cleanString(options.contactId)
+  if (!contactId) return { restored: false, reason: 'missing_contact' }
+  // Active contacts need no write lock. Opening a SQLite write transaction for
+  // every duplicate inbound can exhaust its worker threads during QR recovery.
+  const contact = await db.get('SELECT deleted_at FROM contacts WHERE id = ?', [contactId])
+  if (!contact?.deleted_at) return { restored: false, reason: 'contact_active' }
   return withContactBlockPolicy([{ contactId: options.contactId }], () => restoreSoftDeletedContactForNewInboundUnderBlockPolicy(options))
 }
 

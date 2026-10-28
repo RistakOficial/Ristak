@@ -142,6 +142,21 @@ test('QR, Meta WhatsApp and AI stop before saving incoming messages or sending a
   assert.ok(meta.some(item => item.reason === 'contact_blocked'))
 })
 
+test('an inbound resolving through a linked secondary number cannot update or reopen the blocked contact', async t => {
+  const contact = await fixture(t, { archived: true })
+  const secondary = '+19995550103'
+  await db.run('INSERT INTO contact_phone_numbers (id, contact_id, phone, is_primary, source) VALUES (?, ?, ?, 0, ?)', [randomUUID(), contact.id, secondary, 'unverified_import'])
+  await addContactBlock({ identityType: 'contact', identityValue: contact.id })
+  assert.equal(await findContactBlock({ phone: secondary }), null, 'the secondary must not become a new global phone ban')
+  const result = await processMetaDirectWebhookPayload({ payload: { object: 'whatsapp_business_account', entry: [{ id: 'fictitious_waba', changes: [{ field: 'messages', value: { metadata: { phone_number_id: 'fictitious_phone', display_phone_number: '+19995550102' }, messages: [{ from: secondary.slice(1), id: randomUUID(), timestamp: '4070908800', type: 'text', text: { body: 'Fictitious secondary inbound' } }] } }] }] } })
+  assert.ok(result.some(item => item.reason === 'contact_blocked'))
+  const row = await db.get('SELECT phone, deleted_at FROM contacts WHERE id = ?', [contact.id])
+  assert.equal(row.phone, contact.phone)
+  assert.ok(row.deleted_at)
+  assert.equal((await db.get('SELECT COUNT(*) AS n FROM whatsapp_api_messages WHERE contact_id = ?', [contact.id])).n, 0)
+  assert.equal(await findContactBlock({ phone: secondary }), null)
+})
+
 test('native and imported public forms return a generic error before submissions, contacts or automation side effects', async t => {
   const contact = await fixture(t, { archived: true })
   await addContactBlock({ identityType: 'email', identityValue: contact.email, reason: 'Never public' })
