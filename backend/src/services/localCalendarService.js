@@ -5709,10 +5709,12 @@ async function upsertLocalAppointmentUnderBlockPolicy(raw = {}, options = {}) {
     await assertAppointmentParticipantContactsExist(appointmentPayload.participants)
   }
   const normalized = normalizeAppointmentRecord(raw, options)
+  const accountZone = await getAccountTimezone()
+  const recordStatus = String(normalized.appointmentStatus || normalized.status || '').toLowerCase()
+  const preservesPastHistory = ['noshow', 'no_show', 'showed', 'attended', 'completed', 'invalid', 'failed', 'missed'].includes(recordStatus)
+    && Date.parse(normalizeToUtcIso(normalized.startTime, accountZone)) <= Date.now()
   // Cancellation and history stay writable; new bookings and reopening do not.
-  if (!['cancelled', 'canceled', 'deleted', 'invalid', 'noshow', 'no_show', 'showed', 'attended', 'completed', 'failed', 'missed'].includes(
-    String(normalized.appointmentStatus || normalized.status || '').toLowerCase()
-  )) {
+  if (!['cancelled', 'canceled'].includes(recordStatus) && !preservesPastHistory) {
     await assertContactNotBlocked({ contactId: normalized.contactId })
     for (const participant of participantsProvided ? appointmentPayload.participants : []) {
       await assertContactNotBlocked({ contactId: participant.contactId || participant.contact_id, email: participant.email, phone: participant.phone })
@@ -5730,7 +5732,6 @@ async function upsertLocalAppointmentUnderBlockPolicy(raw = {}, options = {}) {
   // GHL y el modal mandan ISO con offset (ej "...-06:00"); si la columna es
   // `timestamp` (sin zona) Postgres descartaría el offset y guardaría hora local.
   // Convirtiendo a UTC aquí el instante queda correcto en cualquier tipo de columna.
-  const accountZone = await getAccountTimezone()
   normalized.startTime = normalizeToUtcIso(normalized.startTime, accountZone)
   normalized.endTime = normalizeToUtcIso(normalized.endTime, accountZone)
   normalized.dateAdded = normalizeToUtcIso(normalized.dateAdded, accountZone)

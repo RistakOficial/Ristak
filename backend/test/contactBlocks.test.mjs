@@ -121,6 +121,9 @@ test('local and imported-provider reservations reject blocked identities but can
   const appointment = { id: `block_appt_${randomUUID()}`, contactId: contact.id, startTime: '2099-01-01T15:00:00Z', endTime: '2099-01-01T16:00:00Z' }
   await assert.rejects(() => createLocalAppointment(appointment), blocked)
   await assert.rejects(() => upsertLocalAppointment({ ...appointment, source: 'ghl' }), blocked)
+  await assert.rejects(() => upsertLocalAppointment({ ...appointment, appointmentStatus: 'completed' }), blocked)
+  const history = await upsertLocalAppointment({ ...appointment, id: `history_${randomUUID()}`, startTime: '2000-01-01T15:00:00Z', endTime: '2000-01-01T16:00:00Z', appointmentStatus: 'completed' })
+  assert.equal(history.appointmentStatus, 'completed')
   const cancelled = await upsertLocalAppointment({ ...appointment, appointmentStatus: 'cancelled' })
   assert.equal(cancelled.appointmentStatus, 'cancelled')
   await assert.rejects(() => upsertLocalAppointment({ ...appointment, appointmentStatus: 'confirmed' }), blocked)
