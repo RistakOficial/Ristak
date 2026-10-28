@@ -49,6 +49,7 @@ import { getContactLinkedSocial } from '../controllers/contactSocialProfileContr
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireFeature } from '../middleware/licenseMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
+import { getContactBlocks, createContactBlock, deleteContactBlock } from '../controllers/contactBlocksController.js'
 
 const router = express.Router()
 
@@ -64,6 +65,9 @@ router.get('/chats', requireModuleAccess('chat'), getChatContacts)
 router.post('/chats/read', requireModuleAccess('chat'), markChatContactsRead)
 router.post('/chats/:id/read', requireModuleAccess('chat'), markChatContactRead)
 router.get('/search', searchContacts)
+router.get('/blocked', getContactBlocks)
+router.post('/blocked', createContactBlock)
+router.delete('/blocked/:id', deleteContactBlock)
 // Asignación de responsable (antes de /:id para no colisionar con el param).
 router.get('/assignable-users', getAssignableUsers)
 router.get('/stats', getContactStats)

@@ -1,4 +1,5 @@
 import { Agent, Runner, tool } from '@openai/agents'
+import { findContactBlock } from '../../services/contactBlockService.js'
 import { createHash } from 'node:crypto'
 import { DateTime } from 'luxon'
 import { z } from 'zod'
@@ -11222,6 +11223,7 @@ export async function resolveInboundAgentForContact({
   ruleContext,
   activationMessageId = ''
 }) {
+  if (await findContactBlock({ contactId })) return { agentConfig: null, state: null, assigned: false }
   const normalizedChannel = normalizeConversationalChannel(channel)
   const manualAssignment = await getManualConversationAgentAssignment(contactId)
   if (manualAssignment?.agentId) {
@@ -11909,6 +11911,7 @@ export async function handleInboundConversationalMessage({
   channel = 'whatsapp',
   postContext = null
 }, dependencies = {}) {
+  if (await findContactBlock({ contactId, phone })) return { skipped: true, reason: 'contact_blocked' }
   const normalizedChannel = normalizeConversationalChannel(channel)
   const runKey = getRunKey(contactId, normalizedChannel)
   const loadPreventiveMeasure =

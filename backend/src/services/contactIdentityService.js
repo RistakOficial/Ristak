@@ -8,6 +8,7 @@ import { formatContactName, normalizeContactNameFields } from '../utils/contactN
 import { mergeConversationalAgentSafetyContactReferences } from '../utils/conversationalAgentSafetyMerge.js'
 import { acquireConversationalInboundCommitLocks } from './conversationalInboundCommitLockService.js'
 import { parseSortableTimestamp } from '../utils/sqlTimestampSort.js'
+import { findContactBlock, assertContactNotBlocked, withContactBlockPolicy } from './contactBlockService.js'
 
 // (CNT-002) Parser tolerante de tags almacenados como JSON array (o null/legacy).
 function parseStoredTags(raw) {
@@ -403,13 +404,19 @@ export async function findContactByPhoneCandidates(phone, { excludeId = null } =
  * la papelera. La comparación temporal evita que un reintento o una importación
  * histórica anterior al borrado deshaga una eliminación intencional.
  */
-export async function restoreSoftDeletedContactForNewInbound({
+export async function restoreSoftDeletedContactForNewInbound(options = {}) {
+  return withContactBlockPolicy([{ contactId: options.contactId }], () => restoreSoftDeletedContactForNewInboundUnderBlockPolicy(options))
+}
+
+async function restoreSoftDeletedContactForNewInboundUnderBlockPolicy({
   contactId,
   messageTimestamp,
   source = 'chat'
 } = {}) {
   const cleanContactId = String(contactId || '').trim()
   if (!cleanContactId) return { restored: false, reason: 'missing_contact' }
+
+  if (await findContactBlock({ contactId: cleanContactId })) return { restored: false, reason: 'contact_blocked' }
 
   const contact = await db.get(
     'SELECT id, deleted_at FROM contacts WHERE id = ? LIMIT 1',
@@ -620,6 +627,10 @@ async function mergeContactIdsUnderCommitLocks({ fromId, toId, canonicalPhone = 
 
 export async function mergeContactIds({ fromId, toId, canonicalPhone = null }) {
   if (!fromId || !toId || fromId === toId) return toId
+  // A merge must not erase a persistent contact-ID block or spread one through
+  // ambiguous aliases. Administrators must explicitly unblock before merging.
+  await assertContactNotBlocked({ contactId: fromId })
+  await assertContactNotBlocked({ contactId: toId })
 
   return db.transaction(async (transactionDatabase) => {
     // Un merge mueve filas inbound de fromId a toId. Debe competir tanto con
@@ -646,6 +657,7 @@ export async function prepareContactPhoneUpsert({ contactId, phone }) {
   if (!matched) {
     return { phone: canonicalPhone, mergeFromContactId: null }
   }
+  await assertContactNotBlocked({ contactId: matched.id })
 
   const targetExists = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId])
   if (targetExists) {

@@ -2300,6 +2300,42 @@ Familias de tablas relevantes:
 El contacto es la entidad central. Puede venir de HighLevel, formularios, Sites,
 tracking, WhatsApp, Meta, carga manual, API externa o automatizaciones.
 
+### Contactos bloqueados
+
+Los administradores abren **Contactos → Contactos bloqueados** para agregar,
+consultar y retirar bloqueos exactos por correo o teléfono internacional completo.
+El motivo es interno. La API también permite bloquear el ID de un contacto,
+incluido uno archivado. La política vive en `contact_blocks`, separada de la
+papelera y sin borrado en cascada: restaurar o eliminar un contacto no retira
+las reglas de correo/teléfono. Desbloquear tampoco restaura citas canceladas.
+
+El servidor rechaza nuevas reservas y reaperturas, así como envíos de formularios
+nativos/importados y formularios embebidos, antes de crear contactos o ejecutar
+sus efectos de negocio. La respuesta pública es genérica, sin revelar el bloqueo,
+la persona, el motivo o el dato que coincidió. WhatsApp API/QR, correo entrante y
+conversaciones sincronizadas no reactivan el contacto; los mensajes bloqueados
+se ignoran en Ristak. La selección de agentes, las automatizaciones y los envíos
+salientes verifican la misma política. Esto no constituye un bloqueo dentro de
+las cuentas externas de WhatsApp, correo o Meta.
+
+Los correos se comparan completos, sin distinguir mayúsculas, y los teléfonos
+conservan el código de país; únicamente se equipara el alias mexicano `521` de
+WhatsApp con `52`. No se usan nombres, fragmentos ni últimos dígitos. Un número
+adicional sin verificar nunca se convierte automáticamente en una regla nueva.
+Las fusiones de contactos bloqueados se rechazan hasta que un administrador
+retire explícitamente el bloqueo, para no perderlo ni propagarlo a otra persona.
+Una persona con datos distintos aún no vinculados no puede identificarse con
+certeza. La cancelación y el historial siguen disponibles; agregar un bloqueo
+no cancela citas previas ni envía mensajes. Papelera y cancelación se operan por
+sus acciones habituales cuando correspondan.
+
+La migración aditiva `169_contact_blocks.sql` funciona en PostgreSQL y SQLite;
+el bootstrap reutiliza el mismo DDL. Las escrituras locales de citas, captura de
+contactos por formularios y restauración por inbound se serializan con los cambios
+de política mediante transacciones y candados por identidad exacta en PostgreSQL.
+Las rutas `/api/contacts/blocked` y sus herramientas MCP exigen administrador,
+además de los permisos del módulo. Las altas y bajas dejan auditoría.
+
 Capacidades:
 
 - CRUD y busqueda.

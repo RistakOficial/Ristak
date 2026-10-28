@@ -234,6 +234,20 @@ en ChatGPT después del despliegue.
 Fuentes de compatibilidad: [OpenAI: UI de plugins](https://developers.openai.com/plugins/build/chatgpt-ui)
 y [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview).
 
+### Contact blocking tools
+
+`contacts_blocks_list`, `contacts_block` and `contacts_unblock` are admin-only
+tools in the contacts module. Reads require `ristak.read`; changes require
+`ristak.write` and an idempotency key. Creation accepts `identityType` (`email`,
+`phone`, or `contact`), the full `identityValue`, and an optional internal
+`reason`. Phone rules require an explicit international prefix. These rules
+persist independently of the contact trash, use exact identity matching, and
+never infer additional phone rules. Unblocking uses `blockId`; it does not
+restore a contact or cancelled appointment. See **CRM y contactos → Contactos
+bloqueados** in the master manual for the enforcement contract.
+The backing `contact_blocks` table is excluded from generic data and SQL tools;
+only the dedicated administrative operations expose this policy.
+
 ### Payment tools
 
 The `payments` domain contains 64 typed tools and mirrors the supported

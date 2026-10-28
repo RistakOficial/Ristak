@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { assertContactNotBlocked } from '../services/contactBlockService.js';
 import fetch from 'node-fetch';
 import { databaseDialect, db, getAppConfig, setAppConfig } from '../config/database.js';
 import {
@@ -2845,6 +2846,7 @@ function createHighLevelChatError(message, statusCode = 400, code = '') {
 }
 
 export async function sendHighLevelConversationMessageCore(payload = {}, { req, markHumanTakeover = true } = {}) {
+  await assertContactNotBlocked({ contactId: payload.contactId || payload.contact_id, phone: payload.toNumber, email: payload.email });
   const {
     contactId,
     channel,

@@ -52,6 +52,7 @@ import {
   getPhoneInputParts
 } from '@/utils/accountLocale'
 import { ContactBulkActionModals } from './ContactBulkActionModals'
+import { ContactBlocksModal } from './ContactBlocksModal'
 import { ContactBulkActionProgress } from './ContactBulkActionProgress'
 import { ContactBulkPropertyModals } from './ContactBulkPropertyModals'
 import { ContactAdvancedFiltersModal } from './ContactAdvancedFiltersModal'
@@ -525,6 +526,7 @@ const ContactsTable: React.FC = () => {
   const { formatLocalDateShort } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
   const { locationId, accessToken, user } = useAuth()
+  const [blocksOpen, setBlocksOpen] = useState(false)
   const hasWhatsAppTemplatesAccess = hasLicenseFeature(user, ['whatsapp_templates'])
   const hasAutomationsAccess = hasLicenseFeature(user, ['automations'])
   const [contacts, setContacts] = useState<Contact[]>([])
@@ -1978,6 +1980,7 @@ const ContactsTable: React.FC = () => {
             )}
           </div>
           <div className={styles.headerActions}>
+            {user?.role === 'admin' && <Button type="button" variant="ghost" onClick={() => setBlocksOpen(true)}>Contactos bloqueados</Button>}
             <Button
               type="button"
               variant="ghost"
@@ -2190,6 +2193,7 @@ const ContactsTable: React.FC = () => {
         </Modal>
       )}
 
+      {blocksOpen && <ContactBlocksModal onClose={() => setBlocksOpen(false)} />}
       {trashOpen && (
         <Modal isOpen onClose={closeTrash} title="Papelera de contactos" size="lg">
           <div className={styles.trashModalBody}>

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { findContactBlock, assertContactNotBlocked } from './contactBlockService.js'
 import { promises as dns } from 'node:dns'
 import { ImapFlow } from 'imapflow'
 import nodemailer from 'nodemailer'
@@ -829,6 +830,7 @@ async function sendMailWithTransporter(transporter, config, message) {
 }
 
 async function getContactEmailRecipient(contactId, fallbackTo) {
+  await assertContactNotBlocked({ contactId, email: fallbackTo })
   const cleanContactId = cleanString(contactId)
   const fallbackRecipient = cleanString(fallbackTo).toLowerCase()
   if (!cleanContactId) return { contact: null, recipient: fallbackRecipient }
@@ -1128,6 +1130,7 @@ async function findContactByEmail(email) {
 async function findOrCreateContactForInboundEmail({ email, name, createIfMissing = EMAIL_INBOUND_CREATE_CONTACTS_DEFAULT }) {
   const cleanEmail = cleanString(email).toLowerCase()
   if (!EMAIL_PATTERN.test(cleanEmail)) return null
+  if (await findContactBlock({ email: cleanEmail })) return { contact: null, created: false, skipped: true, reason: 'contact_blocked' }
 
   const existing = await findContactByEmail(cleanEmail)
   if (existing?.id) return { contact: existing, created: false }
@@ -1778,6 +1781,7 @@ export async function sendEmail({
   includeSignature = true,
   renderSignature
 } = {}) {
+  await assertContactNotBlocked({ email: to })
   const config = await readStoredConfig()
   const password = await readStoredPassword()
 

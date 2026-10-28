@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import { assertContactNotBlocked, findContactBlock } from './contactBlockService.js'
 import { spawn } from 'child_process'
 import fs from 'fs/promises'
 import { tmpdir } from 'os'
@@ -9582,6 +9583,9 @@ async function upsertMessage({
 }) {
   let normalizedMessage = normalizeWebhookMessage(message)
   const identity = getMessageIdentity({ payload, direction, message: normalizedMessage, businessPhoneHints })
+  if (identity.direction === 'inbound' && await findContactBlock({ contactId, phone: identity.phone })) {
+    return { saved: false, isNew: false, shouldTriggerInboundSideEffects: false, skipped: true, blocked: true, reason: 'contact_blocked' }
+  }
   const incomingProvider = cleanString(normalizedMessage.provider || payload.provider) || PROVIDER_NAME
   const deferMetaInboundEnrichment = identity.direction === 'inbound' &&
     incomingProvider === META_DIRECT_PROVIDER_NAME &&
@@ -10695,6 +10699,9 @@ export async function captureQrChatMessage({
   const cleanWamid = cleanString(wamid)
   if (!cleanContactPhone || !cleanWamid) {
     return { skipped: true, reason: 'missing_identity' }
+  }
+  if (cleanDirection === 'inbound' && await findContactBlock({ phone: cleanContactPhone })) {
+    return { skipped: true, isNew: false, shouldTriggerInboundSideEffects: false, reason: 'contact_blocked' }
   }
 
   // La sesión QR debe seguir conectada para poder reactivarse sin volver a
@@ -14657,6 +14664,7 @@ export async function sendWhatsAppApiTemplateMessage({
   variablesResolved = false,
   allowQrFallback = true
 } = {}) {
+  await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const cleanTemplateName = cleanString(templateName)
@@ -14964,6 +14972,7 @@ export async function sendWhatsAppApiInteractiveMessage({
   skipQrSendProtection = false,
   variablesResolved = false
 } = {}) {
+  await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
@@ -15645,6 +15654,7 @@ export async function sendWhatsAppApiTextMessage({
   agentId,
   variablesResolved = false
 } = {}) {
+  await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
@@ -15944,6 +15954,7 @@ export async function sendWhatsAppApiReactionMessage({
   preferOfficialApiWhenReplyWindowOpen = false,
   skipQrSendProtection = false
 } = {}) {
+  await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
   let cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
@@ -16150,6 +16161,7 @@ export async function sendWhatsAppApiLocationMessage({
   preferOfficialApiWhenReplyWindowOpen = false,
   skipQrSendProtection = false
 } = {}) {
+  await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
@@ -16333,6 +16345,7 @@ export async function sendWhatsAppApiImageMessage({
   skipQrSendProtection = false,
   variablesResolved = false
 } = {}) {
+  await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
@@ -16625,6 +16638,7 @@ export async function sendWhatsAppApiDocumentMessage({
   sensitive = false,
   variablesResolved = false
 } = {}) {
+  await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
@@ -16925,6 +16939,7 @@ export async function sendWhatsAppApiVideoMessage({
   skipQrSendProtection = false,
   variablesResolved = false
 } = {}) {
+  await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
@@ -17210,6 +17225,7 @@ export async function sendWhatsAppApiAudioMessage({
   preferOfficialApiWhenReplyWindowOpen = false,
   skipQrSendProtection = false
 } = {}) {
+  await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)

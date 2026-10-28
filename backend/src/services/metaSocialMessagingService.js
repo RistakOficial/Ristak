@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import { findContactBlock, assertContactNotBlocked } from './contactBlockService.js'
 import fetch from 'node-fetch'
 import { fileTypeFromBuffer } from 'file-type'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
@@ -3377,6 +3378,7 @@ export async function sendMetaSocialTextMessage({
   publicBaseUrl,
   variablesResolved = false
 } = {}) {
+  await assertContactNotBlocked({ contactId })
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
   const sourceBody = cleanString(message)
@@ -3518,6 +3520,7 @@ export async function sendMetaSocialAudioMessage({
   replyToProviderMessageId = '',
   publicBaseUrl = ''
 } = {}) {
+  await assertContactNotBlocked({ contactId })
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
   const cleanAudioUrl = cleanString(audioUrl)
@@ -3730,6 +3733,7 @@ export async function sendMetaSocialAttachmentMessage({
   replyToProviderMessageId = '',
   publicBaseUrl = ''
 } = {}) {
+  await assertContactNotBlocked({ contactId })
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
   const requestedAttachmentType = cleanString(attachmentType).toLowerCase()
@@ -3925,6 +3929,7 @@ export async function sendMetaSocialAttachmentMessage({
 }
 
 export async function sendMetaSocialReactionMessage({ contactId, platform, emoji, targetMessageId = '', targetProviderMessageId = '', externalId } = {}) {
+  await assertContactNotBlocked({ contactId })
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
   const reaction = normalizeMetaReactionValue(emoji)
@@ -4132,6 +4137,7 @@ export async function sendMetaSocialCommentReply({
   userId,
   variablesResolved = false
 } = {}) {
+  await assertContactNotBlocked({ contactId })
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
   const sourceBody = cleanString(message)
@@ -5150,6 +5156,7 @@ export async function processMetaSocialWebhook({
           continue
         }
         if ((await findStoredSocialMessage(socialMessage))?.status === 'removed') continue
+        if (socialMessage.direction === 'inbound' && await findContactBlock({ contactId: hashId('meta_social_contact', `${socialMessage.platform}:${socialMessage.senderId}`) })) continue
 
         const profileCredentials = await resolveMetaSocialGraphCredentials(socialMessage.platform, config, { safe: true })
         const profileBusinessId = getMetaSocialBusinessId(socialMessage.platform, config, {

@@ -1,4 +1,5 @@
 import { DateTime } from 'luxon'
+import { assertContactNotBlocked, withContactBlockPolicy } from './contactBlockService.js'
 import crypto from 'node:crypto'
 import { databaseDialect, db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
@@ -5695,6 +5696,12 @@ export async function loadAppointmentParticipants(appointmentId) {
 }
 
 export async function upsertLocalAppointment(raw = {}, options = {}) {
+  const appointment = raw.appointment && typeof raw.appointment === 'object' ? raw.appointment : raw
+  const participants = (Array.isArray(appointment.participants) ? appointment.participants : []).map(p => ({ contactId: p?.contactId || p?.contact_id, email: p?.email, phone: p?.phone }))
+  return withContactBlockPolicy([{ contactId: appointment.contactId || appointment.contact_id }, ...participants], () => upsertLocalAppointmentUnderBlockPolicy(raw, options))
+}
+
+async function upsertLocalAppointmentUnderBlockPolicy(raw = {}, options = {}) {
   const appointmentPayload = raw.appointment && typeof raw.appointment === 'object' ? raw.appointment : raw
   const participantsProvided = Array.isArray(appointmentPayload.participants)
   if (participantsProvided) {
@@ -5702,6 +5709,15 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
     await assertAppointmentParticipantContactsExist(appointmentPayload.participants)
   }
   const normalized = normalizeAppointmentRecord(raw, options)
+  // Cancellation and history stay writable; new bookings and reopening do not.
+  if (!['cancelled', 'canceled', 'deleted', 'invalid', 'noshow', 'no_show', 'showed', 'attended', 'completed', 'failed', 'missed'].includes(
+    String(normalized.appointmentStatus || normalized.status || '').toLowerCase()
+  )) {
+    await assertContactNotBlocked({ contactId: normalized.contactId })
+    for (const participant of participantsProvided ? appointmentPayload.participants : []) {
+      await assertContactNotBlocked({ contactId: participant.contactId || participant.contact_id, email: participant.email, phone: participant.phone })
+    }
+  }
 
   // (GCAL-003/GHL-003) Last-write-wins: cuando el upsert viene de un PULL de sincronización
   // (Google o HighLevel) activamos un candado de conflicto. Solo pisamos los campos de la

@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { assertContactNotBlocked } from '../services/contactBlockService.js';
 import * as calendarService from '../services/highlevelCalendarService.js';
 import * as localCalendarService from '../services/localCalendarService.js';
 import * as googleCalendarService from '../services/googleCalendarService.js';
@@ -1429,6 +1430,7 @@ async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl,
   const email = normalizeEmail(contact.email);
   const rawPhone = cleanString(contact.phone);
   const phone = rawPhone ? await normalizePhoneForAccount(rawPhone) || rawPhone : '';
+  await assertContactNotBlocked({ contactId: explicitContactId, email, phone });
 
   if (!fullName) {
     const error = new Error('El nombre es requerido');
@@ -1450,6 +1452,7 @@ async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl,
     : null;
   const byPhone = !explicitContact && !byEmail && phone ? await findContactByPhoneCandidates(phone).catch(() => null) : null;
   const contactId = explicitContact?.id || byEmail?.id || byPhone?.id || generateContactId();
+  await assertContactNotBlocked({ contactId, email, phone });
   const overwriteContactFields = Boolean(explicitContact?.id);
   const emailConflict = overwriteContactFields && email
     ? await db.get('SELECT id FROM contacts WHERE LOWER(email) = LOWER(?) AND id != ? LIMIT 1', [email, contactId]).catch(() => null)
@@ -2089,6 +2092,7 @@ export async function createPublicAppointment(req, res) {
       });
     }
 
+    await assertContactNotBlocked(bookingSubmission.contact);
     // (CAL-QUAL) Calificación: si las respuestas descalifican al prospecto, NO se agenda.
     // Respondemos 200 con un payload de descalificación para que el cliente muestre el
     // mensaje del formulario (o redirija). No se crea contacto ni cita.

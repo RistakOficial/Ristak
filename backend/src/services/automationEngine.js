@@ -1,4 +1,5 @@
 import { DateTime } from 'luxon'
+import { findContactBlock, assertContactNotBlocked } from './contactBlockService.js'
 import fetch from 'node-fetch'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
@@ -7464,6 +7465,7 @@ export async function enrollContactManually({
     [cleanContactId]
   )
   if (!contactExists) throw engineError(404, 'Contacto no encontrado')
+  await assertContactNotBlocked({ contactId: cleanContactId })
 
   const automation = useSavedDraftFlow
     ? await getSavedAutomationForTestRun(automationId)
@@ -8330,7 +8332,7 @@ export async function handleIncomingMessage({
   try {
     if (!(await canRunBackgroundJob('automations'))) return
     const contact = await loadContact(contactId, { phone, name: contactName })
-    if (contact.deletedAt) return
+    if (contact.deletedAt || await findContactBlock({ contactId: contact.id, phone: contact.phone, email: contact.email })) return
     const baseCtx = {
       ...eventContext,
       contact,
@@ -8415,7 +8417,7 @@ async function enrollMatching(
 ) {
   const contact = baseCtx.contact || {}
   const enrolledAutomationIds = new Set()
-  if (contact.deletedAt) return enrolledAutomationIds
+  if (contact.deletedAt || await findContactBlock({ contactId: contact.id, phone: contact.phone, email: contact.email })) return enrolledAutomationIds
   for (const automation of automations) {
     if (skipAutomationIds.has(automation.id)) continue
     const flow = automation.flow
@@ -9007,7 +9009,7 @@ export async function handleAutomationEvent(eventType, data = {}) {
       )
       if (row) contact = await loadContact(row.id)
     }
-    if (contact.deletedAt) return
+    if (contact.deletedAt || await findContactBlock({ contactId: contact.id, phone: contact.phone, email: contact.email })) return
     const lifecycleStageChanged = eventData.canonicalContactStatsReconciled === true
       ? eventData.lifecycleStageChanged === true
       : eventData.canonicalLifecycleStageChange === true ||
@@ -9372,7 +9374,7 @@ export async function processDueResumes() {
         continue
       }
       const contact = await loadContact(row.contact_id)
-      if (contact.deletedAt) {
+      if (contact.deletedAt || await findContactBlock({ contactId: contact.id, phone: contact.phone, email: contact.email })) {
         enrollment.status = 'exited'
         enrollment.resumeAt = null
         enrollment.waitKind = null
@@ -9380,7 +9382,7 @@ export async function processDueResumes() {
           nodeId: row.current_node_id,
           label: 'Flujo',
           status: 'exited',
-          detail: 'El contacto está en la papelera; la ejecución no continuará'
+          detail: 'El contacto está bloqueado o en la papelera; la ejecución no continuará'
         })
         await saveEnrollment(enrollment)
         continue

@@ -63,6 +63,13 @@ jobs:
           TEST_POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/ristak_bootstrap
         run: npm --prefix backend run test:postgres-bootstrap
 
+      - name: Verificar bloqueos persistentes de contactos
+        env:
+          TEST_POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/ristak_bootstrap
+        run: |
+          npm rebuild --prefix backend sqlite3
+          node --test --test-concurrency=1 backend/test/contactBlocks.test.mjs backend/test/contactBlocksPostgres.test.mjs
+
       - name: Verificar historial del chatbot con PostgreSQL real
         env:
           TEST_POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/ristak_bootstrap

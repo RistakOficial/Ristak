@@ -28,6 +28,7 @@ import { recordInboundChatUnread } from './chatReadStateService.js'
 import { captureContactIdentityFromMessage } from './contactMessageIdentityCaptureService.js'
 import { withConversationalInboundCommitLock } from './conversationalInboundCommitLockService.js'
 import { restoreSoftDeletedContactForNewInbound } from './contactIdentityService.js'
+import { findContactBlock } from './contactBlockService.js'
 // (NOTI-003) La confirmación de citas por respuesta también debe abrirse cuando el
 // contacto responde por canales sincronizados vía HighLevel (SMS/Messenger/Instagram/
 // WhatsApp de GHL), no solo por WhatsApp API.
@@ -1152,6 +1153,9 @@ export async function upsertHighLevelConversationMessage({
 
   const { contact, created } = await ensureLocalContact({ contactId, apiToken, locationId, contactCache })
   if (!contact) return { saved: 0, skipped: true, reason: 'contact_unavailable' }
+  if (direction === 'inbound' && await findContactBlock({ contactId: contact.id, email: contact.email, phone: contact.phone })) {
+    return { saved: 0, skipped: true, reason: 'contact_blocked' }
+  }
 
   const result = channel.table === 'email'
     ? await upsertEmailRow({ message, contact, direction, notifyNewInbound })

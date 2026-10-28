@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import { assertContactNotBlocked, withContactBlockPolicy } from './contactBlockService.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import dns from 'node:dns/promises'
 import path from 'node:path'
@@ -39582,8 +39583,13 @@ async function emitSiteSubmissionAutomationEvents({ contactResult, formEvent, co
 }
 
 async function upsertContactFromSubmissionWithResult({ site, contact, meta }) {
+  return withContactBlockPolicy([contact], () => upsertContactFromSubmissionUnderBlockPolicy({ site, contact, meta }))
+}
+
+async function upsertContactFromSubmissionUnderBlockPolicy({ site, contact, meta }) {
   const email = normalizeEmail(contact.email)
   const phone = await normalizePhoneForAccount(contact.phone) || cleanString(contact.phone)
+  await assertContactNotBlocked({ email, phone })
   const contactNameFields = normalizeContactNameFields({
     fullName: contact.fullName || contact.full_name,
     firstName: contact.firstName || contact.first_name,
@@ -39596,6 +39602,7 @@ async function upsertContactFromSubmissionWithResult({ site, contact, meta }) {
   if (!email && !phone && !fullName) return emptyContactUpsertResult()
 
   const existing = await findExistingContact({ email, phone })
+  if (existing) await assertContactNotBlocked({ contactId: existing.id, email, phone })
   const contactId = existing?.id || generateContactId()
   const phoneUpsert = await prepareContactPhoneUpsert({ contactId, phone })
   const names = contactNameFields.fullName ? splitContactName(contactNameFields.fullName) : { firstName: '', lastName: '' }
@@ -41266,6 +41273,7 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
     email: normalizeEmail(standard.email || derived.email),
     phone: await normalizePhoneForAccount(rawPhone) || cleanString(rawPhone)
   }
+  await assertContactNotBlocked(contact)
   const meta = {
     ...(body.meta && typeof body.meta === 'object' ? body.meta : {}),
     host,
@@ -42841,6 +42849,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
   }
   const nativeLayers = buildNativeSubmissionLayers({ site, blocks: submissionBlocks, responses })
   const inferredContact = inferContactFromResponses(collectFieldBlocks(submissionBlocks), responses)
+  await assertContactNotBlocked(inferredContact)
   const finalMessageTheme = videoFormGateContext?.formTheme || landingEmbeddedFormContext?.formTheme || null
   const finalMessageSite = finalMessageTheme
     ? { ...site, theme: { ...(site.theme || {}), ...finalMessageTheme } }

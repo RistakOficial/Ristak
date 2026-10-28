@@ -1,4 +1,5 @@
 import * as contactsController from '../controllers/contactsController.js'
+import * as contactBlocksController from '../controllers/contactBlocksController.js'
 import * as contactAssignmentController from '../controllers/contactAssignmentController.js'
 import * as whatsappController from '../controllers/whatsappApiController.js'
 import * as emailController from '../controllers/emailController.js'
@@ -202,6 +203,30 @@ const contactTools = [
     confirmRequired: false, idempotencyRequired: true,
     inputSchema: schema({ contactId: ID, ...controls({ confirm: true, idempotency: true }) }, requiredWith(['contactId'], { confirm: true, idempotency: true })),
     params: (args) => ({ id: args.contactId })
+  }),
+  controllerSpec({
+    name: 'contacts_blocks_list',
+    description: 'Lista bloqueos persistentes exactos por contacto, correo o teléfono. Solo administradores.',
+    module: 'contacts', access: 'read', scope: 'ristak.read', risk: 'low', adminOnly: true,
+    handler: contactBlocksController.getContactBlocks,
+    inputSchema: schema({ search: SHORT_TEXT, limit: { type: 'integer', minimum: 1, maximum: 100 }, offset: { type: 'integer', minimum: 0 } }),
+    query: cleanRequestObject
+  }),
+  controllerSpec({
+    name: 'contacts_block',
+    description: 'Bloquea una identidad exacta sin borrar historial ni adivinar otros teléfonos. Solo administradores.',
+    module: 'contacts', access: 'write', scope: 'ristak.write', risk: 'medium', adminOnly: true,
+    handler: contactBlocksController.createContactBlock, method: 'POST', idempotencyRequired: true,
+    inputSchema: schema({ identityType: { type: 'string', enum: ['contact', 'email', 'phone'] }, identityValue: { type: 'string', minLength: 1, maxLength: 320 }, reason: SHORT_TEXT, ...controls({ idempotency: true }) }, requiredWith(['identityType', 'identityValue'], { idempotency: true })),
+    body: cleanRequestObject
+  }),
+  controllerSpec({
+    name: 'contacts_unblock',
+    description: 'Retira un bloqueo persistente. No restaura contactos ni citas canceladas. Solo administradores.',
+    module: 'contacts', access: 'write', scope: 'ristak.write', risk: 'medium', adminOnly: true,
+    handler: contactBlocksController.deleteContactBlock, method: 'DELETE', idempotencyRequired: true,
+    inputSchema: schema({ blockId: ID, ...controls({ idempotency: true }) }, requiredWith(['blockId'], { idempotency: true })),
+    params: args => ({ id: args.blockId })
   }),
   controllerSpec({
     name: 'contacts_trash_list',

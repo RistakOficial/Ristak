@@ -38,6 +38,7 @@ import {
   ensureSqliteSitesPublicationDomainSchema
 } from '../startup/sitesPublicationDomainSchemaCompatibility.js'
 import { ensureNotificationPersistenceSchema } from '../startup/notificationSchemaCompatibility.js'
+import { ensureContactBlocksSchema } from '../startup/contactBlocksSchema.js'
 import { ensureSharedReportTableConfig } from '../utils/reportTableConfig.js'
 import { booleanProjectionExpression, idempotentCreateViewClause } from '../utils/sqlDdl.js'
 
@@ -2593,6 +2594,7 @@ async function initTablesUnlocked() {
 
     // Debe correr antes del fast-path del bootstrap: una instalación ya
     // inicializada también necesita piezas de notificaciones agregadas después.
+    await ensureContactBlocksSchema(db)
     const notificationSchemaRepair = await ensureNotificationPersistenceSchema({ database: db })
     if (notificationSchemaRepair.addedColumns.length > 0) {
       logger.info(
@@ -9039,6 +9041,10 @@ export async function repairSoftDeletedContactsWithNewInboundActivity() {
       GROUP BY contact_id
     ) activity ON activity.contact_id = c.id
     WHERE c.deleted_at IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM contact_blocks b WHERE
+        (b.identity_type = 'contact' AND b.identity_value = c.id)
+        OR (b.identity_type = 'email' AND b.identity_value = LOWER(TRIM(c.email)))
+        OR (b.identity_type = 'phone' AND b.identity_value = c.phone))
     GROUP BY c.id, c.deleted_at
     HAVING ${deletedAtSort} > 0
        AND MAX(activity.last_inbound_sort) > ${deletedAtSort}
@@ -9052,6 +9058,10 @@ export async function repairSoftDeletedContactsWithNewInboundActivity() {
       WHERE id = ?
         AND deleted_at IS NOT NULL
         AND CAST(deleted_at AS TEXT) = ?
+        AND NOT EXISTS (SELECT 1 FROM contact_blocks b WHERE
+          (b.identity_type = 'contact' AND b.identity_value = contacts.id)
+          OR (b.identity_type = 'email' AND b.identity_value = LOWER(TRIM(contacts.email)))
+          OR (b.identity_type = 'phone' AND b.identity_value = contacts.phone))
     `, [row.id, row.deleted_at_token])
     if (Number(result?.changes || 0) > 0) restored += 1
   }
