@@ -4,13 +4,18 @@ import crypto from 'node:crypto'
 import http from 'node:http'
 import { readFile } from 'node:fs/promises'
 import express from 'express'
+import { DateTime } from 'luxon'
 
 import { databaseReady, db } from '../src/config/database.js'
 import { domainToolSpecs } from '../src/mcp/domainTools.js'
+import { sanitizeMcpResult } from '../src/mcp/toolRegistry.js'
 import mcpRoutes from '../src/routes/mcp.routes.js'
 import sitesRoutes from '../src/routes/sites.routes.js'
 import { resetCentralStorageConfigCache } from '../src/services/mediaStorageService.js'
 import { deleteSite } from '../src/services/sitesService.js'
+import { assertContactNotBlocked } from '../src/services/contactBlockService.js'
+import { createLocalCalendar } from '../src/services/localCalendarService.js'
+import { getAccountTimezone } from '../src/utils/dateUtils.js'
 import {
   MCP_SCOPES,
   MCP_SCOPE_VALUES,
@@ -84,12 +89,12 @@ function domainTool(name) {
   return found
 }
 
-async function issueToken(scopes, userId = fixture.userId) {
+async function issueToken(scopes, userId = fixture.userId, clientId = fixture.clientId) {
   const verifier = crypto.randomBytes(48).toString('base64url')
   const challenge = crypto.createHash('sha256').update(verifier).digest('base64url')
   const code = await createAuthorizationCode({
     userId,
-    clientId: fixture.clientId,
+    clientId,
     redirectUri: fixture.redirectUri,
     codeChallenge: challenge,
     scope: scopes,
@@ -97,7 +102,7 @@ async function issueToken(scopes, userId = fixture.userId) {
   })
   const grant = await consumeAuthorizationCode({
     code,
-    clientId: fixture.clientId,
+    clientId,
     redirectUri: fixture.redirectUri,
     codeVerifier: verifier
   })
@@ -597,4 +602,145 @@ test('los controles de aprobación humana ya no existen en el protocolo MCP', as
   })
   assert.equal(response.payload.result.isError, true)
   assert.equal(response.payload.result.structuredContent.code, 'tool_not_found')
+})
+
+test('bloqueos MCP: catálogo, ciclo real, reintentos, conflictos y auditoría OAuth', async (t) => {
+  const email = `mcp-block-${crypto.randomUUID()}@example.test`
+  const key = `mcp-block-${crypto.randomUUID()}`
+  const contactId = `mcp_block_${crypto.randomUUID()}`
+  let blockId
+  let calendar
+  t.after(async () => {
+    await db.run('DELETE FROM appointment_participants WHERE contact_id = ?', [contactId])
+    await db.run('DELETE FROM appointments WHERE contact_id = ?', [contactId])
+    if (calendar) await db.run('DELETE FROM calendars WHERE id = ?', [calendar.id])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    await db.run("DELETE FROM contact_blocks WHERE identity_type = 'email' AND identity_value = ?", [email])
+  })
+  const list = await requestMcp(fixture.fullToken, { jsonrpc: '2.0', id: 80, method: 'tools/list', params: {} })
+  for (const name of ['contacts_block', 'contacts_blocks_list', 'contacts_unblock']) {
+    assert.ok(list.payload.result.tools.some(tool => tool.name === name), `falta ${name}`)
+  }
+  const invoke = (name, args) => requestMcp(fixture.fullToken, {
+    jsonrpc: '2.0', id: 81, method: 'tools/call', params: { name, arguments: args }
+  })
+  const args = { identityType: 'email', identityValue: email.toUpperCase(), reason: 'Fictitious MCP regression', idempotencyKey: key }
+  const first = await invoke('contacts_block', args)
+  assert.equal(first.payload.result.isError, undefined)
+  blockId = first.payload.result.structuredContent.data.id
+  assert.ok(blockId)
+  const replay = await invoke('contacts_block', args)
+  assert.equal(replay.payload.result.structuredContent.data.id, blockId)
+  assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM contact_blocks WHERE identity_value = ?', [email])).total), 1)
+  await assert.rejects(() => assertContactNotBlocked({ email }), error => error.code === 'request_unavailable')
+
+  await db.run('INSERT INTO contacts (id, full_name, email) VALUES (?, ?, ?)', [contactId, 'Persona ficticia MCP', email])
+  calendar = await createLocalCalendar({ name: 'Fictitious MCP blocked calendar',
+    openHours: [{ daysOfTheWeek: [0, 1, 2, 3, 4, 5, 6], hours: [{ openHour: 13, openMinute: 0, closeHour: 16, closeMinute: 0 }] }] })
+  const timezone = await getAccountTimezone()
+  const start = DateTime.now().setZone(timezone).plus({ days: 5 }).startOf('day').set({ hour: 13 })
+  const booking = await invoke('appointments_create', {
+    calendarId: calendar.id, contactId, startTime: start.toUTC().toISO(), endTime: start.plus({ hours: 1 }).toUTC().toISO(),
+    timezone, idempotencyKey: `booking-${key}`
+  })
+  assert.equal(booking.payload.result.isError, true)
+  assert.equal(booking.payload.result.structuredContent.code, 'request_unavailable', JSON.stringify(booking.payload))
+  assert.equal(Number((await db.get('SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?', [contactId])).total), 0)
+
+  const found = await invoke('contacts_blocks_list', { search: email, limit: 1, offset: 0 })
+  assert.equal(found.payload.result.structuredContent.data.total, 1)
+  assert.equal(found.payload.result.structuredContent.data.items[0].id, blockId)
+  const conflict = await invoke('contacts_block', { ...args, identityValue: `other-${email}` })
+  assert.equal(conflict.payload.result.isError, true)
+  assert.equal(conflict.payload.result.structuredContent.code, 'idempotency_conflict')
+  assert.equal(await db.get('SELECT id FROM contact_blocks WHERE identity_value = ?', [`other-${email}`]), null)
+
+  const audit = await db.get(`SELECT success, risk_level FROM mcp_audit_log
+    WHERE actor_user_id = ? AND tool_name = 'contacts_block' AND success = 1 ORDER BY id DESC LIMIT 1`, [fixture.userId])
+  assert.equal(Number(audit.success), 1)
+  assert.equal(audit.risk_level, 'write')
+  const removal = { blockId, idempotencyKey: `unblock-${key}` }
+  assert.equal((await invoke('contacts_unblock', removal)).payload.result.isError, undefined)
+  assert.equal((await invoke('contacts_unblock', removal)).payload.result.isError, undefined)
+  await assert.doesNotReject(() => assertContactNotBlocked({ email }))
+  assert.equal((await invoke('contacts_blocks_list', { search: email })).payload.result.structuredContent.data.total, 0)
+})
+
+test('MCP conserva los instantes Date de PostgreSQL y devuelve lo mismo al reintentar', () => {
+  const value = {
+    success: true,
+    data: {
+      items: [{ created_at: new Date('2030-01-02T03:04:05.678Z'), updated_at: new Date('2030-01-01T21:04:05.678-06:00') }],
+      dateOnly: '2030-01-02',
+      missingDate: new Date('invalid'),
+      access_token: new Date('2030-01-02T03:04:05.678Z')
+    }
+  }
+  const first = sanitizeMcpResult(value)
+  assert.equal(first.data.items[0].created_at, '2030-01-02T03:04:05.678Z')
+  assert.equal(first.data.items[0].updated_at, first.data.items[0].created_at)
+  assert.equal(first.data.dateOnly, '2030-01-02')
+  assert.equal(first.data.missingDate, null)
+  assert.equal(first.data.access_token, '[redacted]')
+  assert.deepEqual(first, sanitizeMcpResult(JSON.parse(JSON.stringify(value))))
+})
+
+test('bloqueos MCP rechazan argumentos desconocidos y escrituras sin idempotencia', async () => {
+  for (const args of [
+    { identityType: 'email', identityValue: 'invalid-schema@example.test' },
+    { identityType: 'name', identityValue: 'Nombre ficticio', idempotencyKey: 'block-invalid-type-001' },
+    { identityType: 'email', identityValue: 'invalid-schema@example.test', rawSql: 'SELECT 1', idempotencyKey: 'block-invalid-field-001' }
+  ]) {
+    const response = await requestMcp(fixture.fullToken, {
+      jsonrpc: '2.0', id: 82, method: 'tools/call', params: { name: 'contacts_block', arguments: args }
+    })
+    assert.equal(response.payload.result.isError, true)
+    assert.equal(response.payload.result.structuredContent.code, 'invalid_arguments')
+  }
+  assert.equal(await db.get('SELECT id FROM contact_blocks WHERE identity_value = ?', ['invalid-schema@example.test']), null)
+})
+
+test('bloqueos MCP: un administrador con OAuth de lectura no puede bloquear ni desbloquear', async (t) => {
+  const client = await registerOAuthClient({ clientName: 'MCP blocks read only', redirectUris: [fixture.redirectUri] })
+  t.after(() => db.run('DELETE FROM oauth_clients WHERE client_id = ?', [client.client_id]))
+  const token = await issueToken([MCP_SCOPES.READ], fixture.userId, client.client_id)
+  const list = await requestMcp(token, { jsonrpc: '2.0', id: 83, method: 'tools/list', params: {} })
+  const names = new Set(list.payload.result.tools.map(tool => tool.name))
+  assert.ok(names.has('contacts_blocks_list'))
+  assert.equal(names.has('contacts_block'), false)
+  assert.equal(names.has('contacts_unblock'), false)
+  for (const [name, args] of [
+    ['contacts_block', { identityType: 'email', identityValue: 'read-only-block@example.test', idempotencyKey: 'read-only-block-001' }],
+    ['contacts_unblock', { blockId: 'fictitious_block', idempotencyKey: 'read-only-unblock-001' }]
+  ]) {
+    const response = await requestMcp(token, { jsonrpc: '2.0', id: 84, method: 'tools/call', params: { name, arguments: args } })
+    assert.equal(response.payload.result.isError, true)
+    assert.equal(response.payload.result.structuredContent.code, 'insufficient_scope')
+  }
+  assert.equal(await db.get('SELECT id FROM contact_blocks WHERE identity_value = ?', ['read-only-block@example.test']), null)
+})
+
+test('bloqueos MCP: empleados con contactos en escritura y OAuth completo no pueden administrar bloqueos', async () => {
+  const previous = await db.get('SELECT role, access_config FROM users WHERE id = ?', [fixture.secondaryUserId])
+  try {
+    await db.run('UPDATE users SET role = ?, access_config = ? WHERE id = ?', [
+      'employee', JSON.stringify({ contacts: 'write', settings_api_access: 'write' }), fixture.secondaryUserId
+    ])
+    const token = await issueToken(MCP_SCOPE_VALUES, fixture.secondaryUserId)
+    const list = await requestMcp(token, { jsonrpc: '2.0', id: 85, method: 'tools/list', params: {} })
+    const names = new Set(list.payload.result.tools.map(tool => tool.name))
+    for (const [name, args] of [
+      ['contacts_blocks_list', {}],
+      ['contacts_block', { identityType: 'email', identityValue: 'employee-block@example.test', idempotencyKey: 'employee-block-001' }],
+      ['contacts_unblock', { blockId: 'fictitious_block', idempotencyKey: 'employee-unblock-001' }]
+    ]) {
+      assert.equal(names.has(name), false)
+      const response = await requestMcp(token, { jsonrpc: '2.0', id: 86, method: 'tools/call', params: { name, arguments: args } })
+      assert.equal(response.payload.result.isError, true)
+      assert.equal(response.payload.result.structuredContent.code, 'admin_required')
+    }
+    assert.equal(await db.get('SELECT id FROM contact_blocks WHERE identity_value = ?', ['employee-block@example.test']), null)
+  } finally {
+    await db.run('UPDATE users SET role = ?, access_config = ? WHERE id = ?', [previous.role, previous.access_config, fixture.secondaryUserId])
+  }
 })

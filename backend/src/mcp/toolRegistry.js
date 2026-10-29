@@ -181,6 +181,9 @@ function sanitizeExternal(value, key = '', depth = 0) {
       : value
   }
   if (!value || typeof value !== 'object') return value
+  // PostgreSQL returns UTC instants as Date objects. Match native JSON date
+  // serialization before walking object keys (which would turn them into {}).
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : null
   if (Array.isArray(value)) return value.slice(0, 200).map((item) => sanitizeExternal(item, '', depth + 1))
   return Object.fromEntries(
     Object.entries(value).slice(0, 300).map(([entryKey, entryValue]) => [

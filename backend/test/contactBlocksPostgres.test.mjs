@@ -26,6 +26,7 @@ test('PostgreSQL serializes a persistent block with a local booking write and re
     await ensureContactBlocksSchema(database.db)
     const { addContactBlock, assertContactNotBlocked, withContactBlockPolicy } = await import('../src/services/contactBlockService.js')
     const { createLocalAppointment } = await import('../src/services/localCalendarService.js')
+    const { sanitizeMcpResult } = await import('../src/mcp/toolRegistry.js')
     const email = 'blocked@example.test'
     await database.db.run('INSERT INTO contacts (id, email) VALUES (?, ?)', ['blocked_test', email])
     let writeStarted
@@ -45,7 +46,10 @@ test('PostgreSQL serializes a persistent block with a local booking write and re
     assert.equal(committed, false)
     releaseWrite()
     await write
-    await block
+    const blocked = await block
+    assert.ok(blocked.created_at instanceof Date)
+    assert.equal(sanitizeMcpResult(blocked).created_at, blocked.created_at.toISOString())
+    assert.deepEqual(sanitizeMcpResult(blocked), sanitizeMcpResult(JSON.parse(JSON.stringify(blocked))))
     await assert.rejects(() => createLocalAppointment({ contactId: 'blocked_test', startTime: '2099-01-01T15:00:00Z', endTime: '2099-01-01T16:00:00Z' }), error => error.code === 'request_unavailable')
     assert.equal(Number((await database.db.get('SELECT COUNT(*) AS n FROM appointments')).n), 0)
   } finally {

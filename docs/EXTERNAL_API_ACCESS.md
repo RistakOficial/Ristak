@@ -248,6 +248,21 @@ bloqueados** in the master manual for the enforcement contract.
 The backing `contact_blocks` table is excluded from generic data and SQL tools;
 only the dedicated administrative operations expose this policy.
 
+`backend/test/mcpControlPlane.test.mjs` verifies these tools through real HTTP
+JSON-RPC requests and OAuth access tokens against an isolated test database.
+Coverage includes the block/list/unblock lifecycle, a rejected booking through
+`appointments_create`, retries without duplicate rules, conflicting reuse of an
+idempotency key, audit records, strict argument validation, read-only grants,
+and employees with full OAuth scopes. These tests
+run in the existing MCP release gate. If a client keeps a tool catalog from
+before deployment, refresh that connection's catalog to load the new tools.
+
+MCP response sanitization preserves PostgreSQL `Date` values as ISO UTC strings,
+including nested rows and array items. Invalid date objects become `null`, as
+in native JSON serialization. Date-only strings stay unchanged, and secret
+fields are redacted before date conversion. A fresh result and its idempotent
+replay therefore expose the same timestamp rather than `{}` on the first call.
+
 ### Payment tools
 
 The `payments` domain contains 64 typed tools and mirrors the supported
