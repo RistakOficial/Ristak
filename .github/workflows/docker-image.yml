@@ -76,7 +76,7 @@ jobs:
           TZ: UTC
         run: |
           npm rebuild --prefix backend sqlite3
-          node --test --test-concurrency=1 backend/test/conversationalHistoryBoundary.test.mjs backend/test/conversationalQrDeliveryRecovery.test.mjs
+          node --test --test-concurrency=1 backend/test/conversationalHistoryBoundary.test.mjs backend/test/conversationalQrDeliveryRecovery.test.mjs backend/test/conversationalDurableRecovery.test.mjs backend/test/conversationalDurableRecoveryPostgres.test.mjs
 
       - name: Verificar filtros de notificaciones con PostgreSQL real
         env:

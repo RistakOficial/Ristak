@@ -12814,6 +12814,139 @@ async function loadRecoverableProcessingMessages({ nowMs = Date.now() } = {}) {
   return messages
 }
 
+/**
+ * Recuperación periódica de trabajo que YA tiene una obligación durable.
+ * No descubre mensajes históricos ni vuelve a ejecutar los recoveries de pagos,
+ * metas o seguimientos del arranque. El runner conserva sus claims y fences.
+ */
+export async function recoverDurableConversationalAgentWork({
+  nowMs = Date.now(),
+  limit = 100,
+  cursor = ''
+} = {}, dependencies = {}) {
+  const database = dependencies.database || db
+  const featureEnabled = dependencies.featureEnabled || hasFeature
+  if (!(await featureEnabled('conversational_ai'))) {
+    return { scanned: 0, scheduled: 0, skipped: 0, nextCursor: '', hasMore: false }
+  }
+  const boundedLimit = Math.min(500, Math.max(1, Math.trunc(Number(limit) || 100)))
+  const nowIso = new Date(nowMs).toISOString()
+  const rows = await database.all(`
+    SELECT * FROM (
+      SELECT 'pending:' || p.run_key AS work_key, p.contact_id, p.channel,
+             p.scheduled_for, p.payload, NULL AS agent_id
+      FROM ai_agent_pending_reruns p
+      WHERE p.scheduled_for <= ?
+      UNION ALL
+      SELECT 'claim:' || s.id AS work_key, s.contact_id, s.channel,
+             NULL AS scheduled_for,
+             NULL AS payload, s.agent_id
+      FROM conversational_agent_state s
+      JOIN conversational_agents a ON a.id = s.agent_id AND a.enabled = 1
+      WHERE s.status = 'active' AND COALESCE(s.signal, '') = ''
+        AND s.inbound_processing_status = 'processing'
+        AND COALESCE(s.inbound_processing_message_id, '') <> ''
+        AND (s.inbound_processing_lease_until_at IS NULL OR s.inbound_processing_lease_until_at <= ?)
+        AND NOT EXISTS (
+          SELECT 1 FROM ai_agent_pending_reruns p
+          WHERE p.contact_id = s.contact_id
+            AND COALESCE(NULLIF(p.channel, ''), 'whatsapp') = COALESCE(NULLIF(s.channel, ''), 'whatsapp')
+        )
+    ) durable_work
+    WHERE work_key > ?
+    ORDER BY work_key ASC
+    LIMIT ?
+  `, [nowIso, nowIso, String(cursor || ''), boundedLimit])
+  const loadStates = dependencies.loadStates || listConversationStatesForContact
+  const loadAssignment = dependencies.loadAssignment || getManualConversationAgentAssignment
+  const loadAgent = dependencies.loadAgent || getConversationalAgent
+  const loadLatest = dependencies.loadLatest || loadLatestInboundMessage
+  const loadPreventive = dependencies.loadPreventive || getActiveConversationalAgentPreventiveMeasure
+  const loadPlan = dependencies.loadPlan || getConversationalReplyDeliveryPlan
+  const schedule = dependencies.schedule || scheduleConversationalAgentRerun
+  const isLocalWorkActive = dependencies.isLocalWorkActive || ((key) => (
+    runningContacts.has(key) || pendingContactRerunTimers.has(key)
+  ))
+  const canContinue = dependencies.canContinue || (() => true)
+  const recordEvent = dependencies.recordEvent || recordConversationalAgentEvent
+  let scheduled = 0
+  let skipped = 0
+  let visited = 0
+  const seen = new Set()
+  for (const row of rows) {
+    if (!canContinue()) break
+    visited += 1
+    const contactId = String(row.contact_id || '').trim()
+    const channel = normalizeConversationalChannel(row.channel || 'whatsapp')
+    const runKey = getRunKey(contactId, channel)
+    // SQLite puede conservar texto SQL con espacio mientras los writes nuevos
+    // usan ISO; la comparación SQL es sólo un prefiltro, nunca el reloj final.
+    // PostgreSQL también puede entregar esta columna como Date.
+    const scheduledForMs = toTimestampMs(row.scheduled_for)
+    if (!contactId || scheduledForMs > nowMs || seen.has(runKey) || isLocalWorkActive(runKey)) { skipped += 1; continue }
+    seen.add(runKey)
+    try {
+      const assignment = await loadAssignment(contactId)
+      if (assignment && assignment.status !== 'active') { skipped += 1; continue }
+      const states = await loadStates(contactId, { channel })
+      // Un estado terminal/pausado jamás se convierte en permiso para buscar
+      // otro agente. Se requiere una asignación todavía ejecutable.
+      if (states.some(state => state.status === 'human' || (
+        state.status === 'paused' && state.updatedBy === 'whatsapp_business'
+      ))) { skipped += 1; continue }
+      const state = states.find(item => isRunnableConversationState(item) && (
+        !assignment?.agentId || item.agentId === assignment.agentId
+      ) && (!row.agent_id || item.agentId === row.agent_id))
+      if (!state) { skipped += 1; continue }
+      const agent = await loadAgent(state.agentId)
+      if (!agent?.enabled) { skipped += 1; continue }
+      if (await loadPreventive({ contactId, channel, now: nowMs })) { skipped += 1; continue }
+      const latest = await loadLatest(contactId, channel)
+      if (!latest?.id || states.some(item => item.lastAnsweredInboundMessageId === latest.id) ||
+          !shouldRecoverPendingInbound(latest, state, { nowMs, maxAgeMs: 0 })) {
+        skipped += 1; continue
+      }
+      const plan = await loadPlan({
+        contactId, agentId: state.agentId, channel, sourceMessageId: latest.id,
+        externalIdPrefix: 'convagent'
+      })
+      // Una entrega incierta exige revisión, nunca un replay automático.
+      // Un lease vivo también pertenece a otra instancia aunque el inbound
+      // anterior haya vencido. El próximo tick lo reconsidera sin enviarlo.
+      if (plan && (
+        ['ambiguous', 'completed', 'interrupted'].includes(plan.status) ||
+        plan.parts?.some(part => ['sending', 'ambiguous'].includes(part.status)) ||
+        (plan.status === 'processing' && toTimestampMs(plan.leaseUntilAt) > nowMs)
+      )) { skipped += 1; continue }
+      if (!canContinue() || isLocalWorkActive(runKey)) { skipped += 1; continue }
+      const payload = safeJsonParse(row.payload, {}) || {}
+      const pendingEntry = {
+        contactId, channel, phone: payload.phone || latest.phone,
+        messageId: latest.id, scheduledFor: nowIso,
+        ...(payload.mandatoryHandoffRetry ? { mandatoryHandoffRetry: payload.mandatoryHandoffRetry } : {})
+      }
+      schedule({
+        contactId, channel, phone: pendingEntry.phone, latestMessage: latest,
+        scheduledFor: nowIso, pendingEntry,
+        reason: 'recuperación periódica de trabajo durable vencido'
+      })
+      scheduled += 1
+      await recordEvent({ contactId, eventType: 'durable_recovery_scheduled', detail: {
+        messageId: latest.id, agentId: state.agentId, channel,
+        source: row.payload == null ? 'expired_claim' : 'pending_rerun'
+      } }).catch(() => {})
+    } catch (error) {
+      skipped += 1
+      logger.warn(`[Agente conversacional] No se pudo recuperar trabajo durable ${runKey}: ${error.message}`)
+    }
+  }
+  const hasMore = visited < rows.length || rows.length === boundedLimit
+  return {
+    scanned: visited, scheduled, skipped, hasMore,
+    nextCursor: hasMore && visited ? rows[visited - 1].work_key : ''
+  }
+}
+
 export async function recoverPendingConversationalAgentConversations({
   nowMs = Date.now(),
   maxAgeMs = PENDING_RECOVERY_MAX_AGE_MS

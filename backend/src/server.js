@@ -29,6 +29,7 @@ import { startConversationalAgentTestPaymentsCleanup } from './jobs/conversation
 import { startConversationalAppointmentTestCleanupCron } from './jobs/conversationalAppointmentTestCleanup.cron.js'
 import { startConversationalAgentTestAssignmentsCleanup } from './jobs/conversationalAgentTestAssignmentsCleanup.js'
 import { startConversationalAgentPauseExpiryCron } from './jobs/conversationalAgentPauseExpiry.cron.js'
+import { startConversationalAgentRecoveryCron, stopConversationalAgentRecoveryCron } from './jobs/conversationalAgentRecovery.cron.js'
 import { startChatPushDeliveryCron, stopChatPushDeliveryCron } from './jobs/metaDirectChatDelivery.cron.js'
 import { startMcpMaintenanceCron, stopMcpMaintenanceCron } from './jobs/mcpMaintenance.cron.js'
 import { startAutomationReviewProjectionScheduler } from './jobs/automationReviewProjection.cron.js'
@@ -1012,6 +1013,7 @@ async function startRuntimeServices() {
     startConversationalAppointmentTestCleanupCron() // Elimina citas reales de prueba tras cinco minutos
     startConversationalAgentTestAssignmentsCleanup() // Restaura asignaciones temporales y respeta cambios humanos posteriores
     startConversationalAgentPauseExpiryCron() // Reactiva pausas vencidas fuera de los GET de métricas/listados
+    startConversationalAgentRecoveryCron() // Recupera turnos durables abandonados durante un relevo de instancias
     startChatPushDeliveryCron() // Recupera push durable y limpia terminales aunque Meta se desconecte
     startMcpMaintenanceCron() // Expira y depura eventos, aprobaciones, auditoría e invitaciones MCP
     startConversationGoalEffectsRecoveryScheduler() // Recupera leases/fallos de metas sin depender de un reinicio
@@ -1111,6 +1113,7 @@ function handleShutdown(signal) {
   // No apagar startupState.ready: /health ya falla por shuttingDown, pero los
   // requests normales deben seguir pasando mientras la instancia vieja drena.
   markDeployShutdownStarted()
+  stopConversationalAgentRecoveryCron()
   stopChatPushDeliveryCron()
   stopMcpMaintenanceCron()
   stopIntegrationCrons()

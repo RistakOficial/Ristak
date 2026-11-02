@@ -10220,6 +10220,18 @@ error o lease vencido permite reintentar el mismo mensaje. La recuperacion de
 pendientes pagina todos los claims fallidos/vencidos, sin un tope global que
 abandone conversaciones viejas.
 
+Un worker de sistema revisa cada 30 segundos únicamente trabajo ya persistido:
+reruns cuyo plazo venció y claims `processing` cuya lease venció. Esto cubre el
+relevo de instancias durante un deploy: el arranque de la instancia nueva puede
+ocurrir antes del último mensaje recibido por la anterior. La recuperación no
+depende de otro reinicio ni descubre mensajes históricos sin trabajo pendiente.
+Respeta el backoff, la licencia, la asignación actual, las pausas humanas, las
+señales terminales y la cuarentena. Omite trabajo local en curso, leases de
+entrega vigentes y partes con envío incierto; el runner conserva la autoridad
+final y los identificadores de entrega para no duplicar mensajes. La revisión
+es paginada, usa un lock distribuido y se detiene al iniciar el apagado. No
+ejecuta los recuperadores de pagos, metas o seguimientos de arranque en cada tick.
+
 Los mensajes entrantes esperan como mínimo 60 segundos desde la última
 recepción local antes de iniciar la IA. Cada nuevo mensaje reinicia la ventana;
 si el dueño configuró una espera mayor, se respeta esa duración. El vencimiento
