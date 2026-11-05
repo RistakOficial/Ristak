@@ -14,6 +14,7 @@ import { extendedToolSpecs } from './extendedTools.js'
 import { siteToolSpecs } from './siteTools.js'
 import { capabilityToolSpecs } from './capabilityTools.js'
 import { chatAttachmentToolSpecs } from './chatAttachmentTools.js'
+import { programPaymentToolSpecs } from './programPaymentTools.js'
 
 const SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|database[_-]?url|encrypted|hash|cookie|idempotency)/i
 const AUDIT_SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|database[_-]?url|encrypted|hash|cookie|idempotency|approval[_-]?ticket|file[_-]?base64|data[_-]?url|bytes[_-]?base64)/i
@@ -480,7 +481,8 @@ const allSpecs = Object.freeze([
   ...siteToolSpecs,
   ...extendedToolSpecs,
   ...capabilityToolSpecs,
-  ...chatAttachmentToolSpecs
+  ...chatAttachmentToolSpecs,
+  ...programPaymentToolSpecs
 ]
   .filter(entry => !MCP_DISABLED_TOOL_NAMES.has(entry?.name))
   .map(entry => Object.freeze({
