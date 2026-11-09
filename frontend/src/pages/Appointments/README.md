@@ -71,6 +71,14 @@ citas** avanza por cursor cuando el rango es más grande.
 Muestra una columna horaria del día actual seleccionado con eventos, bloqueos y
 total exacto. También usa páginas de 100 filas y carga incremental explícita.
 
+### Panel lateral
+
+**Próximas citas** y **Mensajes automáticos** siguen al calendario seleccionado.
+Cambiar entre mes, semana y día, o navegar a otra fecha, conserva ambas listas y
+las páginas ya abiertas con **Cargar más**. Al elegir otro calendario se cargan
+sus propias listas. Crear, editar o eliminar una cita desde la agenda actualiza
+la lista de próximas citas.
+
 ## Flujos De Citas
 
 Crear cita:

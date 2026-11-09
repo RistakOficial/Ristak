@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -395,6 +395,8 @@ export const Appointments: React.FC = () => {
   // Datos
   const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [selectedCalendar, setSelectedCalendar] = useState<Calendar | null>(null);
+  const selectedCalendarId = selectedCalendar?.id || '';
+  const activeCalendarIdRef = useRef('');
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [eventCountsByDate, setEventCountsByDate] = useState<Record<string, number>>({});
   const [visibleEventsTotal, setVisibleEventsTotal] = useState(0);
@@ -428,7 +430,6 @@ export const Appointments: React.FC = () => {
   const [selectedReminder, setSelectedReminder] = useState<AppointmentReminder | null>(null);
   const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
   const [remindersLoading, setRemindersLoading] = useState(false);
-  const activeReminderCalendarIdRef = useRef('');
 
   // Modal de cita
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
@@ -466,28 +467,17 @@ export const Appointments: React.FC = () => {
   const [selectionStart, setSelectionStart] = useState<{ date: Date; hour: number; minute: number } | null>(null);
   const [selectionEnd, setSelectionEnd] = useState<{ date: Date; hour: number; minute: number } | null>(null);
 
-  // Los mensajes automáticos pertenecen al calendario seleccionado. Al cambiar
-  // la agenda se vacía primero la lista anterior y se descartan respuestas viejas.
+  // Los mensajes automáticos pertenecen al calendario, no al rango visible.
   useEffect(() => {
-    const calendarId = selectedCalendar?.id || '';
-    activeReminderCalendarIdRef.current = calendarId;
-    setReminders([]);
-    setReminderSenders([]);
-    setReminderChannels([]);
-    setReminderTemplates([]);
-    setSelectedReminder(null);
-    setIsReminderModalOpen(false);
-    if (!calendarId) {
-      setRemindersLoading(false);
-      return;
-    }
+    const calendarId = selectedCalendarId;
+    if (!calendarId || activeCalendarIdRef.current !== calendarId) return;
 
     let cancelled = false;
+    const isCurrent = () => !cancelled && activeCalendarIdRef.current === calendarId;
     const loadReminderSettings = async () => {
-      setRemindersLoading(true);
       // CRÍTICO: los recordatorios. Si esto falla, sí es un error real del panel.
       const overview = await appointmentRemindersService.getOverview(calendarId);
-      if (cancelled || activeReminderCalendarIdRef.current !== calendarId) return;
+      if (!isCurrent()) return;
       setReminders(overview.reminders);
       setReminderSenders(overview.senders);
       setReminderChannels(overview.channels);
@@ -496,11 +486,11 @@ export const Appointments: React.FC = () => {
       // Si no hay acceso o fallan, NO deben tumbar todo el panel de mensajes automáticos.
       try {
         const templateBundle = await messageTemplatesService.getBundle();
-        if (!cancelled && activeReminderCalendarIdRef.current === calendarId) {
+        if (isCurrent()) {
           setReminderTemplates(templateBundle.templates);
         }
       } catch {
-        if (!cancelled && activeReminderCalendarIdRef.current === calendarId) {
+        if (isCurrent()) {
           setReminderTemplates([]);
         }
       }
@@ -508,30 +498,29 @@ export const Appointments: React.FC = () => {
 
     loadReminderSettings()
       .catch(() => {
-        if (!cancelled && activeReminderCalendarIdRef.current === calendarId) {
+        if (isCurrent()) {
           showToast('error', 'Mensajes automáticos', 'No se pudieron cargar los mensajes automáticos.');
         }
       })
       .finally(() => {
-        if (!cancelled && activeReminderCalendarIdRef.current === calendarId) {
+        if (isCurrent()) {
           setRemindersLoading(false);
         }
       });
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCalendar?.id]);
+  }, [selectedCalendarId, showToast]);
 
   const handleToggleReminder = useCallback(async (reminder: AppointmentReminder, enabled: boolean) => {
     const calendarId = reminder.calendarId;
-    if (!calendarId || activeReminderCalendarIdRef.current !== calendarId) return;
+    if (!calendarId || activeCalendarIdRef.current !== calendarId) return;
     setReminders(prev => prev.map(item => item.id === reminder.id ? { ...item, enabled } : item));
     try {
       const updated = await appointmentRemindersService.updateReminder(calendarId, reminder.id, { enabled });
-      if (activeReminderCalendarIdRef.current === calendarId) {
+      if (activeCalendarIdRef.current === calendarId) {
         setReminders(prev => prev.map(item => item.id === updated.id ? updated : item));
       }
     } catch {
-      if (activeReminderCalendarIdRef.current === calendarId) {
+      if (activeCalendarIdRef.current === calendarId) {
         setReminders(prev => prev.map(item => item.id === reminder.id ? { ...item, enabled: !enabled } : item));
         showToast('error', 'Mensajes automáticos', 'No se pudo actualizar el mensaje automático.');
       }
@@ -539,48 +528,48 @@ export const Appointments: React.FC = () => {
   }, [showToast]);
 
   const handleAddReminder = useCallback(() => {
-    if (!selectedCalendar?.id) return;
+    if (!selectedCalendarId) return;
     setSelectedReminder(null);
     setIsReminderModalOpen(true);
-  }, [selectedCalendar?.id]);
+  }, [selectedCalendarId]);
 
   const handleSaveReminder = useCallback(async (reminderId: string | null, input: AppointmentReminderInput) => {
-    const calendarId = selectedCalendar?.id || '';
-    if (!calendarId || activeReminderCalendarIdRef.current !== calendarId) return;
+    const calendarId = selectedCalendarId;
+    if (!calendarId || activeCalendarIdRef.current !== calendarId) return;
     try {
       const saved = reminderId
         ? await appointmentRemindersService.updateReminder(calendarId, reminderId, input)
         : await appointmentRemindersService.createReminder(calendarId, input);
-      if (activeReminderCalendarIdRef.current === calendarId) {
+      if (activeCalendarIdRef.current === calendarId) {
         setReminders(prev => reminderId
           ? prev.map(item => item.id === saved.id ? saved : item)
           : [...prev, saved]);
         showToast('success', 'Mensajes automáticos', reminderId ? 'Cambios guardados.' : 'Mensaje automático creado.');
       }
     } catch (error) {
-      if (activeReminderCalendarIdRef.current !== calendarId) return;
+      if (activeCalendarIdRef.current !== calendarId) return;
       if (!isAppointmentReminderScheduleConflict(error)) {
         showToast('error', 'Mensajes automáticos', 'No se pudieron guardar los cambios.');
       }
       throw error;
     }
-  }, [selectedCalendar?.id, showToast]);
+  }, [selectedCalendarId, showToast]);
 
   const handleDeleteReminder = useCallback(async (reminderId: string) => {
-    const calendarId = selectedCalendar?.id || '';
-    if (!calendarId || activeReminderCalendarIdRef.current !== calendarId) return;
+    const calendarId = selectedCalendarId;
+    if (!calendarId || activeCalendarIdRef.current !== calendarId) return;
     try {
       await appointmentRemindersService.deleteReminder(calendarId, reminderId);
-      if (activeReminderCalendarIdRef.current === calendarId) {
+      if (activeCalendarIdRef.current === calendarId) {
         setReminders(prev => prev.filter(item => item.id !== reminderId));
         showToast('success', 'Mensajes automáticos', 'Mensaje automático eliminado.');
       }
     } catch (error) {
-      if (activeReminderCalendarIdRef.current !== calendarId) return;
+      if (activeCalendarIdRef.current !== calendarId) return;
       showToast('error', 'Mensajes automáticos', 'No se pudo eliminar el mensaje automático.');
       throw error;
     }
-  }, [selectedCalendar?.id, showToast]);
+  }, [selectedCalendarId, showToast]);
 
   const timelineOrderedReminders = useMemo(
     () => sortAppointmentRemindersByTimeline(reminders),
@@ -598,7 +587,11 @@ export const Appointments: React.FC = () => {
 
   const selectCalendar = useCallback((calendar: Calendar | null) => {
     const calendarId = calendar?.id || '';
-    activeReminderCalendarIdRef.current = calendarId;
+    setSelectedCalendar(calendar);
+    persistLastSelectedCalendar(calendarId || null);
+    if (activeCalendarIdRef.current === calendarId) return;
+
+    activeCalendarIdRef.current = calendarId;
     setReminders([]);
     setReminderSenders([]);
     setReminderChannels([]);
@@ -625,8 +618,6 @@ export const Appointments: React.FC = () => {
     setVisibleEventsTotal(0);
     setVisibleEventsHasNext(false);
     setVisibleEventsLoading(false);
-    setSelectedCalendar(calendar);
-    persistLastSelectedCalendar(calendarId || null);
   }, [persistLastSelectedCalendar]);
 
   const navigateCalendarView = useCallback((next?: {
@@ -671,7 +662,6 @@ export const Appointments: React.FC = () => {
     panelRef: searchDropdownRef
   });
   const handledOpenAppointmentRef = useRef<string | null>(null);
-  const calendarsRequestRef = useRef(0);
   const eventsRequestRef = useRef(0);
   const eventsAbortRef = useRef<AbortController | null>(null);
   const visibleEventsNextCursorRef = useRef<string | null>(null);
@@ -741,75 +731,21 @@ export const Appointments: React.FC = () => {
     return { startTime, endTime };
   }, [currentDate, timezone, viewMode]);
 
-  const loadCalendars = useCallback(async () => {
-    const requestId = calendarsRequestRef.current + 1;
-    calendarsRequestRef.current = requestId;
-    const cachedCalendars = readCachedCalendars();
-
-    const applyCalendars = (calendarsData: Calendar[]) => {
-      if (calendarsRequestRef.current !== requestId) return;
-      setCalendars(calendarsData);
-
-      // Seleccionar calendario: ruta > último usado > predeterminado > primer activo.
-      let calendarToSelect: Calendar | undefined;
-
-      if (routeState.calendarId) {
-        calendarToSelect = calendarsData.find((cal) => cal.id === routeState.calendarId && cal.isActive);
-      }
-
-      const lastSelectedId = getStoredLastCalendarId();
-      if (!calendarToSelect && lastSelectedId) {
-        calendarToSelect = calendarsData.find((cal) => cal.id === lastSelectedId && cal.isActive);
-      }
-
-      if (!calendarToSelect && defaultCalendarId) {
-        calendarToSelect = calendarsData.find((cal) => cal.id === defaultCalendarId && cal.isActive);
-      }
-
-      if (!calendarToSelect) {
-        calendarToSelect = calendarsData.find((cal) => cal.isActive);
-      }
-
-      selectCalendar(calendarToSelect || null);
-    };
-
-    if (cachedCalendars.length) {
-      applyCalendars(cachedCalendars);
-      setLoading(false);
-    }
-
-    try {
-      if (!cachedCalendars.length) setLoading(true);
-      const calendarsData = await calendarsService.getCalendars(
-        locationId,
-        accessToken,
-        undefined,
-        { throwOnError: true }
-      );
-      if (calendarsRequestRef.current !== requestId) return calendarsData;
-      writeCachedCalendars(calendarsData);
-      applyCalendars(calendarsData);
-    } catch (error) {
-      if (calendarsRequestRef.current === requestId) {
-        if (cachedCalendars.length) {
-          showToast(
-            'warning',
-            'Calendario sin conexión',
-            'Mostramos la última copia guardada. Puedes seguir agendando y sincronizaremos al volver internet.'
-          );
-        } else {
-          showToast('error', 'Error al cargar calendarios', 'No se pudieron obtener los calendarios.');
-        }
-      }
-      return cachedCalendars;
-    } finally {
-      if (calendarsRequestRef.current === requestId) setLoading(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locationId, accessToken, defaultCalendarId, routeState.calendarId, selectCalendar]);
+  const applyCalendars = useEffectEvent((calendarsData: Calendar[]) => {
+    setCalendars(calendarsData);
+    // Lee la ruta más reciente sin volver a pedir la lista al navegar.
+    const activeCalendars = calendarsData.filter(calendar => calendar.isActive);
+    const lastSelectedId = getStoredLastCalendarId();
+    const calendar = activeCalendars.find(item => item.id === routeState.calendarId)
+      ?? activeCalendars.find(item => item.id === lastSelectedId)
+      ?? activeCalendars.find(item => item.id === defaultCalendarId)
+      ?? activeCalendars[0]
+      ?? null;
+    selectCalendar(calendar);
+  });
 
   const loadEvents = useCallback(async ({ append = false }: { append?: boolean } = {}) => {
-    if (!selectedCalendar) return;
+    if (!selectedCalendar || activeCalendarIdRef.current !== selectedCalendar.id) return;
     if (append && (viewMode === 'month' || visibleEventsLoadingRef.current)) return;
     const cursor = append ? visibleEventsNextCursorRef.current : null;
     if (append && !cursor) return;
@@ -1005,6 +941,12 @@ export const Appointments: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCalendar, currentDate, getDateRange, timezone, viewMode]);
 
+  // La sincronización puede terminar después de que el usuario cambie de vista.
+  const visibleRangeActionsRef = useRef({ getDateRange, loadEvents });
+  useLayoutEffect(() => {
+    visibleRangeActionsRef.current = { getDateRange, loadEvents };
+  }, [getDateRange, loadEvents]);
+
   useEffect(() => {
     const isOverlayRoute = routeState.create || Boolean(routeState.appointmentId);
 
@@ -1015,15 +957,15 @@ export const Appointments: React.FC = () => {
 
     if (routeState.calendarId && calendars.length) {
       const routeCalendar = calendars.find(calendar => calendar.id === routeState.calendarId);
-      if (routeCalendar && selectedCalendar?.id !== routeCalendar.id) {
+      if (routeCalendar && activeCalendarIdRef.current !== routeCalendar.id) {
         selectCalendar(routeCalendar);
       }
     }
-  }, [calendars, routeState.appointmentId, routeState.calendarId, routeState.create, routeState.currentDate, routeState.viewMode, selectCalendar, selectedCalendar?.id]);
+  }, [calendars, routeState.appointmentId, routeState.calendarId, routeState.create, routeState.currentDate, routeState.viewMode, selectCalendar]);
 
-  // Cargar eventos próximos desde HOY (independiente del calendario visible)
+  // Cargar eventos próximos desde HOY para el calendario seleccionado.
   const loadUpcomingEvents = useCallback(async ({ append = false }: { append?: boolean } = {}) => {
-    if (!selectedCalendar) return;
+    if (!selectedCalendarId || activeCalendarIdRef.current !== selectedCalendarId) return;
     if (append && upcomingEventsLoadingRef.current) return;
     const cursor = append ? upcomingEventsNextCursorRef.current : null;
     if (append && !cursor) return;
@@ -1032,7 +974,7 @@ export const Appointments: React.FC = () => {
     upcomingEventsAbortRef.current = controller;
     const requestId = upcomingEventsRequestRef.current + 1;
     upcomingEventsRequestRef.current = requestId;
-    const requestBoundary = `${selectedCalendar.id}:${cursor || 'root'}`;
+    const requestBoundary = `${selectedCalendarId}:${cursor || 'root'}`;
     upcomingEventsBoundaryRef.current = requestBoundary;
     const isCurrentRequest = () => (
       !controller.signal.aborted &&
@@ -1041,11 +983,11 @@ export const Appointments: React.FC = () => {
     );
     const cachedUpcoming = append
       ? []
-      : readCalendarUpcomingSnapshot(selectedCalendar.id);
+      : readCalendarUpcomingSnapshot(selectedCalendarId);
 
     if (cachedUpcoming.length) {
       setUpcomingEvents(
-        mergeOfflineCalendarEvents(cachedUpcoming, selectedCalendar.id)
+        mergeOfflineCalendarEvents(cachedUpcoming, selectedCalendarId)
           .filter(event => parseSortableDateValue(event.endTime) >= Date.now())
       );
     }
@@ -1054,7 +996,7 @@ export const Appointments: React.FC = () => {
       upcomingEventsLoadingRef.current = true;
       setUpcomingEventsLoading(true);
       const page = await calendarsService.getUpcomingAppointmentsPage({
-        calendarId: selectedCalendar.id,
+        calendarId: selectedCalendarId,
         cursor,
         limit: UPCOMING_APPOINTMENTS_PAGE_SIZE,
         signal: controller.signal
@@ -1063,8 +1005,8 @@ export const Appointments: React.FC = () => {
       if (isCurrentRequest()) {
         setUpcomingEvents((current) => {
           if (!append) {
-            writeCalendarUpcomingSnapshot(selectedCalendar.id, page.items);
-            return mergeOfflineCalendarEvents(page.items, selectedCalendar.id)
+            writeCalendarUpcomingSnapshot(selectedCalendarId, page.items);
+            return mergeOfflineCalendarEvents(page.items, selectedCalendarId)
               .filter(event => parseSortableDateValue(event.endTime) >= Date.now());
           }
           const merged = new Map(current.map(event => [event.id, event]));
@@ -1073,7 +1015,7 @@ export const Appointments: React.FC = () => {
             Array.from(merged.values()).sort((a, b) => (
               parseSortableDateValue(a.startTime) - parseSortableDateValue(b.startTime) || a.id.localeCompare(b.id)
             )),
-            selectedCalendar.id
+            selectedCalendarId
           ).filter(event => parseSortableDateValue(event.endTime) >= Date.now());
         });
         upcomingEventsNextCursorRef.current = page.pagination.nextCursor;
@@ -1088,7 +1030,7 @@ export const Appointments: React.FC = () => {
         setUpcomingEventsLoading(false);
       }
     }
-  }, [selectedCalendar]);
+  }, [selectedCalendarId]);
 
   const syncOfflineAppointments = useCallback(async (announce = true) => {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -1099,16 +1041,18 @@ export const Appointments: React.FC = () => {
     const result = await flushCalendarAppointmentOutbox(
       payload => calendarsService.createAppointment(payload)
     );
-    const visibleRange = getDateRange();
     refreshOfflineOutboxState();
+    if (activeCalendarIdRef.current !== selectedCalendarId) return;
+    const rangeActions = visibleRangeActionsRef.current;
+    const visibleRange = rangeActions.getDateRange();
     setEvents(current => mergeOfflineCalendarEvents(
       current.filter(event => !isOfflineCalendarEvent(event)),
-      selectedCalendar?.id,
+      selectedCalendarId,
       visibleRange
     ));
     setUpcomingEvents(current => mergeOfflineCalendarEvents(
       current.filter(event => !isOfflineCalendarEvent(event)),
-      selectedCalendar?.id
+      selectedCalendarId
     ).filter(event => parseSortableDateValue(event.endTime) >= Date.now()));
 
     if (result.synced.length) {
@@ -1119,7 +1063,7 @@ export const Appointments: React.FC = () => {
           `${result.synced.length} cita${result.synced.length === 1 ? '' : 's'} pendiente${result.synced.length === 1 ? '' : 's'} ya ${result.synced.length === 1 ? 'quedó' : 'quedaron'} en el servidor.`
         );
       }
-      await Promise.all([loadEvents(), loadUpcomingEvents()]);
+      await Promise.all([rangeActions.loadEvents(), loadUpcomingEvents()]);
     }
 
     if (result.failed.length > lastOfflineFailureCountRef.current) {
@@ -1132,11 +1076,9 @@ export const Appointments: React.FC = () => {
     }
     lastOfflineFailureCountRef.current = result.failed.length;
   }, [
-    getDateRange,
-    loadEvents,
     loadUpcomingEvents,
     refreshOfflineOutboxState,
-    selectedCalendar?.id,
+    selectedCalendarId,
     showToast
   ]);
 
@@ -1168,11 +1110,42 @@ export const Appointments: React.FC = () => {
     }
   }, [locationId, accessToken, selectedCalendar, getDateRange, timezone]);
 
-  // useEffects - ejecutar después de declarar las funciones
-  // Cargar calendarios al montar (incluye defaultCalendarId para reaccionar a cambios de configuración)
   useEffect(() => {
-    loadCalendars();
-  }, [locationId, accessToken, defaultCalendarId, loadCalendars]);
+    const controller = new AbortController();
+    const cachedCalendars = readCachedCalendars();
+    if (cachedCalendars.length) applyCalendars(cachedCalendars);
+    setLoading(!cachedCalendars.length);
+
+    const loadCalendars = async () => {
+      try {
+        const calendarsData = await calendarsService.getCalendars(
+          locationId,
+          accessToken,
+          undefined,
+          { throwOnError: true, signal: controller.signal }
+        );
+        if (controller.signal.aborted) return;
+        writeCachedCalendars(calendarsData);
+        applyCalendars(calendarsData);
+      } catch {
+        if (controller.signal.aborted) return;
+        if (cachedCalendars.length) {
+          showToast(
+            'warning',
+            'Calendario sin conexión',
+            'Mostramos la última copia guardada. Puedes seguir agendando y sincronizaremos al volver internet.'
+          );
+        } else {
+          showToast('error', 'Error al cargar calendarios', 'No se pudieron obtener los calendarios.');
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    };
+
+    void loadCalendars();
+    return () => controller.abort();
+  }, [locationId, accessToken, defaultCalendarId, showToast]);
 
   // Cargar eventos cuando cambie el calendario o la fecha
   useEffect(() => {
@@ -1184,15 +1157,13 @@ export const Appointments: React.FC = () => {
 
   // Cargar próximas citas solo cuando cambie el calendario seleccionado
   useEffect(() => {
-    if (selectedCalendar) {
-      loadUpcomingEvents();
-    }
-  }, [selectedCalendar, locationId, accessToken, loadUpcomingEvents]);
+    void loadUpcomingEvents();
+  }, [loadUpcomingEvents]);
 
   // Las cancelaciones por plazo ocurren en el servidor aunque esta agenda siga
   // abierta. Releer el estado canónico también actualiza conteos y caché offline.
   useEffect(() => {
-    if (!selectedCalendar?.id) return;
+    if (!selectedCalendarId) return;
     let timer: number | null = null;
     let stopped = false;
     let refreshing = false;
@@ -1207,7 +1178,7 @@ export const Appointments: React.FC = () => {
         timer = null;
         refreshing = true;
         invalidateRistakApiReadCache({ pathPrefixes: ['/api/calendars'], abortInflight: false });
-        void Promise.allSettled([loadEvents(), loadUpcomingEvents()]).finally(() => {
+        void Promise.allSettled([visibleRangeActionsRef.current.loadEvents(), loadUpcomingEvents()]).finally(() => {
           refreshing = false;
           if (queued) { queued = false; refresh(); }
         });
@@ -1240,7 +1211,7 @@ export const Appointments: React.FC = () => {
       window.removeEventListener('focus', refresh);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [selectedCalendar?.id, loadEvents, loadUpcomingEvents, canReadLiveChat]);
+  }, [selectedCalendarId, loadUpcomingEvents, canReadLiveChat]);
 
   useEffect(() => {
     const unsubscribe = subscribeCalendarOfflineStore(refreshOfflineOutboxState);
