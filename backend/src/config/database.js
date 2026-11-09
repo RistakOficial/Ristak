@@ -2466,6 +2466,17 @@ async function ensureConversationalAgentStateIdentity() {
   })
 }
 
+const WHATSAPP_QR_FALLBACK_COLUMN = 'qr_fallback_phone_number_id TEXT REFERENCES whatsapp_api_phone_numbers(id) ON DELETE SET NULL'
+
+async function ensureSqliteWhatsAppQrFallbackColumn() {
+  if (usePostgres) return
+
+  const columns = await db.all('PRAGMA table_info(whatsapp_api_phone_numbers)')
+  if (!columns.some(column => column.name === 'qr_fallback_phone_number_id')) {
+    await db.run(`ALTER TABLE whatsapp_api_phone_numbers ADD COLUMN ${WHATSAPP_QR_FALLBACK_COLUMN}`)
+  }
+}
+
 // Inicializar tablas
 async function initTablesUnlocked() {
   try {
@@ -2608,6 +2619,7 @@ async function initTablesUnlocked() {
       [CORE_SCHEMA_BOOTSTRAP_CONFIG_KEY]
     ).catch(() => null)
     if (schemaBootstrap?.config_value === CORE_SCHEMA_BOOTSTRAP_VERSION) {
+      await ensureSqliteWhatsAppQrFallbackColumn()
       logger.info(`[Esquema] Bootstrap ${CORE_SCHEMA_BOOTSTRAP_VERSION} ya aplicado; se omite el replay legacy.`)
       return { skipped: true, version: CORE_SCHEMA_BOOTSTRAP_VERSION }
     }
@@ -5092,7 +5104,6 @@ async function initTablesUnlocked() {
       ['is_default_sender', 'INTEGER DEFAULT 0'],
       ['api_send_enabled', 'INTEGER DEFAULT 1'],
       ['qr_send_enabled', 'INTEGER DEFAULT 0'],
-      ['qr_fallback_phone_number_id', 'TEXT REFERENCES whatsapp_api_phone_numbers(id) ON DELETE SET NULL'],
       ['qr_consent_accepted_at', 'DATETIME'],
       ['qr_consent_accepted_by', 'TEXT'],
       ['qr_status', 'TEXT'],
@@ -5107,6 +5118,8 @@ async function initTablesUnlocked() {
         // Columna ya existe, ignorar.
       }
     }
+
+    await ensureSqliteWhatsAppQrFallbackColumn()
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS whatsapp_api_contacts (
