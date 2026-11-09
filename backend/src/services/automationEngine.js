@@ -5351,9 +5351,8 @@ function whatsappTransportLabel(transports = []) {
 
 async function sendWhatsAppAutomationMessage({ send, phoneNumberId, fromPhone }) {
   // La capa oficial clasifica el error y sólo ella puede autorizar el respaldo
-  // asociado al mismo número. El flag viejo sendViaQr ya no decide el canal:
-  // QR-only usa QR, API-only usa API y API+QR intenta API una sola vez antes
-  // de recurrir al QR gemelo por indisponibilidad real.
+  // configurado. El flag viejo sendViaQr ya no decide el canal: la API
+  // se intenta una vez antes de usar el respaldo por indisponibilidad real.
   return send({ phoneNumberId, fromPhone, transport: 'api', allowQrFallback: true })
 }
 
@@ -5368,7 +5367,7 @@ async function sendWhatsAppBlocks(node, ctx) {
   const to = ctx.contact?.phone
   if (!to) throw new Error('El contacto no tiene teléfono')
 
-  // Remitente: último número donde escribió > principal > específico
+  // Un remitente específico tiene prioridad; el modo de conversación conserva el número entrante.
   let phoneNumberId
   if (str(config.sender) === 'specific' && str(config.senderNumberId)) {
     phoneNumberId = str(config.senderNumberId)
@@ -5376,7 +5375,7 @@ async function sendWhatsAppBlocks(node, ctx) {
     phoneNumberId = ctx.businessPhoneNumberId
   }
 
-  const route = await resolveWhatsAppOutboundRoute({ phoneNumberId })
+  const route = await resolveWhatsAppOutboundRoute({ phoneNumberId, allowQrFallback: true })
   if (!route.available) throw new Error('No hay un número de WhatsApp conectado para esta automatización')
   phoneNumberId = route.phoneNumberId || phoneNumberId
   let fromPhone = route.fromPhone || undefined

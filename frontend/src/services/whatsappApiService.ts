@@ -14,10 +14,13 @@ export interface WhatsAppApiPhoneNumber {
   status?: string | null
   label?: string | null
   is_default_sender?: boolean
+  sender_position?: number | null
   api_send_enabled?: boolean
   qr_send_enabled?: boolean
   qr_status?: string | null
   qr_connected_phone?: string | null
+  qr_fallback_phone_number_id?: string | null
+  automatic_qr_fallback_phone_number_id?: string | null
   qr_consent_accepted_at?: string | null
   qr_last_connected_at?: string | null
   qr_last_disconnected_at?: string | null
@@ -31,6 +34,7 @@ export interface WhatsAppApiPhoneNumberAvailability {
   apiAvailable: boolean
   apiReason?: string
   qrReady: boolean
+  qrFallbackReady?: boolean
   available: boolean
 }
 
@@ -757,6 +761,9 @@ export const whatsappApiService = {
   connect: (payload: WhatsAppApiConnectPayload) => refreshIntegrationsStatusAfter(apiClient.post<WhatsAppApiStatus>('/whatsapp-api/connect', payload)),
   previewPhoneNumbers: (apiKey?: string) => apiClient.post<WhatsAppApiPhoneNumbersPreviewResponse>('/whatsapp-api/phone-numbers/preview', { apiKey }),
   setDefaultPhoneNumber: (phoneNumberId: string) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/phone-numbers/default', { phoneNumberId }),
+  setQrFallbackPhoneNumber: (phoneNumberId: string, qrPhoneNumberId: string | null) => (
+    apiClient.put<WhatsAppApiStatus>(`/whatsapp-api/phone-numbers/${encodeURIComponent(phoneNumberId)}/qr-fallback`, { qrPhoneNumberId })
+  ),
   disconnectPhoneNumber: (phoneNumberId: string, connection: 'api' | 'qr') => (
     refreshIntegrationsStatusAfter(apiClient.post<WhatsAppApiStatus>(`/whatsapp-api/phone-numbers/${encodeURIComponent(phoneNumberId)}/disconnect`, { connection }))
   ),

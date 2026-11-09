@@ -46,6 +46,7 @@ import {
   listMetaSocialPostsView,
   setWhatsAppActiveProviderView,
   setWhatsAppApiDefaultPhoneNumberView,
+  setWhatsAppQrFallbackView,
   syncMetaDirectHistoryView,
   testMetaDirectConnectionView,
   updateWhatsAppQrDripSettingsView,
@@ -116,7 +117,8 @@ router.post('/meta/sync-history', requireWhatsAppApiAccess, syncMetaDirectHistor
 router.post('/meta/disconnect', requireWhatsAppApiAccess, disconnectMetaDirectConnectionView)
 router.post('/connect', requireWhatsAppApiAccess, connectWhatsAppApiView)
 router.post('/phone-numbers/preview', requireWhatsAppApiAccess, previewWhatsAppApiPhoneNumbersView)
-router.post('/phone-numbers/default', requireWhatsAppApiAccess, setWhatsAppApiDefaultPhoneNumberView)
+router.post('/phone-numbers/default', requireModuleAccess('settings_whatsapp'), setWhatsAppApiDefaultPhoneNumberView)
+router.put('/phone-numbers/:phoneNumberId/qr-fallback', requireWhatsAppApiAccess, requireModuleAccess('settings_whatsapp'), setWhatsAppQrFallbackView)
 router.post('/phone-numbers/:id/disconnect', disconnectWhatsAppPhoneNumberView)
 router.post('/phone-numbers/:id/reroute', requireWhatsAppApiAccess, rerouteWhatsAppPhoneNumberContactsView)
 router.post('/phone-numbers/:id/restore', requireWhatsAppApiAccess, restoreWhatsAppPhoneNumberContactsView)

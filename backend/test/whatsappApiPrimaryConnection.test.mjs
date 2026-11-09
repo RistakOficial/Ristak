@@ -9,11 +9,15 @@ import {
   connectWhatsAppApi,
   getMetaDirectConnectionReadiness,
   getWhatsAppApiConfigKeys,
+  getWhatsAppApiStatus,
   promoteConnectedWhatsAppApiPhoneNumber,
   setMetaDirectFetchForTest,
+  setWhatsAppApiDefaultPhoneNumber,
+  setWhatsAppQrFallback,
   setYCloudFetchForTest,
   testMetaDirectConnection
 } from '../src/services/whatsappApiService.js'
+import { reconcileWhatsAppDefaultSender } from '../src/services/whatsappSenderSettingsService.js'
 import { getWhatsAppProviderDefinitions } from '../src/services/whatsapp/providers/providerRegistry.js'
 
 async function snapshotAppConfig(keys = [], callback) {
@@ -208,8 +212,10 @@ test('conectar Meta Direct después de QR deja Meta principal y conserva el QR c
   const qrId = 'qr_first_then_meta_direct'
   const phoneNumberId = 'meta_direct_after_qr'
   const wabaId = 'waba_meta_after_qr'
+  const otherApiId = 'ycloud_after_meta_direct'
   const nonce = `meta-primary-${crypto.randomUUID()}`
   const readinessNonce = `meta-readiness-${crypto.randomUUID()}`
+  const secondaryReadinessNonce = `meta-secondary-readiness-${crypto.randomUUID()}`
   let requestedPhoneFields = ''
   const configKeys = [
     ...Object.values(keys),
@@ -319,11 +325,145 @@ test('conectar Meta Direct después de QR deja Meta principal y conserva el QR c
         quality_rating: 'GREEN',
         messaging_limit: 'TIER_2K'
       })
+
+      await insertRoutingPhone({ id: otherApiId, phone: '+12025550131', createdAt: '2026-01-01 00:00:00' })
+      await setWhatsAppApiDefaultPhoneNumber({ phoneNumberId: otherApiId })
+      assert.equal(await getAppConfig(keys.provider), 'ycloud')
+      const secondaryReadiness = signedMetaConnection({
+        payload: readinessPayload,
+        secret,
+        installationId,
+        nonce: secondaryReadinessNonce
+      })
+      assert.equal((await getMetaDirectConnectionReadiness({
+        payload: readinessPayload,
+        ...secondaryReadiness
+      })).ready, true)
     })
   } finally {
     setMetaDirectFetchForTest(null)
     await db.run('DELETE FROM whatsapp_meta_direct_nonces WHERE nonce = ?', [nonce]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_meta_direct_nonces WHERE nonce = ?', [readinessNonce]).catch(() => undefined)
-    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id IN (?, ?)', [phoneNumberId, qrId])
+    await db.run('DELETE FROM whatsapp_meta_direct_nonces WHERE nonce = ?', [secondaryReadinessNonce]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id IN (?, ?, ?)', [phoneNumberId, qrId, otherApiId])
+  }
+})
+
+
+async function insertRoutingPhone({ id, phone, provider = 'ycloud', qrStatus = 'disconnected', createdAt }) {
+  const connectedQr = qrStatus === 'connected'
+  await db.run(`
+    INSERT INTO whatsapp_api_phone_numbers (
+      id, provider, phone_number, api_send_enabled, qr_send_enabled, qr_status,
+      qr_connected_phone, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `, [id, provider, phone, provider === 'qr' ? 0 : 1, connectedQr ? 1 : 0,
+    qrStatus, connectedQr ? phone : null, createdAt])
+}
+
+test('el primer número conectado conserva su prioridad y el mismo número comparte posición', async () => {
+  const keys = getWhatsAppApiConfigKeys()
+  const first = 'routing_first_qr'
+  const second = 'routing_second_api'
+  const sibling = 'routing_first_api'
+  const pending = 'routing_pending_qr'
+  const third = 'routing_third_qr'
+  const ids = [first, second, sibling, pending, third]
+  const firstPhone = '+12025550101'
+
+  try {
+    await snapshotAppConfig([keys.provider, keys.senderPhone, keys.phoneNumberId, keys.wabaId], async () => {
+      await insertRoutingPhone({ id: pending, phone: null, provider: 'qr', createdAt: '2026-01-01 00:00:00' })
+      await insertRoutingPhone({ id: first, phone: firstPhone, provider: 'qr', qrStatus: 'connected', createdAt: '2026-01-02 00:00:00' })
+      await reconcileWhatsAppDefaultSender({ phoneNumberId: first })
+      assert.equal(await getAppConfig(keys.phoneNumberId), first)
+
+      await insertRoutingPhone({ id: second, phone: '+528111122222', createdAt: '2026-01-03 00:00:00' })
+      await promoteConnectedWhatsAppApiPhoneNumber({ phoneNumberId: second, provider: 'ycloud' })
+      assert.equal(await getAppConfig(keys.phoneNumberId), first)
+
+      await insertRoutingPhone({ id: sibling, phone: firstPhone, createdAt: '2026-01-04 00:00:00' })
+      await promoteConnectedWhatsAppApiPhoneNumber({ phoneNumberId: sibling, provider: 'ycloud' })
+      assert.equal(await getAppConfig(keys.phoneNumberId), sibling)
+
+      await insertRoutingPhone({ id: third, phone: '+528111133333', provider: 'qr', qrStatus: 'connected', createdAt: '2026-01-05 00:00:00' })
+      const status = await setWhatsAppApiDefaultPhoneNumber({ phoneNumberId: second })
+      const rows = new Map(status.phoneNumbers.map(row => [row.id, row]))
+      assert.equal(status.sender.phoneNumberId, second)
+      assert.equal(rows.get(second).sender_position, 1)
+      assert.equal(rows.get(first).sender_position, 2)
+      assert.equal(rows.get(sibling).sender_position, 2)
+      assert.equal(rows.get(third).sender_position, 3)
+      assert.equal(rows.get(pending).sender_position, null)
+      await assert.rejects(setWhatsAppApiDefaultPhoneNumber({ phoneNumberId: pending }), /no está conectado/)
+
+      await Promise.all([
+        setWhatsAppApiDefaultPhoneNumber({ phoneNumberId: third }),
+        setWhatsAppApiDefaultPhoneNumber({ phoneNumberId: sibling })
+      ])
+      const afterConcurrentWrites = await getWhatsAppApiStatus()
+      const marked = (await readPhoneRows(ids)).filter(row => row.is_default_sender === 1)
+      assert.equal(marked.length, 1)
+      assert.equal(afterConcurrentWrites.sender.phoneNumberId, marked[0].id)
+      assert.equal(await getAppConfig(keys.phoneNumberId), marked[0].id)
+    })
+  } finally {
+    await db.run(`DELETE FROM whatsapp_api_phone_numbers WHERE id IN (${ids.map(() => '?').join(', ')})`, ids)
+  }
+})
+
+test('el respaldo explícito exige un QR conectado y vuelve a automático al retirar el QR', async () => {
+  const source = 'routing_explicit_source'
+  const target = 'routing_explicit_target'
+  const disconnected = 'routing_explicit_disconnected'
+  const createdAt = '2026-01-01 00:00:00'
+  const valueFor = (status) => status.phoneNumbers.find(row => row.id === source).qr_fallback_phone_number_id
+
+  try {
+    await insertRoutingPhone({ id: source, phone: '+12025550111', createdAt })
+    await insertRoutingPhone({ id: target, phone: '+528111155555', provider: 'qr', qrStatus: 'connected', createdAt })
+    await insertRoutingPhone({ id: disconnected, phone: '+528111166666', provider: 'qr', createdAt })
+    await assert.rejects(setWhatsAppQrFallback({ phoneNumberId: source, qrPhoneNumberId: disconnected }), /QR conectado/)
+    await assert.rejects(setWhatsAppQrFallback({ phoneNumberId: source, qrPhoneNumberId: source }), /automática/)
+    await assert.rejects(setWhatsAppQrFallback({ phoneNumberId: target, qrPhoneNumberId: source }), /WhatsApp API/)
+    await assert.rejects(setWhatsAppQrFallback({ phoneNumberId: source }), /automática/)
+
+    assert.equal(valueFor(await setWhatsAppQrFallback({ phoneNumberId: source, qrPhoneNumberId: target })), target)
+    assert.equal(valueFor(await setWhatsAppQrFallback({ phoneNumberId: source, qrPhoneNumberId: null })), null)
+    await setWhatsAppQrFallback({ phoneNumberId: source, qrPhoneNumberId: target })
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [target])
+    assert.equal(valueFor(await getWhatsAppApiStatus()), null)
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id IN (?, ?, ?)', [source, target, disconnected])
+  }
+})
+
+test('el principal y su respaldo elegido siguen visibles mientras Meta pide reconexión', async () => {
+  const keys = getWhatsAppApiConfigKeys()
+  const source = 'routing_reconnect_source'
+  const target = 'routing_reconnect_target'
+  const createdAt = '2026-01-01 00:00:00'
+
+  try {
+    await snapshotAppConfig([keys.provider, keys.senderPhone, keys.phoneNumberId, keys.wabaId], async () => {
+      await insertRoutingPhone({ id: source, phone: '+12025550121', provider: 'meta_direct', createdAt })
+      await insertRoutingPhone({ id: target, phone: '+12025550122', provider: 'qr', qrStatus: 'connected', createdAt })
+      await setWhatsAppApiDefaultPhoneNumber({ phoneNumberId: source })
+      await setWhatsAppQrFallback({ phoneNumberId: source, qrPhoneNumberId: target })
+      await db.run("UPDATE whatsapp_api_phone_numbers SET status = 'AUTHORIZATION_REQUIRED', api_send_enabled = 0 WHERE id = ?", [source])
+
+      await reconcileWhatsAppDefaultSender()
+
+      const status = await getWhatsAppApiStatus()
+      assert.equal(status.sender.phoneNumberId, source)
+      const primary = status.phoneNumbers.find(row => row.id === source)
+      assert.equal(primary.sender_position, 1)
+      assert.equal(primary.availability.apiAvailable, false)
+      assert.equal(primary.availability.qrReady, false)
+      assert.equal(primary.availability.qrFallbackReady, true)
+      assert.equal(primary.qr_fallback_phone_number_id, target)
+    })
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id IN (?, ?)', [source, target])
   }
 })

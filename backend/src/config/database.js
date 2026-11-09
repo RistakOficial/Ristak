@@ -5092,6 +5092,7 @@ async function initTablesUnlocked() {
       ['is_default_sender', 'INTEGER DEFAULT 0'],
       ['api_send_enabled', 'INTEGER DEFAULT 1'],
       ['qr_send_enabled', 'INTEGER DEFAULT 0'],
+      ['qr_fallback_phone_number_id', 'TEXT REFERENCES whatsapp_api_phone_numbers(id) ON DELETE SET NULL'],
       ['qr_consent_accepted_at', 'DATETIME'],
       ['qr_consent_accepted_by', 'TEXT'],
       ['qr_status', 'TEXT'],

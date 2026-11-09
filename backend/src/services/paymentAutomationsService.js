@@ -561,7 +561,7 @@ function routeMatchesPaymentPhoneRow(route = {}, phoneRow = {}) {
   ].some((value) => normalizePhoneForStorage(value) === routePhone)
 }
 
-export async function resolvePaymentWhatsAppRoute(contact = {}, { qrOnly = false } = {}) {
+export async function resolvePaymentWhatsAppRoute(contact = {}, { allowQrFallback = false } = {}) {
   const contactRouteIds = []
   const preferredPhoneNumberId = cleanString(contact.preferredWhatsAppPhoneNumberId, 200)
   if (preferredPhoneNumberId) contactRouteIds.push(preferredPhoneNumberId)
@@ -587,7 +587,7 @@ export async function resolvePaymentWhatsAppRoute(contact = {}, { qrOnly = false
   let unavailableContactRoute = null
   for (const phoneNumberId of contactRouteIds) {
     const phoneRow = await getPaymentWhatsAppPhoneRow(phoneNumberId)
-    const route = await resolveWhatsAppOutboundRoute({ phoneNumberId })
+    const route = await resolveWhatsAppOutboundRoute({ phoneNumberId, allowQrFallback })
     const legacyConfiguredRoute = !phoneRow && await isLegacyConfiguredPaymentPhone(phoneNumberId)
     if (legacyConfiguredRoute && route.available && cleanString(route.phoneNumberId, 200) === phoneNumberId) return route
     if (phoneRow && routeMatchesPaymentPhoneRow(route, phoneRow)) return route
@@ -610,22 +610,7 @@ export async function resolvePaymentWhatsAppRoute(contact = {}, { qrOnly = false
     }
   }
 
-  let defaultPhoneNumberId = ''
-  if (qrOnly) {
-    const qrSender = await db.get(`
-      SELECT id
-      FROM whatsapp_api_phone_numbers
-      WHERE qr_send_enabled = 1
-        AND LOWER(COALESCE(qr_status, '')) = 'connected'
-      ORDER BY is_default_sender DESC, updated_at DESC
-      LIMIT 1
-    `).catch(() => null)
-    defaultPhoneNumberId = cleanString(qrSender?.id, 200)
-  }
-
-  return resolveWhatsAppOutboundRoute({
-    phoneNumberId: defaultPhoneNumberId || undefined
-  })
+  return resolveWhatsAppOutboundRoute({ allowQrFallback })
 }
 
 export function paymentWhatsAppRouteArgs(route = {}, allowQrFallback = false) {
@@ -922,7 +907,7 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
 
   let outboundRoute = null
   try {
-    outboundRoute = await resolvePaymentWhatsAppRoute(contact, { qrOnly })
+    outboundRoute = await resolvePaymentWhatsAppRoute(contact, { allowQrFallback: definition.allowQrFallback })
     if (!outboundRoute.available) {
       throw new Error(qrOnly
         ? 'Conecta un número de WhatsApp QR para enviar esta automatización.'

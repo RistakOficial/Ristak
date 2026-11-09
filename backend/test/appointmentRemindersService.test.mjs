@@ -1238,6 +1238,33 @@ test('recordatorios de citas con solo QR envían el texto aunque la plantilla no
   })
 })
 
+test('un recordatorio directo usa WhatsApp QR si es el número principal', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    const sentMessages = []
+    await withReminderFixture({
+      ycloudStatus: 'PENDING',
+      apiSendEnabled: false,
+      qrSendEnabled: true,
+      qrStatus: 'connected'
+    }, async ({ reminder, phoneNumberId }) => {
+      await attachQrSessionForReminder(phoneNumberId, '+526561234567', sentMessages)
+      await db.run(`
+        UPDATE appointment_reminders
+        SET content_mode = 'direct', template_id = NULL, template_name = '', message_text = 'Hola {{contact.first_name}}'
+        WHERE id = ?
+      `, [reminder.id])
+
+      const result = await processDueAppointmentReminders({ batchSize: 1 })
+
+      assert.equal(result.sent, 1)
+      assert.equal(result.errors, 0)
+      assert.equal(captures.length, 0)
+      assert.equal(sentMessages.length, 1)
+      assert.match(sentMessages[0].payload.text, /Hola Ana/)
+    })
+  })
+})
+
 test('recordatorios con canal QR no brincan una API activa del mismo número', async () => {
   await withYCloudMessageCapture(async (captures) => {
     const sentMessages = []

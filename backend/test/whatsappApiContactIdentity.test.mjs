@@ -3284,12 +3284,13 @@ test('envio sin inbound conocido usa QR y evita arriesgar un texto por la API', 
   }
 })
 
-test('131047 confirmado usa una sola vez el QR hermano del mismo número', async () => {
+async function assertConfirmedReplyWindowQrFallback({ differentNumber = false } = {}) {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52993${suffix}`
   const businessPhone = `+52656${suffix}`
-  const connectedJid = `${normalizeDigits(businessPhone)}@s.whatsapp.net`
+  const qrBusinessPhone = differentNumber ? '+52811' + suffix : businessPhone
+  const connectedJid = `${normalizeDigits(qrBusinessPhone)}@s.whatsapp.net`
   const apiPhoneNumberId = `phone_api_sender_${id}`
   const qrPhoneNumberId = `phone_qr_sender_${id}`
   const contactId = `rstk_contact_api_qr_split_${id}`
@@ -3331,7 +3332,10 @@ test('131047 confirmado usa una sola vez el QR hermano del mismo número', async
           id, provider, waba_id, phone_number, display_phone_number, verified_name,
           is_default_sender, api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone, status
         ) VALUES (?, 'qr', 'waba_api_qr_split_fallback_test', ?, ?, 'QR Sender Test', 0, 0, 1, 'connected', ?, 'QR_ONLY')
-      `, [qrPhoneNumberId, businessPhone, businessPhone, businessPhone])
+      `, [qrPhoneNumberId, qrBusinessPhone, qrBusinessPhone, qrBusinessPhone])
+      if (differentNumber) {
+        await db.run('UPDATE whatsapp_api_phone_numbers SET qr_fallback_phone_number_id = ? WHERE id = ?', [qrPhoneNumberId, apiPhoneNumberId])
+      }
 
       await db.run(`
         INSERT INTO whatsapp_qr_sessions (
@@ -3341,8 +3345,8 @@ test('131047 confirmado usa una sola vez el QR hermano del mismo número', async
       `, [
         `qr_${qrPhoneNumberId}`,
         qrPhoneNumberId,
-        businessPhone,
-        businessPhone,
+        qrBusinessPhone,
+        qrBusinessPhone,
         QR_CONSENT_TEXT
       ])
 
@@ -3401,7 +3405,9 @@ test('131047 confirmado usa una sola vez el QR hermano del mismo número', async
       assert.ok(['sent', 'delivered'].includes(result.status), JSON.stringify(result))
       assert.equal(result.transport, 'qr')
       assert.equal(result.fallback, true)
-      assert.match(result.fallbackReason, /respaldo QR del mismo número/i)
+      const expectedReason = differentNumber ? /respaldo QR configurado/i : /respaldo QR del mismo número/i
+      assert.match(result.fallbackReason, expectedReason)
+      assert.equal(result.from, qrBusinessPhone)
       assert.equal(sentMessages.length, 1)
       assert.equal(sentMessages[0].payload.text, body)
 
@@ -3416,7 +3422,7 @@ test('131047 confirmado usa una sola vez el QR hermano del mismo número', async
       assert.equal(message.error_code, null)
       assert.equal(message.error_message, null)
       assert.equal(message.message_text, body)
-      assert.match(message.routing_reason, /respaldo QR del mismo número/i)
+      assert.match(message.routing_reason, expectedReason)
 
       for (const duplicateIndex of [1, 2]) {
         const duplicatePayload = {
@@ -3445,6 +3451,15 @@ test('131047 confirmado usa una sola vez el QR hermano del mismo número', async
         })
       }
       assert.equal(sentMessages.length, 1)
+      const delivered = await db.get(`
+        SELECT business_phone_number_id, business_phone, from_phone, provider_message_id, raw_payload_json
+        FROM whatsapp_api_messages WHERE id = ?
+      `, [message.id])
+      assert.equal(delivered.business_phone_number_id, differentNumber ? qrPhoneNumberId : apiPhoneNumberId)
+      assert.equal(delivered.business_phone, qrBusinessPhone)
+      assert.equal(delivered.from_phone, qrBusinessPhone)
+      assert.equal(delivered.provider_message_id, sentMessages[0].id)
+      assert.equal(JSON.parse(delivered.raw_payload_json).qrFallback.phoneNumberId, qrPhoneNumberId)
 
       const fallbackAttempt = await db.get(`
         SELECT status, attempt_count, qr_phone_number_id
@@ -3468,6 +3483,14 @@ test('131047 confirmado usa una sola vez el QR hermano del mismo número', async
     }
     await cleanup({ contactId, messageId: ycloudMessageId, phone })
   }
+}
+
+test('131047 confirmado usa una sola vez el QR hermano del mismo número', async () => {
+  await assertConfirmedReplyWindowQrFallback()
+})
+
+test('131047 confirmado conserva el remitente QR configurado al repetir el webhook', async () => {
+  await assertConfirmedReplyWindowQrFallback({ differentNumber: true })
 })
 
 test('una pérdida 403 de autorización sí usa el QR de respaldo reconectando', async () => {

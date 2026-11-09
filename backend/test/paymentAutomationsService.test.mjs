@@ -595,6 +595,84 @@ test('un canal QR configurado no brinca una API activa del mismo número', async
   })
 })
 
+test('una automatización de pago sin conversación usa el principal aunque otro número tenga QR', async () => {
+  await withYCloudCapture(async (captures) => {
+    await withOnlyQrPaymentSender(async ({ apiPhoneNumberId, sentMessages }) => {
+      const fixture = await createPaymentFixture({ status: 'pending', suffix: 'defaultwa1' })
+      const primaryPhone = '+12025550112'
+      try {
+        await db.run(`
+          UPDATE whatsapp_api_phone_numbers
+          SET phone_number = ?, display_phone_number = ?, waba_id = 'waba_payment_automations_test'
+          WHERE id = ?
+        `, [primaryPhone, primaryPhone, apiPhoneNumberId])
+        await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+          automations: {
+            remindersEnabled: true,
+            reminderChannel: 'whatsapp_qr',
+            reminderTemplateName: 'recordatorio_pago_pendiente',
+            reminderTemplateLanguage: 'es_MX'
+          }
+        })
+
+        const result = await sendPaymentAutomationMessage('reminder', fixture.paymentId)
+        assert.equal(result.sent, true, result.error)
+        assert.equal(sentMessages.length, 0)
+        assert.equal(captures.length, 1)
+        assert.equal(captures[0].from, primaryPhone)
+      } finally {
+        await cleanupFixtures([fixture.paymentId])
+      }
+    }, { includeApiSender: true })
+  })
+})
+
+test('un respaldo QR de otro número respeta el permiso de la automatización de pago', async () => {
+  await withYCloudCapture(async (captures) => {
+    await withOnlyQrPaymentSender(async ({ apiPhoneNumberId, phoneNumberId, sentMessages }) => {
+      const blocked = await createPaymentFixture({ status: 'pending', suffix: 'qrbackupdisabled' })
+      const allowed = await createPaymentFixture({ status: 'pending', suffix: 'qrbackupenabled' })
+      try {
+        await db.run(`
+          UPDATE whatsapp_api_phone_numbers
+          SET phone_number = '+12025550112', display_phone_number = '+12025550112',
+              api_send_enabled = 0, qr_fallback_phone_number_id = ?
+          WHERE id = ?
+        `, [phoneNumberId, apiPhoneNumberId])
+
+        const settings = {
+          remindersEnabled: true,
+          reminderChannel: 'whatsapp',
+          reminderContentMode: 'direct',
+          reminderMessageText: 'Recordatorio para {{contact.first_name}}'
+        }
+        await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+          automations: { ...settings, reminderQrFallbackEnabled: false }
+        })
+        const withoutFallback = await sendPaymentAutomationMessage('reminder', blocked.paymentId)
+        assert.equal(withoutFallback.sent, false)
+        assert.equal(sentMessages.length, 0)
+
+        await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+          automations: { ...settings, reminderQrFallbackEnabled: true }
+        })
+        const withFallback = await sendPaymentAutomationMessage('reminder', allowed.paymentId)
+        assert.equal(withFallback.sent, true, withFallback.error)
+        assert.equal(captures.length, 0)
+        assert.equal(sentMessages.length, 1)
+        const message = await db.get(
+          "SELECT business_phone_number_id, transport FROM whatsapp_api_messages WHERE contact_id = ? AND direction = 'outbound'",
+          [allowed.contactId]
+        )
+        assert.equal(message.business_phone_number_id, phoneNumberId)
+        assert.equal(message.transport, 'qr')
+      } finally {
+        await cleanupFixtures([blocked.paymentId, allowed.paymentId])
+      }
+    }, { includeApiSender: true })
+  })
+})
+
 test('recordatorio usa el número preferido de la conversación aunque otro WhatsApp sea el predeterminado', async () => {
   await withYCloudCapture(async (captures) => {
     await withOnlyQrPaymentSender(async ({ phoneNumberId, sentMessages }) => {

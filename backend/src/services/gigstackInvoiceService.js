@@ -1021,7 +1021,7 @@ async function deliverGigstackInvoiceWhatsapp(job, payment, token) {
       code: 'missing_invoice_delivery_phone'
     })
   }
-  const route = await gigstackDeliveryDependencies.resolvePaymentWhatsAppRoute(contact)
+  const route = await gigstackDeliveryDependencies.resolvePaymentWhatsAppRoute(contact, { allowQrFallback: true })
   if (!route?.available) {
     throw createGigstackError('La conversación del contacto no tiene un canal de WhatsApp disponible.', {
       status: 409,

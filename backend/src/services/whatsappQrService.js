@@ -1,6 +1,7 @@
 import pino from 'pino'
 import crypto from 'crypto'
 import { db } from '../config/database.js'
+import { getWhatsAppBusinessPhone, reconcileWhatsAppDefaultSender } from './whatsappSenderSettingsService.js'
 import { buildPhoneMatchCandidates, normalizePhoneDigits, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { logger } from '../utils/logger.js'
 import { acquireDistributedLock, releaseDistributedLock, renewDistributedLock } from '../utils/distributedLock.js'
@@ -2042,9 +2043,7 @@ async function findPhoneRowByConnectedPhone(phoneNumber, excludePhoneNumberId = 
     WHERE id != ?
   `, [cleanString(excludePhoneNumberId)])
 
-  return (rows || []).find(row =>
-    phoneMatches(row.phone_number || row.display_phone_number || row.qr_connected_phone, normalizedPhone)
-  ) || null
+  return (rows || []).find(row => getWhatsAppBusinessPhone(row) === normalizedPhone) || null
 }
 
 async function promoteStandaloneQrPhone(phone, connectedPhone) {
@@ -2103,9 +2102,16 @@ async function promoteStandaloneQrPhone(phone, connectedPhone) {
 }
 
 async function resolveQrPhone({ phoneNumberId, from } = {}) {
-  if (phoneNumberId) return getPhoneRow(phoneNumberId)
+  if (phoneNumberId) {
+    const phone = await getPhoneRow(phoneNumberId)
+    const verifiedPhone = normalizePhoneForStorage(phone.qr_connected_phone)
+    if (verifiedPhone && verifiedPhone !== phone.expectedPhone) {
+      throw new Error('El QR conectado corresponde a otro número. Vuelve a vincularlo desde Configuración > WhatsApp.')
+    }
+    return phone
+  }
 
-  const normalizedFrom = normalizePhoneForStorage(from) || cleanString(from)
+  const normalizedFrom = normalizePhoneForStorage(from)
   if (!normalizedFrom) throw new Error('Elige el número que enviara por QR')
 
   const rows = await db.all(`
@@ -2114,7 +2120,10 @@ async function resolveQrPhone({ phoneNumberId, from } = {}) {
     WHERE qr_send_enabled = 1
   `)
 
-  const row = rows.find(item => phoneMatches(item.phone_number || item.display_phone_number, normalizedFrom))
+  const row = rows.find(item => (
+    getWhatsAppBusinessPhone(item) === normalizedFrom &&
+    (!item.qr_connected_phone || normalizePhoneForStorage(item.qr_connected_phone) === normalizedFrom)
+  ))
   if (!row) {
     throw new Error('Ese número no tiene QR conectado para enviar mensajes')
   }
@@ -2921,7 +2930,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
         }
       }
 
-      if (!phoneMatches(connectedPhone, expectedPhone)) {
+      if (!connectedPhone || normalizePhoneForStorage(connectedPhone) !== normalizePhoneForStorage(expectedPhone)) {
         const message = connectedPhone
           ? `El QR conecto ${connectedPhone}, pero esperabamos ${expectedPhone}`
           : `WhatsApp no entrego el número conectado para validar que sea ${expectedPhone}. Genera otro QR e intentalo de nuevo.`
@@ -2951,6 +2960,9 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
         qrCodeDataUrl: null,
         lastError: null,
         lastConnectedAt: nowIso()
+      })
+      await reconcileWhatsAppDefaultSender({ phoneNumberId: activePhone.id }).catch(error => {
+        logger.warn(`[WhatsApp QR] No se pudo actualizar el número principal: ${error.message}`)
       })
       notifyWhatsAppQrConnectionOpen({
         phoneNumberId: activePhone.id,

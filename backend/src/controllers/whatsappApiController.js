@@ -36,6 +36,7 @@ import {
   sendMetaDirectTestMessage,
   setWhatsAppActiveProvider,
   setWhatsAppApiDefaultPhoneNumber,
+  setWhatsAppQrFallback,
   syncMetaDirectHistory,
   testMetaDirectConnection,
   rerouteWhatsAppPhoneNumberContacts,
@@ -308,6 +309,19 @@ export async function setWhatsAppApiDefaultPhoneNumberView(req, res) {
       success: false,
       error: error.message || 'No se pudo marcar el número principal'
     })
+  }
+}
+
+export async function setWhatsAppQrFallbackView(req, res) {
+  try {
+    const data = await setWhatsAppQrFallback({
+      phoneNumberId: req.params.phoneNumberId,
+      qrPhoneNumberId: req.body?.qrPhoneNumberId
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error configurando respaldo QR: ${error.message}`)
+    res.status(400).json({ success: false, error: error.message })
   }
 }
 

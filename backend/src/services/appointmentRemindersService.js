@@ -1633,52 +1633,24 @@ export async function syncOnlineMeetingAppointmentReminder(calendarId, { enabled
 }
 
 async function resolveSenderPhone(reminder, contact) {
-  const findById = async (id) => {
-    if (!id) return null
-    return db.get(`
-      SELECT id, phone_number, api_send_enabled, qr_send_enabled, qr_status
-      FROM whatsapp_api_phone_numbers WHERE id = ?
-    `, [id])
-  }
-
-  let row = null
+  let phoneNumberId
   if (reminder.senderMode === 'specific') {
-    row = await findById(reminder.senderPhoneNumberId)
+    phoneNumberId = cleanString(reminder.senderPhoneNumberId)
   } else if (reminder.senderMode === 'contact') {
-    row = await findById(cleanString(contact.preferred_whatsapp_phone_number_id))
+    phoneNumberId = cleanString(contact.preferred_whatsapp_phone_number_id)
   }
 
-  if (!row) {
-    row = await db.get(`
-      SELECT id, phone_number, api_send_enabled, qr_send_enabled, qr_status
-      FROM whatsapp_api_phone_numbers
-      WHERE api_send_enabled = 1 OR qr_send_enabled = 1 OR qr_status = 'connected'
-      ORDER BY is_default_sender DESC, updated_at DESC
-      LIMIT 1
-    `)
-  }
-
-  if (!row) return {
-    fromPhone: null,
-    phoneNumberId: null,
-    transport: 'api',
-    apiEnabled: false,
-    qrReady: false,
-    qrFallbackAvailable: false
-  }
-
+  const qrOnly = cleanString(reminder.channel) === 'whatsapp_qr'
   const route = await resolveWhatsAppOutboundRoute({
-    phoneNumberId: cleanString(row.id),
-    fromPhone: cleanString(row.phone_number),
-    preferredTransport: cleanString(reminder?.channel) === 'whatsapp_qr' ? 'qr' : undefined
+    phoneNumberId,
+    preferredTransport: qrOnly ? 'qr' : undefined,
+    allowQrFallback: !qrOnly
   })
   return {
     fromPhone: route.fromPhone,
     phoneNumberId: route.phoneNumberId,
-    transport: route.transport,
     apiEnabled: route.available && route.transport === 'api',
-    qrReady: route.available && route.transport === 'qr',
-    qrFallbackAvailable: route.qrFallbackAvailable
+    qrReady: route.available && route.transport === 'qr'
   }
 }
 
@@ -2019,6 +1991,7 @@ async function sendReminderViaQr({ reminder, appointment, sender, template, time
     externalId: buildAppointmentReminderExternalId(reminder, appointment, attemptCount),
     transport: 'qr',
     allowQrFallback: false,
+    forceRequestedTransport: cleanString(reminder.channel) === 'whatsapp_qr',
     variablesResolved: true
   })
   return response
@@ -2141,7 +2114,7 @@ async function sendReminderByResolvedChannel({ reminder, appointment, timezone, 
     channel: resolvedChannel,
     // El ruteo automático no implementa su propio salto API -> QR. Conserva
     // la preferencia sólo en el intento API y deja que la capa central valide
-    // si la indisponibilidad realmente autoriza el respaldo del mismo número.
+    // si la indisponibilidad realmente autoriza el respaldo configurado.
     qrFallbackEnabled: resolvedChannel === 'whatsapp',
     senderMode: isWhatsAppReminderChannel(resolvedChannel) ? reminder.senderMode : 'contact'
   }
@@ -2166,7 +2139,7 @@ async function sendAppointmentReminderByAutomaticChannel({ reminder, appointment
     : ''
   const sender = await resolveSenderPhone(reminder, appointment)
   const channels = buildAutomaticChannelOrder(mode, preferredChannel).filter(channel => {
-    // API y QR del mismo número son un solo intento de WhatsApp. Repetir ambos
+    // API y su respaldo son un solo intento de WhatsApp. Repetir ambos
     // como canales consecutivos podía ejecutar dos envíos físicos.
     if (sender.apiEnabled) return channel !== 'whatsapp_qr'
     if (sender.qrReady) return channel !== 'whatsapp'
@@ -2195,7 +2168,8 @@ async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, ti
   const text = await getReminderPlainText(reminder, appointment, timezone)
   if (!text) throw new Error('Escribe el mensaje directo que se enviará en este recordatorio.')
 
-  if (cleanString(reminder.channel) === 'whatsapp_qr') {
+  const qrOnly = cleanString(reminder.channel) === 'whatsapp_qr'
+  if (qrOnly || sender.qrReady) {
     if (!sender.qrReady) {
       throw new Error('Conecta WhatsApp QR para enviar este recordatorio por QR.')
     }
@@ -2208,7 +2182,7 @@ async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, ti
       externalId: buildAppointmentReminderExternalId(reminder, appointment, attemptCount),
       transport: 'qr',
       allowQrFallback: false,
-      forceRequestedTransport: true,
+      forceRequestedTransport: qrOnly,
       variablesResolved: true
     })
   }
@@ -2267,7 +2241,7 @@ async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone
 
   const providerState = getMessageTemplateProviderState(template)
   const templateStatus = providerState.status
-  if (!sender.apiEnabled && sender.qrReady) {
+  if (cleanString(reminder.channel) === 'whatsapp_qr' || (!sender.apiEnabled && sender.qrReady)) {
     return sendReminderViaQr({
       reminder,
       appointment,

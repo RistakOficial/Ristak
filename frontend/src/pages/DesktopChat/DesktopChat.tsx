@@ -2854,7 +2854,7 @@ function getHighLevelChannelForComposer(channel: ComposerChannel): HighLevelChat
 
 function getSelectedBusinessPhone(status?: WhatsAppApiStatus | null): WhatsAppApiPhoneNumber | null {
   const phones = status?.phoneNumbers || []
-  return status?.selectedPhone || phones.find((phone) => phone.is_default_sender) || phones[0] || null
+  return phones.find((phone) => phone.is_default_sender) || status?.selectedPhone || phones.find(phone => getBusinessPhoneValue(phone)) || null
 }
 
 function getBusinessPhoneValue(phone?: WhatsAppApiPhoneNumber | null) {
@@ -3506,21 +3506,21 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     isNativeWhatsAppComposerRouteConnected({
       businessPhoneValue: getBusinessPhoneValue(phone),
       apiAvailable: isPhoneApiEnabled(phone, whatsappStatus),
-      qrReady: isPhoneQrReadyForSend(phone)
+      qrReady: isPhoneQrReadyForSend(phone) || Boolean(phone.availability?.qrFallbackReady)
     })
   )), [whatsappComposerPhones, whatsappStatus])
   const defaultComposerBusinessPhone = useMemo(() => (
-    connectedWhatsappComposerPhones.find((phone) => phone.id === requestedDefaultComposerBusinessPhone?.id) ||
+    requestedDefaultComposerBusinessPhone ||
     connectedWhatsappComposerPhones[0] ||
     null
   ), [connectedWhatsappComposerPhones, requestedDefaultComposerBusinessPhone?.id])
   const selectedBusinessPhone = useMemo(() => {
     if (composerChannel === 'sms' || composerBusinessPhoneId === HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID) return null
 
-    return connectedWhatsappComposerPhones.find((phone) => phone.id === composerBusinessPhoneId) ||
+    return whatsappComposerPhones.find((phone) => phone.id === composerBusinessPhoneId) ||
       defaultComposerBusinessPhone ||
       null
-  }, [composerBusinessPhoneId, composerChannel, connectedWhatsappComposerPhones, defaultComposerBusinessPhone])
+  }, [composerBusinessPhoneId, composerChannel, whatsappComposerPhones, defaultComposerBusinessPhone])
   const preferredWhatsAppPhoneNumberId = getPreferredWhatsAppPhoneNumberId(activeInfoContact)
   const automaticWhatsAppRoutePhone = useMemo(() => {
     const routedMessage = [...messages]
@@ -3588,9 +3588,8 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
       .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))[0] || null
   }, [messages, selectedBusinessPhone, selectedBusinessPhoneValue])
   const apiReplyWindowOpen = isInsideWhatsAppReplyWindow(lastInboundForSelectedPhone?.date)
-  const selectedQrReady = isPhoneQrReadyForSend(selectedBusinessPhone)
-  const selectedApiUnavailable = Boolean(selectedBusinessPhone && !isWhatsAppPhoneApiAvailable(selectedBusinessPhone, whatsappStatus))
-  const nativeWhatsAppTransport: 'api' | 'qr' = selectedQrReady && (!whatsappConnected || selectedApiUnavailable)
+  const selectedQrReady = isPhoneQrReadyForSend(selectedBusinessPhone) || Boolean(selectedBusinessPhone?.availability?.qrFallbackReady)
+  const nativeWhatsAppTransport: 'api' | 'qr' = selectedQrReady && !whatsappConnected && !selectedBusinessPhone?.qr_fallback_phone_number_id
     ? 'qr'
     : 'api'
 
@@ -3737,7 +3736,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
         const preferredNativeWhatsAppRouteId = preference.routeId && preference.routeId !== 'highlevel'
           ? preference.routeId
           : ''
-        const connectedPreferredNativeWhatsAppRouteId = preferredNativeWhatsAppRouteId && connectedWhatsappComposerPhones.some((phone) => (
+        const knownPreferredNativeWhatsAppRouteId = preferredNativeWhatsAppRouteId && whatsappComposerPhones.some((phone) => (
           phone.id === preferredNativeWhatsAppRouteId
         ))
           ? preferredNativeWhatsAppRouteId
@@ -3746,7 +3745,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
           preferredChannel === 'whatsapp'
             ? preference.routeId === 'highlevel' && highLevelConnected
               ? HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID
-              : connectedPreferredNativeWhatsAppRouteId || defaultComposerBusinessPhone?.id || ''
+              : knownPreferredNativeWhatsAppRouteId || defaultComposerBusinessPhone?.id || ''
             : preferredChannel === 'sms'
               ? HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID
               : defaultComposerBusinessPhone?.id || ''
@@ -3760,7 +3759,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     return () => { cancelled = true }
   }, [
     activeContact?.id,
-    connectedWhatsappComposerPhones,
+    whatsappComposerPhones,
     defaultComposerBusinessPhone?.id,
     defaultHighLevelPhoneNumber?.phoneNumber,
     emailConnected,
@@ -3772,10 +3771,10 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
     setComposerBusinessPhoneId((current) => {
       if (!activeContact) return ''
       if (current === HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID && highLevelConnected) return current
-      if (current && connectedWhatsappComposerPhones.some((phone) => phone.id === current)) return current
+      if (current && whatsappComposerPhones.some((phone) => phone.id === current)) return current
       return defaultComposerBusinessPhone?.id || ''
     })
-  }, [activeContact, connectedWhatsappComposerPhones, defaultComposerBusinessPhone?.id, highLevelConnected])
+  }, [activeContact, whatsappComposerPhones, defaultComposerBusinessPhone?.id, highLevelConnected])
   useEffect(() => {
     setComposerHighLevelFromNumber((current) => {
       if (!highLevelConnected || highLevelPhoneNumbers.length === 0) return ''
@@ -6549,7 +6548,7 @@ export const DesktopChat: React.FC<DesktopChatProps> = ({ embeddedContact = null
         return
       }
       provider = 'whatsapp_api'
-      transport = selectedQrReady && !whatsappConnected ? 'qr' : 'api'
+      transport = nativeWhatsAppTransport
     } else if (highLevelConnected) {
       provider = 'highlevel'
       channel = activeConversationChannel

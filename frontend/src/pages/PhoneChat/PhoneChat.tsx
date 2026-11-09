@@ -6487,7 +6487,7 @@ export const PhoneChat: React.FC = () => {
     isNativeWhatsAppComposerRouteConnected({
       businessPhoneValue: getBusinessPhoneValue(phone),
       apiAvailable: isWhatsAppPhoneApiAvailable(phone, whatsappStatus),
-      qrReady: isBusinessPhoneQrReady(phone)
+      qrReady: isBusinessPhoneQrReady(phone) || Boolean(phone.availability?.qrFallbackReady)
     })
   )), [businessPhones, whatsappStatus])
   const explicitContactBusinessPhoneOverrideId = activeContact?.id ? contactBusinessPhoneOverrides[activeContact.id] || '' : ''
@@ -6502,7 +6502,7 @@ export const PhoneChat: React.FC = () => {
   )
   const activeContactBusinessPhoneOverrideId = requestedContactBusinessPhoneOverrideId === HIGHLEVEL_WHATSAPP_ROUTE_OVERRIDE_ID && !highLevelConnected
     ? ''
-    : requestedContactBusinessPhoneOverrideId && requestedContactBusinessPhoneOverrideId !== HIGHLEVEL_WHATSAPP_ROUTE_OVERRIDE_ID && !connectedComposerBusinessPhones.some((phone) => (
+    : requestedContactBusinessPhoneOverrideId && requestedContactBusinessPhoneOverrideId !== HIGHLEVEL_WHATSAPP_ROUTE_OVERRIDE_ID && !businessPhones.some((phone) => (
         phone.id === requestedContactBusinessPhoneOverrideId
       ))
       ? ''
@@ -6855,13 +6855,13 @@ export const PhoneChat: React.FC = () => {
     if (activeContactBusinessPhoneOverrideId === HIGHLEVEL_WHATSAPP_ROUTE_OVERRIDE_ID) return null
 
     const fromComposerOverride = activeContactBusinessPhoneOverrideId
-      ? connectedComposerBusinessPhones.find((phone) => phone.id === activeContactBusinessPhoneOverrideId)
+      ? businessPhones.find((phone) => phone.id === activeContactBusinessPhoneOverrideId)
       : null
     const preferredBusinessPhoneId = activeContact?.preferredWhatsAppPhoneNumberId ||
       activeContact?.preferred_whatsapp_phone_number_id ||
       ''
     const fromContactPreference = preferredBusinessPhoneId
-      ? connectedComposerBusinessPhones.find((phone) => phone.id === preferredBusinessPhoneId)
+      ? businessPhones.find((phone) => phone.id === preferredBusinessPhoneId)
       : null
 
     const newestInboundMessageWithBusinessPhone = [...messages]
@@ -6872,25 +6872,25 @@ export const PhoneChat: React.FC = () => {
       .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))[0] || null
 
     const fromInboundMessageId = newestInboundMessageWithBusinessPhone?.businessPhoneNumberId
-      ? connectedComposerBusinessPhones.find((phone) => phone.id === newestInboundMessageWithBusinessPhone.businessPhoneNumberId)
+      ? businessPhones.find((phone) => phone.id === newestInboundMessageWithBusinessPhone.businessPhoneNumberId)
       : null
     const fromInboundMessagePhone = newestInboundMessageWithBusinessPhone?.businessPhone
       ? connectedComposerBusinessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), newestInboundMessageWithBusinessPhone.businessPhone))
       : null
     const fromMessageId = newestMessageWithBusinessPhone?.businessPhoneNumberId
-      ? connectedComposerBusinessPhones.find((phone) => phone.id === newestMessageWithBusinessPhone.businessPhoneNumberId)
+      ? businessPhones.find((phone) => phone.id === newestMessageWithBusinessPhone.businessPhoneNumberId)
       : null
     const fromMessagePhone = newestMessageWithBusinessPhone?.businessPhone
       ? connectedComposerBusinessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), newestMessageWithBusinessPhone.businessPhone))
       : null
     const fromChatInboundId = activeContact?.lastInboundBusinessPhoneNumberId
-      ? connectedComposerBusinessPhones.find((phone) => phone.id === activeContact.lastInboundBusinessPhoneNumberId)
+      ? businessPhones.find((phone) => phone.id === activeContact.lastInboundBusinessPhoneNumberId)
       : null
     const fromChatInboundPhone = activeContact?.lastInboundBusinessPhone
       ? connectedComposerBusinessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), activeContact.lastInboundBusinessPhone))
       : null
     const fromChatId = activeContact?.lastBusinessPhoneNumberId
-      ? connectedComposerBusinessPhones.find((phone) => phone.id === activeContact.lastBusinessPhoneNumberId)
+      ? businessPhones.find((phone) => phone.id === activeContact.lastBusinessPhoneNumberId)
       : null
     const fromChatPhone = activeContact?.lastBusinessPhone
       ? connectedComposerBusinessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), activeContact.lastBusinessPhone))
@@ -6906,8 +6906,8 @@ export const PhoneChat: React.FC = () => {
       fromMessagePhone ||
       fromChatId ||
       fromChatPhone ||
-      connectedComposerBusinessPhones.find((phone) => phone.is_default_sender) ||
-      connectedComposerBusinessPhones.find((phone) => phone.id === whatsappStatus?.selectedPhone?.id) ||
+      businessPhones.find((phone) => phone.is_default_sender) ||
+      businessPhones.find((phone) => phone.id === whatsappStatus?.selectedPhone?.id) ||
       connectedComposerBusinessPhones[0] ||
       null
   }, [
@@ -6918,6 +6918,7 @@ export const PhoneChat: React.FC = () => {
     activeContact?.preferredWhatsAppPhoneNumberId,
     activeContact?.preferred_whatsapp_phone_number_id,
     activeContactBusinessPhoneOverrideId,
+    businessPhones,
     connectedComposerBusinessPhones,
     messages,
     whatsappStatus?.selectedPhone
@@ -6949,9 +6950,9 @@ export const PhoneChat: React.FC = () => {
     null
   ), [businessPhones, effectiveSelectedChatPhone, whatsappStatus?.selectedPhone])
   const cameraShareBusinessPhoneValue = getBusinessPhoneValue(cameraShareBusinessPhone)
-  const cameraShareQrReady = isBusinessPhoneQrReady(cameraShareBusinessPhone)
+  const cameraShareQrReady = isBusinessPhoneQrReady(cameraShareBusinessPhone) || Boolean(cameraShareBusinessPhone?.availability?.qrFallbackReady)
   const cameraShareApiAvailable = isWhatsAppPhoneApiAvailable(cameraShareBusinessPhone, whatsappStatus)
-  const cameraShareTransport: 'api' | 'qr' = cameraShareQrReady && !cameraShareApiAvailable
+  const cameraShareTransport: 'api' | 'qr' = cameraShareQrReady && !cameraShareApiAvailable && !cameraShareBusinessPhone?.qr_fallback_phone_number_id
     ? 'qr'
     : 'api'
   const lastInboundForSelectedPhone = useMemo(() => {
@@ -6967,8 +6968,11 @@ export const PhoneChat: React.FC = () => {
       .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))[0] || null
   }, [messages, selectedBusinessPhone, selectedBusinessPhoneValue])
   const apiReplyWindowOpen = isInsideReplyWindow(lastInboundForSelectedPhone?.date)
-  const selectedQrReady = isBusinessPhoneQrReady(selectedBusinessPhone)
+  const selectedQrReady = isBusinessPhoneQrReady(selectedBusinessPhone) || Boolean(selectedBusinessPhone?.availability?.qrFallbackReady)
   const selectedApiUnavailable = Boolean(selectedBusinessPhone && !whatsappConnected)
+  const selectedWhatsAppTransport: 'api' | 'qr' = selectedQrReady && selectedApiUnavailable && !selectedBusinessPhone?.qr_fallback_phone_number_id
+    ? 'qr'
+    : 'api'
   const outsideReplyWindow = Boolean(activeContact?.phone && !apiReplyWindowOpen)
   const inferredHighLevelChatChannel = useMemo(() => inferHighLevelChatChannel(activeContact, messages), [activeContact, messages])
   const activeContactHighLevelChannelOverride = activeContact?.id ? contactHighLevelChannelOverrides[activeContact.id] : undefined
@@ -13316,9 +13320,9 @@ export const PhoneChat: React.FC = () => {
         return
       }
 
-      transport = selectedQrReady && selectedApiUnavailable ? 'qr' : 'api'
+      transport = selectedWhatsAppTransport
 
-      if (transport === 'api' && !whatsappConnected) {
+      if (transport === 'api' && !whatsappConnected && !selectedQrReady) {
         setScheduleError('Conecta WhatsApp API antes de programar este mensaje.')
         return
       }
@@ -14259,21 +14263,19 @@ export const PhoneChat: React.FC = () => {
 
     // El número emisor no puede enviar: en lugar de fallar el envío, ofrecer soluciones.
     const sendAvailability = selectedBusinessPhone?.availability
-    if (sendAvailability && !sendAvailability.available) {
+    if (sendAvailability && !sendAvailability.available && !selectedQrReady) {
       setNumberIssueOpen(true)
       return
     }
     const apiUnavailableForSelected = selectedApiUnavailable
-    if (apiUnavailableForSelected && sendAvailability?.qrReady && selectedBusinessPhone?.id && !qrRiskAcceptedIds[selectedBusinessPhone.id]) {
+    if (apiUnavailableForSelected && selectedQrReady && selectedBusinessPhone?.id && !qrRiskAcceptedIds[selectedBusinessPhone.id]) {
       setQrRiskPhone(selectedBusinessPhone)
       return
     }
 
-    const resolvedTransport: 'api' | 'qr' = selectedQrReady && apiUnavailableForSelected
-      ? 'qr'
-      : 'api'
+    const resolvedTransport = selectedWhatsAppTransport
 
-    if (resolvedTransport === 'api' && !whatsappConnected) {
+    if (resolvedTransport === 'api' && !whatsappConnected && !selectedQrReady) {
       showToast('error', 'WhatsApp no está conectado', 'Conecta WhatsApp API en configuración para enviar mensajes desde Ristak.')
       return
     }

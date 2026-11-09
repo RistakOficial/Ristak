@@ -141,8 +141,10 @@ Si Meta pierde permisos, además de marcar su fila `AUTHORIZATION_REQUIRED`, se
 reconcilia la preferencia global a YCloud cuando esa conexión sigue disponible.
 Esto protege rutas históricas, pero no sustituye la regla por fila.
 
-El respaldo QR sólo se ejecuta cuando existe una sesión compatible del mismo
-teléfono, la solicitud tiene `allowQrFallback=true` y el fallo confirma pérdida
+El respaldo QR usa la sesión asignada expresamente al número emisor si está
+disponible. En automático, busca exclusivamente una sesión del mismo teléfono,
+incluso si API y QR están en filas distintas. La solicitud debe tener
+`allowQrFallback=true` y el fallo debe confirmar pérdida
 de conexión/autorización, suspensión, restricción o límite del transporte, o la
 ventana de 24 horas cerrada/desconocida para contenido libre. El preflight evita
 tocar la API cuando la evidencia local ya lo demuestra; si el proveedor devuelve
@@ -174,7 +176,7 @@ de 15 minutos y el respaldo está listo, Ristak manda ese mismo texto por QR.
 directa. Después de recibirlo en un envío, Ristak hace una sola lectura inocua
 del `Phone Number ID`. Si esa lectura confirma `100/33`, `190` u otra pérdida
 inequívoca de acceso al activo, marca la fila `AUTHORIZATION_REQUIRED` y puede
-usar el QR autorizado del mismo teléfono dentro de la solicitud original. Si el
+usar el QR autorizado para ese teléfono dentro de la solicitud original. Si el
 número sigue accesible o la comprobación también es ambigua, conserva el fallo
 API, no toca QR y explica que evitó el respaldo para no duplicar el mensaje. Los
 demás HTTP 5xx mantienen la prohibición general.
@@ -1002,7 +1004,27 @@ ACK de `/api/license/whatsapp/meta/disconnect`; sólo entonces elimina el token
 local. Así no queda un WABA central activo enviando eventos a un tenant que ya
 se considera desconectado.
 
-## Desconexión por número desde Ristak
+## Número principal, respaldos y desconexión desde Ristak
+
+En **Configuración → WhatsApp → Números**, el primer número conectado se vuelve
+principal y se identifica con una estrella. **Convertir en predeterminado**,
+desde el menú de tres puntos, cambia el remitente para envíos que no tienen un
+número asignado. Los números adicionales muestran su posición. Una sesión QR y
+una API del mismo teléfono representan el mismo número del negocio. Al conectar
+la API de ese mismo número, se prefiere la API y se conserva su posición.
+
+Las conversaciones y las automatizaciones con remitente elegido conservan su
+selección. Para elegir una excepción al respaldo automático, abre **Configurar
+respaldo QR** en la fila API o **Usar como respaldo QR** en la fila que enviará
+por QR. La opción **Automático · QR del mismo número** restaura la selección por
+teléfono. Si no hay un QR autorizado disponible, el envío sigue las reglas de
+error del canal y Ristak no elige un número ajeno.
+
+La selección principal usa `whatsapp_api_phone_numbers.is_default_sender` y
+cada número API guarda su asignación explícita en
+`whatsapp_api_phone_numbers.qr_fallback_phone_number_id`. El cambio de
+principal usa `POST /api/whatsapp-api/phone-numbers/default` y la asignación usa
+`PUT /api/whatsapp-api/phone-numbers/:phoneNumberId/qr-fallback`.
 
 El contenedor **Pausas automáticas para QR** sólo aparece cuando al menos un
 número de la cuenta tiene una sesión con estado `connected`. Una cuenta que

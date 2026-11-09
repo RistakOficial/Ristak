@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -59,6 +59,7 @@ type BusinessProfile = {
 type ConnectedSection = 'numbers' | 'templates' | 'alerts'
 type AlertFilter = 'all' | 'critical' | 'warning' | 'info'
 type ConnectionChoice = 'api' | 'qr'
+type QrFallbackDraft = { mode: 'source' | 'backup'; phoneId: string; selectedId: string }
 const alertFilters: AlertFilter[] = ['all', 'critical', 'warning', 'info']
 const isAlertFilter = (value?: string | null): value is AlertFilter => alertFilters.includes(value as AlertFilter)
 const isQueryText = (value?: string | null): value is string => typeof value === 'string'
@@ -122,6 +123,13 @@ function getPhoneDisplayValue(phone?: WhatsAppApiPhoneNumber | null) {
 function getPhoneLabel(phone: WhatsAppApiPhoneNumber) {
   const number = getPhoneDisplayValue(phone)
   return phone.verified_name && phone.verified_name !== number ? `${number} · ${phone.verified_name}` : number
+}
+
+function getSenderPositionLabel(position?: number | null) {
+  if (position === 1) return 'Principal'
+  if (position === 2) return 'Secundario'
+  if (position === 3) return 'Terciario'
+  return position ? `${position}.º número` : ''
 }
 
 function getDisconnectApiLabel(phone: WhatsAppApiPhoneNumber) {
@@ -291,6 +299,9 @@ export const WhatsAppSettings: React.FC = () => {
   const [qrDripSaving, setQrDripSaving] = useState(false)
   const [qrDripDisableConfirmOpen, setQrDripDisableConfirmOpen] = useState(false)
   const [defaultingPhoneId, setDefaultingPhoneId] = useState('')
+  const [qrFallbackDraft, setQrFallbackDraft] = useState<QrFallbackDraft | null>(null)
+  const [qrFallbackSaving, setQrFallbackSaving] = useState(false)
+  const statusReadVersion = useRef(0)
 
   const hasWhatsAppApiAccess = hasLicenseFeature(user, ['whatsapp_api'])
   const hasWhatsAppTemplatesAccess = hasLicenseFeature(user, ['whatsapp_templates'])
@@ -353,24 +364,35 @@ export const WhatsAppSettings: React.FC = () => {
     )
   }, [apiStatus?.qr?.sessions])
 
+  const isQrConnected = (phone: WhatsAppApiPhoneNumber) => (
+    String(qrSessionsByPhoneId.get(phone.id)?.status || phone.qr_status || '').toLowerCase() === 'connected'
+  )
+  const canBeQrBackup = (phone: WhatsAppApiPhoneNumber) => (
+    Number(phone.qr_send_enabled) === 1 && isQrConnected(phone) && phone.availability?.qrReady !== false
+  )
+  const canSetQrBackup = (phone: WhatsAppApiPhoneNumber) => (
+    hasWhatsAppApiAccess && !isStandaloneQrPhone(phone) &&
+    (Number(phone.api_send_enabled ?? 1) === 1 || phone.status === 'AUTHORIZATION_REQUIRED')
+  )
+
   const hasApiCredential = Boolean(apiKey.trim() || apiStatus?.credentials.hasApiKey)
   const canSubmitApi = hasApiCredential
 
-  const loadApiStatus = async () => {
-    const nextStatus = await whatsappApiService.getStatus()
+  const applyPhoneRoutingStatus = (nextStatus: WhatsAppApiStatus) => {
     setApiStatus(nextStatus)
-
-    if (nextStatus.phoneNumbers.length) {
-      // La lista completa se muestra abajo; este id solo marca el principal.
-    }
-
-    const preferredPhoneId = nextStatus.sender.phoneNumberId ||
+    setSelectedPhoneId(
       nextStatus.phoneNumbers.find(phone => phone.is_default_sender)?.id ||
+      nextStatus.sender.phoneNumberId ||
       nextStatus.phoneNumbers.find(phone => phone.phone_number === nextStatus.sender.phone)?.id ||
       nextStatus.phoneNumbers[0]?.id ||
       ''
+    )
+  }
 
-    setSelectedPhoneId(preferredPhoneId)
+  const loadApiStatus = async () => {
+    const readVersion = ++statusReadVersion.current
+    const nextStatus = await whatsappApiService.getStatus()
+    if (readVersion === statusReadVersion.current) applyPhoneRoutingStatus(nextStatus)
     return nextStatus
   }
 
@@ -650,18 +672,43 @@ export const WhatsAppSettings: React.FC = () => {
   }
 
   const makePhoneDefault = async (phone: WhatsAppApiPhoneNumber) => {
-    if (!phone.id || defaultingPhoneId) return
+    if (defaultingPhoneId || qrFallbackSaving) return
 
     setDefaultingPhoneId(phone.id)
     try {
       const nextStatus = await whatsappApiService.setDefaultPhoneNumber(phone.id)
-      setApiStatus(nextStatus)
-      setSelectedPhoneId(phone.id)
-      showToast('success', 'Número principal guardado', `${getPhoneLabel(phone)} quedó como respaldo para chats nuevos.`)
+      statusReadVersion.current += 1
+      applyPhoneRoutingStatus(nextStatus)
+      showToast('success', 'Número principal guardado', `${getPhoneLabel(phone)} se usará para envíos sin un número asignado.`)
     } catch (error) {
       showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Intenta marcarlo otra vez.')
     } finally {
       setDefaultingPhoneId('')
+    }
+  }
+
+  const saveQrFallback = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!qrFallbackDraft || qrFallbackSaving) return
+
+    const fromSource = qrFallbackDraft.mode === 'source'
+    const sourceId = fromSource ? qrFallbackDraft.phoneId : qrFallbackDraft.selectedId
+    const backupId = fromSource ? qrFallbackDraft.selectedId : qrFallbackDraft.phoneId
+    if (!sourceId) return
+
+    setQrFallbackSaving(true)
+    try {
+      const nextStatus = await whatsappApiService.setQrFallbackPhoneNumber(sourceId, backupId || null)
+      statusReadVersion.current += 1
+      applyPhoneRoutingStatus(nextStatus)
+      setQrFallbackDraft(null)
+      showToast('success', 'Respaldo QR guardado', backupId
+        ? 'El número elegido podrá enviar como respaldo cuando el envío permita usar QR.'
+        : 'Ristak buscará automáticamente el QR del mismo número.')
+    } catch (error) {
+      showToast('error', 'No se pudo guardar el respaldo', error instanceof Error ? error.message : 'Intenta nuevamente.')
+    } finally {
+      setQrFallbackSaving(false)
     }
   }
 
@@ -1074,16 +1121,13 @@ export const WhatsAppSettings: React.FC = () => {
       const qrSession = qrSessionsByPhoneId.get(phone.id)
       const qrStatus = qrSession?.status || phone.qr_status || ''
       const qrError = isQrWorkingStatus(qrStatus) ? '' : (qrSession?.lastError || phone.qr_last_error || '')
-      const isSender = Boolean(phone.is_default_sender) ||
-        phone.id === selectedPhoneId ||
-        phone.phone_number === apiStatus.sender.phone ||
-        phone.display_phone_number === apiStatus.sender.phone
+      const isSender = Boolean(phone.is_default_sender)
       const qrPending = ['starting', 'qr_pending', 'restarting', 'reconnecting'].includes(String(qrStatus).toLowerCase())
-      const qrConnected = String(qrStatus).toLowerCase() === 'connected'
+      const qrConnected = isQrConnected(phone)
       const provider = String(phone.provider || '').toLowerCase()
       const officialProviderConnected = provider === 'meta_direct' ? metaDirectConnected : ycloudConnected
       const officialAttached = !isStandaloneQrPhone(phone) && Number(phone.api_send_enabled ?? 1) !== 0
-      const apiEnabled = officialAttached && officialProviderConnected
+      const apiEnabled = hasWhatsAppApiAccess && officialAttached && officialProviderConnected
       const needsMetaReconnect = provider === 'meta_direct' && metaReconnectRequired && (
         !configuredMetaPhoneNumberId || configuredMetaPhoneNumberId === phone.id
       )
@@ -1109,6 +1153,7 @@ export const WhatsAppSettings: React.FC = () => {
         row.phone.label,
         row.phone.id,
         row.displayName,
+        getSenderPositionLabel(row.phone.sender_position),
         getWhatsAppQualityLabel(row.phone),
         getWhatsAppMessagingLimitLabel(row.phone),
         row.officialStatus.label,
@@ -1215,6 +1260,16 @@ export const WhatsAppSettings: React.FC = () => {
                     const { phone, qrPending, qrConnected, qrError, qrStatus, displayName, isSender, officialAttached, apiEnabled, officialStatus } = row
                     const standaloneQr = isStandaloneQrPhone(phone)
                     const canDisconnectQr = standaloneQr || qrConnected || qrPending || Number(phone.qr_send_enabled || 0) === 1
+                    const canDisconnectApi = hasWhatsAppApiAccess && (officialAttached || phone.status === 'AUTHORIZATION_REQUIRED')
+                    const canMakeDefault = !isSender && (phone.availability?.available ?? (apiEnabled || qrConnected))
+                    const canConfigureBackup = canSetQrBackup(phone) ||
+                      (hasWhatsAppApiAccess && Boolean(phone.qr_fallback_phone_number_id))
+                    const canAssignAsBackup = canBeQrBackup(phone) && phoneRows.some(source => source.id !== phone.id && canSetQrBackup(source))
+                    const hasRoutingActions = canMakeDefault || canConfigureBackup || canAssignAsBackup
+                    const positionLabel = isSender ? 'Principal' : getSenderPositionLabel(phone.sender_position === 1 ? null : phone.sender_position)
+                    const explicitBackup = phoneRows.find(item => item.id === phone.qr_fallback_phone_number_id)
+                    const hasSeparateAutomaticBackup = !explicitBackup && phone.automatic_qr_fallback_phone_number_id &&
+                      phone.automatic_qr_fallback_phone_number_id !== phone.id
                     const apiDisconnectKey = `${phone.id}:api`
                     const qrDisconnectKey = `${phone.id}:qr`
                     const rowBusy = disconnectingConnectionKey === apiDisconnectKey || disconnectingConnectionKey === qrDisconnectKey
@@ -1223,7 +1278,15 @@ export const WhatsAppSettings: React.FC = () => {
                       <React.Fragment key={phone.id}>
                         <tr>
                           <td>
-                            <strong>{getPhoneDisplayValue(phone)}</strong>
+                            <div className={styles.numberIdentity}>
+                              <strong>{getPhoneDisplayValue(phone)}</strong>
+                              {positionLabel && (
+                                <Badge variant="neutral">
+                                  {isSender && <Star size={12} aria-hidden="true" />}
+                                  {positionLabel}
+                                </Badge>
+                              )}
+                            </div>
                             <span>{phone.id}</span>
                           </td>
                           <td>{displayName}</td>
@@ -1251,37 +1314,53 @@ export const WhatsAppSettings: React.FC = () => {
                                 </Button>
                               )}
                             </div>
+                            {explicitBackup && (
+                              <div className={styles.routingHint}>
+                                Respaldo elegido · {explicitBackup.qr_connected_phone || getPhoneDisplayValue(explicitBackup)}
+                                {!canBeQrBackup(explicitBackup) && ' (QR no disponible)'}
+                              </div>
+                            )}
+                            {hasSeparateAutomaticBackup && <div className={styles.routingHint}>Respaldo automático · QR del mismo número</div>}
                           </td>
                           <td>{getWhatsAppQualityLabel(phone)}</td>
                           <td>{getWhatsAppMessagingLimitLabel(phone)}</td>
                           <td>
-                            <div className={styles.rowActions}>
+                            {(hasRoutingActions || canDisconnectApi || canDisconnectQr) && <div className={styles.rowActions}>
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                   <Button
                                     type="button"
                                     variant="ghost"
                                     size="small"
-                                    disabled={rowBusy || defaultingPhoneId === phone.id}
+                                    disabled={rowBusy || Boolean(defaultingPhoneId) || qrFallbackSaving}
                                     aria-label={`Acciones para ${getPhoneLabel(phone)}`}
                                   >
                                     <MoreHorizontal size={16} />
                                   </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end" className={styles.actionsMenu}>
-                                  {!isSender && (apiEnabled || qrConnected) && (
-                                    <DropdownMenuItem
-                                      onSelect={(event) => {
-                                        event.preventDefault()
-                                        makePhoneDefault(phone)
-                                      }}
-                                    >
+                                  {canMakeDefault && (
+                                    <DropdownMenuItem onSelect={() => void makePhoneDefault(phone)}>
                                       <Star size={15} />
-                                      Hacer principal
+                                      Convertir en predeterminado
                                     </DropdownMenuItem>
                                   )}
-                                  {!isSender && (apiEnabled || qrConnected) && (apiEnabled || canDisconnectQr) && <DropdownMenuSeparator />}
-                                  {officialAttached && (
+                                  {canConfigureBackup && (
+                                    <DropdownMenuItem onSelect={() => setQrFallbackDraft({
+                                      mode: 'source', phoneId: phone.id, selectedId: phone.qr_fallback_phone_number_id || ''
+                                    })}>
+                                      <QrCode size={15} />
+                                      Configurar respaldo QR
+                                    </DropdownMenuItem>
+                                  )}
+                                  {canAssignAsBackup && (
+                                    <DropdownMenuItem onSelect={() => setQrFallbackDraft({ mode: 'backup', phoneId: phone.id, selectedId: '' })}>
+                                      <Link2 size={15} />
+                                      Usar como respaldo QR
+                                    </DropdownMenuItem>
+                                  )}
+                                  {hasRoutingActions && (canDisconnectApi || canDisconnectQr) && <DropdownMenuSeparator />}
+                                  {canDisconnectApi && (
                                     <DropdownMenuItem
                                       className={styles.destructiveMenuItem}
                                       onSelect={(event) => {
@@ -1307,7 +1386,7 @@ export const WhatsAppSettings: React.FC = () => {
                                   )}
                                 </DropdownMenuContent>
                               </DropdownMenu>
-                            </div>
+                            </div>}
                           </td>
                         </tr>
                         {qrError ? (
@@ -1833,34 +1912,68 @@ export const WhatsAppSettings: React.FC = () => {
         )
       })()}
 
-      <Modal
-        isOpen={hasWhatsAppApiAccess && Boolean(apiStatus?.needsDefaultSelection)}
-        onClose={() => null}
-        title="Elige tu número principal"
-        type="custom"
-        size="md"
-        showCloseButton={false}
-      >
-        <div className={styles.qrConsentBody}>
-          <p>
-            Hay varios números de WhatsApp conectados y ninguno está marcado como principal.
-            El número principal se usa para contactos nuevos, importaciones, campañas y
-            automatizaciones cuando un chat no tiene un número asignado.
-          </p>
-          {visiblePhoneNumbers.map((phone) => (
-            <button
-              key={phone.id}
-              type="button"
-              className={styles.defaultPickerOption}
-              disabled={Boolean(defaultingPhoneId)}
-              onClick={() => makePhoneDefault(phone)}
-            >
-              {defaultingPhoneId === phone.id ? 'Guardando…' : getPhoneLabel(phone)}
-              {phone.verified_name ? <span className={styles.defaultPickerOptionHint}>{phone.verified_name}</span> : null}
-            </button>
-          ))}
-        </div>
-      </Modal>
+      {qrFallbackDraft && (() => {
+        const fromSource = qrFallbackDraft.mode === 'source'
+        const phone = visiblePhoneNumbers.find(item => item.id === qrFallbackDraft.phoneId)
+        if (!phone) return null
+
+        const options = visiblePhoneNumbers
+          .filter(item => item.id !== phone.id && (
+            fromSource
+              ? item.id === phone.qr_fallback_phone_number_id || (canSetQrBackup(phone) && canBeQrBackup(item))
+              : canSetQrBackup(item)
+          ))
+          .map(item => ({
+            value: item.id,
+            label: fromSource && !canBeQrBackup(item) ? `${getPhoneLabel(item)} (QR no disponible)` : getPhoneLabel(item)
+          }))
+        if (fromSource) options.unshift({ value: '', label: 'Automático · QR del mismo número' })
+
+        const close = () => {
+          if (!qrFallbackSaving) setQrFallbackDraft(null)
+        }
+        return (
+          <Modal
+            isOpen
+            onClose={close}
+            title={fromSource ? 'Configurar respaldo QR' : 'Usar como respaldo QR'}
+            subtitle={getPhoneLabel(phone)}
+            size="md"
+          >
+            <form className={styles.qrConsentBody} onSubmit={saveQrFallback}>
+              <p>
+                {fromSource
+                  ? 'En automático se usa el QR del mismo número, si está disponible. Puedes elegir otro QR para los envíos que permiten respaldo.'
+                  : 'Elige el número de WhatsApp API que podrá usar este QR cuando necesite respaldo. Esto reemplaza su selección actual.'}
+              </p>
+              <div className={styles.fieldLabel}>
+                <label htmlFor="whatsapp-qr-backup">{fromSource ? 'Número de respaldo' : 'Número al que respalda'}</label>
+                <CustomSelect
+                  id="whatsapp-qr-backup"
+                  options={options}
+                  value={qrFallbackDraft.selectedId}
+                  onValueChange={selectedId => setQrFallbackDraft({ ...qrFallbackDraft, selectedId })}
+                  placeholder="Selecciona un número"
+                  disabled={qrFallbackSaving}
+                  portal
+                />
+              </div>
+              <div className={styles.qrModalActions}>
+                <Button type="button" variant="secondary" onClick={close} disabled={qrFallbackSaving}>Cancelar</Button>
+                <Button
+                  type="submit"
+                  loading={qrFallbackSaving}
+                  disabled={fromSource
+                    ? qrFallbackDraft.selectedId === (phone.qr_fallback_phone_number_id || '')
+                    : !qrFallbackDraft.selectedId}
+                >
+                  Guardar respaldo
+                </Button>
+              </div>
+            </form>
+          </Modal>
+        )
+      })()}
     </div>
   )
 }

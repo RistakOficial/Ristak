@@ -4568,11 +4568,15 @@ de error limpia el auth rechazado y empieza un emparejamiento limpio. Si Baileys
 emite un QR pero no se puede convertir en imagen, el estado queda como error
 accionable en lugar de dejar el modal girando indefinidamente.
 
-El respaldo QR se resuelve por telefono, no solo por el id exacto del numero API.
-Si el numero oficial y la conexion QR quedaron en filas distintas de
-`whatsapp_api_phone_numbers`, el backend debe localizar la fila QR del mismo
-telefono (`phone_number`, `display_phone_number` o `qr_connected_phone`) y enviar
-desde ahi. Tambien cuenta como usable una sesion QR conectada o en reconexion
+El número principal se marca con una estrella en Configuración → WhatsApp →
+Números. Es el remitente para chats nuevos y envíos sin un número asignado. Se
+asigna con la primera conexión y se puede cambiar desde los tres puntos.
+
+El respaldo QR automático se resuelve por el teléfono completo. Si la API y
+el QR quedaron en filas distintas, se usa la sesión del mismo número. Otro
+teléfono sólo puede servir de respaldo si se eligió expresamente para esa API
+y el envío permite respaldo. También cuenta como usable una sesión QR
+conectada o en reconexión
 tecnica (`connected`, `reconnecting`, `restarting`, `connection_replaced` o
 `disconnected_*`). Un `bad_session` (`500`) y los `connectionClosed` (`428`) se
 reintentan y, si superan el limite de un intento, quedan en `reconnecting` para

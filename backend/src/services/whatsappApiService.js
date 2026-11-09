@@ -8,6 +8,12 @@ import { fileURLToPath } from 'url'
 import nodeFetch from 'node-fetch'
 import sharp from 'sharp'
 import { databaseDialect, db, getAppConfig, repairWhatsAppApiContactIdentityFromMessages, setAppConfig } from '../config/database.js'
+import {
+  getWhatsAppBusinessPhone,
+  getWhatsAppSenderPositions,
+  reconcileWhatsAppDefaultSender,
+  WHATSAPP_SENDER_CONFIG_KEYS
+} from './whatsappSenderSettingsService.js'
 import { getMetaApiVersion } from '../config/constants.js'
 import {
   findContactByPhoneCandidates,
@@ -457,10 +463,7 @@ const TEMPLATE_STATUS_ALERTS = {
 const CONFIG_KEYS = {
   enabled: 'whatsapp_api_enabled',
   apiKey: 'whatsapp_api_ycloud_api_key_encrypted',
-  senderPhone: 'whatsapp_api_sender_phone',
-  phoneNumberId: 'whatsapp_api_phone_number_id',
-  wabaId: 'whatsapp_api_waba_id',
-  provider: 'whatsapp_api_provider',
+  ...WHATSAPP_SENDER_CONFIG_KEYS,
   metaStatus: 'whatsapp_meta_direct_status',
   metaAppId: 'whatsapp_meta_direct_app_id',
   metaBusinessId: 'whatsapp_meta_direct_business_id',
@@ -3688,6 +3691,7 @@ async function syncLocalMessageTemplateFromProvider(template) {
 async function syncPhoneNumbers(phoneNumbers = [], options = {}) {
   const normalized = phoneNumbers.map(normalizePhoneNumberRecord)
   const reactivate = options.reactivate === true ? 1 : 0
+  let prunedDefaultPhone
 
   // Cuando recibimos la lista COMPLETA desde YCloud (pruneMissing) borramos las
   // filas en caché que YCloud ya no devuelve (números eliminados / WABA dado de baja),
@@ -3697,7 +3701,7 @@ async function syncPhoneNumbers(phoneNumbers = [], options = {}) {
     const keepIds = normalized.map(item => item.id).filter(Boolean)
     const placeholders = keepIds.map(() => '?').join(', ')
     const stale = await db.all(`
-      SELECT id, phone_number, verified_name
+      SELECT id, phone_number, display_phone_number, verified_name, is_default_sender
       FROM whatsapp_api_phone_numbers
       WHERE COALESCE(provider, 'ycloud') = ?
         AND LOWER(COALESCE(qr_status, '')) NOT IN ('connected', 'reconnecting', 'restarting')
@@ -3706,6 +3710,7 @@ async function syncPhoneNumbers(phoneNumbers = [], options = {}) {
 
     for (const row of stale) {
       await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [row.id])
+      if (Number(row.is_default_sender) === 1) prunedDefaultPhone = row
       logger.info(`WhatsApp API: número eliminado de YCloud, borrado de caché local: ${row.phone_number || row.id} (${row.verified_name || 'sin nombre'})`)
     }
   }
@@ -3752,27 +3757,15 @@ async function syncPhoneNumbers(phoneNumbers = [], options = {}) {
 
     await syncPhoneNumberAlert(item, options)
   }
+  return prunedDefaultPhone
 }
 
-async function setDefaultSenderPhoneNumber(phoneNumberId) {
-  const cleanPhoneNumberId = cleanString(phoneNumberId)
-  if (!cleanPhoneNumberId) return
-
-  await db.run(`
-    UPDATE whatsapp_api_phone_numbers
-    SET is_default_sender = CASE WHEN id = ? THEN 1 ELSE 0 END,
-      updated_at = CURRENT_TIMESTAMP
-  `, [cleanPhoneNumberId])
-}
-
-// Contrato central para cualquier proveedor de API oficial registrado: una
-// conexión API recién completada se vuelve la autoridad del número sin tocar
-// la sesión QR existente. Si QR se conectó primero puede vivir en una fila
-// hermana; el ruteo la encuentra por teléfono y la conserva como respaldo.
-export async function promoteConnectedWhatsAppApiPhoneNumber({ phoneNumberId, provider } = {}) {
+// El alta de una API conserva el número principal, con la API como transporte
+// preferido cuando pertenece al mismo número que el QR.
+export async function promoteConnectedWhatsAppApiPhoneNumber({ phoneNumberId, provider, previousPhone } = {}) {
   const cleanPhoneNumberId = cleanString(phoneNumberId)
   if (!cleanPhoneNumberId) {
-    throw new Error('Falta el número de la API oficial que debe quedar como principal')
+    throw new Error('Falta el número conectado a la API oficial')
   }
 
   const phone = await db.get(`
@@ -3796,17 +3789,11 @@ export async function promoteConnectedWhatsAppApiPhoneNumber({ phoneNumberId, pr
     throw new Error('El número conectado no pertenece al proveedor de API oficial esperado')
   }
   if (Number(phone.api_send_enabled ?? 1) !== 1) {
-    throw new Error('La API oficial del número quedó deshabilitada y no puede marcarse como principal')
+    throw new Error('La API oficial de ese número quedó deshabilitada')
   }
 
   const senderPhone = cleanString(phone.phone_number || phone.display_phone_number)
-  await setDefaultSenderPhoneNumber(phone.id)
-  await Promise.all([
-    setAppConfig(CONFIG_KEYS.provider, registeredProvider),
-    setAppConfig(CONFIG_KEYS.senderPhone, senderPhone),
-    setAppConfig(CONFIG_KEYS.phoneNumberId, phone.id),
-    setAppConfig(CONFIG_KEYS.wabaId, phone.waba_id || '')
-  ])
+  await reconcileWhatsAppDefaultSender({ phoneNumberId: phone.id, previousPhone })
 
   const matchPhones = getPhoneRowMatchValues(phone)
   const possibleQrRows = matchPhones.length
@@ -3824,7 +3811,7 @@ export async function promoteConnectedWhatsAppApiPhoneNumber({ phoneNumberId, pr
     .filter(Boolean)
 
   logger.info(
-    `WhatsApp: ${registeredProvider} quedó como API principal para ${senderPhone || phone.id}` +
+    `WhatsApp: ${registeredProvider} quedó conectado para ${senderPhone || phone.id}` +
     `${siblingQrPhoneNumberIds.length ? ` con ${siblingQrPhoneNumberIds.length} respaldo QR asociado` : ''}.`
   )
 
@@ -3842,41 +3829,8 @@ function isLocallyConnectedWhatsAppPhone(phone = {}) {
   const apiEnabled = provider !== 'qr' && Number(phone.api_send_enabled ?? 1) === 1
   const qrEnabled = Number(phone.qr_send_enabled || 0) === 1 ||
     ['starting', 'qr_pending', 'connected', 'reconnecting', 'restarting'].includes(qrStatus)
-  return provider === 'qr' || apiEnabled || qrEnabled
-}
-
-async function selectNextDefaultWhatsAppPhone() {
-  const rows = await getPhoneNumbersFromDb()
-  const connectedRows = rows.filter(isLocallyConnectedWhatsAppPhone)
-  const nextDefault = connectedRows.find(row => Number(row.is_default_sender || 0) === 1) ||
-    connectedRows.find(row => (
-      isOfficialWhatsAppApiProvider(cleanString(row.provider).toLowerCase()) &&
-      cleanString(row.provider).toLowerCase() !== 'qr' &&
-      Number(row.api_send_enabled ?? 1) === 1
-    )) ||
-    connectedRows[0] ||
-    null
-
-  if (nextDefault?.id) {
-    await setDefaultSenderPhoneNumber(nextDefault.id)
-    const nextProvider = cleanString(nextDefault.provider).toLowerCase()
-    const configWrites = [
-      setAppConfig(CONFIG_KEYS.senderPhone, nextDefault.phone_number || nextDefault.display_phone_number || ''),
-      setAppConfig(CONFIG_KEYS.phoneNumberId, nextDefault.id || ''),
-      setAppConfig(CONFIG_KEYS.wabaId, nextDefault.waba_id || '')
-    ]
-    if ([PROVIDER_NAME, META_DIRECT_PROVIDER_NAME].includes(nextProvider)) {
-      configWrites.push(setAppConfig(CONFIG_KEYS.provider, nextProvider))
-    }
-    await Promise.all(configWrites)
-    return nextDefault
-  }
-
-  await db.run('UPDATE whatsapp_api_phone_numbers SET is_default_sender = 0 WHERE is_default_sender != 0')
-  await setAppConfig(CONFIG_KEYS.senderPhone, '')
-  await setAppConfig(CONFIG_KEYS.phoneNumberId, '')
-  await setAppConfig(CONFIG_KEYS.wabaId, '')
-  return null
+  return provider === 'qr' || apiEnabled || qrEnabled ||
+    (provider === META_DIRECT_PROVIDER_NAME && cleanString(phone.status).toUpperCase() === 'AUTHORIZATION_REQUIRED')
 }
 
 function isRecoverableQrConnection({ phone = {}, session = {}, authItems = 0 } = {}) {
@@ -4024,7 +3978,9 @@ export async function repairDisconnectedYCloudPhoneRows({ force = false } = {}) 
     if (outcome === 'kept_qr') keptQr += 1
   }
 
-  await selectNextDefaultWhatsAppPhone()
+  await reconcileWhatsAppDefaultSender({
+    previousPhone: rows.find(row => Number(row.is_default_sender) === 1)
+  })
   await setAppConfig(YCLOUD_DISCONNECTED_PHONE_CLEANUP_CONFIG_KEY, YCLOUD_DISCONNECTED_PHONE_CLEANUP_VERSION)
   return {
     repaired: removed > 0 || convertedToQr > 0 || templateCleanup.templatesDetached > 0 || templateCleanup.templateSnapshotsDeleted > 0,
@@ -4041,27 +3997,50 @@ export async function setWhatsAppApiDefaultPhoneNumber({ phoneNumberId } = {}) {
     throw new Error('Elige el número que quieres dejar como principal')
   }
 
-  const phoneNumber = await db.get(`
-    SELECT id, provider, waba_id, phone_number, display_phone_number
-    FROM whatsapp_api_phone_numbers
-    WHERE id = ?
-  `, [cleanPhoneNumberId])
+  await reconcileWhatsAppDefaultSender({ phoneNumberId: cleanPhoneNumberId, makeDefault: true })
+  return getWhatsAppApiStatus()
+}
 
-  if (!phoneNumber) {
-    throw new Error('Ese número de WhatsApp no está conectado')
+export async function setWhatsAppQrFallback({ phoneNumberId, qrPhoneNumberId } = {}) {
+  const sourceId = cleanString(phoneNumberId)
+  const targetId = cleanString(qrPhoneNumberId)
+  if (qrPhoneNumberId !== null && (typeof qrPhoneNumberId !== 'string' || !targetId)) {
+    throw new Error('Elige un número conectado por QR o la opción automática')
   }
 
-  const senderPhone = phoneNumber.phone_number || phoneNumber.display_phone_number || ''
-  await setDefaultSenderPhoneNumber(cleanPhoneNumberId)
-  await setAppConfig(CONFIG_KEYS.senderPhone, senderPhone)
-  await setAppConfig(CONFIG_KEYS.phoneNumberId, phoneNumber.id || '')
-  await setAppConfig(CONFIG_KEYS.wabaId, phoneNumber.waba_id || '')
-  const provider = cleanString(phoneNumber.provider).toLowerCase()
-  if ([PROVIDER_NAME, META_DIRECT_PROVIDER_NAME].includes(provider)) {
-    await setAppConfig(CONFIG_KEYS.provider, provider)
-  }
-  await setAppConfig(CONFIG_KEYS.lastSyncedAt, nowIso())
-  await setAppConfig(CONFIG_KEYS.lastError, '')
+  await db.transaction(async (tx) => {
+    const source = await tx.get(`
+      SELECT id, provider, status, api_send_enabled, qr_fallback_phone_number_id
+      FROM whatsapp_api_phone_numbers
+      WHERE id = ?
+    `, [sourceId])
+    if (!source || (!isOfficialWhatsAppApiProvider(source.provider) && !source.qr_fallback_phone_number_id)) {
+      throw new Error('El respaldo se configura para un número de WhatsApp API')
+    }
+
+    if (targetId) {
+      if (targetId === sourceId) throw new Error('Para usar el QR de ese mismo registro, elige la opción automática')
+      const awaitingMetaAuthorization = source.provider === META_DIRECT_PROVIDER_NAME && source.status === 'AUTHORIZATION_REQUIRED'
+      if (!isOfficialWhatsAppApiProvider(source.provider) || (Number(source.api_send_enabled) !== 1 && !awaitingMetaAuthorization)) {
+        throw new Error('Conecta WhatsApp API para asignar un respaldo QR a este número')
+      }
+      const target = await tx.get(`
+        SELECT id, phone_number, display_phone_number, qr_connected_phone, qr_send_enabled, qr_status
+        FROM whatsapp_api_phone_numbers
+        WHERE id = ?
+      `, [targetId])
+      const targetPhone = target && getWhatsAppBusinessPhone(target)
+      const connectedPhone = normalizePhoneForStorage(target?.qr_connected_phone)
+      if (!targetPhone || Number(target.qr_send_enabled) !== 1 || target.qr_status !== 'connected' ||
+          (connectedPhone && connectedPhone !== targetPhone)) {
+        throw new Error('El número de respaldo debe tener WhatsApp QR conectado')
+      }
+    }
+    await tx.run(`
+      UPDATE whatsapp_api_phone_numbers SET qr_fallback_phone_number_id = ?
+      WHERE id = ?
+    `, [targetId || null, sourceId])
+  })
 
   return getWhatsAppApiStatus()
 }
@@ -4092,8 +4071,22 @@ async function findBusinessPhoneNumberId(phone = '', { phoneNumberId, provider, 
 const BUSINESS_PHONE_ROW_SELECT = `
   id, provider, waba_id, phone_number, display_phone_number, status,
   quality_rating, api_send_enabled, qr_send_enabled, qr_status,
-  qr_connected_phone, qr_last_error, is_default_sender, updated_at
+  qr_connected_phone, qr_fallback_phone_number_id, qr_last_error, is_default_sender, updated_at
 `
+
+function getBusinessSenderPhone(row = {}) {
+  return normalizePhoneForStorage(row?.phone_number) || normalizePhoneForStorage(row?.display_phone_number)
+}
+
+function getQrSenderPhone(row = {}) {
+  return normalizePhoneForStorage(row?.qr_connected_phone) || getBusinessSenderPhone(row)
+}
+
+function getUsableQrSenderPhone(row) {
+  const expected = getBusinessSenderPhone(row)
+  const connected = getQrSenderPhone(row)
+  return isQrFallbackReady(row) && (!expected || connected === expected) ? connected : ''
+}
 
 async function findBusinessPhoneRowForSender({ phoneNumberId, fromPhone } = {}) {
   const cleanPhoneNumberId = cleanString(phoneNumberId)
@@ -4105,7 +4098,7 @@ async function findBusinessPhoneRowForSender({ phoneNumberId, fromPhone } = {}) 
     `, [cleanPhoneNumberId]).catch(() => null)
   }
 
-  const normalized = normalizePhoneForStorage(fromPhone) || cleanString(fromPhone)
+  const normalized = normalizePhoneForStorage(fromPhone)
   if (!normalized) return null
 
   const rows = await db.all(`
@@ -4114,7 +4107,7 @@ async function findBusinessPhoneRowForSender({ phoneNumberId, fromPhone } = {}) 
     ORDER BY is_default_sender DESC, updated_at DESC
   `).catch(() => [])
 
-  return rows.find(row => rowMatchesAnyPhone(row, [normalized])) || null
+  return rows.find(row => getBusinessSenderPhone(row) === normalized) || null
 }
 
 // El proveedor global existe por compatibilidad y para algunas pantallas de
@@ -4124,19 +4117,36 @@ async function findBusinessPhoneRowForSender({ phoneNumberId, fromPhone } = {}) 
 async function loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   const configuredProvider = cleanString(config.provider).toLowerCase() || PROVIDER_NAME
-  let configuredMetaDirect = configuredProvider === META_DIRECT_PROVIDER_NAME
-    ? await loadMetaDirectConfig()
-    : null
-  const selectedPhoneNumberId = cleanString(
-    phoneNumberId ||
-    (configuredProvider === META_DIRECT_PROVIDER_NAME ? configuredMetaDirect?.phoneNumberId : '') ||
-    config.phoneNumberId
-  )
-  const selectedFromPhone = cleanString(fromPhone || config.senderPhone)
-  const requestedPhoneRow = await findBusinessPhoneRowForSender({
-    phoneNumberId: selectedPhoneNumberId,
-    fromPhone: selectedFromPhone
-  })
+  let configuredMetaDirect = null
+  const requestedId = cleanString(phoneNumberId)
+  const requestedPhone = cleanString(fromPhone)
+  const explicitSender = Boolean(requestedId || requestedPhone)
+  let requestedPhoneRow = explicitSender
+    ? await findBusinessPhoneRowForSender({ phoneNumberId: requestedId, fromPhone: requestedPhone })
+    : await db.get(`
+        SELECT ${BUSINESS_PHONE_ROW_SELECT}
+        FROM whatsapp_api_phone_numbers
+        WHERE is_default_sender = 1
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+      `)
+  if (!requestedPhoneRow && !explicitSender) {
+    if (configuredProvider === META_DIRECT_PROVIDER_NAME) configuredMetaDirect = await loadMetaDirectConfig()
+    requestedPhoneRow = await findBusinessPhoneRowForSender({
+      phoneNumberId: config.phoneNumberId || configuredMetaDirect?.phoneNumberId,
+      fromPhone: config.senderPhone
+    })
+    if (!requestedPhoneRow && !config.phoneNumberId && !configuredMetaDirect?.phoneNumberId && !config.senderPhone) {
+      requestedPhoneRow = await db.get(`
+        SELECT ${BUSINESS_PHONE_ROW_SELECT}
+        FROM whatsapp_api_phone_numbers
+        WHERE (LOWER(COALESCE(provider, '')) != 'qr' AND COALESCE(api_send_enabled, 1) = 1)
+           OR (qr_send_enabled = 1 AND LOWER(COALESCE(qr_status, '')) = 'connected')
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+      `)
+    }
+  }
   let phoneRow = requestedPhoneRow
 
   // Una fila QR puede representar el respaldo del mismo número que vive en una
@@ -4145,8 +4155,8 @@ async function loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone } = {}) {
   // cerrada/desconocida el preflight posterior puede elegir el QR compatible si
   // la solicitud autorizó respaldo.
   if (cleanString(requestedPhoneRow?.provider).toLowerCase() === 'qr') {
-    const requestedPhones = getPhoneRowMatchValues(requestedPhoneRow)
-    const officialRows = requestedPhones.length
+    const qrSenderPhone = getQrSenderPhone(requestedPhoneRow)
+    const officialRows = qrSenderPhone
       ? await db.all(`
           SELECT ${BUSINESS_PHONE_ROW_SELECT}
           FROM whatsapp_api_phone_numbers
@@ -4157,7 +4167,7 @@ async function loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone } = {}) {
       : []
 
     for (const candidate of officialRows) {
-      if (!rowMatchesAnyPhone(candidate, requestedPhones)) continue
+      if (getBusinessSenderPhone(candidate) !== qrSenderPhone) continue
       const candidateProvider = cleanString(candidate.provider).toLowerCase()
       if (candidateProvider === PROVIDER_NAME && config.enabled && config.apiKey) {
         phoneRow = candidate
@@ -4175,18 +4185,26 @@ async function loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone } = {}) {
 
   if (!phoneRow?.id) {
     const provider = configuredProvider
-    const metaDirect = provider === META_DIRECT_PROVIDER_NAME ? configuredMetaDirect : null
+    const metaDirect = provider === META_DIRECT_PROVIDER_NAME
+      ? (configuredMetaDirect || await loadMetaDirectConfig())
+      : null
+    const legacyId = cleanString(metaDirect?.phoneNumberId || config.phoneNumberId)
+    const legacyPhone = cleanString(metaDirect?.displayPhoneNumber || config.senderPhone)
+    const matchesLegacySender = (!requestedId || requestedId === legacyId) && (
+      !requestedPhone || normalizePhoneForStorage(requestedPhone) === normalizePhoneForStorage(legacyPhone)
+    )
     return {
       ...config,
       provider,
-      senderPhone: metaDirect?.displayPhoneNumber || selectedFromPhone,
-      phoneNumberId: metaDirect?.phoneNumberId || selectedPhoneNumberId,
+      senderPhone: requestedPhone || (matchesLegacySender ? legacyPhone : ''),
+      phoneNumberId: requestedId || (matchesLegacySender ? legacyId : ''),
       wabaId: metaDirect?.wabaId || config.wabaId,
       selectedPhoneRow: null,
       requestedPhoneRow: null,
-      officialApiAvailable: provider === META_DIRECT_PROVIDER_NAME
+      senderMatchesConfiguration: matchesLegacySender,
+      officialApiAvailable: matchesLegacySender && (provider === META_DIRECT_PROVIDER_NAME
         ? Boolean(metaDirect?.connected)
-        : Boolean(config.enabled && config.apiKey)
+        : Boolean(config.enabled && config.apiKey))
     }
   }
 
@@ -4204,7 +4222,7 @@ async function loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone } = {}) {
   return {
     ...config,
     provider,
-    senderPhone: phoneRow.phone_number || phoneRow.display_phone_number || selectedFromPhone,
+    senderPhone: provider === 'qr' ? getQrSenderPhone(phoneRow) : getBusinessSenderPhone(phoneRow),
     phoneNumberId: phoneRow.id,
     wabaId: phoneRow.waba_id || config.wabaId,
     selectedPhoneRow: phoneRow,
@@ -4280,15 +4298,33 @@ function rowMatchesAnyPhone(row = {}, phones = []) {
   return candidates.some(candidate => phones.some(phone => phoneMatches(candidate, phone)))
 }
 
-async function findQrFallbackPhoneRowForSender({ phoneNumberId, fromPhone, phoneRow } = {}) {
-  const sourceRow = phoneRow || await findBusinessPhoneRowForSender({ phoneNumberId, fromPhone })
-  if (isQrFallbackReady(sourceRow)) return sourceRow
+export function findAutomaticQrFallbackPhoneRow(sourceRow, candidateRows = [], fromPhone = '') {
+  const sourcePhone = sourceRow ? getBusinessSenderPhone(sourceRow) : normalizePhoneForStorage(fromPhone)
+  if (!sourcePhone) return null
+  if (getUsableQrSenderPhone(sourceRow) === sourcePhone) return sourceRow
+  return candidateRows.find(row => getUsableQrSenderPhone(row) === sourcePhone) || null
+}
 
-  const searchPhones = [
-    normalizePhoneForStorage(fromPhone) || cleanString(fromPhone),
-    ...getPhoneRowMatchValues(sourceRow)
-  ].filter(Boolean)
-  if (!searchPhones.length) return null
+export function findConfiguredQrFallbackPhoneRow(sourceRow, candidateRows = []) {
+  const configuredId = cleanString(sourceRow?.qr_fallback_phone_number_id)
+  if (!configuredId) return null
+  return candidateRows.find(row => cleanString(row?.id) === configuredId && getUsableQrSenderPhone(row)) || null
+}
+
+async function findQrFallbackPhoneRowForSender({ phoneNumberId, fromPhone, phoneRow, allowDifferentNumber = true } = {}) {
+  const sourceRow = phoneRow || await findBusinessPhoneRowForSender({ phoneNumberId, fromPhone })
+  const sourcePhone = sourceRow ? getBusinessSenderPhone(sourceRow) : normalizePhoneForStorage(fromPhone)
+  const configuredId = cleanString(sourceRow?.qr_fallback_phone_number_id)
+
+  if (configuredId) {
+    const configuredRow = await findBusinessPhoneRowForSender({ phoneNumberId: configuredId })
+    if (findConfiguredQrFallbackPhoneRow(sourceRow, [configuredRow]) &&
+        (allowDifferentNumber || getQrSenderPhone(configuredRow) === sourcePhone)) {
+      return configuredRow
+    }
+  }
+  if (!sourcePhone) return null
+  if (getUsableQrSenderPhone(sourceRow) === sourcePhone) return sourceRow
 
   const rows = await db.all(`
     SELECT ${BUSINESS_PHONE_ROW_SELECT}
@@ -4297,11 +4333,28 @@ async function findQrFallbackPhoneRowForSender({ phoneNumberId, fromPhone, phone
     ORDER BY is_default_sender DESC, updated_at DESC
   `).catch(() => [])
 
-  return rows.find(row =>
-    cleanString(row.id) !== cleanString(sourceRow?.id) &&
-    isQrFallbackReady(row) &&
-    rowMatchesAnyPhone(row, searchPhones)
-  ) || null
+  return findAutomaticQrFallbackPhoneRow(sourceRow, rows, fromPhone)
+}
+
+async function resolveRequestedQrDelivery({ config, phoneNumberId, fromPhone, allowQrFallback = false } = {}) {
+  const sender = {
+    phoneNumberId,
+    fromPhone,
+    phoneRow: config.requestedPhoneRow || config.selectedPhoneRow
+  }
+  const qrRow = config.senderMatchesConfiguration === false ? null : (
+    await findQrFallbackPhoneRowForSender({ ...sender, allowDifferentNumber: false }) ||
+    (allowQrFallback && await findQrFallbackPhoneRowForSender(sender))
+  )
+  if (!qrRow?.id) throw new Error('Ese número no tiene QR conectado para enviar mensajes')
+
+  return {
+    phoneNumberId: qrRow.id,
+    fromPhone,
+    ...(getQrSenderPhone(qrRow) !== normalizePhoneForStorage(fromPhone)
+      ? { fallbackReason: getQrFallbackReasonForSender('WhatsApp API no está disponible para este envío.', fromPhone, qrRow) }
+      : {})
+  }
 }
 
 /**
@@ -4309,80 +4362,52 @@ async function findQrFallbackPhoneRowForSender({ phoneNumberId, fromPhone, phone
  *
  * La fila oficial es siempre la primaria cuando representa el mismo número que
  * una conexión QR. QR sólo queda como transporte primario si no hay API oficial
- * disponible, y como respaldo únicamente cuando pertenece al mismo teléfono.
+ * disponible. Otro número sólo puede respaldar a la API si existe una relación
+ * explícita y el envío autoriza el respaldo QR.
  */
-export async function resolveWhatsAppOutboundRoute({ phoneNumberId, fromPhone, preferredTransport = '' } = {}) {
-  let config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone })
-
-  // Algunas automatizaciones antiguas no guardaron un remitente explícito. En
-  // ese caso usamos la fila activa predeterminada y volvemos a resolver para que
-  // también pueda promover una fila QR a su API oficial gemela.
-  if (!cleanString(phoneNumberId) && !cleanString(fromPhone)) {
-    const defaultRow = await db.get(`
-      SELECT ${BUSINESS_PHONE_ROW_SELECT}
-      FROM whatsapp_api_phone_numbers
-      WHERE api_send_enabled = 1
-         OR (qr_send_enabled = 1 AND LOWER(COALESCE(qr_status, '')) = 'connected')
-      ORDER BY is_default_sender DESC, updated_at DESC
-      LIMIT 1
-    `).catch(() => null)
-    if (defaultRow?.id) {
-      config = await loadWhatsAppOutboundConfig({ phoneNumberId: defaultRow.id })
-    }
-  }
-
+export async function resolveWhatsAppOutboundRoute({ phoneNumberId, fromPhone, preferredTransport = '', allowQrFallback = false } = {}) {
+  const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone })
   const phoneRow = config.selectedPhoneRow
   const provider = cleanString(config.provider).toLowerCase()
   const officialAvailable = Boolean(
     config.officialApiAvailable &&
     (provider === PROVIDER_NAME || provider === META_DIRECT_PROVIDER_NAME)
   )
-  const qrRow = await findQrFallbackPhoneRowForSender({
+  const sender = {
     phoneNumberId: config.phoneNumberId || phoneNumberId,
     fromPhone: config.senderPhone || fromPhone,
     phoneRow
-  })
+  }
+  const qrRow = config.senderMatchesConfiguration === false ? null : await findQrFallbackPhoneRowForSender(sender)
+  const hasDifferentNumberFallback = Boolean(qrRow?.id && getQrSenderPhone(qrRow) !== normalizePhoneForStorage(sender.fromPhone))
+  const prefersQr = cleanString(preferredTransport).toLowerCase() === 'qr'
+  let directQrRow = null
+  if (prefersQr || !officialAvailable) {
+    directQrRow = hasDifferentNumberFallback
+      ? await findQrFallbackPhoneRowForSender({ ...sender, allowDifferentNumber: false })
+      : qrRow
+  }
 
-  if (cleanString(preferredTransport).toLowerCase() === 'qr' && qrRow?.id) {
+  // Con un respaldo explícito distinto, conservamos la identidad de la API
+  // para que el envío aplique su política y el catálogo de plantillas original.
+  if (directQrRow?.id && (prefersQr || !(hasDifferentNumberFallback && allowQrFallback))) {
     return {
       available: true,
       transport: 'qr',
       provider: 'qr',
-      phoneNumberId: cleanString(qrRow.id) || null,
-      fromPhone: cleanString(qrRow.phone_number || qrRow.display_phone_number || qrRow.qr_connected_phone) || null,
-      qrFallbackAvailable: false
-    }
-  }
-
-  if (officialAvailable) {
-    return {
-      available: true,
-      transport: 'api',
-      provider,
-      phoneNumberId: cleanString(config.phoneNumberId) || null,
-      fromPhone: cleanString(config.senderPhone) || null,
-      qrFallbackAvailable: Boolean(qrRow?.id)
-    }
-  }
-
-  if (qrRow?.id) {
-    return {
-      available: true,
-      transport: 'qr',
-      provider: 'qr',
-      phoneNumberId: cleanString(qrRow.id) || null,
-      fromPhone: cleanString(qrRow.phone_number || qrRow.display_phone_number || qrRow.qr_connected_phone) || null,
+      phoneNumberId: cleanString(directQrRow.id),
+      fromPhone: getQrSenderPhone(directQrRow),
       qrFallbackAvailable: false
     }
   }
 
   return {
-    available: false,
+    available: officialAvailable || (hasDifferentNumberFallback && allowQrFallback),
     transport: 'api',
     provider,
     phoneNumberId: cleanString(config.phoneNumberId || phoneNumberId) || null,
     fromPhone: cleanString(config.senderPhone || fromPhone) || null,
-    qrFallbackAvailable: false
+    qrFallbackAvailable: Boolean(qrRow?.id)
   }
 }
 
@@ -4629,7 +4654,8 @@ async function getOfficialApiFallbackDecision({
   contactId,
   error,
   checkReplyWindow = false,
-  allowReplyWindowFallback = true
+  allowReplyWindowFallback = true,
+  allowDifferentNumber = true
 } = {}) {
   const phoneRow = config?.selectedPhoneRow || await findBusinessPhoneRowForSender({ phoneNumberId, fromPhone })
   const unavailableReason = !error
@@ -4644,14 +4670,14 @@ async function getOfficialApiFallbackDecision({
   const replyWindowReason = windowReason || preflightWindowReason
   const reason = errorReason || unavailableReason || signalReason ||
     (allowReplyWindowFallback ? getReplyWindowQrFallbackReason(replyWindowReason) : '')
-  const fallbackPhoneRow = reason
-    ? await findQrFallbackPhoneRowForSender({ phoneNumberId, fromPhone, phoneRow })
+  const fallbackPhoneRow = reason && config?.senderMatchesConfiguration !== false
+    ? await findQrFallbackPhoneRowForSender({ phoneNumberId, fromPhone, phoneRow, allowDifferentNumber })
     : null
 
   return {
     phoneRow,
     fallbackPhoneRow,
-    reason,
+    reason: fallbackPhoneRow ? getQrFallbackReasonForSender(reason, fromPhone, fallbackPhoneRow) : reason,
     unavailableReason,
     windowReason,
     preflightWindowReason,
@@ -4659,7 +4685,8 @@ async function getOfficialApiFallbackDecision({
     shouldBlockOfficialApi: Boolean(
       windowReason ||
       preflightWindowReason ||
-      ((unavailableReason || signalReason) && !fallbackPhoneRow?.id)
+      unavailableReason ||
+      (signalReason && !fallbackPhoneRow?.id)
     ),
     blockReason: windowReason || preflightWindowReason || ''
   }
@@ -4667,7 +4694,7 @@ async function getOfficialApiFallbackDecision({
 
 async function getOfficialApiMediaFallbackDecision({ beforeMessageSend = false, ...options } = {}) {
   const decision = await getOfficialApiFallbackDecision(options)
-  if (decision.shouldFallback || !options.error) return decision
+  if (decision.shouldFallback || !options.error || options.config?.senderMatchesConfiguration === false) return decision
 
   const error = options.error
   const code = cleanString(error.graphCode || extractWhatsAppProviderError(error).code)
@@ -4689,9 +4716,13 @@ async function getOfficialApiMediaFallbackDecision({ beforeMessageSend = false, 
   return {
     ...decision,
     fallbackPhoneRow,
-    reason: beforeMessageSend
-      ? 'La API no pudo recibir el archivo; Ristak usó el respaldo QR del mismo número.'
-      : 'La API rechazó el formato del archivo; Ristak usó el respaldo QR del mismo número.',
+    reason: getQrFallbackReasonForSender(
+      beforeMessageSend
+        ? 'La API no pudo recibir el archivo; Ristak usó el respaldo QR del mismo número.'
+        : 'La API rechazó el formato del archivo; Ristak usó el respaldo QR del mismo número.',
+      options.fromPhone,
+      fallbackPhoneRow
+    ),
     shouldFallback: Boolean(fallbackPhoneRow?.id)
   }
 }
@@ -4865,7 +4896,7 @@ async function findAuthorizedTemplateSendForProviderMessage({
 async function readCompletedQrFallback({ messageId, attempt } = {}) {
   if (cleanString(attempt?.status).toLowerCase() !== 'sent') return null
   const stored = await db.get(`
-    SELECT status, transport, routing_reason, provider_message_id, wamid
+    SELECT status, transport, routing_reason, provider_message_id, wamid, from_phone
     FROM whatsapp_api_messages
     WHERE id = ?
     LIMIT 1
@@ -4878,6 +4909,7 @@ async function readCompletedQrFallback({ messageId, attempt } = {}) {
     response: {
       id: cleanString(stored.provider_message_id || attempt.qr_message_id),
       wamid: cleanString(stored.wamid || stored.provider_message_id || attempt.qr_message_id),
+      from: cleanString(stored.from_phone),
       status: normalizeMessageDeliveryStatus(stored.status) || 'sent',
       transport: 'qr',
       fallback: true,
@@ -4892,8 +4924,8 @@ async function readCompletedQrFallback({ messageId, attempt } = {}) {
 /**
  * Si el proveedor confirma una ventana cerrada o un rechazo multimedia, sabemos
  * que no entregó el mensaje. La autorización original viaja en su fila y
- * este claim durable permite mandar exactamente una copia por el QR del mismo
- * número, incluso si llegan webhooks duplicados o concurrentes.
+ * este claim durable permite mandar exactamente una copia por el QR autorizado,
+ * incluso si llegan webhooks duplicados o concurrentes.
  */
 async function maybeFallbackFailedFreeformMessageViaQr({
   messageId,
@@ -4956,9 +4988,13 @@ async function maybeFallbackFailedFreeformMessageViaQr({
     return { applied: false, pending: false }
   }
 
-  const fallbackReason = replyWindowReason
-    ? getReplyWindowQrFallbackReason(replyWindowReason)
-    : 'La API rechazó el archivo; Ristak usó el respaldo QR del mismo número.'
+  const fallbackReason = getQrFallbackReasonForSender(
+    replyWindowReason
+      ? getReplyWindowQrFallbackReason(replyWindowReason)
+      : 'La API rechazó el archivo; Ristak usó el respaldo QR del mismo número.',
+    fromPhone,
+    fallbackPhoneRow
+  )
   const cleanProvider = cleanString(stored.provider).toLowerCase() || PROVIDER_NAME
   const cleanProviderMessageId = cleanString(
     stored.ycloud_message_id ||
@@ -5048,6 +5084,8 @@ async function maybeFallbackFailedFreeformMessageViaQr({
     const qrMessageId = cleanString(qrResponse.id || qrResponse.wamid)
     const qrWamid = cleanString(qrResponse.wamid || qrResponse.id)
     const qrStatus = normalizeMessageDeliveryStatus(qrResponse.status) || 'sent'
+    const qrFromPhone = normalizePhoneForStorage(qrResponse.from) || getQrSenderPhone(fallbackPhoneRow)
+    const senderChanged = qrFromPhone !== fromPhone
     const protocolMessageKeyId = resolveWhatsAppProtocolMessageKey({
       transport: 'qr',
       wamid: qrWamid
@@ -5057,6 +5095,8 @@ async function maybeFallbackFailedFreeformMessageViaQr({
       apiFailure: {
         provider: cleanProvider,
         providerMessageId: cleanProviderMessageId || null,
+        phoneNumberId: stored.business_phone_number_id || null,
+        fromPhone,
         errorCode: cleanString(errorCode || stored.error_code) || null,
         errorMessage: cleanString(errorMessage || stored.error_message) || null
       },
@@ -5064,6 +5104,7 @@ async function maybeFallbackFailedFreeformMessageViaQr({
         applied: true,
         reason: fallbackReason,
         phoneNumberId: fallbackPhoneRow.id,
+        fromPhone: qrFromPhone,
         messageId: qrMessageId || null,
         status: qrStatus
       }
@@ -5077,6 +5118,10 @@ async function maybeFallbackFailedFreeformMessageViaQr({
             provider_message_id = ?,
             wamid = ?,
             protocol_message_key_id = ?,
+            business_phone_number_id = COALESCE(?, business_phone_number_id),
+            business_phone = COALESCE(?, business_phone),
+            from_phone = COALESCE(?, from_phone),
+            context_json = CASE WHEN ? = 1 THEN NULL ELSE context_json END,
             transport = 'qr',
             routing_reason = ?,
             status = ?,
@@ -5092,6 +5137,10 @@ async function maybeFallbackFailedFreeformMessageViaQr({
         qrMessageId || null,
         qrWamid || null,
         protocolMessageKeyId || null,
+        senderChanged ? fallbackPhoneRow.id : null,
+        senderChanged ? qrFromPhone : null,
+        senderChanged ? qrFromPhone : null,
+        senderChanged ? 1 : 0,
         fallbackReason,
         qrStatus,
         rawPayload,
@@ -5233,9 +5282,11 @@ async function maybeFallbackRejectedTemplateViaQr({
     stored.provider_message_id ||
     stored.wamid
   )
-  const fallbackReason = getDeterministicTemplateQrFallbackReason({
-    errorCode: errorCode || stored.error_code
-  })
+  const fallbackReason = getQrFallbackReasonForSender(
+    getDeterministicTemplateQrFallbackReason({ errorCode: errorCode || stored.error_code }),
+    fromPhone,
+    fallbackPhoneRow
+  )
   const claim = await db.run(`
     INSERT INTO whatsapp_api_qr_fallback_attempts (
       api_message_id, provider, provider_message_id, error_code, error_message,
@@ -5284,6 +5335,8 @@ async function maybeFallbackRejectedTemplateViaQr({
     const qrMessageId = cleanString(qrResponse.id || qrResponse.wamid)
     const qrWamid = cleanString(qrResponse.wamid || qrResponse.id)
     const qrStatus = normalizeMessageDeliveryStatus(qrResponse.status) || 'sent'
+    const qrFromPhone = normalizePhoneForStorage(qrResponse.from) || getQrSenderPhone(fallbackPhoneRow)
+    const senderChanged = qrFromPhone !== fromPhone
     const protocolMessageKeyId = resolveWhatsAppProtocolMessageKey({
       transport: 'qr',
       wamid: qrWamid
@@ -5294,6 +5347,8 @@ async function maybeFallbackRejectedTemplateViaQr({
       apiFailure: {
         provider: cleanProvider,
         providerMessageId: cleanProviderMessageId || null,
+        phoneNumberId: stored.business_phone_number_id || null,
+        fromPhone,
         errorCode: cleanString(errorCode || stored.error_code) || null,
         errorMessage: cleanString(errorMessage || stored.error_message) || null
       },
@@ -5301,6 +5356,7 @@ async function maybeFallbackRejectedTemplateViaQr({
         applied: true,
         reason: fallbackReason,
         phoneNumberId: fallbackPhoneRow.id,
+        fromPhone: qrFromPhone,
         messageId: qrMessageId || null,
         status: qrStatus
       }
@@ -5314,6 +5370,10 @@ async function maybeFallbackRejectedTemplateViaQr({
             provider_message_id = ?,
             wamid = ?,
             protocol_message_key_id = ?,
+            business_phone_number_id = COALESCE(?, business_phone_number_id),
+            business_phone = COALESCE(?, business_phone),
+            from_phone = COALESCE(?, from_phone),
+            context_json = CASE WHEN ? = 1 THEN NULL ELSE context_json END,
             transport = 'qr',
             routing_reason = ?,
             status = ?,
@@ -5329,6 +5389,10 @@ async function maybeFallbackRejectedTemplateViaQr({
         qrMessageId || null,
         qrWamid || null,
         protocolMessageKeyId || null,
+        senderChanged ? fallbackPhoneRow.id : null,
+        senderChanged ? qrFromPhone : null,
+        senderChanged ? qrFromPhone : null,
+        senderChanged ? 1 : 0,
         fallbackReason,
         qrStatus,
         rawPayload,
@@ -5585,7 +5649,7 @@ async function getPhoneNumbersFromDb({ signal, limit, connectedOnly = false } = 
     SELECT id, waba_id, phone_number, display_phone_number, verified_name,
       provider, profile_picture_url, business_profile_json, quality_rating, messaging_limit,
       status, label, is_default_sender, api_send_enabled, qr_send_enabled,
-      qr_consent_accepted_at, qr_consent_accepted_by, qr_status,
+      qr_fallback_phone_number_id, qr_consent_accepted_at, qr_consent_accepted_by, qr_status,
       qr_connected_phone, qr_last_connected_at, qr_last_disconnected_at,
       qr_last_error, updated_at
     FROM whatsapp_api_phone_numbers
@@ -5595,7 +5659,7 @@ async function getPhoneNumbersFromDb({ signal, limit, connectedOnly = false } = 
       OR COALESCE(qr_send_enabled, 0) = 1
       OR LOWER(COALESCE(qr_status, '')) IN ('starting', 'qr_pending', 'connected', 'reconnecting', 'restarting')
     )` : ''}
-    ORDER BY is_default_sender DESC, updated_at DESC, phone_number ASC
+    ORDER BY is_default_sender DESC, created_at ASC, id ASC
     ${boundedLimit ? 'LIMIT ?' : ''}
   `, boundedLimit ? [boundedLimit] : [], signal ? { signal } : undefined)
 }
@@ -5756,7 +5820,7 @@ export async function disconnectStandaloneWhatsAppQrPhoneNumber({ phoneNumberId 
   const result = await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [cleanPhoneNumberId])
 
   if (shouldResetDefault) {
-    await selectNextDefaultWhatsAppPhone()
+    await reconcileWhatsAppDefaultSender({ previousPhone: phone })
   }
 
   await setAppConfig(CONFIG_KEYS.lastSyncedAt, nowIso())
@@ -5804,7 +5868,7 @@ export async function disconnectWhatsAppPhoneNumber({ phoneNumberId, connection 
         (configuredPhoneNumberId === cleanPhoneNumberId || Number(phone.is_default_sender || 0) === 1) &&
         Number(phone.api_send_enabled ?? 1) === 0
       ) {
-        await selectNextDefaultWhatsAppPhone()
+        await reconcileWhatsAppDefaultSender()
       }
     }
     return getWhatsAppApiStatus()
@@ -5824,8 +5888,8 @@ export async function disconnectWhatsAppPhoneNumber({ phoneNumberId, connection 
     }
     await db.run(`
       UPDATE whatsapp_api_phone_numbers
-      SET api_send_enabled = 0,
-          is_default_sender = 0,
+      SET status = 'DISCONNECTED',
+          api_send_enabled = 0,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND provider = ?
     `, [cleanPhoneNumberId, META_DIRECT_PROVIDER_NAME])
@@ -5833,7 +5897,6 @@ export async function disconnectWhatsAppPhoneNumber({ phoneNumberId, connection 
     await db.run(`
       UPDATE whatsapp_api_phone_numbers
       SET api_send_enabled = 0,
-          is_default_sender = 0,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [cleanPhoneNumberId])
@@ -5859,7 +5922,9 @@ export async function disconnectWhatsAppPhoneNumber({ phoneNumberId, connection 
     throw new Error('El proveedor oficial de ese número no es compatible')
   }
 
-  await selectNextDefaultWhatsAppPhone()
+  await reconcileWhatsAppDefaultSender({
+    previousPhone: Number(phone.is_default_sender) === 1 ? phone : undefined
+  })
   await setAppConfig(CONFIG_KEYS.lastSyncedAt, nowIso())
   await setAppConfig(CONFIG_KEYS.lastError, '')
   logger.info(`WhatsApp: conexión ${cleanConnection} retirada de Ristak para ${phone.phone_number || phone.display_phone_number || phone.id} (${provider})`)
@@ -6246,23 +6311,21 @@ export async function getWhatsAppApiStatus() {
       ? await getOfficialApiRestrictionReason({ phoneRow: phone, config }).catch(() => '')
       : 'WhatsApp API no está conectado.'
     const apiAvailable = officialProviderConnected && !apiRestrictionReason
-    const qrReady = isQrFallbackReady(phone)
+    const qrReady = Boolean(getUsableQrSenderPhone(phone))
+    const automaticQr = findAutomaticQrFallbackPhoneRow(phone, locallyConnectedPhoneNumbers)
+    const configuredQr = findConfiguredQrFallbackPhoneRow(phone, locallyConnectedPhoneNumbers)
     return {
       ...phone,
+      automatic_qr_fallback_phone_number_id: automaticQr?.id || null,
       availability: {
         apiAvailable,
         apiReason: apiAvailable ? '' : (apiRestrictionReason || 'WhatsApp API no está conectado.'),
         qrReady,
+        qrFallbackReady: Boolean(configuredQr || automaticQr),
         available: apiAvailable || qrReady
       }
     }
   }))
-
-  const needsDefaultSelection = Boolean(
-    (connected || metaDirect.connected) &&
-    phoneNumbersWithAvailability.length > 1 &&
-    !phoneNumbersWithAvailability.some(phone => Number(phone.is_default_sender || 0) === 1)
-  )
 
   const pendingRestores = phoneNumbersWithAvailability
     .filter(phone => (pendingRestoreCounts.get(phone.id) || 0) > 0 && phone.availability.apiAvailable)
@@ -6273,11 +6336,13 @@ export async function getWhatsAppApiStatus() {
       contactCount: pendingRestoreCounts.get(phone.id) || 0
     }))
 
-  const selectedPhone = phoneNumbersWithAvailability.find(phone => phone.id === config.phoneNumberId) ||
-    phoneNumbersWithAvailability.find(phone => phone.phone_number === config.senderPhone) ||
-    phoneNumbersWithAvailability.find(phone => Number(phone.is_default_sender || 0) === 1) ||
-    phoneNumbersWithAvailability[0] ||
-    null
+  const primary = phoneNumbersWithAvailability.find(phone => Number(phone.is_default_sender || 0) === 1)
+  const senderPositions = getWhatsAppSenderPositions(phoneNumbersWithAvailability, primary)
+  const positionedPhoneNumbers = phoneNumbersWithAvailability.map(phone => ({
+    ...phone,
+    sender_position: senderPositions.get(getWhatsAppBusinessPhone(phone)) ?? null
+  }))
+  const selectedPhone = positionedPhoneNumbers.find(phone => phone.id === primary?.id) || null
   const highestSeverity = alerts.reduce((highest, alert) => {
     return !highest || alertSeverityRank(alert.severity) > alertSeverityRank(highest) ? alert.severity : highest
   }, '')
@@ -6302,9 +6367,9 @@ export async function getWhatsAppApiStatus() {
       hasApiKey: config.hasApiKey
     },
     sender: {
-      phone: config.senderPhone || '',
-      phoneNumberId: config.phoneNumberId || '',
-      wabaId: config.wabaId || ''
+      phone: selectedPhone?.phone_number || selectedPhone?.display_phone_number || selectedPhone?.qr_connected_phone || '',
+      phoneNumberId: selectedPhone?.id || '',
+      wabaId: selectedPhone?.waba_id || ''
     },
     webhook: {
       id: config.webhookEndpointId || '',
@@ -6312,9 +6377,9 @@ export async function getWhatsAppApiStatus() {
       status: config.webhookStatus || '',
       enabledEvents: REQUIRED_WEBHOOK_EVENTS
     },
-    phoneNumbers: phoneNumbersWithAvailability,
+    phoneNumbers: positionedPhoneNumbers,
     selectedPhone,
-    needsDefaultSelection,
+    needsDefaultSelection: false,
     pendingRestores,
     balance: connected ? balance : null,
     templates: templateCatalog,
@@ -6471,7 +6536,7 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
       })
     ])
     const enrichedPhoneNumbers = await enrichPhoneNumbersWithProfiles(cleanApiKey, phoneNumbers)
-    await syncPhoneNumbers(enrichedPhoneNumbers, { pruneMissing: true, reactivate: true })
+    const previousPhone = await syncPhoneNumbers(enrichedPhoneNumbers, { pruneMissing: true, reactivate: true })
     if (balance) await syncBalance(balance)
     await syncTemplates(templates)
 
@@ -6508,7 +6573,8 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
     if (selectedPhone?.phoneNumber) {
       await promoteConnectedWhatsAppApiPhoneNumber({
         phoneNumberId: selectedPhone.id,
-        provider: PROVIDER_NAME
+        provider: PROVIDER_NAME,
+        previousPhone
       })
     }
 
@@ -6561,10 +6627,8 @@ export async function refreshWhatsAppApi() {
       })
     ])
     const enrichedPhoneNumbers = await enrichPhoneNumbersWithProfiles(config.apiKey, phoneNumbers)
-    await syncPhoneNumbers(enrichedPhoneNumbers, { pruneMissing: true })
-    if (config.phoneNumberId) {
-      await setDefaultSenderPhoneNumber(config.phoneNumberId)
-    }
+    const previousPhone = await syncPhoneNumbers(enrichedPhoneNumbers, { pruneMissing: true })
+    await reconcileWhatsAppDefaultSender({ previousPhone })
     if (balance) await syncBalance(balance)
     await syncTemplates(templates)
 
@@ -6628,7 +6692,7 @@ export async function disconnectWhatsAppApi() {
   const config = await loadConfig({ includeSecrets: true })
 
   const selectFallbackProvider = async () => {
-    const nextDefault = await selectNextDefaultWhatsAppPhone()
+    const nextDefault = await reconcileWhatsAppDefaultSender()
     const nextProvider = cleanString(nextDefault?.provider).toLowerCase()
     if (nextProvider === META_DIRECT_PROVIDER_NAME) {
       await setAppConfig(CONFIG_KEYS.provider, META_DIRECT_PROVIDER_NAME)
@@ -6644,7 +6708,6 @@ export async function disconnectWhatsAppApi() {
   await db.run(`
     UPDATE whatsapp_api_phone_numbers
     SET api_send_enabled = 0,
-        is_default_sender = 0,
         updated_at = CURRENT_TIMESTAMP
     WHERE LOWER(COALESCE(provider, ?)) = ?
   `, [PROVIDER_NAME, PROVIDER_NAME])
@@ -6713,9 +6776,7 @@ export async function disconnectWhatsAppApi() {
   await repairDisconnectedYCloudPhoneRows({ force: true })
   const nextDefault = await selectFallbackProvider()
   if (!nextDefault) {
-    // selectNextDefaultWhatsAppPhone mantiene compatibilidad escribiendo
-    // selectores vacios; en una desconexion total no deben sobrevivir como
-    // configuracion fantasma.
+    // En una desconexión total tampoco deben sobrevivir datos del proveedor.
     await clearYCloudConnectionConfig()
   }
   await setAppConfig(CONFIG_KEYS.lastError, '')
@@ -9839,6 +9900,13 @@ async function upsertMessage({
     AND LOWER(COALESCE(whatsapp_api_messages.direction, '')) = 'inbound'
     AND LOWER(COALESCE(excluded.message_type, '')) IN ('unsupported', 'unknown', 'unavailable')
     AND LOWER(COALESCE(whatsapp_api_messages.message_type, '')) NOT IN ('', 'status', 'unsupported', 'unknown', 'unavailable')`
+  // Un webhook oficial tardío puede actualizar el estado de un envío rescatado,
+  // pero la identidad del mensaje entregado sigue siendo la del QR que lo envió.
+  const keepExistingQrFallbackIdentity = cleanTransport === 'api' ? `
+    LOWER(COALESCE(whatsapp_api_messages.transport, '')) = 'qr'
+    AND LOWER(COALESCE(whatsapp_api_messages.source_adapter, '')) = 'baileys'
+    AND LOWER(COALESCE(whatsapp_api_messages.direction, '')) = 'outbound'
+    AND COALESCE(whatsapp_api_messages.routing_reason, '') != ''` : '1 = 0'
 
   const persistWhatsAppMessage = async ({ targetMessageId, updateOnIdConflict }) => db.run(`
     INSERT INTO whatsapp_api_messages (
@@ -9865,18 +9933,24 @@ async function upsertMessage({
         ELSE COALESCE(NULLIF(excluded.source_adapter, ''), whatsapp_api_messages.source_adapter)
       END,
       origin = COALESCE(NULLIF(excluded.origin, ''), whatsapp_api_messages.origin),
-      provider_message_id = COALESCE(NULLIF(excluded.provider_message_id, ''), whatsapp_api_messages.provider_message_id),
+      provider_message_id = CASE WHEN ${keepExistingQrFallbackIdentity} THEN whatsapp_api_messages.provider_message_id
+        ELSE COALESCE(NULLIF(excluded.provider_message_id, ''), whatsapp_api_messages.provider_message_id) END,
       ycloud_message_id = COALESCE(NULLIF(excluded.ycloud_message_id, ''), whatsapp_api_messages.ycloud_message_id),
       meta_message_id = COALESCE(NULLIF(excluded.meta_message_id, ''), whatsapp_api_messages.meta_message_id),
-      wamid = COALESCE(NULLIF(excluded.wamid, ''), whatsapp_api_messages.wamid),
-      protocol_message_key_id = COALESCE(NULLIF(excluded.protocol_message_key_id, ''), whatsapp_api_messages.protocol_message_key_id),
-      business_phone_number_id = COALESCE(excluded.business_phone_number_id, whatsapp_api_messages.business_phone_number_id),
+      wamid = CASE WHEN ${keepExistingQrFallbackIdentity} THEN whatsapp_api_messages.wamid
+        ELSE COALESCE(NULLIF(excluded.wamid, ''), whatsapp_api_messages.wamid) END,
+      protocol_message_key_id = CASE WHEN ${keepExistingQrFallbackIdentity} THEN whatsapp_api_messages.protocol_message_key_id
+        ELSE COALESCE(NULLIF(excluded.protocol_message_key_id, ''), whatsapp_api_messages.protocol_message_key_id) END,
+      business_phone_number_id = CASE WHEN ${keepExistingQrFallbackIdentity} THEN whatsapp_api_messages.business_phone_number_id
+        ELSE COALESCE(excluded.business_phone_number_id, whatsapp_api_messages.business_phone_number_id) END,
       whatsapp_api_contact_id = COALESCE(excluded.whatsapp_api_contact_id, whatsapp_api_messages.whatsapp_api_contact_id),
       contact_id = COALESCE(whatsapp_api_messages.contact_id, excluded.contact_id),
       phone = COALESCE(NULLIF(excluded.phone, ''), whatsapp_api_messages.phone),
-      from_phone = COALESCE(NULLIF(excluded.from_phone, ''), whatsapp_api_messages.from_phone),
+      from_phone = CASE WHEN ${keepExistingQrFallbackIdentity} THEN whatsapp_api_messages.from_phone
+        ELSE COALESCE(NULLIF(excluded.from_phone, ''), whatsapp_api_messages.from_phone) END,
       to_phone = COALESCE(NULLIF(excluded.to_phone, ''), whatsapp_api_messages.to_phone),
-      business_phone = COALESCE(NULLIF(excluded.business_phone, ''), whatsapp_api_messages.business_phone),
+      business_phone = CASE WHEN ${keepExistingQrFallbackIdentity} THEN whatsapp_api_messages.business_phone
+        ELSE COALESCE(NULLIF(excluded.business_phone, ''), whatsapp_api_messages.business_phone) END,
       transport = CASE
         WHEN LOWER(COALESCE(whatsapp_api_messages.transport, '')) = 'qr'
           AND LOWER(COALESCE(excluded.transport, '')) = 'api'
@@ -9935,9 +10009,10 @@ async function upsertMessage({
         ELSE COALESCE(NULLIF(excluded.error_message, ''), whatsapp_api_messages.error_message)
       END,
       message_timestamp = COALESCE(excluded.message_timestamp, whatsapp_api_messages.message_timestamp),
-      raw_payload_json = CASE WHEN ${keepExistingInboundContent} THEN whatsapp_api_messages.raw_payload_json
+      raw_payload_json = CASE WHEN (${keepExistingInboundContent}) OR (${keepExistingQrFallbackIdentity}) THEN whatsapp_api_messages.raw_payload_json
         ELSE COALESCE(NULLIF(excluded.raw_payload_json, ''), whatsapp_api_messages.raw_payload_json) END,
-      context_json = COALESCE(NULLIF(excluded.context_json, 'null'), whatsapp_api_messages.context_json),
+      context_json = CASE WHEN ${keepExistingQrFallbackIdentity} THEN whatsapp_api_messages.context_json
+        ELSE COALESCE(NULLIF(excluded.context_json, 'null'), whatsapp_api_messages.context_json) END,
       referral_json = COALESCE(NULLIF(excluded.referral_json, 'null'), whatsapp_api_messages.referral_json),
       detected_ctwa_clid = COALESCE(NULLIF(excluded.detected_ctwa_clid, ''), whatsapp_api_messages.detected_ctwa_clid),
       detected_source_id = COALESCE(NULLIF(excluded.detected_source_id, ''), whatsapp_api_messages.detected_source_id),
@@ -12470,10 +12545,8 @@ export async function getMetaDirectConnectionReadiness({ payload = {}, rawBody =
     throw new Error('Faltan los identificadores de WhatsApp que se deben confirmar')
   }
 
-  const [config, enabled, provider, phone] = await Promise.all([
+  const [config, phone] = await Promise.all([
     loadMetaDirectConfig(),
-    getAppConfig(CONFIG_KEYS.enabled),
-    getAppConfig(CONFIG_KEYS.provider),
     db.get(`
       SELECT id, provider, waba_id, status, api_send_enabled
       FROM whatsapp_api_phone_numbers
@@ -12482,8 +12555,6 @@ export async function getMetaDirectConnectionReadiness({ payload = {}, rawBody =
   ])
   const exactAssets = config.wabaId === expectedWabaId && config.phoneNumberId === expectedPhoneNumberId
   const ready = Boolean(
-    enabled === '1' &&
-    provider === META_DIRECT_PROVIDER_NAME &&
     config.connected &&
     config.webhookMode === 'installer_relay' &&
     exactAssets &&
@@ -12511,8 +12582,8 @@ export async function disconnectMetaDirectConnection() {
   if (current.phoneNumberId) {
     await db.run(`
       UPDATE whatsapp_api_phone_numbers
-      SET api_send_enabled = 0,
-          is_default_sender = 0,
+      SET status = 'DISCONNECTED',
+          api_send_enabled = 0,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND provider = ?
     `, [current.phoneNumberId, META_DIRECT_PROVIDER_NAME])
@@ -12526,7 +12597,7 @@ export async function disconnectMetaDirectConnection() {
     await setAppConfig(CONFIG_KEYS.provider, PROVIDER_NAME)
   }
   if (current.phoneNumberId) {
-    await selectNextDefaultWhatsAppPhone()
+    await reconcileWhatsAppDefaultSender()
   }
 
   return getWhatsAppApiStatus()
@@ -12778,6 +12849,7 @@ export async function repairWhatsAppProviderConnectionStates() {
     }
   }
 
+  await reconcileWhatsAppDefaultSender()
   return { ycloud, metaRegistrationRequired }
 }
 
@@ -14031,7 +14103,9 @@ export async function getWhatsAppQrForPhone({ phoneNumberId } = {}) {
 }
 
 export async function disconnectWhatsAppQrForPhone({ phoneNumberId } = {}) {
-  return disconnectWhatsAppQrConnection({ phoneNumberId })
+  const session = await disconnectWhatsAppQrConnection({ phoneNumberId })
+  await reconcileWhatsAppDefaultSender()
+  return session
 }
 
 async function createYCloudWhatsAppApiTemplate(templatePayload = {}) {
@@ -14790,11 +14864,7 @@ export async function sendWhatsAppApiTemplateMessage({
     },
     ...(templateComponents.length ? { components: templateComponents } : {})
   }
-  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
-
-  if (config.provider === PROVIDER_NAME && (!config.enabled || !config.apiKey)) {
-    throw new Error('WhatsApp_API no está conectado')
-  }
+  const fromPhone = normalizePhoneForStorage(config.senderPhone || from) || cleanString(config.senderPhone || from)
 
   if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
   const requestBody = {
@@ -14858,6 +14928,7 @@ export async function sendWhatsAppApiTemplateMessage({
       fallbackPhoneNumberId: fallbackDecision.fallbackPhoneRow?.id
     })
   }
+  throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
 
   let response
   try {
@@ -14984,7 +15055,7 @@ export async function sendWhatsAppApiInteractiveMessage({
 } = {}) {
   await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
-  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const fromPhone = normalizePhoneForStorage(config.senderPhone || from) || cleanString(config.senderPhone || from)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const interactiveInput = { body: body || text, buttons, urlButton }
   const renderedInteractiveInput = variablesResolved
@@ -15017,16 +15088,12 @@ export async function sendWhatsAppApiInteractiveMessage({
     cleanTransport = 'api'
   }
 
-  if (cleanTransport !== 'qr' && config.provider === PROVIDER_NAME && (!config.enabled || !config.apiKey)) {
-    throw new Error('WhatsApp_API no está conectado')
-  }
 
   if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
 
   if (cleanTransport === 'qr') {
     return sendTextViaQrFallback({
-      phoneNumberId,
-      fromPhone,
+      ...await resolveRequestedQrDelivery({ config, phoneNumberId, fromPhone, allowQrFallback }),
       toPhone,
       body: interactivePayload.fallbackText,
       externalId,
@@ -15158,12 +15225,24 @@ function buildQrFallbackError(originalError, fallbackError) {
 }
 
 const QR_FALLBACK_SENT_REASON = 'Ristak envió el mensaje por el respaldo QR del mismo número.'
+const CONFIGURED_QR_FALLBACK_SENT_REASON = 'Ristak envió el mensaje por el respaldo QR configurado.'
 
 function getAppliedQrFallbackReason(fallbackReason = '') {
   const reason = cleanString(fallbackReason)
   if (!reason) return ''
   if (/(?:US[ÓO]|ENVI[ÓO]).{0,80}(?:RESPALDO\s+)?QR/i.test(reason)) return reason
   return `${reason} ${QR_FALLBACK_SENT_REASON}`
+}
+
+function getQrFallbackReasonForSender(reason, sourcePhone, fallbackPhoneRow) {
+  if (!reason || !fallbackPhoneRow?.id || getQrSenderPhone(fallbackPhoneRow) === normalizePhoneForStorage(sourcePhone)) {
+    return reason
+  }
+  if (/respaldo QR del mismo número/i.test(reason)) {
+    return reason.replace(/respaldo QR del mismo número/i, 'respaldo QR configurado')
+  }
+  if (/(?:US[ÓO]|ENVI[ÓO]).{0,80}(?:RESPALDO\s+)?QR/i.test(reason)) return reason
+  return `${reason} ${CONFIGURED_QR_FALLBACK_SENT_REASON}`
 }
 
 function decorateQrFallbackResponse(response = {}, fallbackReason = '') {
@@ -15183,14 +15262,20 @@ function decorateQrFallbackResponse(response = {}, fallbackReason = '') {
 async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, phoneNumberId, contactId, replyToMessageId = '', replyToProviderMessageId = '', fallbackReason, originalError, persist = true, skipQrSendProtection = false, agentId } = {}) {
   try {
     const agentMetadata = buildConversationalAgentMessageMetadata(agentId)
+    // Una respuesta citada sólo existe en la conversación del remitente original.
+    const quotedReply = Boolean(replyToMessageId || replyToProviderMessageId)
+    const qrPhone = quotedReply && fallbackReason && phoneNumberId
+      ? getQrSenderPhone(await findBusinessPhoneRowForSender({ phoneNumberId }))
+      : ''
+    const fallbackNumberChanged = qrPhone && qrPhone !== normalizePhoneForStorage(fromPhone)
     const response = await sendWhatsAppQrTextMessage({
       phoneNumberId,
       from: fromPhone,
       to: toPhone,
       text: body,
       externalId,
-      replyToMessageId,
-      replyToProviderMessageId,
+      replyToMessageId: fallbackNumberChanged ? '' : replyToMessageId,
+      replyToProviderMessageId: fallbackNumberChanged ? '' : replyToProviderMessageId,
       skipQrSendProtection
     })
 
@@ -15210,6 +15295,7 @@ async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, pho
         message: {
           ...response,
           ...agentMetadata,
+          phoneNumberId,
           from: response.from || fromPhone,
           to: response.to || toPhone,
           type: response.type || 'text',
@@ -15262,6 +15348,7 @@ async function sendLocationViaQrFallback({ fromPhone, toPhone, location, externa
         },
         message: {
           ...response,
+          phoneNumberId,
           from: response.from || fromPhone,
           to: response.to || toPhone,
           type: 'location',
@@ -15369,6 +15456,7 @@ async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageD
         },
         message: {
           ...response,
+          phoneNumberId,
           from: response.from || fromPhone,
           to: response.to || toPhone,
           type: response.type || 'image',
@@ -15446,6 +15534,7 @@ async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, 
         },
         message: {
           ...response,
+          phoneNumberId,
           from: response.from || fromPhone,
           to: response.to || toPhone,
           type: response.type || 'document',
@@ -15523,6 +15612,7 @@ async function sendVideoViaQrFallback({ fromPhone, toPhone, requestVideo, videoD
         },
         message: {
           ...response,
+          phoneNumberId,
           from: response.from || fromPhone,
           to: response.to || toPhone,
           type: response.type || 'video',
@@ -15603,6 +15693,7 @@ async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioD
         },
         message: {
           ...response,
+          phoneNumberId,
           from: response.from || fromPhone,
           to: response.to || toPhone,
           type: response.type || 'audio',
@@ -15633,7 +15724,7 @@ async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioD
 /** Resolve the same default text route without sending anything. */
 export async function prepareWhatsAppApiTextDelivery({ to, from, phoneNumberId, contactId } = {}) {
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
-  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const fromPhone = normalizePhoneForStorage(config.senderPhone || from) || cleanString(config.senderPhone || from)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const decision = await getOfficialApiFallbackDecision({
     config, fromPhone, phoneNumberId: phoneNumberId || config.phoneNumberId,
@@ -15666,7 +15757,7 @@ export async function sendWhatsAppApiTextMessage({
 } = {}) {
   await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
-  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const fromPhone = normalizePhoneForStorage(config.senderPhone || from) || cleanString(config.senderPhone || from)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const renderedText = variablesResolved
     ? String(text ?? '')
@@ -15814,16 +15905,12 @@ export async function sendWhatsAppApiTextMessage({
     return { ...response, localMessageId: persistedMessage?.messageId || null }
   }
 
-  if (cleanTransport !== 'qr' && config.provider === PROVIDER_NAME && (!config.enabled || !config.apiKey)) {
-    throw new Error('WhatsApp_API no está conectado')
-  }
 
   if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
 
   if (cleanTransport === 'qr') {
     return sendTextViaQrFallback({
-      phoneNumberId,
-      fromPhone,
+      ...await resolveRequestedQrDelivery({ config, phoneNumberId, fromPhone, allowQrFallback }),
       toPhone,
       body,
       externalId,
@@ -15967,7 +16054,7 @@ export async function sendWhatsAppApiReactionMessage({
   await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
   let cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
-  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const fromPhone = normalizePhoneForStorage(config.senderPhone || from) || cleanString(config.senderPhone || from)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const reactionEmoji = cleanString(emoji)
   const target = await resolveWhatsAppMessageReference({
@@ -15994,6 +16081,7 @@ export async function sendWhatsAppApiReactionMessage({
   }
 
   if (cleanTransport !== 'qr' && config.provider === META_DIRECT_PROVIDER_NAME) {
+    if (!config.officialApiAvailable) throw new Error('WhatsApp API no está disponible para este número.')
     const response = await sendReactionViaMetaDirect({
       to: toPhone,
       from: fromPhone,
@@ -16025,14 +16113,11 @@ export async function sendWhatsAppApiReactionMessage({
     return { ...response, localMessageId: persistedMessage?.messageId || null }
   }
 
-  if (cleanTransport !== 'qr' && config.provider === PROVIDER_NAME && (!config.enabled || !config.apiKey)) {
-    throw new Error('WhatsApp_API no está conectado')
-  }
   if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
 
   if (cleanTransport === 'qr') {
     const response = await sendWhatsAppQrReactionMessage({
-      phoneNumberId,
+      phoneNumberId: (await resolveRequestedQrDelivery({ config, phoneNumberId, fromPhone })).phoneNumberId,
       from: fromPhone,
       to: toPhone,
       emoji: reactionEmoji,
@@ -16072,7 +16157,8 @@ export async function sendWhatsAppApiReactionMessage({
     phoneNumberId,
     toPhone,
     contactId,
-    checkReplyWindow: true
+    checkReplyWindow: true,
+    allowDifferentNumber: false
   })
   if (allowQrFallback && fallbackDecision.shouldFallback) {
     const response = await sendWhatsAppQrReactionMessage({
@@ -16173,7 +16259,7 @@ export async function sendWhatsAppApiLocationMessage({
 } = {}) {
   await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
-  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const fromPhone = normalizePhoneForStorage(config.senderPhone || from) || cleanString(config.senderPhone || from)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const location = normalizeWhatsAppLocation({ latitude, longitude, name, address })
 
@@ -16193,16 +16279,12 @@ export async function sendWhatsAppApiLocationMessage({
     cleanTransport = 'api'
   }
 
-  if (cleanTransport !== 'qr' && config.provider === PROVIDER_NAME && (!config.enabled || !config.apiKey)) {
-    throw new Error('WhatsApp_API no está conectado')
-  }
 
   if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
 
   if (cleanTransport === 'qr') {
     return sendLocationViaQrFallback({
-      phoneNumberId,
-      fromPhone,
+      ...await resolveRequestedQrDelivery({ config, phoneNumberId, fromPhone, allowQrFallback }),
       toPhone,
       location,
       externalId,
@@ -16357,7 +16439,7 @@ export async function sendWhatsAppApiImageMessage({
 } = {}) {
   await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
-  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const fromPhone = normalizePhoneForStorage(config.senderPhone || from) || cleanString(config.senderPhone || from)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const renderedCaption = variablesResolved
     ? String(caption ?? '')
@@ -16386,9 +16468,6 @@ export async function sendWhatsAppApiImageMessage({
   })) {
     cleanTransport = 'api'
   }
-  if (cleanTransport !== 'qr' && config.provider === PROVIDER_NAME && (!config.enabled || !config.apiKey)) {
-    throw new Error('WhatsApp_API no está conectado')
-  }
 
   let link = cleanImageUrl
   let providerImage = null
@@ -16403,8 +16482,7 @@ export async function sendWhatsAppApiImageMessage({
   if (cleanTransport === 'qr') {
     const optimizedImage = link ? null : await getPreparedImage()
     return sendImageViaQrFallback({
-      phoneNumberId,
-      fromPhone,
+      ...await resolveRequestedQrDelivery({ config, phoneNumberId, fromPhone, allowQrFallback }),
       toPhone,
       requestImage: {
         ...(link ? { link } : {}),
@@ -16650,7 +16728,7 @@ export async function sendWhatsAppApiDocumentMessage({
 } = {}) {
   await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
-  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const fromPhone = normalizePhoneForStorage(config.senderPhone || from) || cleanString(config.senderPhone || from)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const renderedCaption = variablesResolved
     ? String(caption ?? '')
@@ -16679,9 +16757,6 @@ export async function sendWhatsAppApiDocumentMessage({
   })) {
     cleanTransport = 'api'
   }
-  if (cleanTransport !== 'qr' && config.provider === PROVIDER_NAME && (!config.enabled || !config.apiKey)) {
-    throw new Error('WhatsApp_API no está conectado')
-  }
 
   let link = cleanDocumentUrl
   let providerDocument = null
@@ -16691,8 +16766,7 @@ export async function sendWhatsAppApiDocumentMessage({
 
   if (cleanTransport === 'qr') {
     return sendDocumentViaQrFallback({
-      phoneNumberId,
-      fromPhone,
+      ...await resolveRequestedQrDelivery({ config, phoneNumberId, fromPhone, allowQrFallback }),
       toPhone,
       requestDocument: {
         ...(link ? { link } : {}),
@@ -16757,7 +16831,11 @@ export async function sendWhatsAppApiDocumentMessage({
           ...(cleanCaption ? { caption: cleanCaption } : {})
         },
         documentDataUrl, externalId, contactId, publicBaseUrl, skipQrSendProtection,
-        fallbackReason: 'La API oficial no admite este tipo de archivo; Ristak usó el respaldo QR del mismo número.'
+        fallbackReason: getQrFallbackReasonForSender(
+          'La API oficial no admite este tipo de archivo; Ristak usó el respaldo QR del mismo número.',
+          fromPhone,
+          fallbackPhoneRow
+        )
       })
     }
     throw new Error('La API oficial de WhatsApp no admite archivos ZIP ni XML. Usa un número conectado sólo por QR o envíalo por Messenger u otro canal compatible.')
@@ -16951,7 +17029,7 @@ export async function sendWhatsAppApiVideoMessage({
 } = {}) {
   await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
-  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const fromPhone = normalizePhoneForStorage(config.senderPhone || from) || cleanString(config.senderPhone || from)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const renderedCaption = variablesResolved
     ? String(caption ?? '')
@@ -16979,9 +17057,6 @@ export async function sendWhatsAppApiVideoMessage({
     contactId
   })) {
     cleanTransport = 'api'
-  }
-  if (cleanTransport !== 'qr' && config.provider === PROVIDER_NAME && (!config.enabled || !config.apiKey)) {
-    throw new Error('WhatsApp_API no está conectado')
   }
 
   let link = cleanVideoUrl
@@ -17018,8 +17093,7 @@ export async function sendWhatsAppApiVideoMessage({
 
   if (cleanTransport === 'qr') {
     return sendVideoViaQrFallback({
-      phoneNumberId,
-      fromPhone,
+      ...await resolveRequestedQrDelivery({ config, phoneNumberId, fromPhone, allowQrFallback }),
       toPhone,
       requestVideo: await buildQrRequestVideo(),
       videoDataUrl: link ? undefined : qrVideoDataUrl,
@@ -17237,7 +17311,7 @@ export async function sendWhatsAppApiAudioMessage({
 } = {}) {
   await assertContactNotBlocked({ contactId, phone: to })
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
-  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const fromPhone = normalizePhoneForStorage(config.senderPhone || from) || cleanString(config.senderPhone || from)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const cleanAudioUrl = cleanString(audioUrl)
   const isVoiceNote = voice === undefined ? Boolean(audioDataUrl) : Boolean(voice)
@@ -17256,13 +17330,6 @@ export async function sendWhatsAppApiAudioMessage({
     contactId
   })) {
     cleanTransport = 'api'
-  }
-  if (
-    cleanTransport !== 'qr' &&
-    config.provider !== META_DIRECT_PROVIDER_NAME &&
-    (!config.enabled || !config.apiKey)
-  ) {
-    throw new Error('WhatsApp_API no está conectado')
   }
 
   let link = cleanAudioUrl
@@ -17325,8 +17392,7 @@ export async function sendWhatsAppApiAudioMessage({
 
   if (cleanTransport === 'qr') {
     return sendAudioViaQrFallback({
-      phoneNumberId,
-      fromPhone,
+      ...await resolveRequestedQrDelivery({ config, phoneNumberId, fromPhone, allowQrFallback }),
       toPhone,
       requestAudio: await buildQrRequestAudio(),
       audioDataUrl,

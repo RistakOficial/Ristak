@@ -673,6 +673,59 @@ test('el ruteo activo promueve API y conserva el QR hermano como respaldo autom�
   })
 })
 
+test('sólo envía por un QR de otro número si está vinculado y el envío permite respaldo', async () => {
+  await withYCloudMessageCapture(async (apiSends) => {
+    await withOnlyQrSender(async ({ phoneNumberId: qrId, sentMessages }) => {
+      const apiId = `phone_api_configured_backup_${randomUUID()}`
+      const apiPhone = '+16561234567'
+      const qrPhone = '+526561234567'
+      const to = '+525500098721'
+      try {
+        await setAppConfig(getWhatsAppApiConfigKeys().enabled, '0')
+        await db.run('UPDATE whatsapp_api_phone_numbers SET is_default_sender = 0 WHERE id = ?', [qrId])
+        await db.run(`
+          INSERT INTO whatsapp_api_phone_numbers (
+            id, provider, waba_id, phone_number, is_default_sender, api_send_enabled, status
+          ) VALUES (?, 'ycloud', 'waba_ycloud_buttons_test', ?, 1, 1, 'CONNECTED')
+        `, [apiId, apiPhone])
+
+        const noLink = await resolveWhatsAppOutboundRoute({ allowQrFallback: true })
+        assert.equal(noLink.phoneNumberId, apiId)
+        assert.equal(noLink.qrFallbackAvailable, false)
+        assert.equal(noLink.available, false)
+        const explicitSender = await resolveWhatsAppOutboundRoute({ fromPhone: qrPhone })
+        assert.equal(explicitSender.phoneNumberId, qrId)
+        assert.equal(explicitSender.transport, 'qr')
+
+        await db.run('UPDATE whatsapp_api_phone_numbers SET qr_fallback_phone_number_id = ? WHERE id = ?', [qrId, apiId])
+        const disallowed = await resolveWhatsAppOutboundRoute()
+        assert.equal(disallowed.available, false)
+        assert.equal(disallowed.qrFallbackAvailable, true)
+        await assert.rejects(sendWhatsAppApiTextMessage({ to, text: 'No autorizado', allowQrFallback: false }))
+
+        const allowed = await resolveWhatsAppOutboundRoute({ allowQrFallback: true })
+        assert.equal(allowed.available, true)
+        assert.equal(allowed.phoneNumberId, apiId)
+        assert.equal(allowed.transport, 'api')
+        const response = await sendWhatsAppApiTextMessage({ to, text: 'Respaldo autorizado', allowQrFallback: true })
+
+        assert.equal(apiSends.length, 0)
+        assert.equal(sentMessages.length, 1)
+        assert.equal(response.from, qrPhone)
+        assert.match(response.fallbackReason, /respaldo QR configurado/i)
+        const stored = await db.get('SELECT business_phone_number_id, business_phone FROM whatsapp_api_messages WHERE id = ?', [response.localMessageId])
+        assert.equal(stored?.business_phone_number_id, qrId)
+        assert.equal(stored?.business_phone, qrPhone)
+      } finally {
+        await db.run('DELETE FROM whatsapp_api_messages WHERE phone = ?', [to])
+        await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
+        await db.run('DELETE FROM contacts WHERE phone = ?', [to])
+        await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [apiId])
+      }
+    })
+  })
+})
+
 test('envía botones interactivos de respuesta por YCloud', async () => {
   await withYCloudMessageCapture(async (captures) => {
     const to = '+5215511112222'
