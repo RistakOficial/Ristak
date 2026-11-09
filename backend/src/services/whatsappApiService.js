@@ -10941,6 +10941,7 @@ export async function captureQrChatMessage({
     // antes de citas/automatizaciones/agente: cualquiera de esas rutas puede
     // esperar proveedores externos y no forma parte de la entrega del chat.
     void sendChatMessageNotification({
+      channel: 'whatsapp',
       contactId: result.contactId,
       contactName: result.contactName,
       phone: result.phone,
@@ -12130,6 +12131,7 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
     // externos, pero nunca deben retrasar el aviso de un mensaje ya persistido.
     newInboundResults.forEach(result => {
       void sendChatMessageNotification({
+        channel: 'whatsapp',
         contactId: result.contactId,
         contactName: result.contactName,
         phone: result.phone,

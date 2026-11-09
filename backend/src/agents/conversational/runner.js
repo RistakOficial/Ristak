@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { db } from '../../config/database.js'
 import { logger } from '../../utils/logger.js'
 import { DEFAULT_TIMEZONE, getAccountTimezone, normalizeToUtcIso, parseStoredUtcDateTime } from '../../utils/dateUtils.js'
+import { isAgentResponseScheduleOpen, isAgentResponseScheduleOpenAt } from '../../utils/conversationalAgentResponseSchedule.js'
 import { getAccountLocaleSettings } from '../../utils/accountLocale.js'
 import {
   getAIRuntimeConfig,
@@ -7799,6 +7800,34 @@ function messageTimestampMs(message = {}) {
   return toTimestampMs(message.message_timestamp || message.messageTimestamp || message.created_at || message.createdAt)
 }
 
+function inboundReceiptTimeMs(message) {
+  return parseStoredUtcDateTime(message.created_at ?? message.createdAt ?? message.message_timestamp)?.toMillis()
+}
+
+async function isInboundWithinAgentResponseSchedule(agent, message, state, allowEscalation) {
+  // La escalación ya persistida sólo cierra una obligación técnica del mismo
+  // inbound. No habilita un turno nuevo ni el clasificador ordinario.
+  if (allowEscalation && state?.inboundProcessingMessageId === message.id &&
+      getPendingMandatoryHandoffEscalationReason(state)) return true
+  return isAgentResponseScheduleOpen(agent.responseSchedule, inboundReceiptTimeMs(message), Date.now())
+}
+
+async function cancelFollowUpOutsideResponseSchedule({ contactId, agentId, channel, baseMessageId, followUpIndex }) {
+  await db.run(`
+    UPDATE conversational_agent_state
+    SET follow_up_base_message_id = NULL, updated_at = CURRENT_TIMESTAMP
+    WHERE contact_id = ? AND agent_id = ?
+      AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+      AND follow_up_base_message_id = ?
+      AND COALESCE(follow_up_sent_count, 0) = ?
+  `, [contactId, agentId, channel, baseMessageId, followUpIndex - 1])
+  await recordConversationalAgentEvent({
+    contactId,
+    eventType: 'follow_up_suppressed',
+    detail: { agentId, baseMessageId, followUpIndex, channel, reason: 'outside_response_schedule' }
+  }).catch(() => {})
+}
+
 function getNextFollowUpStep(agentConfig = {}, sentCount = 0) {
   const steps = getAgentFollowUpSteps(agentConfig)
   const index = Math.max(0, Number(sentCount) || 0)
@@ -8057,6 +8086,14 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
     return
   }
 
+  const cancelOutsideSchedule = () => cancelFollowUpOutsideResponseSchedule({
+    contactId, agentId: agentConfig.id, channel: normalizedChannel, baseMessageId, followUpIndex
+  })
+  if (!(await isAgentResponseScheduleOpen(agentConfig.responseSchedule, startTiming.dueAtMs, Date.now()))) {
+    await cancelOutsideSchedule()
+    return
+  }
+
   const aiProvider = resolveConversationalFollowUpAIProvider(agentConfig)
   const runtime = await resolveConversationalAIRuntime(aiProvider)
   agentConfig = { ...agentConfig, aiProvider }
@@ -8216,6 +8253,14 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
       dependencies: {
         splitter: splitMessageIntoBubbles,
         forceSingleMessage: hasServerVisibleAppointmentAvailability(ctx.actions),
+        beforeSendFence: async ({ send }) => {
+          const currentAgent = await getConversationalAgent(agentConfig.id)
+          if (!currentAgent?.enabled) return { allowed: false, reason: 'agent_paused' }
+          if (!(await isAgentResponseScheduleOpen(currentAgent.responseSchedule, beforeSendTiming.dueAtMs, Date.now()))) {
+            return { allowed: false, reason: 'outside_response_schedule' }
+          }
+          return { allowed: true, sent: true, deliveryResult: await send() }
+        },
         markReplyComplete: async ({ contactId: doneContactId, latest: doneLatest }) => {
           await db.run(`
             UPDATE conversational_agent_state
@@ -8250,6 +8295,11 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
           sentParts: delivery.sentParts
         }
       }).catch(() => {})
+      return
+    }
+
+    if (delivery.suppressedByDeliveryFence && !delivery.interruptedBy) {
+      if (delivery.suppressionReason === 'outside_response_schedule') await cancelOutsideSchedule()
       return
     }
 
@@ -8912,6 +8962,9 @@ export async function sendCurrentConversationalReply({
     if (!authority.checked || (authority.newerMessage && !ownsTerminalState)) {
       return { allowed: false, reason: 'newer_inbound_before_send', newerMessage: authority.newerMessage || null }
     }
+    if (!ownsTerminalState && !(await isAgentResponseScheduleOpen(agent.responseSchedule, Date.now()))) {
+      return { allowed: false, reason: 'outside_response_schedule' }
+    }
     return { allowed: true, sent: true, deliveryResult: await send() }
   })
 }
@@ -8924,6 +8977,7 @@ async function handleToolCallingV2InboundTurn({
   messages,
   historyEnvelope,
   pendingMessages = [],
+  hasOutsideScheduleHistory = false,
   agentConfig,
   runtime,
   aiProvider,
@@ -8952,7 +9006,12 @@ async function handleToolCallingV2InboundTurn({
     applyDeferredAutomaticRelease,
     conversationModel: agentConfig.model,
     historyEnvelope: { ...historyEnvelope, messages },
-    runtimeEventContext: 'Responde en una sola intervención a todos los mensajes pendientes desde la última respuesta. Usa también la conversación previa con el equipo humano como contexto; no vuelvas a preguntar datos que ya estén en el chat.'
+    runtimeEventContext: [
+      hasOutsideScheduleHistory
+        ? `Responde en una sola intervención a los últimos ${pendingMessages.length} mensajes entrantes. Usa los mensajes anteriores como contexto.`
+        : 'Responde en una sola intervención a todos los mensajes pendientes desde la última respuesta.',
+      'Usa también la conversación previa con el equipo humano como contexto; no vuelvas a preguntar datos que ya estén en el chat.'
+    ].join(' ')
   }), { hasCommittedEffect: toolCallingV2HasCommittedEffect }).catch(async (error) => {
     const ctx = error?.conversationalContext
     if (error?.code === 'conversational_turn_superseded' && toolCallingV2HasCommittedEffect(ctx)) {
@@ -12156,6 +12215,39 @@ export async function handleInboundConversationalMessage({
 	      if (!agentState || agentState.status !== 'active' || agentState.signal) return
 	      if (agentState.lastInboundMessageId === latest.id && agentState.lastAnsweredInboundMessageId === latest.id) return
 
+      const skipOutsideSchedule = async (message) => {
+        const claim = await claimConversationInboundMessage(contactId, message.id, {
+          agentId: agentConfig.id,
+          channel: normalizedChannel
+        })
+        let inboundSettled = ['already_completed', 'already_answered'].includes(claim.reason)
+        if (claim.claimed) {
+          const result = await completeConversationInboundMessage(contactId, message.id, {
+            agentId: agentConfig.id,
+            channel: normalizedChannel,
+            claimToken: claim.claimToken,
+            answered: false
+          })
+          inboundSettled = result.completed
+          if (inboundSettled) {
+            await recordConversationalAgentEvent({
+              contactId,
+              eventType: 'run_suppressed_outside_response_schedule',
+              detail: { messageId: message.id, agentId: agentConfig.id, channel: normalizedChannel }
+            }).catch(() => {})
+          }
+        }
+        if (inboundSettled) {
+          await deleteCurrentPendingRerun(runKey)
+        }
+        return { skipped: true, reason: 'outside_response_schedule' }
+      }
+      if (!(await isInboundWithinAgentResponseSchedule(
+        agentConfig, latest, agentState, mandatoryHandoffPolicyConfiguredForRun
+      ))) {
+        return await skipOutsideSchedule(latest)
+      }
+
       // Esperar desde la última recepción agrupa la ráfaga antes de llamar a IA.
       // Si llega otro mensaje, esta corrida reinicia el plazo y recarga el lote.
       const responseDelayMs = Math.max(CONVERSATIONAL_INBOUND_QUIET_WINDOW_MS, getAgentResponseDelayMs(agentConfig))
@@ -12178,6 +12270,18 @@ export async function handleInboundConversationalMessage({
         await deleteCurrentPendingRerun(runKey)
         return
       }
+      const currentAgent = await getConversationalAgent(agentConfig.id)
+      if (!currentAgent?.enabled) {
+        await deleteCurrentPendingRerun(runKey)
+        return
+      }
+      if (!(await isInboundWithinAgentResponseSchedule(
+        currentAgent, waitResult.latest, agentState,
+        mandatoryHandoffPolicyConfiguredForRun && shouldDeferAutomaticReleaseForMandatoryHandoff(currentAgent)
+      ))) {
+        return await skipOutsideSchedule(waitResult.latest)
+      }
+      agentConfig = { ...agentConfig, responseSchedule: currentAgent.responseSchedule }
       if (waitResult.latest.id !== latest.id) {
         latest = waitResult.latest
         highLevelPhoneRoute = await resolveHighLevelConversationalPhoneRoute({
@@ -12363,7 +12467,15 @@ export async function handleInboundConversationalMessage({
         await settleActiveClaim({ status: 'failed', error: 'conversation_history_empty' })
         return
       }
-	      const pendingMessages = await loadPendingInboundMessages(contactId, agentState, normalizedChannel, latest)
+      const pendingHistory = await loadPendingInboundMessages(contactId, agentState, normalizedChannel, latest)
+      let pendingMessages = pendingHistory
+      if (agentConfig.responseSchedule !== null) {
+        const timezone = await getAccountTimezone({ throwOnError: true })
+        const lastOutsideSchedule = pendingHistory.findLastIndex((message) => (
+          !isAgentResponseScheduleOpenAt(agentConfig.responseSchedule, timezone, inboundReceiptTimeMs(message))
+        ))
+        pendingMessages = pendingHistory.slice(lastOutsideSchedule + 1)
+      }
       const traceMessage = cleanMessageText(pendingMessages[pendingMessages.length - 1] || latest)
       mandatoryHandoffRuntimeInfrastructureReady = true
       await handleToolCallingV2InboundTurn({
@@ -12374,6 +12486,7 @@ export async function handleInboundConversationalMessage({
           messages,
           historyEnvelope,
           pendingMessages,
+          hasOutsideScheduleHistory: pendingMessages.length > 0 && pendingMessages.length !== pendingHistory.length,
           agentConfig,
           runtime,
           aiProvider,

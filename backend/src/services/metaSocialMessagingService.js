@@ -5270,6 +5270,7 @@ export async function processMetaSocialWebhook({
             logger.warn(`[Citas] Fallo inesperado al procesar inbound DM Meta: ${error.message}`)
           })
           sendChatMessageNotification({
+            channel: channelForAutomation,
             contactId: result.contactId,
             contactName: result.contactName,
             profileName: result.contactName,

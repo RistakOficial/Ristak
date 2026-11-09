@@ -2477,6 +2477,14 @@ async function ensureSqliteWhatsAppQrFallbackColumn() {
   }
 }
 
+async function ensureSqliteConversationalAgentResponseScheduleColumn() {
+  if (usePostgres) return
+  const columns = await db.all('PRAGMA table_info(conversational_agents)')
+  if (columns.length && !columns.some((column) => column.name === 'response_schedule')) {
+    await db.run('ALTER TABLE conversational_agents ADD COLUMN response_schedule TEXT')
+  }
+}
+
 // Inicializar tablas
 async function initTablesUnlocked() {
   try {
@@ -2620,6 +2628,7 @@ async function initTablesUnlocked() {
     ).catch(() => null)
     if (schemaBootstrap?.config_value === CORE_SCHEMA_BOOTSTRAP_VERSION) {
       await ensureSqliteWhatsAppQrFallbackColumn()
+      await ensureSqliteConversationalAgentResponseScheduleColumn()
       logger.info(`[Esquema] Bootstrap ${CORE_SCHEMA_BOOTSTRAP_VERSION} ya aplicado; se omite el replay legacy.`)
       return { skipped: true, version: CORE_SCHEMA_BOOTSTRAP_VERSION }
     }
@@ -7252,6 +7261,7 @@ async function initTablesUnlocked() {
         contact_scope TEXT DEFAULT 'all',
         contact_scope_cutoff_at DATETIME,
         response_delay_config TEXT,
+        response_schedule TEXT,
         reply_delivery_config TEXT,
         follow_up_config TEXT,
         goal_workflow_config TEXT,
@@ -7291,6 +7301,7 @@ async function initTablesUnlocked() {
         // La columna ya existe.
       }
     }
+    await ensureSqliteConversationalAgentResponseScheduleColumn()
     await db.run(`
       UPDATE conversational_agents
       SET runtime_mode = 'tool_calling_v2'

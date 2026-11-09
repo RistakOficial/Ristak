@@ -38,6 +38,12 @@ Backend:
   nunca mover ni redefinir la disponibilidad del negocio. Al consultar por fecha
   del visitante cubre hasta dos días de borde: UTC-12 y UTC+14 pueden separar el
   mismo instante por dos fechas de calendario.
+- Los horarios de respuesta del chatbot también usan la hora de pared de la
+  cuenta. Una fecha específica tiene prioridad sobre el horario semanal,
+  incluso si está cerrada. El inicio de un rango es inclusivo y el final es
+  exclusivo. Un rango termina en su mismo día y puede cerrar a las 24:00.
+  Para continuar después de medianoche, configura otro rango desde las 00:00
+  en el día siguiente.
 
 Frontend:
 

@@ -17,6 +17,7 @@ interface TimeParts {
   hour: number
   minute: number
   period: TimePeriod
+  endOfDay?: boolean
 }
 
 export interface TimePickerSelectProps {
@@ -25,6 +26,7 @@ export interface TimePickerSelectProps {
   disabled?: boolean
   className?: string
   allowLastMinute?: boolean
+  allowEndOfDay?: boolean
   confirmLabel?: string
   'aria-label': string
 }
@@ -35,6 +37,7 @@ const FIVE_MINUTE_OPTIONS = Array.from({ length: 12 }, (_, index) => index * 5)
 const padTimePart = (value: number) => String(value).padStart(2, '0')
 
 const parseTimeParts = (value: string): TimeParts => {
+  if (value === '24:00') return { hour: 12, minute: 0, period: 'AM', endOfDay: true }
   const match = /^(\d{2}):(\d{2})$/.exec(String(value || '').trim())
   const hour24 = match ? Number(match[1]) : 9
   const minute = match ? Number(match[2]) : 0
@@ -47,7 +50,8 @@ const parseTimeParts = (value: string): TimeParts => {
   }
 }
 
-const timePartsToValue = ({ hour, minute, period }: TimeParts) => {
+const timePartsToValue = ({ hour, minute, period, endOfDay }: TimeParts) => {
+  if (endOfDay) return '24:00'
   const hour24 = period === 'AM'
     ? hour % 12
     : (hour % 12) + 12
@@ -55,6 +59,7 @@ const timePartsToValue = ({ hour, minute, period }: TimeParts) => {
 }
 
 const formatTimeValue = (value: string) => {
+  if (value === '24:00') return 'Fin del día'
   const parts = parseTimeParts(value)
   return `${padTimePart(parts.hour)}:${padTimePart(parts.minute)} ${parts.period}`
 }
@@ -65,6 +70,7 @@ export const TimePickerSelect: React.FC<TimePickerSelectProps> = ({
   disabled = false,
   className = '',
   allowLastMinute = false,
+  allowEndOfDay = false,
   confirmLabel = 'De acuerdo',
   'aria-label': ariaLabel
 }) => {
@@ -133,7 +139,7 @@ export const TimePickerSelect: React.FC<TimePickerSelectProps> = ({
         <div className={styles.columns}>
           <DropdownMenuRadioGroup
             value={String(draft.hour)}
-            onValueChange={(hour) => setDraft(current => ({ ...current, hour: Number(hour) }))}
+            onValueChange={(hour) => setDraft(current => ({ ...current, hour: Number(hour), endOfDay: false }))}
             className={styles.column}
             aria-label="Hora"
           >
@@ -151,7 +157,7 @@ export const TimePickerSelect: React.FC<TimePickerSelectProps> = ({
 
           <DropdownMenuRadioGroup
             value={String(draft.minute)}
-            onValueChange={(minute) => setDraft(current => ({ ...current, minute: Number(minute) }))}
+            onValueChange={(minute) => setDraft(current => ({ ...current, minute: Number(minute), endOfDay: false }))}
             className={styles.column}
             aria-label="Minuto"
           >
@@ -168,8 +174,10 @@ export const TimePickerSelect: React.FC<TimePickerSelectProps> = ({
           </DropdownMenuRadioGroup>
 
           <DropdownMenuRadioGroup
-            value={draft.period}
-            onValueChange={(period) => setDraft(current => ({ ...current, period: period as TimePeriod }))}
+            value={draft.endOfDay ? 'end-of-day' : draft.period}
+            onValueChange={(period) => setDraft(current => period === 'end-of-day'
+              ? parseTimeParts('24:00')
+              : { ...current, period: period as TimePeriod, endOfDay: false })}
             className={styles.column}
             aria-label="AM o PM"
           >
@@ -183,6 +191,16 @@ export const TimePickerSelect: React.FC<TimePickerSelectProps> = ({
                 {period}
               </DropdownMenuRadioItem>
             ))}
+            {allowEndOfDay && (
+              <DropdownMenuRadioItem
+                value="end-of-day"
+                className={styles.option}
+                aria-label="Fin del día (24:00)"
+                onSelect={(event) => event.preventDefault()}
+              >
+                24:00
+              </DropdownMenuRadioItem>
+            )}
           </DropdownMenuRadioGroup>
         </div>
 

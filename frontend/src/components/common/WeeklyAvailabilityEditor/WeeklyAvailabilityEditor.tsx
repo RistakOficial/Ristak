@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react'
-import { Copy, Plus, Trash2 } from 'lucide-react'
+import { Copy } from 'lucide-react'
 import { Button } from '../Button'
-import { TimePickerSelect } from '../TimePickerSelect'
+import { AvailabilityTimeRanges } from './AvailabilityTimeRanges'
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -14,20 +14,19 @@ import {
   DEFAULT_WEEKLY_AVAILABILITY_RANGE,
   WEEKLY_AVAILABILITY_DAYS,
   cloneWeeklyAvailability,
-  findSuggestedAvailabilityRange,
-  minutesToTimeValue,
-  timeValueToMinutes,
-  type WeeklyAvailability,
-  type WeeklyAvailabilityTimeRange
+  type WeeklyAvailability
 } from './weeklyAvailability'
 
-const LAST_MINUTE_OF_DAY = 24 * 60 - 1
 import styles from './WeeklyAvailabilityEditor.module.css'
+
+const MONDAY_FIRST = [...WEEKLY_AVAILABILITY_DAYS.slice(1), WEEKLY_AVAILABILITY_DAYS[0]]
 
 export interface WeeklyAvailabilityEditorProps {
   value: WeeklyAvailability
   onChange: (value: WeeklyAvailability) => void
   minimumRangeMinutes?: number
+  allowEndOfDay?: boolean
+  mondayFirst?: boolean
   disabled?: boolean
   'aria-label'?: string
 }
@@ -144,6 +143,8 @@ export const WeeklyAvailabilityEditor: React.FC<WeeklyAvailabilityEditorProps> =
   value,
   onChange,
   minimumRangeMinutes = 60,
+  allowEndOfDay = false,
+  mondayFirst = false,
   disabled = false,
   'aria-label': ariaLabel = 'Disponibilidad semanal'
 }) => {
@@ -168,63 +169,6 @@ export const WeeklyAvailabilityEditor: React.FC<WeeklyAvailabilityEditorProps> =
     }))
   }
 
-  // Mantiene el rango siempre válido (fin > inicio). Cuando la persona mueve un
-  // extremo por encima del otro, en vez de dejar un rango imposible (que se
-  // descartaría al guardar) conservamos la duración del bloque desplazando el
-  // extremo que NO tocó. Así se puede configurar "2:00 – 7:00 PM" empezando por
-  // cualquiera de los dos selectores sin que el bloque se pierda.
-  const keepRangeValid = (
-    previous: WeeklyAvailabilityTimeRange,
-    patch: Partial<WeeklyAvailabilityTimeRange>
-  ): WeeklyAvailabilityTimeRange => {
-    const next = { ...previous, ...patch }
-    const start = timeValueToMinutes(next.start)
-    const end = timeValueToMinutes(next.end, true)
-    if (start === null || end === null || end > start) return next
-
-    const prevStart = timeValueToMinutes(previous.start)
-    const prevEnd = timeValueToMinutes(previous.end, true)
-    const fallbackSpan = Math.max(5, Math.round(minimumRangeMinutes) || 0)
-    const span = prevStart !== null && prevEnd !== null && prevEnd > prevStart
-      ? prevEnd - prevStart
-      : fallbackSpan
-
-    if ('start' in patch) {
-      const shiftedEnd = Math.min(LAST_MINUTE_OF_DAY, start + span)
-      if (shiftedEnd > start) return { start: next.start, end: minutesToTimeValue(shiftedEnd, true) }
-      // Sin espacio al final del día: fija el fin al último minuto y retrocede el inicio.
-      return {
-        start: minutesToTimeValue(Math.max(0, LAST_MINUTE_OF_DAY - span)),
-        end: minutesToTimeValue(LAST_MINUTE_OF_DAY, true)
-      }
-    }
-    // Se movió el fin: adelanta el inicio para conservar el bloque.
-    return { start: minutesToTimeValue(Math.max(0, end - span)), end: next.end }
-  }
-
-  const handleRangeChange = (
-    day: number,
-    rangeIndex: number,
-    patch: Partial<WeeklyAvailabilityTimeRange>
-  ) => {
-    emitDayChange(day, current => ({
-      ...current,
-      ranges: current.ranges.map((range, index) => index === rangeIndex ? keepRangeValid(range, patch) : range)
-    }))
-  }
-
-  const handleAddRange = (day: number, range: WeeklyAvailabilityTimeRange | null) => {
-    if (!range) return
-    emitDayChange(day, current => ({ ...current, enabled: true, ranges: [...current.ranges, range] }))
-  }
-
-  const handleDeleteRange = (day: number, rangeIndex: number) => {
-    emitDayChange(day, current => {
-      const ranges = current.ranges.filter((_, index) => index !== rangeIndex)
-      return { ...current, enabled: ranges.length > 0, ranges }
-    })
-  }
-
   const handleCopySchedule = (sourceDay: number, targetDays: number[]) => {
     const source = weekly.find(entry => entry.day === sourceDay)
     if (!source?.ranges.length) return
@@ -238,13 +182,12 @@ export const WeeklyAvailabilityEditor: React.FC<WeeklyAvailabilityEditorProps> =
 
   return (
     <div className={styles.editor} role="group" aria-label={ariaLabel}>
-      {WEEKLY_AVAILABILITY_DAYS.map(dayMeta => {
+      {(mondayFirst ? MONDAY_FIRST : WEEKLY_AVAILABILITY_DAYS).map(dayMeta => {
         const day = weekly.find(entry => entry.day === dayMeta.day) || {
           day: dayMeta.day,
           enabled: false,
           ranges: []
         }
-        const suggestedRange = findSuggestedAvailabilityRange(day.ranges, minimumRangeMinutes)
 
         return (
           <div
@@ -265,62 +208,25 @@ export const WeeklyAvailabilityEditor: React.FC<WeeklyAvailabilityEditorProps> =
             {!day.enabled ? (
               <span className={styles.unavailable}>No disponible</span>
             ) : (
-              <div className={styles.rangeStack}>
-                {day.ranges.map((range, rangeIndex) => (
-                  <div className={styles.rangeRow} key={`${day.day}-${rangeIndex}`}>
-                    <TimePickerSelect
-                      className={styles.timeControl}
-                      value={range.start}
-                      onValueChange={(start) => handleRangeChange(day.day, rangeIndex, { start })}
-                      disabled={disabled}
-                      aria-label={`Hora inicial del ${dayMeta.label.toLowerCase()}`}
-                    />
-                    <span className={styles.rangeSeparator} aria-hidden="true">a</span>
-                    <TimePickerSelect
-                      className={styles.timeControl}
-                      value={range.end}
-                      onValueChange={(end) => handleRangeChange(day.day, rangeIndex, { end })}
-                      allowLastMinute
-                      disabled={disabled}
-                      aria-label={`Hora final del ${dayMeta.label.toLowerCase()}`}
-                    />
-                    <div className={styles.rangeActions}>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="small"
-                        iconOnly
-                        disabled={disabled || !suggestedRange}
-                        onClick={() => handleAddRange(day.day, suggestedRange)}
-                        aria-label={`Agregar otro horario el ${dayMeta.label.toLowerCase()}`}
-                        title={suggestedRange ? 'Agregar otro horario' : 'No queda espacio para otro horario'}
-                      >
-                        <Plus size={16} aria-hidden="true" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="small"
-                        iconOnly
-                        className={styles.deleteAction}
-                        disabled={disabled}
-                        onClick={() => handleDeleteRange(day.day, rangeIndex)}
-                        aria-label={`Eliminar este horario del ${dayMeta.label.toLowerCase()}`}
-                        title="Eliminar horario"
-                      >
-                        <Trash2 size={16} aria-hidden="true" />
-                      </Button>
-                      {rangeIndex === 0 ? (
-                        <CopyScheduleMenu
-                          sourceDay={day.day}
-                          disabled={disabled}
-                          onApply={(targetDays) => handleCopySchedule(day.day, targetDays)}
-                        />
-                      ) : null}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <AvailabilityTimeRanges
+                ranges={day.ranges}
+                onChange={(ranges) => emitDayChange(day.day, (current) => ({
+                  ...current,
+                  enabled: ranges.length > 0,
+                  ranges
+                }))}
+                contextLabel={`del ${dayMeta.label.toLowerCase()}`}
+                minimumRangeMinutes={minimumRangeMinutes}
+                allowEndOfDay={allowEndOfDay}
+                disabled={disabled}
+                firstRangeAction={(
+                  <CopyScheduleMenu
+                    sourceDay={day.day}
+                    disabled={disabled}
+                    onApply={(targetDays) => handleCopySchedule(day.day, targetDays)}
+                  />
+                )}
+              />
             )}
           </div>
         )

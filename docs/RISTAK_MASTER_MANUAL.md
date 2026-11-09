@@ -9453,6 +9453,22 @@ La API conserva:
 
 ### Configuracion y experiencia del usuario
 
+En **Operación técnica del chat → Horario de respuesta**, cada chatbot puede
+estar **Activo siempre** o responder en **Días y horas específicas**. El horario
+se edita de lunes a domingo, con uno o más rangos por día. Una fecha específica reemplaza el horario semanal de ese día y puede
+tener su propio horario o quedar cerrada. Los chatbots anteriores conservan
+**Activo siempre** hasta que se les configure un horario.
+
+Fuera de horario, los mensajes siguen llegando al chat para atención humana y
+se aplican los avisos habituales del chat. El bot sólo inicia una respuesta automática si recibió el mensaje dentro de su
+horario y la ventana sigue abierta al procesarlo. Abrir otra ventana no dispara
+respuestas a mensajes que llegaron fuera de horario. Los seguimientos que
+vencen fuera de horario se omiten. Los acuses de acciones ya confirmadas y las
+entregas humanas de seguridad pendientes pueden terminar fuera de horario.
+El horario se guarda por bot en
+`conversational_agents.response_schedule` y la API lo expone como
+`responseSchedule`. Un valor nulo equivale a **Activo siempre**.
+
 Las condiciones de entrada y salida del chatbot muestran el nombre de las
 etiquetas seleccionadas, incluidas las internas del sistema, al volver a abrir
 la configuracion. Los menus desplegables forman parte de la edicion aunque se

@@ -1267,6 +1267,7 @@ async function saveInboundEmailFromImap({ imapMessage, parsed, config }) {
     })
 
     sendChatMessageNotification({
+      channel: 'email',
       contactId: contact.id,
       contactName: contact.full_name || from.name || from.address,
       text: text || subject || 'Nuevo correo',

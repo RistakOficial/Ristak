@@ -832,6 +832,7 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
     })
     const channel = getLocalChannelFromWhatsAppTransport(transport)
     sendChatMessageNotification({
+      channel: channel,
       contactId: contact.id,
       contactName: contact.full_name || contact.first_name || contactPhone,
       text: text || 'Nuevo mensaje',
@@ -952,6 +953,7 @@ async function upsertEmailRow({ message, contact, direction, notifyNewInbound })
       logger.warn(`[Chat Read State] No se pudo incrementar unread GHL email ${remoteMessageId}: ${error.message}`)
     })
     sendChatMessageNotification({
+      channel: 'email',
       contactId: contact.id,
       contactName: contact.full_name || contact.first_name || fromEmail || 'Email',
       text: text || getEmailSubject(message) || 'Nuevo correo',
@@ -1091,6 +1093,7 @@ async function upsertMetaRow({ message, contact, platform, direction, notifyNewI
       logger.warn(`[Chat Read State] No se pudo incrementar unread GHL ${platform} ${remoteMessageId}: ${error.message}`)
     })
     sendChatMessageNotification({
+      channel: platform,
       contactId: contact.id,
       contactName: contact.full_name || contact.first_name || platform,
       text: text || 'Nuevo mensaje',

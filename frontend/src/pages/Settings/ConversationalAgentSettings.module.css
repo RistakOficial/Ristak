@@ -3011,3 +3011,56 @@
   padding: 0 10px;
   font-size: 12px;
 }
+
+.responseScheduleEditor,
+.responseScheduleGroup {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.responseScheduleEditor {
+  gap: 18px;
+}
+
+.responseScheduleGroup h4 {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.responseScheduleGroup p,
+.responseScheduleNotice {
+  margin: 0;
+  color: var(--text-mute);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+
+.responseScheduleDate {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-block: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.responseScheduleDateHeading,
+.responseScheduleDateActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.responseScheduleDateHeading {
+  justify-content: space-between;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.responseScheduleDateInput {
+  flex: 1 1 180px;
+  min-width: 0;
+}

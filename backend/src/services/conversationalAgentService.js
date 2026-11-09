@@ -4,6 +4,11 @@ import { databaseDialect, db } from '../config/database.js'
 import { PUBLIC_URL } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { DEFAULT_TIMEZONE, getAccountTimezone, parseStoredUtcDateTime } from '../utils/dateUtils.js'
+import {
+  isAgentResponseScheduleOpen,
+  normalizeAgentResponseSchedule,
+  parseStoredAgentResponseSchedule
+} from '../utils/conversationalAgentResponseSchedule.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import {
   normalizeContactLifecycleStage,
@@ -13884,6 +13889,7 @@ function mapAgentRow(row) {
     contactScope: normalizeContactScope(row.contact_scope),
     contactScopeCutoffAt: row.contact_scope_cutoff_at || null,
     responseDelay: normalizeAgentResponseDelay(parseJsonField(row.response_delay_config, null)),
+    responseSchedule: parseStoredAgentResponseSchedule(row.response_schedule),
     replyDelivery: normalizeAgentReplyDeliveryForConfig(parseJsonField(row.reply_delivery_config, null)),
     followUp: normalizeAgentFollowUp(parseJsonField(row.follow_up_config, null)),
     goalWorkflow: normalizeAgentGoalWorkflow(parseJsonField(row.goal_workflow_config, null)),
@@ -14238,6 +14244,9 @@ function agentInputToRowValues(input, base) {
     responseDelay: input.responseDelay === undefined
       ? normalizeAgentResponseDelay(base.responseDelay)
       : normalizeAgentResponseDelay(input.responseDelay),
+    responseSchedule: input.responseSchedule === undefined
+      ? base.responseSchedule
+      : normalizeAgentResponseSchedule(input.responseSchedule),
     replyDelivery: input.replyDelivery === undefined
       ? normalizeAgentReplyDeliveryForConfig(base.replyDelivery)
       : normalizeAgentReplyDeliveryForConfig(input.replyDelivery),
@@ -14314,6 +14323,7 @@ const DEFAULT_AGENT_BASE = {
   contactScope: DEFAULT_CONTACT_SCOPE,
   contactScopeCutoffAt: null,
   responseDelay: DEFAULT_RESPONSE_DELAY_CONFIG,
+  responseSchedule: null,
   // Los agentes nuevos empiezan sin la mini-IA que separa globos. El dueño
   // puede activarla conscientemente desde el editor; los agentes existentes
   // conservan su configuración persistida y el fallback legacy de arriba.
@@ -14632,8 +14642,8 @@ export async function createConversationalAgent(input = {}) {
       allow_emojis, hide_attended, hide_attended_notifications,
       default_calendar_id, closing_strategy_mode, closing_strategy_custom,
       persuasion_level, language_level, contact_scope, contact_scope_cutoff_at,
-      response_delay_config, reply_delivery_config, follow_up_config, goal_workflow_config, entry_filters
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      response_delay_config, response_schedule, reply_delivery_config, follow_up_config, goal_workflow_config, entry_filters
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     id, next.name, next.enabled ? 1 : 0, next.aiProvider, next.model,
     next.runtimeMode,
@@ -14646,7 +14656,8 @@ export async function createConversationalAgent(input = {}) {
     0, next.hideAttendedNotifications ? 1 : 0, next.defaultCalendarId,
     next.closingStrategyMode, next.closingStrategyCustom,
     next.persuasionLevel, next.languageLevel, next.contactScope, next.contactScopeCutoffAt,
-    JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters)
+    JSON.stringify(next.responseDelay), next.responseSchedule ? JSON.stringify(next.responseSchedule) : null,
+    JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters)
   ])
   await recordConversationalAgentEvent({ eventType: 'agent_created', detail: { agentId: id, name: next.name } })
   return getConversationalAgent(id)
@@ -14678,6 +14689,7 @@ export async function updateConversationalAgent(agentId, input = {}) {
         closing_strategy_mode = ?, closing_strategy_custom = ?,
         persuasion_level = ?, language_level = ?,
         contact_scope = ?, contact_scope_cutoff_at = ?, response_delay_config = ?,
+        response_schedule = CASE WHEN ? = 1 THEN ? ELSE response_schedule END,
         reply_delivery_config = ?, follow_up_config = ?, goal_workflow_config = ?, entry_filters = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
@@ -14694,7 +14706,9 @@ export async function updateConversationalAgent(agentId, input = {}) {
     next.closingStrategyMode, next.closingStrategyCustom,
     next.persuasionLevel, next.languageLevel,
     next.contactScope, next.contactScopeCutoffAt,
-    JSON.stringify(next.responseDelay), JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters),
+    JSON.stringify(next.responseDelay), input.responseSchedule === undefined ? 0 : 1,
+    next.responseSchedule ? JSON.stringify(next.responseSchedule) : null,
+    JSON.stringify(next.replyDelivery), JSON.stringify(next.followUp), JSON.stringify(next.goalWorkflow), JSON.stringify(next.filters),
     agentId
     ])
     if (input?.capabilitiesConfig !== undefined) {
@@ -18100,17 +18114,18 @@ export async function pauseConversationForExternalWhatsAppReply(contactId, { mes
   })
 }
 
-export async function shouldSuppressChatNotificationForConversationalAgent(contactId) {
+export async function shouldSuppressChatNotificationForConversationalAgent(contactId, {
+  channel = null,
+  receivedAtMs = Date.now()
+} = {}) {
   if (!contactId) return false
-  const states = await listConversationStatesForContact(contactId)
+  const states = await listConversationStatesForContact(contactId, { channel })
   for (const state of states) {
-    if (!state?.agentId || state.status !== 'active' || state.signal) continue
-    if (state.agentEnabled !== null && state.agentHideAttendedNotifications !== null) {
-      if (state.agentEnabled && state.agentHideAttendedNotifications) return true
-      continue
-    }
+    if (!state?.agentId || state.status !== 'active' || state.signal ||
+        state.agentEnabled === false || state.agentHideAttendedNotifications === false) continue
     const agent = await getConversationalAgent(state.agentId)
-    if (agent?.enabled && agent.hideAttendedNotifications) return true
+    if (agent?.enabled && agent.hideAttendedNotifications &&
+        await isAgentResponseScheduleOpen(agent.responseSchedule, receivedAtMs)) return true
   }
   return false
 }

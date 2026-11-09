@@ -1,3 +1,4 @@
+export { AvailabilityTimeRanges } from './AvailabilityTimeRanges'
 export { WeeklyAvailabilityEditor, default } from './WeeklyAvailabilityEditor'
 export type { WeeklyAvailabilityEditorProps } from './WeeklyAvailabilityEditor'
 export {
@@ -13,6 +14,7 @@ export {
   openHoursToWeeklyAvailability,
   summarizeWeeklyAvailability,
   timeValueToMinutes,
+  validateAvailabilityRanges,
   validateWeeklyAvailability,
   weeklyAvailabilityToOpenHours
 } from './weeklyAvailability'

@@ -437,6 +437,16 @@ export interface AgentSuccessExtra {
   value?: string
 }
 
+export interface AgentResponseScheduleInterval {
+  start: string
+  end: string
+}
+
+export interface AgentResponseSchedule {
+  weekly: Array<AgentResponseScheduleInterval & { dayOfWeek: number }>
+  dateOverrides: Array<{ date: string; intervals: AgentResponseScheduleInterval[] }>
+}
+
 export interface ConversationalAgentDef {
   id: string
   name: string
@@ -468,6 +478,7 @@ export interface ConversationalAgentDef {
   languageLevel: ConversationalLanguageLevel
   contactScope: ConversationalContactScope
   contactScopeCutoffAt?: string | null
+  responseSchedule: AgentResponseSchedule | null
   responseDelay: AgentResponseDelayConfig
   replyDelivery: AgentReplyDeliveryConfig
   followUp: AgentFollowUpConfig
@@ -1230,6 +1241,7 @@ function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
     languageLevel: normalizeConversationalLanguageLevel(agent.languageLevel),
     contactScope: normalizeContactScope(agent.contactScope),
     contactScopeCutoffAt: agent.contactScopeCutoffAt ?? null,
+    responseSchedule: agent.responseSchedule ?? null,
     followUp: {
       ...DEFAULT_AGENT_FOLLOW_UP,
       ...((agent.followUp || {}) as Partial<AgentFollowUpConfig>),

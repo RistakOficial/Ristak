@@ -222,81 +222,87 @@ export const calendarDurationToMinutes = (value: unknown, unit: unknown) => {
   return Math.max(1, Math.round(amount * (normalizedUnit.startsWith('hour') ? 60 : 1)))
 }
 
-export const validateWeeklyAvailability = (
-  value: WeeklyAvailability,
-  minimumRangeMinutes = 1
-): WeeklyAvailabilityValidationResult => {
-  const issues: WeeklyAvailabilityValidationIssue[] = []
+export const validateAvailabilityRanges = (
+  ranges: WeeklyAvailabilityTimeRange[],
+  dayLabel: string,
+  minimumRangeMinutes = 1,
+  allowEndOfDay = false
+): Array<Omit<WeeklyAvailabilityValidationIssue, 'day'>> => {
+  const issues: Array<Omit<WeeklyAvailabilityValidationIssue, 'day'>> = []
   const requiredMinutes = Math.max(1, Math.round(Number(minimumRangeMinutes) || 1))
 
-  cloneWeeklyAvailability(value).forEach(entry => {
-    if (!entry.enabled) return
-    const dayLabel = WEEKLY_AVAILABILITY_DAYS.find(day => day.day === entry.day)?.label || 'Ese día'
-    if (!entry.ranges.length) {
+  if (!ranges.length) return [{
+    code: 'missing_ranges',
+    message: `${dayLabel} está activo, pero no tiene ningún horario.`
+  }]
+
+  const normalizedRanges = ranges.map(range => ({
+    range,
+    start: timeValueToMinutes(range.start),
+    end: timeValueToMinutes(range.end, allowEndOfDay)
+  }))
+
+  normalizedRanges.forEach(({ range, start, end }) => {
+    if (start === null || end === null || end <= start) {
       issues.push({
-        day: entry.day,
-        code: 'missing_ranges',
-        message: `${dayLabel} está activo, pero no tiene ningún horario.`
+        code: 'invalid_range',
+        message: `Revisa el horario ${range.start || 'sin inicio'}–${range.end || 'sin cierre'} de ${dayLabel}. La hora final debe ser posterior a la inicial.`
       })
       return
     }
-
-    const normalizedRanges = entry.ranges.map(range => ({
-      range,
-      start: timeValueToMinutes(range.start),
-      end: timeValueToMinutes(range.end)
-    }))
-
-    normalizedRanges.forEach(({ range, start, end }) => {
-      if (start === null || end === null || end <= start) {
-        issues.push({
-          day: entry.day,
-          code: 'invalid_range',
-          message: `Revisa el horario ${range.start || 'sin inicio'}–${range.end || 'sin cierre'} de ${dayLabel}. La hora final debe ser posterior a la inicial.`
-        })
-        return
-      }
-      if (end - start < requiredMinutes) {
-        issues.push({
-          day: entry.day,
-          code: 'range_too_short',
-          message: `El horario ${range.start}–${range.end} de ${dayLabel} es menor que la duración de la cita (${requiredMinutes} min).`
-        })
-      }
-    })
-
-    const validRanges = normalizedRanges
-      .filter((range): range is { range: WeeklyAvailabilityTimeRange; start: number; end: number } => (
-        range.start !== null && range.end !== null && range.end > range.start
-      ))
-      .sort((left, right) => left.start - right.start)
-
-    for (let index = 1; index < validRanges.length; index += 1) {
-      const previous = validRanges[index - 1]
-      const current = validRanges[index]
-      if (current.start < previous.end) {
-        issues.push({
-          day: entry.day,
-          code: 'overlap',
-          message: `Hay horarios empalmados el ${dayLabel.toLowerCase()}: ${previous.range.start}–${previous.range.end} y ${current.range.start}–${current.range.end}.`
-        })
-      }
+    if (end - start < requiredMinutes) {
+      issues.push({
+        code: 'range_too_short',
+        message: `El horario ${range.start}–${range.end} de ${dayLabel} es menor que la duración de la cita (${requiredMinutes} min).`
+      })
     }
   })
 
+  const validRanges = normalizedRanges
+    .filter((range): range is { range: WeeklyAvailabilityTimeRange; start: number; end: number } => (
+      range.start !== null && range.end !== null && range.end > range.start
+    ))
+    .sort((left, right) => left.start - right.start)
+
+  for (let index = 1; index < validRanges.length; index += 1) {
+    const previous = validRanges[index - 1]
+    const current = validRanges[index]
+    if (current.start < previous.end) {
+      issues.push({
+        code: 'overlap',
+        message: `Hay horarios empalmados el ${dayLabel.toLowerCase()}: ${previous.range.start}–${previous.range.end} y ${current.range.start}–${current.range.end}.`
+      })
+    }
+  }
+
+  return issues
+}
+
+export const validateWeeklyAvailability = (
+  value: WeeklyAvailability,
+  minimumRangeMinutes = 1,
+  allowEndOfDay = false
+): WeeklyAvailabilityValidationResult => {
+  const issues = cloneWeeklyAvailability(value).flatMap(entry => {
+    if (!entry.enabled) return []
+    const dayLabel = WEEKLY_AVAILABILITY_DAYS.find(day => day.day === entry.day)?.label || 'Ese día'
+    return validateAvailabilityRanges(entry.ranges, dayLabel, minimumRangeMinutes, allowEndOfDay)
+      .map(issue => ({ ...issue, day: entry.day }))
+  })
   return { valid: issues.length === 0, issues }
 }
 
 export const findSuggestedAvailabilityRange = (
   ranges: WeeklyAvailabilityTimeRange[],
-  minimumRangeMinutes = 60
+  minimumRangeMinutes = 60,
+  allowEndOfDay = false
 ): WeeklyAvailabilityTimeRange | null => {
-  const lastMinuteOfDay = 24 * 60 - 1
+  const lastMinuteOfDay = 24 * 60 - Number(!allowEndOfDay)
   const desiredMinutes = Math.min(lastMinuteOfDay, Math.max(5, Math.ceil(Math.max(60, minimumRangeMinutes) / 5) * 5))
   const occupied = ranges
     .map(range => ({
       start: timeValueToMinutes(range.start),
-      end: timeValueToMinutes(range.end)
+      end: timeValueToMinutes(range.end, allowEndOfDay)
     }))
     .filter((range): range is { start: number; end: number } => (
       range.start !== null && range.end !== null && range.end > range.start
@@ -319,7 +325,7 @@ export const findSuggestedAvailabilityRange = (
   if (!gap) return null
   return {
     start: minutesToTimeValue(gap.start),
-    end: minutesToTimeValue(gap.start + desiredMinutes)
+    end: minutesToTimeValue(gap.start + desiredMinutes, allowEndOfDay)
   }
 }
 

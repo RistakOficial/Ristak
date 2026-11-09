@@ -2708,6 +2708,7 @@ export async function sendAppointmentConfirmationNotification(appointment = {}, 
 }
 
 export async function sendChatMessageNotification(message = {}) {
+  const receivedAtMs = Date.now()
   const durableDelivery = message.durableDelivery === true
   const initialTransport = await getEffectivePushTransportStatus()
   const canProbeUnknownCentral = durableDelivery && initialTransport?.central?.transientFailure === true
@@ -2721,7 +2722,9 @@ export async function sendChatMessageNotification(message = {}) {
   }
 
   // (MOB-006) El on/off de chat se resuelve POR usuario destinatario en el dispatcher.
-  const suppressByAgent = await shouldSuppressChatNotificationForConversationalAgent(message.contactId).catch((error) => {
+  const suppressByAgent = await shouldSuppressChatNotificationForConversationalAgent(message.contactId, {
+    channel: message.channel, receivedAtMs
+  }).catch((error) => {
     logger.warn(`[Push] No se pudo revisar silencio del agente conversacional: ${error.message}`)
     return false
   })

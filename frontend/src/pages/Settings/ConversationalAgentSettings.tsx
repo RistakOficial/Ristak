@@ -49,6 +49,7 @@ import {
   type AgentResponseDelayConfig,
   type AgentResponseDelayMode,
   type AgentResponseDelayUnit,
+  type AgentResponseSchedule,
   type ConversationalAIProviderStatus,
   type ConversationalAgentConfig,
   type ConversationalAgentDef,
@@ -76,6 +77,7 @@ import { calendarsService, type Calendar } from '@/services/calendarsService'
 import apiClient from '@/services/apiClient'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower, formatCrmLabelSentence } from '@/utils/crmLabels'
 import { formatCurrency } from '@/utils/format'
+import { AgentResponseScheduleEditor, getAgentResponseScheduleError } from './AgentResponseScheduleEditor'
 import { ConditionBuilder } from './ConditionBuilder'
 import styles from './ConversationalAgentSettings.module.css'
 import { describeConversationalPreviewAction } from './conversationalPreviewAction'
@@ -748,6 +750,7 @@ function agentToInput(agent: ConversationalAgentDef): ConversationalAgentDefInpu
     hideAttended: agent.hideAttended,
     hideAttendedNotifications: agent.hideAttendedNotifications,
     contactScope: agent.contactScope,
+    responseSchedule: agent.responseSchedule,
     responseDelay: agent.responseDelay,
     replyDelivery: agent.replyDelivery,
     followUp: agent.followUp,
@@ -963,6 +966,7 @@ function getNativeCapabilityError(agent: ConversationalAgentDef, accountCurrency
 function getAgentValidationError(agent: ConversationalAgentDef, accountCurrency = '') {
   return getConversationalHandoffRulesLengthError(agent.capabilitiesConfig) ||
     (agent.enabled ? getNativeCapabilityError(agent, accountCurrency) : '') ||
+    getAgentResponseScheduleError(agent.responseSchedule) ||
     getResponseDelayError(getAgentResponseDelay(agent)) ||
     getReplyDeliveryError(getAgentReplyDelivery(agent)) ||
     getFollowUpError(getAgentFollowUp(agent))
@@ -1108,6 +1112,62 @@ function QuestionSelectRow<T extends string>({
         </div>
       )}
     </div>
+  )
+}
+
+const responseScheduleModes = [
+  { value: 'always', label: 'Activo siempre' },
+  { value: 'scheduled', label: 'Días y horas específicas' }
+] as const
+
+function AgentResponseScheduleQuestion({
+  value,
+  onChange
+}: {
+  value: AgentResponseSchedule | null
+  onChange: (value: AgentResponseSchedule | null) => void
+}) {
+  const [draft, setDraft] = useState<AgentResponseSchedule | null>(null)
+  const schedule = draft ?? value
+  const error = getAgentResponseScheduleError(draft)
+
+  return (
+    <QuestionSelectRow
+      question="¿Cuándo puede responder el agente?"
+      helper="Decide si responde a cualquier hora o solo dentro de los días y horarios que elijas."
+      value={schedule ? 'scheduled' : 'always'}
+      options={[...responseScheduleModes]}
+      selectLabel="Horario de respuesta"
+      onChange={(mode) => {
+        if (mode === 'always') {
+          setDraft(null)
+          if (value) onChange(null)
+        } else {
+          setDraft({ weekly: [], dateOverrides: [] })
+        }
+      }}
+    >
+      {schedule && (
+        <>
+          {error && (
+            <p className={styles.responseScheduleNotice} role="status">
+              {error}{value ? ' Mientras tanto, sigue vigente el último horario válido.' : ' Por ahora sigue activo siempre.'}
+            </p>
+          )}
+          <AgentResponseScheduleEditor
+            value={schedule}
+            onChange={(next) => {
+              if (getAgentResponseScheduleError(next)) {
+                setDraft(next)
+              } else {
+                setDraft(null)
+                onChange(next)
+              }
+            }}
+          />
+        </>
+      )}
+    </QuestionSelectRow>
   )
 }
 
@@ -3642,6 +3702,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 options={selectedAgentModelOptions}
                 selectLabel={`Modelo de ${selectedProvider.label}`}
                 onChange={(model) => onChange({ model })}
+              />
+
+              <AgentResponseScheduleQuestion
+                key={agent.id}
+                value={agent.responseSchedule}
+                onChange={(responseSchedule) => onChange({ responseSchedule })}
               />
 
               <QuestionSelectRow
