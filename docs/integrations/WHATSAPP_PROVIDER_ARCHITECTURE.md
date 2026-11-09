@@ -464,10 +464,10 @@ plantilla `cita_programada` usa un encabezado de texto sin emoji porque Meta no
 admite emojis ni caracteres de formato en ese componente.
 
 Después de completar Embedded Signup de Meta directo, Configuración > WhatsApp
-abre un paso de pagos exclusivo de Meta. **Configurar ahora** abre la pantalla de
-la cuenta correcta en Meta usando el `business_id` y el WABA guardados por ese
-callback; **Configurar después** cierra el aviso y la misma liga permanece en
-Más acciones. La tarjeta se registra únicamente en Meta y nunca pasa por Ristak.
+muestra un solo aviso de pagos por conexión. **Configurar ahora** cierra el aviso
+y abre la pantalla de la cuenta correcta en otra pestaña de Meta usando el
+`business_id` y el WABA de la conexión. **Configurar después** cierra el aviso y
+la misma liga permanece en Más acciones. La tarjeta se registra solo en Meta.
 Este paso no usa IDs, estados ni credenciales YCloud.
 
 ## Contratos de webhook

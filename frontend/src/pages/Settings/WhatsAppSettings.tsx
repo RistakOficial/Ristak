@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -302,6 +303,7 @@ export const WhatsAppSettings: React.FC = () => {
   const [qrFallbackDraft, setQrFallbackDraft] = useState<QrFallbackDraft | null>(null)
   const [qrFallbackSaving, setQrFallbackSaving] = useState(false)
   const statusReadVersion = useRef(0)
+  const handledMetaConnectionKey = useRef<string | null>(null)
 
   const hasWhatsAppApiAccess = hasLicenseFeature(user, ['whatsapp_api'])
   const hasWhatsAppTemplatesAccess = hasLicenseFeature(user, ['whatsapp_templates'])
@@ -412,8 +414,9 @@ export const WhatsAppSettings: React.FC = () => {
   }, [apiStatus?.metaDirect?.businessId, apiStatus?.metaDirect?.wabaId, selectedMetaWabaId])
 
   const openMetaPaymentConfiguration = () => {
+    // Cierra el aviso antes de que el navegador cambie de pestaña.
+    flushSync(() => setMetaPaymentSetupOpen(false))
     window.open(paymentConfigUrl, '_blank', 'noopener,noreferrer')
-    setMetaPaymentSetupOpen(false)
   }
 
   useEffect(() => {
@@ -441,10 +444,17 @@ export const WhatsAppSettings: React.FC = () => {
   useEffect(() => {
     const params = new URLSearchParams(location.search)
     const connected = params.get('meta_connected')
-    if (!connected) return
+    const hashParams = new URLSearchParams(location.hash.slice(1))
+    const signupSucceeded = hashParams.get('whatsapp_meta') === 'success'
+    if ((!connected && !signupSucceeded) || handledMetaConnectionKey.current === location.key) return
+    handledMetaConnectionKey.current = location.key
 
-    if (connected === '1') {
-      showToast('success', 'Meta conectado', 'La conexión directa quedó guardada. Actívala cuando quieras usarla para enviar.')
+    if (signupSucceeded || connected === '1') {
+      if (signupSucceeded) {
+        showToast('success', 'WhatsApp conectado con Meta', 'Tu número oficial quedó activo en Ristak.')
+      } else {
+        showToast('success', 'Meta conectado', 'La conexión directa quedó guardada. Actívala cuando quieras usarla para enviar.')
+      }
       invalidateIntegrationsStatus()
       loadApiStatus()
         .catch(() => null)
@@ -455,23 +465,13 @@ export const WhatsAppSettings: React.FC = () => {
 
     params.delete('meta_connected')
     params.delete('meta_error')
+    if (signupSucceeded) hashParams.delete('whatsapp_meta')
     navigate({
       pathname: location.pathname,
-      search: params.toString() ? `?${params.toString()}` : ''
+      search: params.toString(),
+      hash: signupSucceeded ? hashParams.toString() : location.hash
     }, { replace: true })
-  }, [location.pathname, location.search, navigate, showToast])
-
-  useEffect(() => {
-    const params = new URLSearchParams(location.hash.replace(/^#/, ''))
-    if (params.get('whatsapp_meta') !== 'success') return
-
-    showToast('success', 'WhatsApp conectado con Meta', 'Tu número oficial quedó activo en Ristak.')
-    invalidateIntegrationsStatus()
-    loadApiStatus()
-      .catch(() => null)
-      .finally(() => setMetaPaymentSetupOpen(true))
-    navigate({ pathname: location.pathname, search: location.search, hash: '' }, { replace: true })
-  }, [location.hash, location.pathname, location.search, navigate, showToast])
+  }, [location.hash, location.key, location.pathname, location.search, navigate, showToast])
 
   useEffect(() => {
     const hasPendingQr = visiblePhoneNumbers.some((phone) => {

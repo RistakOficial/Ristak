@@ -150,15 +150,19 @@ test('el frontend pide configurar pagos después de conectar Meta por cualquiera
   )
 
   assert.ok(settingsSource.includes("const [metaPaymentSetupOpen, setMetaPaymentSetupOpen] = useState(false)"))
+  assert.match(settingsSource, /params\.get\('meta_connected'\)/)
+  assert.match(settingsSource, /hashParams\.get\('whatsapp_meta'\) === 'success'/)
+  assert.match(settingsSource, /signupSucceeded \|\| connected === '1'/)
   assert.equal(
     settingsSource.match(/finally\(\(\) => setMetaPaymentSetupOpen\(true\)\)/g)?.length,
-    2,
-    'los callbacks meta_connected y whatsapp_meta deben mostrar el mismo siguiente paso'
+    1,
+    'ambos callbacks deben compartir una sola apertura del aviso'
   )
   assert.ok(settingsSource.includes('Configura los pagos de WhatsApp Business'))
   assert.ok(settingsSource.includes('Configurar después'))
-  assert.ok(settingsSource.includes('Configurar ahora'))
+  assert.match(settingsSource, /onClick=\{openMetaPaymentConfiguration\}>\s*Configurar ahora/)
   assert.match(settingsSource, /variant="ghost"[\s\S]*?Configurar después/)
+  assert.match(settingsSource, /flushSync\(\(\) => setMetaPaymentSetupOpen\(false\)\)\s*window\.open\(paymentConfigUrl,/)
   assert.match(settingsSource, /apiStatus\?\.metaDirect\?\.businessId/)
   assert.match(settingsSource, /apiStatus\?\.metaDirect\?\.wabaId/)
   assert.doesNotMatch(settingsSource, /const ycloudAssetId/)
