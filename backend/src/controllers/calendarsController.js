@@ -56,6 +56,7 @@ import {
   dispatchAppointmentCreatedAutomations
 } from '../services/appointmentAutomationService.js';
 import { deleteAppointmentEverywhere } from '../services/appointmentDeletionService.js';
+import { isLocalOnlyConversationalTestAppointment } from '../services/conversationalAgentTestContactService.js';
 import { resolveAppointmentConfirmationFlow } from '../services/appointmentConfirmationService.js';
 import { INTERNAL_CONTROLLER_CONTEXT } from '../agents/invokeController.js';
 import {
@@ -2701,6 +2702,7 @@ export async function createAppointment(req, res) {
       });
     }
     const internalAppointmentContext = req[INTERNAL_CONTROLLER_CONTEXT] || {};
+    const localOnlyTest = carriesTestMetadata && isLocalOnlyConversationalTestAppointment(appointmentData);
     const conversationalAppointmentAuthorityFence = typeof internalAppointmentContext.conversationalAppointmentAuthorityFence === 'function'
       ? internalAppointmentContext.conversationalAppointmentAuthorityFence
       : null;
@@ -2812,12 +2814,14 @@ export async function createAppointment(req, res) {
     // impedir crear la cita: si falla, degradamos a valores planos.
     let renderedTemplates;
     try {
-      renderedTemplates = await renderCalendarAppointmentTemplates({
-        calendar: localCalendar || {},
-        appointmentData,
-        titleTemplate: appointmentData.title || localCalendar?.eventTitle || localCalendar?.name || 'Cita',
-        notesTemplate: localCalendar?.notes || appointmentData.notes || appointmentData.description || ''
-      });
+      renderedTemplates = localOnlyTest
+        ? { title: appointmentData.title, notes: appointmentData.notes }
+        : await renderCalendarAppointmentTemplates({
+            calendar: localCalendar || {},
+            appointmentData,
+            titleTemplate: appointmentData.title || localCalendar?.eventTitle || localCalendar?.name || 'Cita',
+            notesTemplate: localCalendar?.notes || appointmentData.notes || appointmentData.description || ''
+          });
     } catch (error) {
       logger.warn(`[Calendars Controller] No se pudieron renderizar plantillas de cita, uso valores planos: ${error.message}`);
       renderedTemplates = {
@@ -2936,7 +2940,7 @@ export async function createAppointment(req, res) {
         locationId: context.locationId
       }, {
         locationId: context.locationId,
-        syncStatus: 'pending'
+        syncStatus: localOnlyTest ? 'local_only' : 'pending'
       });
       if (depositFence) {
         await consumeConversationalAppointmentDepositEvidence({
@@ -2986,7 +2990,7 @@ export async function createAppointment(req, res) {
       ? await db.transaction(createLocalWithAvailability)
       : await createLocalWithAvailability();
 
-    if (isHighLevelConfigured(context)) {
+    if (!localOnlyTest && isHighLevelConfigured(context)) {
       let highLevelAppointmentWriteStarted = false;
       try {
         const localContactId = appointment.contactId || appointmentData.contactId || appointmentData.contact_id;
@@ -3081,11 +3085,11 @@ export async function createAppointment(req, res) {
       }
     }
 
-    const hasGoogleMirror = Boolean(
+    const hasGoogleMirror = !localOnlyTest && Boolean(
       cleanString(localCalendar?.googleCalendarId || localCalendar?.google_calendar_id)
     );
     try {
-      const googleResult = await googleCalendarService.syncAppointmentToGoogle(appointment);
+      const googleResult = localOnlyTest ? null : await googleCalendarService.syncAppointmentToGoogle(appointment);
       if (googleResult?.appointment) {
         appointment = googleResult.appointment;
       }
@@ -3139,10 +3143,8 @@ export async function createAppointment(req, res) {
 
     const contactId = appointmentData.contactId || appointmentData.contact_id || appointment?.contactId || appointment?.contact_id;
 
-    // Las citas de prueba recorren calendario, push, webhooks marcados como test
-    // y avisos internos dirigidos al dueño de la prueba. Mensajes externos,
-    // etiquetas y mutaciones no reversibles sólo se simulan y auditan. JAMÁS
-    // cuentan como conversión Meta/CAPI.
+    // Las citas de prueba conservan avisos internos para su dueño y jamás
+    // cuentan como conversión Meta/CAPI. Las automáticas sólo viven en Ristak.
     if (contactId && !appointment?.isTest) {
       const customEvents = localCalendarService.normalizeCalendarCustomEventsConfig(localCalendar?.customEvents || {});
       // Cita creada desde el admin: la superficie se detecta por la última
@@ -3274,6 +3276,13 @@ export async function updateAppointment(req, res) {
     delete updateData.strict_lifecycle_mutation;
     const context = await getHighLevelContext(req, { accessToken });
     const existing = await localCalendarService.getLocalAppointment(id);
+    if (isLocalOnlyConversationalTestAppointment(existing)) {
+      return res.status(409).json({
+        success: false,
+        code: 'test_appointment_read_only',
+        error: 'Esta cita de prueba no se puede editar y se elimina automáticamente.'
+      });
+    }
     let appointment;
     let lifecycleReplay = null;
 

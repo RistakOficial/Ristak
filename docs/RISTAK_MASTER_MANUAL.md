@@ -10388,16 +10388,15 @@ espera. La entrega también comprueba mensajes nuevos mientras se calculan los
 cortes o entre globos; las partes ya enviadas no se repiten. Preview conserva su
 respuesta inmediata para probar la estrategia, sin simular la espera real.
 
-El tester usa por defecto la identidad estable `test@ristaktests.com`.
-`get_contact_profile` la reconoce como la identidad del hilo, sin inventar que
-falta una ficha, pedir otro telefono ni marcarla como cliente anterior. Con los
-switches de prueba apagados vive como contacto virtual y todas las tools
-conservan `dryRun=true`: el telefono muestra decisiones y respuestas, pero no
-crea citas, pagos, asignaciones ni notificaciones. Cuando una capacidad autoriza
-un efecto real aislado, el backend resuelve o crea esa misma ficha tecnica,
-reactiva la fila si fue enviada a la papelera y devuelve su ID al tester para
-continuaciones por webhook. El usuario no selecciona contacto ni el frontend
-envia una identidad elegida desde el modal.
+El editor prueba la agenda automáticamente cuando el chatbot guardado tiene
+**Agendar cita** habilitado y el usuario puede editar citas y leer contactos.
+No hay un switch de prueba ni un selector de contacto. El servidor usa una ficha
+técnica por ID del chatbot con el nombre **Nombre del bot - Test**, sin teléfono
+y con correo interno no enrutable. Reutiliza la ficha si cambia el nombre o se
+archivó, y no acepta un contacto del navegador para efectos de prueba. Devuelve
+el ID técnico al tester para las continuaciones por webhook de pago sandbox.
+Los borradores sin guardar y las pruebas sin efectos autorizados siguen usando
+una ficha virtual: muestran decisiones y respuestas sin crear registros.
 
 Los datos confirmados mediante `save_contact_data` se conservan entre vueltas
 del tester en `conversational_agent_events`, evento `preview_contact_data`,
@@ -10451,12 +10450,13 @@ del `executionId`/`testMessageId`, que identifica e idempotentiza el request que
 se está ejecutando. Nunca se vuelve a numerar el historial por posición ni se
 usa el ID del request actual como si fuera el ID durable de todas las vueltas.
 
-Cada capacidad guarda su propio **Modo test**. Citas sólo autoriza cita o entrega
-humana; Pagos autoriza exclusivamente el mecanismo configurado: link sandbox si
+La agenda automática de prueba sólo autoriza cita o entrega humana; Pagos
+conserva su propio **Modo test** y autoriza exclusivamente el mecanismo
+configurado: link sandbox si
 es `payment_link`, o lectura real del adjunto sin crear dinero si es
-`bank_transfer`. Activar una no amplia la otra ni hace que una cita exija
-credenciales sandbox de pagos. Al activarlo, el servidor usa la ficha tecnica
-estable y vuelve a cargar la configuracion persistida; nunca confia en
+`bank_transfer`. Probar la agenda no activa cobros ni exige credenciales sandbox.
+El servidor usa la ficha técnica del chatbot y vuelve a cargar la configuración
+persistida; nunca confía en
 calendario, usuario, producto, precio, pasarela, monto o moneda enviados como
 override por el navegador. La decision del modelo sigue ocurriendo primero en
 `dryRun`; sólo la accion estructurada exacta que tuvo exito se convierte despues
@@ -10470,7 +10470,7 @@ asignar, escritura de Citas para agendar y escritura de Pagos para cobrar. Otro
 usuario no puede leer ni limpiar la corrida. Cada efecto usa hash, llave
 idempotente, claim token y lease; reintentar el mismo mensaje no duplica la cita,
 el link, la asignacion ni la notificacion. La corrida guarda tambien el hash de
-la revision de capacidades. Si el switch aplicable se apaga o cualquier capacidad cambia
+la revisión de capacidades. Si una capacidad cambia
 mientras el modelo responde, el servidor revoca la corrida y vuelve a comprobar
 esa revision antes de cada mutacion; una respuesta vieja no puede crear efectos.
 El request completo vive además en `conversational_agent_test_turns`, con una
@@ -10483,7 +10483,7 @@ otro agent run ni volver a tocar tools. Si el proceso muere, la lease vence y el
 siguiente dueño recupera el checkpoint bajo un token nuevo. El
 hash durable cubre transcript, configuración efectiva, contacto y revisión de
 capacidades; un segundo hash cubre el request original del cliente y permite
-reproducir una respuesta ya completada aunque después se apague Modo test, sin
+reproducir una respuesta ya completada aunque después cambie la configuración, sin
 saltarse ownership ni aceptar otro payload. La identidad queda reservada como
 `pending` antes de renovar `effects_json` o el TTL de la corrida: reutilizar el ID
 con otro contenido se rechaza sin mutar autoridad. El resultado crudo
@@ -10526,13 +10526,17 @@ llamada al proveedor: el motor conserva el candado hasta que termina el callback
 y lo libera tambien si muere la conexion. SQLite usa `BEGIN IMMEDIATE` sobre un
 archivo auxiliar por agente durante todo el callback como fallback local
 multiproceso, sin bloquear pruebas de agentes distintos. Si un efecto ya está
-terminando, el guardado responde ocupado y el frontend lo reintenta en vez de
-apagar Modo test a mitad del proveedor; si el guardado gana primero, el efecto
+terminando, el guardado responde ocupado y el frontend lo reintenta; si el
+guardado gana primero, el efecto
 ve la revision revocada antes de mutar.
 
-- Agenda: vuelve a comprobar el slot dentro del candado real, crea una cita con
-  `is_test=1`, participantes y prefijo visible de prueba, ejecuta sincronizacion
-  de calendario y push reales marcados como test, y suprime Meta/CAPI productivo.
+- Agenda: vuelve a comprobar el horario dentro del candado real y registra una
+  cita con `is_test=1` y los participantes de la prueba. La cita aparece en el
+  calendario de Ristak como **Nombre del bot - Test**. El probador muestra un
+  aviso de cinco minutos sólo después de guardar la cita; su detalle también
+  queda marcado como prueba. La cita automática es de solo lectura y no se
+  copia a Google ni a HighLevel, no manda invitaciones ni cuenta para Meta/CAPI.
+  El calendario abierto se actualiza cuando se crea o elimina.
   Si dos sesiones preview del mismo contacto alcanzaron a ofrecer el mismo slot,
   la primera cita materializada gana. La segunda confirmacion trata esa cita no
   vinculada a su propia sesion como conflicto definitivo de disponibilidad: no la
@@ -10551,19 +10555,19 @@ ve la revision revocada antes de mutar.
   la marca interrumpida y deja que el cleanup retire la cita temporal sin duplicarla.
   En agenda humana, cita y asignacion se reconcilian por separado para informar
   resultados parciales verdaderos.
-  El despachador de automatizaciones de prueba manda webhooks reales con headers
-  `X-Ristak-Test-*`, payload `testMode/ristakTest` e idempotencia; las
-  notificaciones y recordatorios llegan como copia interna real al usuario que
-  inició la prueba. Mensajes externos al contacto, tags, campos, asignaciones e
+  En las citas automáticas los webhooks de automatización quedan simulados;
+  las notificaciones y recordatorios llegan como copia interna real al usuario
+  que inició la prueba. Mensajes externos al contacto, tags, campos, asignaciones e
   inscripciones productivas se simulan y auditan porque no se pueden deshacer de
   forma confiable. `conversational_appointment_test_automation_receipts` conserva
-  cada resultado y nunca reenvía un webhook ambiguo. A
-  los cinco minutos elimina Google/HighLevel cuando apliquen, recordatorios,
+  cada resultado y nunca reenvía un webhook ambiguo de una prueba anterior.
+  La cita vence a los cinco minutos y el siguiente barrido elimina recordatorios,
   confirmaciones, participantes y fila local usando `appointment_id +
   test_effect_id`; nunca acepta borrar una cita real. La API normal rechaza las
   marcas `is_test/test_*`: sólo el contexto interno del tester puede llegar al
   flujo y aun así debe coincidir con run, effect, claim, contacto, calendario,
-  participantes y payload durables. Los IDs creados en Google o HighLevel se
+  participantes y payload durables. Para pruebas anteriores con espejos, los IDs
+  creados en Google o HighLevel se
   guardan inmediatamente en `conversational_appointment_test_provider_receipts`
   antes del upsert local, con fallback y compensacion remota; la limpieza puede
   recuperar esos recibos aunque se haya perdido la fila local. Al retirar un
@@ -10577,9 +10581,7 @@ ve la revision revocada antes de mutar.
   retirar el evento aunque la agenda se haya religado despues, sin convertir el
   receipt en permiso para borrar IDs arbitrarios. El DELETE es exclusivamente
   remoto: cita y ledger se cierran juntos en la transaccion propia de la
-  limpieza. En HighLevel,
-  la prueba sólo reutiliza un contacto ya ligado o una coincidencia exacta y
-  única de solo lectura; nunca crea ni vincula una ficha remota para poder probar.
+  limpieza. La prueba automática nunca crea ni vincula una ficha remota.
   Cuando `bookingOwner=human`, el efecto real de prueba valida el horario y
   notifica al equipo sin crear ni prometer una cita. Si hay `handoffUserId`,
   tambien prueba la asignacion temporal y restaura al responsable anterior; si
@@ -10925,8 +10927,8 @@ nunca un booleano escrito por el modelo.
   la corrida la elimina. El tester del wizard genera una identidad de borrador,
   sesion y mensaje estables aunque el agente todavía no se haya guardado; eso
   permite probar el flujo de dos turnos como mock sin habilitar efectos reales.
-  Así Modo test apagado y encendido recuperan el mismo UTC entre requests sin
-  confiar en texto o estado del navegador. Modo test vuelve a exigir esa marca
+  Así la simulación y la prueba que registra la cita recuperan el mismo UTC
+  entre requests sin confiar en texto o estado del navegador. El tester exige esa marca
   verificada y toma un claim CAS de la misma oferta antes de convertir una
   simulacion en cita temporal real; si otra petición cambió el slot, no crea nada
   ni pisa la oferta nueva. En vivo,

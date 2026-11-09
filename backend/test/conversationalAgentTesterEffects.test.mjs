@@ -25,15 +25,20 @@ import {
   setConversationalAgentTestPaymentDependenciesForTests
 } from '../src/services/conversationalAgentTestPaymentService.js'
 import {
-  CONVERSATIONAL_AGENT_TEST_CONTACT_EMAIL,
   resolveConversationalAgentTestContact
 } from '../src/services/conversationalAgentTestContactService.js'
 import {
   lockConversationalTesterConfigOverride,
+  runConversationalAgentTester,
   testAgent as testAgentController
 } from '../src/controllers/conversationalAgentController.js'
-import { createAppointment as createAppointmentController } from '../src/controllers/calendarsController.js'
-import { createLocalAppointment, upsertLocalCalendar } from '../src/services/localCalendarService.js'
+import {
+  createAppointment as createAppointmentController,
+  updateAppointment as updateAppointmentController
+} from '../src/controllers/calendarsController.js'
+import { createLocalAppointment, getLocalAppointment, upsertLocalCalendar } from '../src/services/localCalendarService.js'
+import { cleanupExpiredConversationalTestAppointments } from '../src/services/conversationalAppointmentTestCleanupService.js'
+import { removeAutomationTriggerIndex, replaceAutomationTriggerIndex } from '../src/services/automationTriggerIndexService.js'
 import { runIdempotentAppointmentCreation } from '../src/services/appointmentCreationSafetyService.js'
 import {
   createConversationalTools,
@@ -1604,67 +1609,189 @@ test('normaliza efectos sólo cuando hay una acción explícita y no activa noti
   })
 })
 
-test('Modo test resuelve, reutiliza y reactiva test@ristaktests.com sin selección del frontend', async () => {
+test('cada chatbot reutiliza su contacto de prueba al renombrarse, incluso con pruebas simultáneas y bots homónimos', async () => {
   const suffix = randomUUID()
-  const agentId = `agent_default_test_contact_${suffix}`
-  const runId = `session_default_test_contact_${suffix}`
-  const requestedByUserId = `user_default_test_contact_${suffix}`
-
+  const agent = { id: `agent_test_contact_${suffix}`, name: 'Luna' }
+  const contactIds = new Set()
   try {
     const concurrentContacts = await Promise.all(
-      Array.from({ length: 4 }, () => resolveConversationalAgentTestContact())
+      Array.from({ length: 4 }, () => resolveConversationalAgentTestContact(agent))
     )
-    const contactIds = new Set(concurrentContacts.map((contact) => contact?.id))
+    for (const contact of concurrentContacts) contactIds.add(contact.id)
     assert.equal(contactIds.size, 1)
-    assert.equal(concurrentContacts[0]?.email, CONVERSATIONAL_AGENT_TEST_CONTACT_EMAIL)
+    const [first] = concurrentContacts
+    const sameName = await resolveConversationalAgentTestContact({ ...agent, id: `${agent.id}_other` })
+    contactIds.add(sameName.id)
+    assert.notEqual(sameName.id, first.id)
+    assert.notEqual(sameName.email, first.email)
+    assert.equal(first.full_name, 'Luna - Test')
+    assert.equal(sameName.full_name, first.full_name)
+    await db.run('UPDATE contacts SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?', [first.id])
+    const restored = await resolveConversationalAgentTestContact({ ...agent, name: 'Clara' })
+    assert.equal(restored.id, first.id)
+    assert.equal(restored.full_name, 'Clara - Test')
+    assert.equal(restored.deleted_at, null)
+  } finally {
+    for (const id of contactIds) await db.run('DELETE FROM contacts WHERE id = ?', [id])
+  }
+})
 
-    const defaultContactId = concurrentContacts[0].id
+test('el editor agenda automáticamente en Ristak con el nombre del chatbot y limpia la cita al vencer', async () => {
+  const suffix = randomUUID()
+  const agentId = `agent_auto_booking_${suffix}`
+  const calendarId = `calendar_auto_booking_${suffix}`
+  const runId = `session_auto_booking_${suffix}`
+  const realContactId = `contact_auto_booking_${suffix}`
+  const automationId = `automation_auto_booking_${suffix}`
+  const timezone = await getAccountTimezone()
+  const slot = DateTime.now().setZone(timezone).plus({ days: 14 }).startOf('day').set({ hour: 11 })
+  const startTime = slot.toUTC().toISO()
+  const endTime = slot.plus({ hours: 1 }).toUTC().toISO()
+  let testContactId
+  try {
+    await db.run("INSERT INTO contacts (id, full_name) VALUES (?, 'Paciente real')", [realContactId])
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda del chatbot',
+      googleCalendarId: `google_${suffix}`,
+      notes: 'Instrucciones del calendario para pacientes reales.',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [{
+        daysOfTheWeek: [slot.weekday],
+        hours: [{ openHour: 10, openMinute: 0, closeHour: 14, closeMinute: 0 }]
+      }]
+    }, { source: 'ristak', syncStatus: 'synced', allowGoogleSyncMetadata: true })
+    const flow = JSON.stringify({
+      nodes: [
+        { id: 'start', type: 'start', config: { triggers: [
+          { id: 'booked', type: 'trigger-appointment-booked', config: { calendar: calendarId } }
+        ] } },
+        { id: 'webhook', type: 'action-webhook', config: { method: 'POST', url: 'http://127.0.0.1:1/test' } }
+      ],
+      edges: [{ id: 'edge', sourceNodeId: 'start', targetNodeId: 'webhook' }],
+      settings: {}
+    })
     await db.run(
-      'UPDATE contacts SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [defaultContactId]
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, 'Webhook de agenda', 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, flow, flow]
     )
-    const restoredContact = await resolveConversationalAgentTestContact()
-    assert.equal(restoredContact.id, defaultContactId)
-    assert.equal(restoredContact.deleted_at, null)
-
+    await replaceAutomationTriggerIndex(db, { id: automationId, status: 'published', flow, published_flow: flow })
     await db.run(
       `INSERT INTO conversational_agents (id, name, enabled, runtime_mode, capabilities_config)
-       VALUES (?, 'Agente con contacto técnico automático', 1, 'tool_calling_v2', ?)`,
+       VALUES (?, 'Recepción Norte', 0, 'tool_calling_v2', ?)`,
       [agentId, JSON.stringify({
         schemaVersion: 3,
         items: [{
           id: 'schedule_appointment',
           enabled: true,
-          calendarId: `calendar_default_test_contact_${suffix}`,
-          bookingOwner: 'human',
-          testMode: { enabled: true, cleanupAfterMinutes: 5, notify: false }
+          calendarId,
+          bookingOwner: 'ai',
+          testMode: { enabled: false, notify: false }
         }]
       })]
     )
+    const req = {
+      user: { userId: `user_${suffix}`, role: 'admin' },
+      body: {
+        agentId,
+        testSessionId: runId,
+        testMessageId: `message_${suffix}`,
+        contactId: realContactId,
+        config: { name: 'Borrador ajeno', capabilitiesConfig: { items: [] } },
+        messages: [{ role: 'user', content: 'Sí, agéndala a las 11.' }]
+      }
+    }
+    const readOnly = mockResponse()
+    await runConversationalAgentTester({
+      ...req,
+      user: { userId: `reader_${suffix}`, role: 'employee', access_config: { contacts: 'read', appointments: 'read' } }
+    }, readOnly, { runPreview: async ({ previewContact }) => {
+      assert.equal(previewContact, null)
+      return { actions: [], reply: 'Sólo simulación.' }
+    } })
+    assert.equal(readOnly.statusCode, 200)
+    assert.equal(readOnly.body.data.testRunId, undefined)
 
-    const run = await prepareConversationalAgentTestRun({
-      testRunId: runId,
-      testMessageId: `message_default_test_contact_${suffix}`,
-      agentId,
-      requestedByUserId,
-      effects: {
-        enabled: true,
-        scheduleAppointment: true,
-        notifyOwner: false
+    const res = mockResponse()
+    const before = Date.now()
+    await runConversationalAgentTester(req, res, {
+      runPreview: async ({ previewContact, previewScopeId, executionId, configOverride }) => {
+        testContactId = previewContact.id
+        assert.notEqual(testContactId, realContactId)
+        assert.equal(previewContact.full_name, 'Recepción Norte - Test')
+        assert.equal(configOverride.capabilitiesConfig.items[0].calendarId, calendarId)
+        const offerEventId = buildConversationalAppointmentPreviewOfferEventId(previewScopeId)
+        await db.run(
+          `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+           VALUES (?, ?, ?, ?, ?)`,
+          [offerEventId, testContactId, agentId, CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT, JSON.stringify({
+            previewScopeId, agentId, contactId: testContactId, channel: 'whatsapp', calendarId, startTime, timezone,
+            status: 'accepted', acceptedExecutionId: executionId,
+            expiresAt: new Date(Date.now() + 60_000).toISOString()
+          })]
+        )
+        return {
+          reply: 'Cita agendada.',
+          actions: [{
+            type: 'book_appointment', calendarId, startTime, endTime, title: 'Valoración',
+            confirmationEvidence: {
+              evidenceVerified: true, nativeToolDecision: true, selectedStartTime: startTime,
+              selectionMode: 'accepted_prior_offer', customerQuote: 'Sí, agéndala a las 11.', offerEventId
+            },
+            outcome: { status: 'simulated' }
+          }]
+        }
       }
     })
+    assert.equal(res.statusCode, 200, JSON.stringify(res.body))
+    const [effect] = res.body.data.testEffects
+    assert.equal(effect.status, 'recorded', JSON.stringify(effect))
+    const appointment = await getLocalAppointment(effect.entityId)
+    assert.equal(appointment.title, 'Recepción Norte - Test')
+    assert.equal(appointment.contactName, appointment.title)
+    assert.equal(appointment.contactId, testContactId)
+    assert.equal(appointment.isTest, true)
+    assert.equal(appointment.syncStatus, 'local_only')
+    assert.equal(appointment.googleEventId, null)
+    assert.deepEqual(await db.get(
+      `SELECT execution_mode, status FROM conversational_appointment_test_automation_receipts
+       WHERE test_effect_id = ? AND automation_id = ?`,
+      [effect.id, automationId]
+    ), { execution_mode: 'simulated', status: 'simulated' })
+    assert.match(appointment.notes, /después de 5 minutos/)
+    assert.equal(effect.payload.testExpiresAt, appointment.testExpiresAt)
+    const expiration = Date.parse(appointment.testExpiresAt)
+    assert.ok(expiration >= before + 300_000 && expiration <= Date.now() + 300_000)
 
-    assert.equal(run.contact.id, defaultContactId)
-    assert.equal(run.contact.email, CONVERSATIONAL_AGENT_TEST_CONTACT_EMAIL)
-    assert.equal(
-      (await db.get('SELECT contact_id FROM conversational_agent_test_runs WHERE id = ?', [runId])).contact_id,
-      defaultContactId
-    )
+    const edit = mockResponse()
+    await updateAppointmentController({ params: { id: appointment.id }, body: { contactId: realContactId } }, edit)
+    assert.equal(edit.statusCode, 409)
+    assert.equal(edit.body.code, 'test_appointment_read_only')
+
+    const replay = mockResponse()
+    await runConversationalAgentTester(req, replay, {
+      runPreview: () => assert.fail('El mismo turno no debe volver a llamar al asistente.')
+    })
+    assert.deepEqual(replay.body, res.body)
+    await cleanupExpiredConversationalTestAppointments({ now: new Date(expiration - 1) })
+    assert.ok(await getLocalAppointment(appointment.id))
+    await cleanupExpiredConversationalTestAppointments({ now: new Date(expiration + 1_000) })
+    assert.equal(await getLocalAppointment(appointment.id), null)
+    assert.equal((await db.get('SELECT full_name FROM contacts WHERE id = ?', [realContactId])).full_name, 'Paciente real')
   } finally {
+    await db.run('DELETE FROM conversational_appointment_test_automation_receipts WHERE automation_id = ?', [automationId]).catch(() => undefined)
+    await removeAutomationTriggerIndex(db, automationId).catch(() => undefined)
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_events WHERE agent_id = ?', [agentId]).catch(() => undefined)
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_test_effects WHERE run_id = ?', [runId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_test_turns WHERE run_id = ?', [runId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_test_runs WHERE id = ?', [runId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => undefined)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id IN (?, ?)', [realContactId, testContactId || '']).catch(() => undefined)
   }
 })
 
@@ -1874,7 +2001,7 @@ test('el modo con efectos conserva texto editable pero ignora capacidades malici
   assert.equal(locked.id, 'agent-persisted')
 })
 
-test('apagar Modo test durante la respuesta del modelo revoca el run antes de cualquier mutación', async () => {
+test('desactivar Agendar cita durante la respuesta del modelo revoca el run antes de cualquier mutación', async () => {
   const suffix = randomUUID()
   const agentId = `agent_test_revoke_${suffix}`
   const contactId = `contact_test_revoke_${suffix}`
@@ -1914,7 +2041,7 @@ test('apagar Modo test durante la respuesta del modelo revoca el run antes de cu
 
     await db.run(
       'UPDATE conversational_agents SET capabilities_config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [JSON.stringify({ ...capabilitiesConfig, testMode: { ...capabilitiesConfig.testMode, enabled: false } }), agentId]
+      [JSON.stringify({ ...capabilitiesConfig, items: [{ ...capabilitiesConfig.items[0], enabled: false }] }), agentId]
     )
 
     await assert.rejects(
@@ -1938,7 +2065,7 @@ test('apagar Modo test durante la respuesta del modelo revoca el run antes de cu
   }
 })
 
-test('cada efecto exige su propio switch y transferencia nunca abre un checkout sandbox', async () => {
+test('agenda no activa el modo test de pagos y transferencia nunca abre un checkout sandbox', async () => {
   const suffix = randomUUID()
   const agentId = `agent_test_scoped_${suffix}`
   const contactId = `contact_test_scoped_${suffix}`

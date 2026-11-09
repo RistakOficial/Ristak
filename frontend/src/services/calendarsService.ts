@@ -228,6 +228,8 @@ export interface CalendarEvent {
   googleEventId?: string | null;
   locationId: string;
   contactId?: string;
+  contactName?: string;
+  isTest?: boolean;
   groupId?: string;
   appointmentStatus: 'confirmed' | 'pending' | 'cancelled' | 'showed' | 'noshow' | 'rescheduled';
   assignedUserId?: string;
@@ -249,7 +251,7 @@ export interface CalendarEvent {
   };
   masterEventId?: string;
   source?: 'ristak' | 'ghl' | 'google';
-  syncStatus?: 'pending' | 'synced' | 'error' | 'local_pending' | 'local_failed';
+  syncStatus?: 'pending' | 'synced' | 'error' | 'local_pending' | 'local_failed' | 'local_only';
   syncError?: string | null;
   participants?: AppointmentParticipant[];
 }

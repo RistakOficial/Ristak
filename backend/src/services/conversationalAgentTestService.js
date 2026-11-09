@@ -3,6 +3,7 @@ import { db } from '../config/database.js'
 import { createInternalNotification } from './notificationsService.js'
 import { getLocalFreeSlots } from './localCalendarService.js'
 import {
+  DEFAULT_CONVERSATIONAL_TEST_MODE,
   getConversationalCapability
 } from '../agents/conversational/nativeRuntimeConfig.js'
 import { invokeController, toToolResult } from '../agents/invokeController.js'
@@ -24,7 +25,12 @@ import {
   cleanupConversationalAgentTestAssignment
 } from './conversationalAgentTestAssignmentService.js'
 import { withConversationalAgentTestMutationLock } from './conversationalAgentTestMutationLockService.js'
-import { resolveConversationalAgentTestContact } from './conversationalAgentTestContactService.js'
+import {
+  CONVERSATIONAL_AGENT_TEST_CONTACT_EMAIL,
+  isAutomaticConversationalAgentTestContactId,
+  resolveConversationalAgentTestContact
+} from './conversationalAgentTestContactService.js'
+import { publishChatDataChangedEvent } from './chatLiveEventsService.js'
 import { getAccountTimezone, normalizeDateOnlyInTimezone } from '../utils/dateUtils.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { logger } from '../utils/logger.js'
@@ -634,21 +640,12 @@ export async function prepareConversationalAgentTestRun({
   )
   if (!agent) throw testError('El agente de esta prueba ya no existe.', 404, 'test_agent_not_found')
 
-  const contact = cleanContactId
-    ? await db.get(
-        'SELECT id, full_name, first_name, last_name, phone, email FROM contacts WHERE id = ? AND deleted_at IS NULL',
-        [cleanContactId]
-      )
-    : await resolveConversationalAgentTestContact()
-  if (!contact) throw testError('El contacto de prueba ya no existe.', 404, 'test_contact_not_found')
-  cleanContactId = cleanString(contact.id)
-
   const persistedCapabilitiesConfig = parseJson(agent.capabilities_config, {})
   const persistedConfig = { capabilitiesConfig: persistedCapabilitiesConfig }
   const scheduleCapability = getConversationalCapability(persistedConfig, 'schedule_appointment')
   const paymentCapability = getConversationalCapability(persistedConfig, 'collect_payment')
-  if (normalizedEffects.scheduleAppointment && !capabilityTestModeEnabled(scheduleCapability)) {
-    throw testError('Activa y guarda Modo test dentro de Agendar cita antes de crear citas reales desde el tester.', 409, 'test_schedule_mode_not_enabled')
+  if ((normalizedEffects.scheduleAppointment || normalizedEffects.assignUser) && !scheduleCapability?.enabled) {
+    throw testError('Activa y guarda Agendar cita para probar la agenda de este asistente.', 409, 'test_schedule_mode_not_enabled')
   }
   if (normalizedEffects.collectPayment && !capabilityTestModeEnabled(paymentCapability)) {
     throw testError('Activa y guarda Modo test dentro de Cobrar antes de crear un cobro real desde el tester.', 409, 'test_payment_mode_not_enabled')
@@ -659,9 +656,14 @@ export async function prepareConversationalAgentTestRun({
   if (normalizedEffects.assignUser && !assignmentUserId) {
     throw testError('Selecciona una persona responsable antes de probar la asignación.', 409, 'test_assignment_user_required')
   }
-  if (normalizedEffects.assignUser && !capabilityTestModeEnabled(scheduleCapability)) {
-    throw testError('Activa y guarda Modo test dentro de Agendar cita antes de probar la entrega a una persona.', 409, 'test_schedule_mode_not_enabled')
-  }
+  const contact = cleanContactId
+    ? await db.get(
+        'SELECT id, full_name, first_name, last_name, phone, email FROM contacts WHERE id = ? AND deleted_at IS NULL',
+        [cleanContactId]
+      )
+    : await resolveConversationalAgentTestContact(agent)
+  if (!contact) throw testError('El contacto de prueba ya no existe.', 404, 'test_contact_not_found')
+  cleanContactId = cleanString(contact.id)
 
   const requestedTestModes = [
     ...(normalizedEffects.scheduleAppointment || normalizedEffects.assignUser ? [scheduleCapability?.testMode] : []),
@@ -829,7 +831,7 @@ async function assertCurrentTestRunAuthority(run, effectType = '') {
       [currentRun.id]
     )
     throw testError(
-      'Modo test o la configuración del agente cambió durante la prueba. No se ejecutó ninguna acción real; reinicia el tester.',
+      'La configuración del agente cambió durante la prueba. No se ejecutó ninguna acción real; reinicia el tester.',
       409,
       'test_run_config_revoked'
     )
@@ -837,8 +839,8 @@ async function assertCurrentTestRunAuthority(run, effectType = '') {
 
   const schedule = getConversationalCapability({ capabilitiesConfig }, 'schedule_appointment')
   const payment = getConversationalCapability({ capabilitiesConfig }, 'collect_payment')
-  if (cleanEffectType === 'appointment' && !capabilityTestModeEnabled(schedule)) {
-    throw testError('Modo test de Agendar cita ya no está activo.', 409, 'test_schedule_mode_not_enabled')
+  if (['appointment', 'assignment'].includes(cleanEffectType) && !schedule?.enabled) {
+    throw testError('Agendar cita ya no está activo.', 409, 'test_schedule_mode_not_enabled')
   }
   if (cleanEffectType === 'payment' && !capabilityTestModeEnabled(payment)) {
     throw testError('Modo test de Cobrar ya no está activo.', 409, 'test_payment_mode_not_enabled')
@@ -849,9 +851,6 @@ async function assertCurrentTestRunAuthority(run, effectType = '') {
     )
     if (!assignmentUserId) {
       throw testError('La asignación de prueba ya no tiene una persona responsable.', 409, 'test_assignment_user_required')
-    }
-    if (!capabilityTestModeEnabled(schedule)) {
-      throw testError('Modo test de Agendar cita ya no está activo.', 409, 'test_schedule_mode_not_enabled')
     }
   }
   return capabilitiesConfig
@@ -1626,6 +1625,12 @@ async function finalizeConversationalAppointmentTestEffect({
     return effect
   })
 
+  if (entityId) {
+    publishChatDataChangedEvent(
+      { contactId: runContext.contact.id, domains: ['appointments'], entityId },
+      { recordBusinessEvent: false }
+    )
+  }
   await ensureConversationalAgentTestEffectNotification(effectId).catch((error) => {
     logger.warn(`[Tester agente] La cita quedó cerrada, pero su notificación se reintentará: ${error.message}`)
   })
@@ -2108,14 +2113,16 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
           })
         }
 
-        const testExpiresAt = toIso(Date.now() + 5 * 60 * 1000)
+        const cleanupMinutes = DEFAULT_CONVERSATIONAL_TEST_MODE.cleanupAfterMinutes
+        const testExpiresAt = toIso(Date.now() + cleanupMinutes * 60_000)
+        const automaticContact = isAutomaticConversationalAgentTestContactId(runContext.contact.id)
         await assertCurrentTestRunAuthority(claim.run, 'appointment')
         const appointmentControllerRequest = {
           body: {
             calendarId: request.calendarId,
             contactId: runContext.contact.id,
-            title: `[PRUEBA] ${request.title || 'Cita del agente'}`,
-            notes: 'Cita temporal creada por el Modo test del agente. Se elimina automáticamente después de cinco minutos.',
+            title: automaticContact ? runContext.contact.full_name : `[PRUEBA] ${request.title || 'Cita del agente'}`,
+            notes: `Esta cita de prueba se elimina automáticamente después de ${cleanupMinutes} minutos.`,
             startTime: request.startTime,
             endTime: request.endTime,
             clientRequestId: `conv-test:${claim.effect.id}`,
@@ -2187,8 +2194,8 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
           appointmentId: appointment.id,
           controllerAttempts: controllerExecution.attempts,
           retried: controllerExecution.retried,
-          testExpiresAt,
-          cleanupDueAt: testExpiresAt,
+          testExpiresAt: appointment.testExpiresAt || testExpiresAt,
+          cleanupDueAt: appointment.testExpiresAt || testExpiresAt,
           automationExecution,
           automationPreview: automationExecution,
           summary: `Cita de prueba creada de verdad. Se enviaron las notificaciones seguras${automationRealActionCount ? ` y ${automationRealActionCount} acción(es) real(es) aislada(s)` : ''}${reminderNotificationCount ? `, incluyendo ${reminderNotificationCount} recordatorio(s) al dueño de la prueba` : ''}${uniqueAutomationNames.length ? `; se recorrieron ${uniqueAutomationNames.length} automatización(es)` : ''}${automationSimulatedActionCount ? ` y ${automationSimulatedActionCount} efecto(s) irreversible(s) quedaron simulados` : ''}. La cita se eliminará automáticamente después de cinco minutos.`
@@ -2247,7 +2254,9 @@ async function recordPreviewEffect({ runContext, actions, effectType, capabiliti
         contact: {
           id: runContext.contact.id,
           name: runContext.contact.full_name || runContext.contact.first_name || 'Contacto de prueba',
-          email: runContext.contact.email || '',
+          email: isAutomaticConversationalAgentTestContactId(runContext.contact.id)
+            ? CONVERSATIONAL_AGENT_TEST_CONTACT_EMAIL
+            : (runContext.contact.email || ''),
           phone: runContext.contact.phone || ''
         },
         paymentGateConfig: {

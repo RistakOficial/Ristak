@@ -29,7 +29,7 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAIAvailability, useAnchoredPortal, useAppConfig } from '@/hooks'
 import { aiRuntimeService } from '@/services/aiRuntimeService'
-import { hasPaymentLinksAccess } from '@/utils/accessControl'
+import { hasModuleAccess, hasPaymentLinksAccess } from '@/utils/accessControl'
 import {
   conversationalAgentService,
   buildConversationalLegacyEditableText,
@@ -333,6 +333,7 @@ function createTestTrackingId(prefix: 'session' | 'message' | 'transcript') {
 const RETRYABLE_TEST_RUN_CODES = new Set([
   'test_run_closed',
   'test_run_expired',
+  'test_run_identity_mismatch',
   'test_run_not_found'
 ])
 const RETRY_SAME_TEST_TURN_CODES = new Set([
@@ -412,6 +413,7 @@ type TestMessage = {
   content: string
   attachments?: TestAttachment[]
   internal?: boolean
+  appointmentNotice?: boolean
   deliveryKey?: string
 }
 
@@ -1262,7 +1264,7 @@ function buildNativeCapabilityFromAgent(
       bookingOwner: 'ai',
       handoffUserId: '',
       handoffUserName: '',
-      testMode: { enabled: false, cleanupAfterMinutes: 5, notify: true }
+      testMode: { enabled: true, cleanupAfterMinutes: 5, notify: true }
     }
   }
   if (id === 'collect_payment') {
@@ -1550,24 +1552,6 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
           ) : (
             <p className={styles.helper}>La IA vuelve a comprobar el horario elegido, crea la cita y sólo entonces la confirma.</p>
           )}
-          <div className={styles.nativeTestModeRow} data-enabled={scheduleCapability.testMode.enabled ? 'true' : undefined}>
-            <div>
-              <strong>Modo test para citas</strong>
-              <span>{scheduleCapability.bookingOwner === 'human'
-                ? (scheduleCapability.handoffUserId
-                    ? 'Asigna temporalmente la solicitud, manda la notificación de prueba y después restaura al responsable anterior.'
-                    : 'Valida el horario y avisa al equipo, sin asignar a una persona ni crear o modificar la cita.')
-                : 'Crea una cita marcada como prueba y la elimina automáticamente después de 5 minutos.'}</span>
-            </div>
-            <Switch
-              checked={scheduleCapability.testMode.enabled}
-              onChange={(enabled) => updateCapability({
-                ...scheduleCapability,
-                testMode: { ...scheduleCapability.testMode, enabled, cleanupAfterMinutes: 5 }
-              })}
-              aria-label="Activar modo test para citas"
-            />
-          </div>
         </div>
       ) : null
     },
@@ -2543,6 +2527,7 @@ function getProviderStatus(aiProviders: ConversationalAIProviderStatus[], provid
 }
 
 const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, productsError, canUsePaymentLinks, filterOptions, onConnectProvider, onBack, onChange, onFlushSave, onDelete }) => {
+  const { user } = useAuth()
   const { showToast } = useNotification()
   const { labels } = useLabels()
   const leadLowerLabel = formatCrmLabelLower(labels.lead, DEFAULT_CRM_LABELS.lead)
@@ -2727,13 +2712,14 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       } as Extract<ConversationalCapabilityItem, { id: 'collect_payment' }>
     : storedTestPaymentCapability
   const testScheduleCapability = getNativeCapability(agent.capabilitiesConfig, 'schedule_appointment')
+  const canTestSchedule = hasModuleAccess(user, 'contacts') && hasModuleAccess(user, 'appointments', 'write')
+  const testScheduleEnabled = Boolean(testScheduleCapability?.enabled && canTestSchedule)
   const testAiScheduleCapabilityEnabled = Boolean(
-    testScheduleCapability?.enabled && testScheduleCapability.bookingOwner !== 'human'
+    testScheduleEnabled && testScheduleCapability?.bookingOwner !== 'human'
   )
   const testHumanScheduleCapabilityEnabled = Boolean(
-    testScheduleCapability?.enabled && testScheduleCapability.bookingOwner === 'human'
+    testScheduleEnabled && testScheduleCapability?.bookingOwner === 'human'
   )
-  const scheduleTestModeEnabled = Boolean(testScheduleCapability?.enabled && testScheduleCapability.testMode?.enabled)
   const paymentTestModeConfigured = Boolean(testPaymentCapability?.enabled && testPaymentCapability.testMode?.enabled)
   const paymentTestModeEnabled = Boolean(
     paymentTestModeConfigured && !(
@@ -2744,28 +2730,25 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const testPaymentWebhookEnabled = Boolean(
     paymentTestModeEnabled && testPaymentCapability?.collectionMethod === 'payment_link'
   )
-  const testAssignmentCapabilityEnabled = Boolean(testHumanScheduleCapabilityEnabled && testScheduleCapability?.handoffUserId)
-  const testEffectsEnabled = scheduleTestModeEnabled || paymentTestModeEnabled
+  const testAssignmentCapabilityEnabled = Boolean(
+    testHumanScheduleCapabilityEnabled && testScheduleCapability?.handoffUserId && hasModuleAccess(user, 'contacts', 'write')
+  )
+  const expectsTestRun = testScheduleEnabled || paymentTestModeEnabled
   const effectiveTestEffects: ConversationalAgentTestEffects = {
-    enabled: testEffectsEnabled,
+    enabled: expectsTestRun,
     // Agenda humana también necesita una corrida real cuando el dueño eligió
     // "avisar al equipo sin asignar". El efecto de agenda valida el horario y
     // notifica; la asignación temporal sólo existe si hay una persona concreta.
-    scheduleAppointment: scheduleTestModeEnabled && Boolean(testScheduleCapability?.enabled),
+    scheduleAppointment: testScheduleEnabled,
     // Tanto el link sandbox como la lectura real de un comprobante necesitan una
     // corrida durable de prueba. Sólo el link espera después un webhook.
     collectPayment: paymentTestModeEnabled,
-    assignUser: scheduleTestModeEnabled && testAssignmentCapabilityEnabled,
+    assignUser: testAssignmentCapabilityEnabled,
     notifyOwner: Boolean(
-      (scheduleTestModeEnabled && testScheduleCapability?.testMode?.notify !== false) ||
+      (testScheduleEnabled && testScheduleCapability?.testMode?.notify !== false) ||
       (paymentTestModeEnabled && testPaymentCapability?.testMode?.notify !== false)
     )
   }
-  const expectsTestRun = Boolean(
-    effectiveTestEffects.scheduleAppointment ||
-    effectiveTestEffects.collectPayment ||
-    effectiveTestEffects.assignUser
-  )
   const recentTestEffects = testRunHistory
     .flatMap((run) => [...run.effects].reverse().map((effect) => ({ runId: run.id, effect })))
     .slice(0, 20)
@@ -2786,7 +2769,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     : testMessages.map((message, index) => ({
         id: `test-${index}`,
         direction: message.internal ? 'system' : message.role === 'user' ? 'outbound' : 'inbound',
-        body: message.content || getAttachmentMessageLabel(message.attachments || []),
+        header: message.appointmentNotice ? <Badge variant="info">Cita de prueba</Badge> : undefined,
+        body: message.appointmentNotice
+          ? <span role="status">{message.content}</span>
+          : (message.content || getAttachmentMessageLabel(message.attachments || [])),
         attachments: (message.attachments || []).map((attachment): PhoneChatPreviewAttachment => ({
           id: attachment.id,
           kind: attachment.kind,
@@ -3051,8 +3037,18 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
     for (const [index, effect] of (result.testEffects || []).entries()) {
       if (!canContinue()) return false
+      const appointmentNotice = effect.type === 'appointment' && effect.status === 'recorded' &&
+        effect.payload?.appointmentCreated === true && Boolean(effect.payload.appointmentId)
+      const contactName = typeof effect.payload?.contactName === 'string' ? effect.payload.contactName : ''
       appendMessage(
-        { role: 'assistant', content: describeTestEffectResult(effect), internal: true },
+        {
+          role: 'assistant',
+          content: appointmentNotice
+            ? `${contactName ? `Agendada como «${contactName}». ` : ''}Se elimina del calendario en 5 minutos.`
+            : describeTestEffectResult(effect),
+          internal: true,
+          appointmentNotice
+        },
         `effect-${effect.id || index}`
       )
     }
@@ -3183,7 +3179,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   useEffect(() => {
-    if (!testEffectsEnabled || !testPaymentWebhookEnabled || testPracticeExpired) return
+    if (!testPaymentWebhookEnabled || testPracticeExpired) return
     let cancelled = false
 
     const pollVerifiedPayment = async () => {
@@ -3296,7 +3292,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     testPaymentWebhookEnabled,
     showToast,
     refreshTestRunHistory,
-    testEffectsEnabled,
     testPracticeExpired
   ])
 
@@ -4123,7 +4118,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             onClose={() => setTestOptionsOpen(false)}
             title="Opciones de la prueba"
             subtitle={expectsTestRun
-              ? 'Modo test activo: las tools configuradas se ejecutan de forma real y aislada.'
+              ? 'Aquí puedes revisar qué se registra durante la prueba.'
               : 'El teléfono sólo simula esta conversación y no modifica nada.'}
             size="md"
           >
@@ -4131,32 +4126,32 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               <div className={styles.agentTestModeSummary} data-effects-enabled={expectsTestRun ? 'true' : undefined}>
                 <strong>{expectsTestRun ? 'Registro controlado' : 'Simulación segura'}</strong>
                 <span>{expectsTestRun
-                  ? 'Las acciones se marcan como prueba y se limpian automáticamente después de 5 minutos.'
+                  ? 'Las acciones se registran por separado de la actividad de tus clientes.'
                   : 'La IA conversa y muestra lo que haría, pero no crea citas, cobros ni notificaciones.'}</span>
               </div>
 
               {expectsTestRun && (
                 <div className={styles.agentTestEffectList}>
-                  {scheduleTestModeEnabled && testAiScheduleCapabilityEnabled && (
+                  {testAiScheduleCapabilityEnabled && (
                     <div className={styles.agentTestOptionSwitch}>
                       <span>
-                        <strong>Cita real de prueba</strong>
-                        <small>La IA agenda en el calendario elegido, dispara notificaciones y la cita se elimina después de 5 minutos.</small>
+                        <strong>Citas de prueba automáticas</strong>
+                        <small>La cita aparece como «{agent.name} - Test» en el calendario de Ristak y se elimina después de 5 minutos.</small>
                       </span>
                       <Badge variant="info">Activa</Badge>
                     </div>
                   )}
 
-                  {scheduleTestModeEnabled && testHumanScheduleCapabilityEnabled && (
+                  {testHumanScheduleCapabilityEnabled && (
                     <div className={styles.agentTestOptionSwitch}>
                       <span>
                         <strong>Agenda confirmada por humano</strong>
-                        <small>{testScheduleCapability?.handoffUserId
+                        <small>{testAssignmentCapabilityEnabled
                           ? 'La IA valida el horario, asigna temporalmente la solicitud a la persona configurada y después restaura al responsable anterior.'
                           : 'La IA valida el horario y avisa al equipo sin asignar a una persona; no crea ni modifica la cita.'}</small>
                       </span>
-                      <Badge variant={testScheduleCapability?.handoffUserId ? 'info' : 'neutral'}>
-                        {testScheduleCapability?.handoffUserId ? 'Asignación activa' : 'Sin asignar'}
+                      <Badge variant={testAssignmentCapabilityEnabled ? 'info' : 'neutral'}>
+                        {testAssignmentCapabilityEnabled ? 'Asignación activa' : 'Sin asignar'}
                       </Badge>
                     </div>
                   )}
@@ -4203,15 +4198,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 )}
               </div>
 
-              {!testEffectsEnabled && (
-                <p className={styles.helper}>Activa el switch de prueba dentro de Agendar cita o Cobrar para probar únicamente esa capacidad.</p>
-              )}
-              {testEffectsEnabled && !expectsTestRun && (
-                <p className={styles.helper}>
-                  {testHumanScheduleCapabilityEnabled
-                    ? 'La agenda la termina una persona. Sin responsable asignado, el tester muestra el handoff pero no crea citas ni hace una asignación real.'
-                    : 'El switch de prueba está activo, pero esta configuración no tiene una acción real que ejecutar. La conversación sigue siendo una simulación.'}
-                </p>
+              {testScheduleCapability?.enabled && !canTestSchedule && (
+                <p className={styles.helper}>Puedes simular la agenda. Para guardar una cita de prueba necesitas acceso a Contactos y permiso para editar Citas.</p>
               )}
 
               <div className={styles.agentTestOptionsActions}>

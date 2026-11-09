@@ -79,7 +79,7 @@ test('normalizadores nativos conservan texto vacío explícito y descartan capac
   })
   assert.equal(capabilities.schemaVersion, 3)
   assert.equal(capabilities.safetyPolicy.enabled, true)
-  assert.equal(capabilities.testMode.enabled, false)
+  assert.equal(capabilities.testMode.enabled, true)
   assert.deepEqual(capabilities.items, [
     {
       id: 'schedule_appointment',
@@ -89,7 +89,7 @@ test('normalizadores nativos conservan texto vacío explícito y descartan capac
       handoffUserId: '',
       handoffUserName: '',
       testMode: {
-        enabled: false,
+        enabled: true,
         cleanupAfterMinutes: 5,
         notify: true
       },
@@ -288,7 +288,7 @@ test('agendar normaliza quién termina la cita y el manifest expone ese contrato
     handoffUserId: '42',
     handoffUserName: 'Mariana',
     testMode: {
-      enabled: false,
+      enabled: true,
       cleanupAfterMinutes: 5,
       notify: true
     },
@@ -597,7 +597,7 @@ test('migración legacy infiere transferencia sólo cuando era el único método
   assert.equal(mixedLegacy.gateway, 'stripe')
 })
 
-test('Modo test migra la raíz legacy y después respeta switches independientes por capacidad', () => {
+test('la agenda de prueba sigue la capacidad de agendar y no prende el switch de pagos', () => {
   const migrated = normalizeConversationalCapabilitiesConfig({
     testMode: { enabled: true, notify: false },
     items: [
@@ -613,7 +613,7 @@ test('Modo test migra la raíz legacy y después respeta switches independientes
   const independent = normalizeConversationalCapabilitiesConfig({
     testMode: { enabled: true, notify: true },
     items: [
-      { id: 'schedule_appointment', enabled: true, calendarId: 'cal_1', testMode: { enabled: true, notify: true } },
+      { id: 'schedule_appointment', enabled: true, calendarId: 'cal_1', testMode: { enabled: false, notify: true } },
       { id: 'collect_payment', enabled: true, productId: 'p_1', priceId: 'pp_1', testMode: { enabled: false, notify: true } }
     ]
   })
@@ -624,7 +624,7 @@ test('Modo test migra la raíz legacy y después respeta switches independientes
   const allOff = normalizeConversationalCapabilitiesConfig({
     testMode: { enabled: true },
     items: [
-      { id: 'schedule_appointment', enabled: true, calendarId: 'cal_1', testMode: { enabled: false } },
+      { id: 'schedule_appointment', enabled: false, calendarId: 'cal_1', testMode: { enabled: true } },
       { id: 'collect_payment', enabled: true, productId: 'p_1', priceId: 'pp_1', testMode: { enabled: false } }
     ]
   })

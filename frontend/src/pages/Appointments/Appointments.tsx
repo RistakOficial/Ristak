@@ -2503,7 +2503,7 @@ export const Appointments: React.FC = () => {
                             <div
                               key={event.id}
                               className={`${styles.eventChip} ${styles[`event${event.appointmentStatus.charAt(0).toUpperCase() + event.appointmentStatus.slice(1).toLowerCase()}`] || styles.eventDefault}`}
-                              draggable
+                              draggable={!(event.isTest && event.syncStatus === 'local_only')}
                               onDragStart={handleDragStart(event)}
                               onDragEnd={handleDragEnd}
                               onClick={(e) => {

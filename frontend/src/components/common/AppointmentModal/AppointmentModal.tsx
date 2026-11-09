@@ -355,6 +355,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState(INITIAL_FORM_STATE);
   const isCreateMode = mode === 'create';
+  const isLocalTestAppointment = !isCreateMode && event?.isTest && event.syncStatus === 'local_only';
   const [isEditingExisting, setIsEditingExisting] = useState(false);
   const isReadOnlyMode = !isCreateMode && !isEditingExisting;
 
@@ -519,6 +520,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   };
 
   const loadContactById = async (contactId: string) => {
+    if (isLocalTestAppointment) return;
     try {
       const response = await fetch(apiUrl(`/api/highlevel/contacts/${contactId}`));
       if (!response.ok) throw new Error('Error al cargar contacto');
@@ -1285,8 +1287,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     : formData.assignedUserId
       ? 'Persona asignada'
       : 'Sin asignar';
-  const contactName = selectedContact ? getContactDisplayName(selectedContact) : '';
-  const contactDelivery = selectedContact ? getContactDelivery(selectedContact) : '';
+  const contactName = isLocalTestAppointment
+    ? (event.contactName || event.title)
+    : (selectedContact ? getContactDisplayName(selectedContact) : '');
+  const contactDelivery = !isLocalTestAppointment && selectedContact ? getContactDelivery(selectedContact) : '';
   const addressLabel = formData.address.trim() || 'Sin ubicación';
   const notesLabel = formData.notes.trim() || 'Sin notas';
 
@@ -1893,8 +1897,12 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 <span className={styles.summaryDivider} aria-hidden="true" />
                 <span className={styles.timezoneBadge}>Zona horaria · {timeZoneShort}</span>
               </div>
+              {isLocalTestAppointment && (
+                <div className={styles.summaryMeta}>Se elimina automáticamente 5 minutos después de agendarse.</div>
+              )}
             </div>
             <div className={styles.summaryActions}>
+              {event?.isTest && <Badge variant="info">Cita de prueba</Badge>}
               {/* GCAL-007: estado de sincronización con Google de esta cita */}
               {googleSyncBadge && (
                 <Badge variant={googleSyncBadge.variant}>{googleSyncBadge.label}</Badge>
@@ -2252,7 +2260,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         )}
 
         {isReadOnlyMode ? (
-          <div className={`${styles.actions} ${styles.viewActions}`}>
+          !isLocalTestAppointment && <div className={`${styles.actions} ${styles.viewActions}`}>
             <Button
               variant="primary"
               onClick={() => setIsEditingExisting(true)}

@@ -4,6 +4,7 @@ import * as googleCalendarService from './googleCalendarService.js'
 import * as highlevelCalendarService from './highlevelCalendarService.js'
 import * as localCalendarService from './localCalendarService.js'
 import { withConversationalAgentTestMutationLock } from './conversationalAgentTestMutationLockService.js'
+import { publishChatDataChangedEvent } from './chatLiveEventsService.js'
 
 const TEST_APPOINTMENT_CLEANUP_LIMIT = 100
 const TEST_APPOINTMENT_CLEANUP_LEASE_MS = 2 * 60 * 1000
@@ -524,6 +525,12 @@ export async function cleanupConversationalTestAppointment({
     await markEffectCleanup(cleanEffectId, 'cleaned')
     await markRunCleanedWhenComplete(effect.run_id)
   })
+  if (row) {
+    publishChatDataChangedEvent(
+      { contactId: row.contact_id, domains: ['appointments'], entityId: cleanAppointmentId },
+      { recordBusinessEvent: false }
+    )
+  }
   return {
     status: 'cleaned',
     appointmentId: cleanAppointmentId,

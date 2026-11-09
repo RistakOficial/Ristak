@@ -30,6 +30,7 @@ import {
   normalizePhoneForAccount
 } from '../utils/accountLocale.js' // (GCAL-006)
 import GHLClient from './ghlClient.js'
+import { isLocalOnlyConversationalTestAppointment } from './conversationalAgentTestContactService.js'
 import * as highlevelCalendarService from './highlevelCalendarService.js'
 import { getCalendarPublicBaseUrlStatus } from './sitesService.js'
 import { hasFeature } from './licenseService.js'
@@ -8738,6 +8739,7 @@ export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
 
   for (const row of rows) {
     const appointment = appointmentRowToApi(row)
+    if (isLocalOnlyConversationalTestAppointment(appointment)) continue
     try {
       if (!isRistakOwnedRow(row, LOCAL_APPOINTMENT_PREFIX) && !isPendingHighLevelLinkedRow(row, 'ghl_appointment_id')) {
         logger.warn(`Saltando cita no local para evitar duplicado en HighLevel: ${appointment.id}`)

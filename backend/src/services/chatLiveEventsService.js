@@ -122,7 +122,7 @@ export function publishChatMessageEvent(input = {}) {
   }
 }
 
-export function publishChatDataChangedEvent(input = {}) {
+export function publishChatDataChangedEvent(input = {}, { recordBusinessEvent = true } = {}) {
   const contactId = cleanString(input.contactId)
   const supportedDomains = new Set(['appointments', 'scheduled_messages'])
   const domains = [...new Set((Array.isArray(input.domains) ? input.domains : [])
@@ -138,13 +138,15 @@ export function publishChatDataChangedEvent(input = {}) {
     changedAt: new Date().toISOString()
   }
 
-  recordMcpBusinessEventBestEffort({
-    domain: 'chat',
-    type: 'chat_data_changed',
-    entityId: payload.entityId || contactId,
-    payload,
-    occurredAt: payload.changedAt
-  })
+  if (recordBusinessEvent) {
+    recordMcpBusinessEventBestEffort({
+      domain: 'chat',
+      type: 'chat_data_changed',
+      entityId: payload.entityId || contactId,
+      payload,
+      occurredAt: payload.changedAt
+    })
+  }
 
   if (clients.size === 0) return
 

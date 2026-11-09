@@ -580,7 +580,6 @@ export interface ConversationalAgentTestOptions {
   agentId?: string
   testSessionId?: string
   testMessageId?: string
-  contactId?: string
   effects?: ConversationalAgentTestEffects
 }
 
@@ -977,7 +976,7 @@ function normalizeCapabilityItem(value: unknown, legacyTestMode = DEFAULT_CONVER
       bookingOwner: raw.bookingOwner === 'human' ? 'human' : 'ai',
       handoffUserId: String(raw.handoffUserId || '').trim().slice(0, 160),
       handoffUserName: String(raw.handoffUserName || '').trim().slice(0, 240),
-      testMode: normalizeCapabilityTestMode(raw.testMode, legacyTestMode)
+      testMode: { ...normalizeCapabilityTestMode(raw.testMode, legacyTestMode), enabled }
     }
   }
 
@@ -1708,7 +1707,6 @@ export const conversationalAgentService = {
         ...(options.agentId ? { agentId: options.agentId } : {}),
         ...(options.testSessionId ? { testSessionId: options.testSessionId } : {}),
         ...(options.testMessageId ? { testMessageId: options.testMessageId } : {}),
-        ...(options.contactId ? { contactId: options.contactId } : {}),
         ...(options.effects ? { effects: options.effects } : {})
       })
     })

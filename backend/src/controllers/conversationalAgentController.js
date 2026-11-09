@@ -30,6 +30,7 @@ import {
   runConversationalAgentPreview,
   queueManuallyActivatedConversation
 } from '../agents/conversational/runner.js'
+import { getConversationalCapability } from '../agents/conversational/nativeRuntimeConfig.js'
 import {
   buildConversationalAgentTestRuntimeEventContext,
   buildConversationalAgentTestTurnRequestHash,
@@ -397,15 +398,20 @@ export async function updateState(req, res) {
   }
 }
 
-export async function testAgent(req, res) {
+export function testAgent(req, res) {
+  return runConversationalAgentTester(req, res)
+}
+
+export async function runConversationalAgentTester(req, res, { runPreview = runConversationalAgentPreview } = {}) {
   try {
     const requestedEffects = normalizeConversationalAgentTestEffects(req.body?.effects)
     assertConversationalTesterAccess(req.user, requestedEffects)
     const agentId = String(req.body?.agentId || '').trim()
+    const identifiedPreview = Boolean(agentId && req.body?.testSessionId && req.body?.testMessageId)
     let runContext = null
     let configOverride = req.body?.config || null
 
-    if (requestedEffects.enabled) {
+    if (requestedEffects.enabled || identifiedPreview) {
       if (!agentId) {
         return res.status(400).json({ success: false, error: 'Guarda el agente antes de registrar acciones de prueba.' })
       }
@@ -427,24 +433,38 @@ export async function testAgent(req, res) {
         return res.json({ success: true, data: completedReplay })
       }
       const persistedAgent = await getConversationalAgent(agentId)
-      if (!persistedAgent) {
+      if (!persistedAgent && requestedEffects.enabled) {
         return res.status(404).json({ success: false, error: 'El agente de esta prueba ya no existe.' })
       }
-      // En una prueba con efectos, el texto editable puede venir de la pantalla,
-      // pero calendario, producto, precio, monto y dueño de agenda siempre salen
-      // de la versión guardada en servidor.
-      configOverride = lockConversationalTesterConfigOverride(configOverride, persistedAgent)
-      runContext = await prepareConversationalAgentTestRun({
-        testRunId: req.body?.testSessionId,
-        testMessageId: req.body?.testMessageId,
-        agentId,
-        requestedByUserId: req.user?.userId,
-        contactId: req.body?.contactId,
-        effects: requestedEffects,
-        messages: req.body?.messages,
-        configOverride,
-        clientRequestHash
+      const schedule = getConversationalCapability(persistedAgent || {}, 'schedule_appointment')
+      const autoSchedule = Boolean(
+        identifiedPreview && schedule?.enabled &&
+        hasUserAccess(req.user, 'contacts', 'read') && hasUserAccess(req.user, 'appointments', 'write')
+      )
+      const autoAssign = autoSchedule && schedule.bookingOwner === 'human' && Boolean(schedule.handoffUserId) &&
+        hasUserAccess(req.user, 'contacts', 'write')
+      const effects = normalizeConversationalAgentTestEffects({
+        ...requestedEffects,
+        enabled: requestedEffects.enabled || autoSchedule,
+        scheduleAppointment: requestedEffects.scheduleAppointment || autoSchedule,
+        assignUser: requestedEffects.assignUser || autoAssign
       })
+      if (effects.enabled) {
+        // El texto editable puede venir de la pantalla; agenda, productos y
+        // contacto de prueba los resuelve el servidor. Nunca usar contactId
+        // de un cliente anterior para registrar acciones sobre una ficha real.
+        configOverride = lockConversationalTesterConfigOverride(configOverride, persistedAgent)
+        runContext = await prepareConversationalAgentTestRun({
+          testRunId: req.body?.testSessionId,
+          testMessageId: req.body?.testMessageId,
+          agentId,
+          requestedByUserId: req.user?.userId,
+          effects,
+          messages: req.body?.messages,
+          configOverride,
+          clientRequestHash
+        })
+      }
     }
 
     const previewScopeId = buildConversationalAppointmentPreviewScopeId({
@@ -463,7 +483,7 @@ export async function testAgent(req, res) {
       const testVerifiedPaymentEvidence = runContext
         ? await getConversationalAgentTestVerifiedPaymentEvidence({ runContext })
         : null
-      return runConversationalAgentPreview({
+      return runPreview({
         messages: req.body?.messages,
         configOverride,
         agentId: agentId || null,
@@ -478,7 +498,7 @@ export async function testAgent(req, res) {
       const testEffects = runContext
         ? await recordConversationalAgentPreviewEffects({ runContext, actions: result.actions })
         : []
-      const reconciledResult = runContext
+      const reconciledResult = runContext?.effects.scheduleAppointment
         ? reconcileConversationalAgentPreviewResult({ result, testEffects })
         : result
       const reconciledConversationEnded = didConversationalPreviewEndConversation(reconciledResult.actions)

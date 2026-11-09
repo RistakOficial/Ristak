@@ -390,7 +390,9 @@ function normalizeCapabilityItem(input, legacyTestMode = DEFAULT_CONVERSATIONAL_
       bookingOwner,
       handoffUserId: bookingOwner === 'human' ? cleanId(input.handoffUserId, 160) : '',
       handoffUserName: bookingOwner === 'human' ? cleanText(input.handoffUserName, 180) : '',
-      testMode: normalizeCapabilityTestMode(input.testMode, legacyTestMode),
+      // Los clientes anteriores aún leen este campo. La prueba de agenda
+      // siempre acompaña a la capacidad; su switch anterior no da autoridad.
+      testMode: { ...normalizeCapabilityTestMode(input.testMode, legacyTestMode), enabled },
       // Compatibilidad de lectura con agentes anteriores. La agenda persistida,
       // no esta capacidad, es la única fuente de verdad para empalmes.
       allowOverlaps: toBoolean(input.allowOverlaps)

@@ -6,6 +6,7 @@ import { logger } from '../utils/logger.js'
 import { recordAudit } from '../utils/auditLog.js'
 import { publishChatDataChangedEvent } from './chatLiveEventsService.js'
 import { filterRoutableEmailAttendees } from './emailRecipientService.js'
+import { isLocalOnlyConversationalTestAppointment } from './conversationalAgentTestContactService.js'
 import * as localCalendarService from './localCalendarService.js'
 import { clearGoogleCalendarIntegrationCredentials } from './integrationCredentialsCleanupService.js'
 import {
@@ -1612,6 +1613,10 @@ export async function syncAppointmentToGoogle(appointmentOrId, { sendUpdates = '
     return { enabled: true, appointment: null }
   }
 
+  if (isLocalOnlyConversationalTestAppointment(appointment)) {
+    return { enabled: false, reason: 'test_appointment_local_only', appointment }
+  }
+
   if (cleanString(appointment.googleSyncStatus).toLowerCase() === 'history_only') {
     return {
       enabled: false,
@@ -1895,6 +1900,7 @@ export async function syncLocalAppointmentsToGoogle({ calendarId = null, limit =
   const conditions = [
     'deleted_at IS NULL',
     "COALESCE(sync_status, '') != 'pending_delete'",
+    "COALESCE(sync_status, '') != 'local_only'",
     "COALESCE(google_sync_status, '') != 'history_only'",
     `(
       (

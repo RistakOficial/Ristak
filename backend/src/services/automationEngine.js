@@ -12,6 +12,7 @@ import {
 } from '../utils/dateUtils.js'
 import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
 import { createInternalNotification } from './notificationsService.js'
+import { isLocalOnlyConversationalTestAppointment } from './conversationalAgentTestContactService.js'
 import {
   collectAutomationFlowRequiredFeatures,
   getAutomationNodeRequiredFeatures
@@ -8753,7 +8754,9 @@ async function runAppointmentTestFlow(flow, automation, startNodeId, baseCtx) {
     try {
       await assertAutomationNodeFeatureAccess(node)
       if (node.type === 'action-webhook') {
-        result = await executeAppointmentTestWebhook(node, ctx)
+        result = isLocalOnlyConversationalTestAppointment(ctx)
+          ? await simulateAppointmentTestNode(node, ctx, 'Webhook simulado: la cita automática de prueba sólo se registra en Ristak.')
+          : await executeAppointmentTestWebhook(node, ctx)
       } else if (node.type === 'action-system-notification') {
         result = await executeAppointmentTestSystemNotification(node, ctx)
       } else if (isReadOnlyTestNode(node)) {
