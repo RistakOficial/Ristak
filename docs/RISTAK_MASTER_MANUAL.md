@@ -109,6 +109,11 @@ cambios nuevos deben entrar por `backend/migrations/versioned/`. PostgreSQL usa
 timeouts de mantenimiento únicamente en esa sesión y restaura los límites de la
 cuenta antes de atender tráfico.
 
+SQLite termina cada consulta antes de iniciar la siguiente en la misma conexión.
+Las transacciones mantienen sus conexiones dedicadas y `BEGIN IMMEDIATE`. Así,
+cuando llegan a la vez un webhook de WhatsApp y su copia por QR, una lectura
+pendiente en la conexión compartida no bloquea la escritura del contacto.
+
 El bootstrap común no ejecuta DDL específico de otro motor. En particular, el
 índice legacy `idx_campaign_contacts_cursor_created_at_id`, cuya expresión usa
 `julianday()` y `INDEXED BY`, se crea sólo en SQLite. PostgreSQL usa sus índices

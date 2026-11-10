@@ -786,8 +786,18 @@ if (usePostgres) {
     })
   }
 
-  const sqliteDb = new sqlite3.Database(dbPath)
-  sqliteDb.configure('busyTimeout', 10_000)
+  function openSqliteDataConnection() {
+    const connection = new sqlite3.Database(dbPath)
+    // Configura el timeout antes de activar la cola serial del driver.
+    connection.configure('busyTimeout', 10_000)
+    // Finaliza cada statement antes de empezar otro en la misma conexión. Si
+    // una lectura sigue abierta cuando toca escribir y otra conexión ya tiene
+    // BEGIN IMMEDIATE, SQLite puede devolver BUSY sin esperar el busy timeout.
+    connection.serialize()
+    return connection
+  }
+
+  const sqliteDb = openSqliteDataConnection()
   logger.success('Conectado a SQLite:', dbPath)
 
   const createSqliteAdapter = (connection) => ({
@@ -927,8 +937,7 @@ if (usePostgres) {
       // Una conexión dedicada evita que dos transacciones concurrentes se
       // aniden en la conexión global o que escrituras ajenas queden incluidas
       // accidentalmente entre BEGIN y COMMIT.
-      const transactionConnection = new sqlite3.Database(dbPath)
-      transactionConnection.configure('busyTimeout', 10_000)
+      const transactionConnection = openSqliteDataConnection()
       const txDb = createSqliteAdapter(transactionConnection)
       try {
         // El PRAGMA es por conexión y debe ejecutarse antes de BEGIN. Sin esto,
