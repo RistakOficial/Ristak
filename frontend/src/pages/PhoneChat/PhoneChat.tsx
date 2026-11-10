@@ -155,6 +155,7 @@ import {
   buildConversationalLegacyEditableText,
   conversationalAgentService,
   getConversationalHandoffRulesLengthError,
+  getConversationalLinkMessageLengthError,
   readConversationalAgentLiveCache,
   type AgentFilterOptions,
   type AgentFollowUpConfig,
@@ -8146,11 +8147,22 @@ export const PhoneChat: React.FC = () => {
           }
           throw new Error(handoffRulesLengthError)
         }
+        const link = requestAgent.capabilitiesConfig?.items.find((item) => item.id === 'send_link')
+        const linkMessageLengthError = getConversationalLinkMessageLengthError(link?.message)
+        if (linkMessageLengthError) {
+          if (options.notify !== false && phoneAgentMountedRef.current) {
+            showToast('warning', 'Revisa el mensaje del enlace', linkMessageLengthError)
+          }
+          throw new Error(linkMessageLengthError)
+        }
 
         agentSavePendingCountRef.current += 1
         if (phoneAgentMountedRef.current) setAgentConfigSaving(true)
         try {
-          const next = await conversationalAgentService.updateAgent(agentId, phoneAgentToInput(requestAgent))
+          const input = phoneAgentToInput(requestAgent)
+          // Sólo una edición que solicite publicar o pausar debe enviar ese estado.
+          if (effectiveEnabled === undefined) delete input.enabled
+          const next = await conversationalAgentService.updateAgent(agentId, input)
           agentMutationVersionsRef.current.set(agentId, (agentMutationVersionsRef.current.get(agentId) || 0) + 1)
           const revisionUnchanged = (agentSaveRevisionsRef.current.get(agentId) || 0) === requestRevision
           if (revisionUnchanged) {
@@ -20671,6 +20683,7 @@ export const PhoneChat: React.FC = () => {
           linkKind: 'verified_goal',
           triggerLinkId: '',
           url: '',
+          message: '',
           trackingParam: 'ristak_goal_id'
         }
       }
@@ -20724,8 +20737,12 @@ export const PhoneChat: React.FC = () => {
           }
     )
 
-    const updateNativeCapabilityDraft = (next: ConversationalCapabilityItem) => {
+    const updateNativeCapabilityDraft = (
+      next: ConversationalCapabilityItem,
+      { pauseAgent = false }: { pauseAgent?: boolean } = {}
+    ) => {
       if (!selectedAgentDef) return
+      if (pauseAgent && selectedAgentDef.enabled) agentPendingEnabledRef.current.set(selectedAgentDef.id, false)
       const exists = nativeCapabilities.items.some((item) => item.id === next.id)
       const items = exists
         ? nativeCapabilities.items.map((item) => (item.id === next.id ? next : item))
@@ -20752,6 +20769,7 @@ export const PhoneChat: React.FC = () => {
       ? constrainNativePaymentCapability(storedPaymentCapability)
       : null
     const linkCapability = getSelectedNativeCapability('send_link')
+    const linkMessageLengthError = getConversationalLinkMessageLengthError(linkCapability?.message)
     const handoffCapability = getSelectedNativeCapability('handoff_human')
     const handoffRulesLengthError = getConversationalHandoffRulesLengthError(nativeCapabilities)
     const customCapability = getSelectedNativeCapability('custom_goal')
@@ -21569,14 +21587,24 @@ export const PhoneChat: React.FC = () => {
 
       if (id === 'send_link' && linkCapability?.enabled) {
         return (
-          <PhoneTextField
-            label="Enlace permitido"
-            value={linkCapability.url}
-            onChange={(url) => updateNativeCapabilityDraft({ ...linkCapability, linkKind: 'verified_goal', triggerLinkId: '', url })}
-            onBlur={() => saveNativeCapability(linkCapability)}
-            placeholder="https://tu-negocio.com/siguiente-paso"
-            disabled={agentConfigSaving}
-          />
+          <>
+            <PhoneTextField
+              label="Enlace permitido"
+              value={linkCapability.url}
+              onChange={(url) => updateNativeCapabilityDraft({
+                ...linkCapability, linkKind: 'verified_goal', triggerLinkId: '', url
+              }, { pauseAgent: true })}
+              placeholder="https://tu-negocio.com/siguiente-paso"
+            />
+            <PhoneTextArea
+              label="Mensaje junto al enlace (opcional)"
+              value={linkCapability.message}
+              onChange={(message) => updateNativeCapabilityDraft({ ...linkCapability, message })}
+              placeholder="Ejemplo: Aquí puedes elegir un horario para tu cita."
+              hint={linkMessageLengthError || 'El enlace se agrega debajo de tu texto. Si lo dejas vacío, se usa el mensaje habitual.'}
+              invalid={Boolean(linkMessageLengthError)}
+            />
+          </>
         )
       }
 
@@ -21746,7 +21774,7 @@ export const PhoneChat: React.FC = () => {
                     <input
                       type="checkbox"
                       checked={Boolean(item?.enabled)}
-                      disabled={agentConfigSaving}
+                      disabled={agentConfigSaving || (option.id === 'send_link' && Boolean(linkMessageLengthError))}
                       onChange={(event) => toggleNativeCapability(option.id, event.target.checked)}
                     />
                     <span><strong>{option.label}</strong><small>{option.description}</small></span>

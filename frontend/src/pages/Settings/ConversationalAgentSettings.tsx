@@ -34,12 +34,14 @@ import {
   conversationalAgentService,
   buildConversationalLegacyEditableText,
   CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH,
+  CONVERSATIONAL_LINK_MESSAGE_MAX_LENGTH,
   isConversationalAgentEntryConflictError,
   DEFAULT_AGENT_DEPOSIT_METHODS,
   DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG,
   DEFAULT_CONVERSATIONAL_CONTACT_SCOPE,
   DEFAULT_CONVERSATIONAL_PROMPT_CONFIG,
   getConversationalHandoffRulesLengthError,
+  getConversationalLinkMessageLengthError,
   type AgentFilterOptions,
   type AgentFollowUpConfig,
   type AgentFollowUpStepConfig,
@@ -939,6 +941,8 @@ function getNativeCapabilityItemError(
     }
   }
   if (item.id === 'send_link') {
+    const messageError = getConversationalLinkMessageLengthError(item.message)
+    if (messageError) return messageError
     const hasConfiguredLink = item.linkKind === 'trigger'
       ? Boolean(String(item.triggerLinkId || item.url || '').trim())
       : isSafeConversationalUrl(item.url)
@@ -967,6 +971,7 @@ function getNativeCapabilityError(agent: ConversationalAgentDef, accountCurrency
 
 function getAgentValidationError(agent: ConversationalAgentDef, accountCurrency = '') {
   return getConversationalHandoffRulesLengthError(agent.capabilitiesConfig) ||
+    getConversationalLinkMessageLengthError(agent.capabilitiesConfig?.items.find((item) => item.id === 'send_link')?.message) ||
     (agent.enabled ? getNativeCapabilityError(agent, accountCurrency) : '') ||
     getAgentResponseScheduleError(agent.responseSchedule) ||
     getResponseDelayError(getAgentResponseDelay(agent)) ||
@@ -1307,6 +1312,7 @@ function buildNativeCapabilityFromAgent(
       linkKind: 'verified_goal',
       triggerLinkId: '',
       url: '',
+      message: '',
       trackingParam: 'ristak_goal_id'
     }
   }
@@ -1415,6 +1421,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
       } as Extract<ConversationalCapabilityItem, { id: 'collect_payment' }>
     : storedPaymentCapability
   const linkCapability = getNativeCapability(capabilities, 'send_link')
+  const linkMessageLengthError = getConversationalLinkMessageLengthError(linkCapability?.message)
   const handoffCapability = getNativeCapability(capabilities, 'handoff_human')
   const handoffRulesLengthError = getConversationalHandoffRulesLengthError(capabilities)
   const customCapability = getNativeCapability(capabilities, 'custom_goal')
@@ -1969,14 +1976,26 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
       item: linkCapability,
       settings: linkCapability?.enabled ? (
         <div className={styles.nativeCapabilitySettings}>
-          <label className={styles.label}>Enlace que puede mandar</label>
+          <label className={styles.label} htmlFor="conversational-send-link-url">Enlace que puede mandar</label>
           <input
+            id="conversational-send-link-url"
             className={styles.input}
             value={linkCapability.url}
             placeholder="https://tu-negocio.com/siguiente-paso"
             onChange={(event) => updateCapability({ ...linkCapability, linkKind: 'verified_goal', triggerLinkId: '', url: event.target.value })}
           />
           <p className={styles.helper}>Abrir el enlace no confirma una cita ni un pago. Esos resultados necesitan evidencia real aparte.</p>
+          <ExpandableTextareaField
+            id="conversational-send-link-message"
+            label="Mensaje junto al enlace (opcional)"
+            description="El chatbot enviará este texto con la URL debajo. Si lo dejas vacío, usará su respuesta habitual."
+            value={linkCapability.message}
+            rows={3}
+            placeholder="Ejemplo: Aquí puedes agendar tu cita."
+            characterLimit={CONVERSATIONAL_LINK_MESSAGE_MAX_LENGTH}
+            aria-invalid={Boolean(linkMessageLengthError) || undefined}
+            onChange={(message) => updateCapability({ ...linkCapability, message })}
+          />
         </div>
       ) : null
     },

@@ -24,6 +24,7 @@ export type ConversationalCapabilityId =
   | 'custom_goal'
 
 export const CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH = 4000
+export const CONVERSATIONAL_LINK_MESSAGE_MAX_LENGTH = 500
 
 export interface ConversationalPromptConfig {
   schemaVersion: 1 | 2
@@ -89,7 +90,15 @@ export interface SendLinkCapability extends ConversationalCapabilityBase {
   linkKind: 'trigger' | 'verified_goal'
   triggerLinkId: string
   url: string
+  message: string
   trackingParam: string
+}
+
+export function getConversationalLinkMessageLengthError(value = '') {
+  const excess = value.length - CONVERSATIONAL_LINK_MESSAGE_MAX_LENGTH
+  return excess > 0
+    ? `El mensaje junto al enlace admite hasta ${CONVERSATIONAL_LINK_MESSAGE_MAX_LENGTH} caracteres. Reduce ${excess.toLocaleString('es-MX')} para poder guardar.`
+    : ''
 }
 
 export interface HandoffHumanCapability extends ConversationalCapabilityBase {
@@ -1058,6 +1067,7 @@ function normalizeCapabilityItem(value: unknown, legacyTestMode = DEFAULT_CONVER
       linkKind: raw.linkKind === 'trigger' ? 'trigger' : 'verified_goal',
       triggerLinkId: String(raw.triggerLinkId || '').trim().slice(0, 180),
       url: String(raw.url || '').trim().slice(0, 2000),
+      message: typeof raw.message === 'string' ? raw.message : '',
       trackingParam: String(raw.trackingParam || 'ristak_goal_id').trim().slice(0, 64) || 'ristak_goal_id'
     }
   }

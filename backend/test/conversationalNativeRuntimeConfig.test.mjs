@@ -20,6 +20,7 @@ const {
   DEFAULT_CONVERSATIONAL_STRATEGY_INSTRUCTIONS,
   DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS,
   CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH,
+  CONVERSATIONAL_LINK_MESSAGE_MAX_LENGTH,
   buildConversationalCapabilityManifest,
   getConversationalCapability,
   getConversationalCapabilitiesConfig,
@@ -53,6 +54,35 @@ function uniqueTagFilters(tag) {
     exit: { groups: [] }
   }
 }
+
+test('el texto del enlace se guarda completo, valida el límite y se puede borrar', async () => {
+  const message = `\nHola 👋\n${'x'.repeat(CONVERSATIONAL_LINK_MESSAGE_MAX_LENGTH - '\nHola 👋\n\n'.length)}\n`
+  const capability = { id: 'send_link', enabled: true, url: 'https://example.test/registro' }
+  const configWithMessage = (value) => ({ items: [{ ...capability, message: value }] })
+  const agent = await createConversationalAgent({
+    name: 'Mensaje de enlace',
+    enabled: false,
+    capabilitiesConfig: configWithMessage(message)
+  })
+  try {
+    assert.equal(getConversationalCapability(agent, 'send_link').message, message)
+    for (const value of [`${message} `, { text: 'inválido' }]) {
+      await assert.rejects(
+        updateConversationalAgent(agent.id, { capabilitiesConfig: configWithMessage(value) }),
+        (error) => error?.statusCode === 400 && error?.code === 'CONVERSATIONAL_LINK_MESSAGE_INVALID'
+      )
+    }
+    assert.equal(getConversationalCapability(await getConversationalAgent(agent.id), 'send_link').message, message)
+
+    const cleared = await updateConversationalAgent(agent.id, { capabilitiesConfig: configWithMessage('') })
+    assert.deepEqual(
+      getConversationalCapability(cleared, 'send_link'),
+      getConversationalCapability({ capabilitiesConfig: { items: [capability] } }, 'send_link')
+    )
+  } finally {
+    await removeAgent(agent.id)
+  }
+})
 
 test('normalizadores nativos conservan texto vacío explícito y descartan capacidades desconocidas', () => {
   const prompt = normalizeConversationalPromptConfig({

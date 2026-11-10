@@ -9588,6 +9588,15 @@ termine el turno al llamar `send_trigger_link` sin redactar texto adicional.
 Mostrarlo en el simulador no confirma una entrega real ni completa objetivos en
 la cuenta. Una preparación fallida no agrega una URL a la respuesta.
 
+En **Mandar enlace**, el campo **Mensaje junto al enlace (opcional)** permite
+guardar hasta 500 caracteres por chatbot junto a la URL. Cuando el chatbot
+prepara el enlace, manda el texto escrito y, debajo, la URL correspondiente en
+el mismo globo. Aplica al enlace general y al enlace de **Objetivo propio**
+cuando éste usa esa configuración. La prueba también muestra el mensaje junto
+al enlace preparado. Si se deja el campo vacío o se borra su contenido, el
+chatbot conserva su respuesta habitual. El mensaje no cambia cuándo se entrega
+un enlace ni qué evidencia hace falta para dar el objetivo por cumplido.
+
 El campo **Cuándo debe pasarlo** admite hasta 4000 caracteres en escritorio,
 celular y API. Ambas interfaces muestran el conteo y conservan visible un
 borrador que exceda el límite para que pueda corregirse; no lo recortan ni lo

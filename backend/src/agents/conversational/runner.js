@@ -204,6 +204,7 @@ const PREVIEW_CONVERSATION_END_FLAG_BY_TOOL = Object.freeze({
 
 const PREVIEW_TURN_END_FLAG_BY_TOOL = Object.freeze({
   ...PREVIEW_CONVERSATION_END_FLAG_BY_TOOL,
+  send_goal_url: 'wouldSendConfiguredLink',
   reschedule_appointment: 'wouldRescheduleAppointment',
   cancel_appointment: 'wouldCancelAppointment'
 })
@@ -2264,6 +2265,7 @@ export function guardConversationalAppointmentReplyAgainstState({ reply = '', ct
     questionCategories,
     previousState: currentAppointmentTelemetryState(ctx)
   }
+  if (isConfiguredLinkReply(originalReply, ctx.actions)) return base
   const verifiedAppointmentFacts = verifiedAppointmentFactsFromContext(ctx)
   const appointmentVerificationUnavailable = ctx.verifiedAppointmentContext?.unavailable === true ||
     (Array.isArray(ctx.appointmentReadActions) && ctx.appointmentReadActions.some((action) => (
@@ -2810,6 +2812,22 @@ function nativePreviewPreparedLink(action = {}) {
     Boolean(nativeActionVisibleUrl(action))
 }
 
+function getConfiguredLinkReply(actions = []) {
+  const action = (Array.isArray(actions) ? actions : []).findLast((candidate) => (
+    ['send_trigger_link', 'send_goal_url'].includes(candidate?.type) &&
+    candidate.outcome?.linkPrepared === true &&
+    candidate.outcome?.linkMessage &&
+    !nativeActionFailed(candidate) &&
+    (nativeActionSucceeded(candidate) || candidate.outcome?.status === 'simulated') &&
+    Boolean(nativeActionVisibleUrl(candidate))
+  ))
+  return action ? `${action.outcome.linkMessage}\n${nativeActionVisibleUrl(action)}` : ''
+}
+
+function isConfiguredLinkReply(reply, actions) {
+  return Boolean(reply) && reply === getConfiguredLinkReply(actions)
+}
+
 export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
   const preventiveSuppression = (Array.isArray(actions) ? actions : []).some((action) => (
     action?.type === 'apply_safety_measure' &&
@@ -2832,6 +2850,8 @@ export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
   if (contactIdentityUnavailable) {
     return 'tuve un problema para abrir la información de este chat. no te voy a pedir datos que ya deberían estar registrados; necesito que una persona del equipo lo revise'
   }
+  const configuredLinkReply = getConfiguredLinkReply(actions)
+  if (configuredLinkReply) return configuredLinkReply
   // Un mismo turno puede guardar primero un dato requerido y después completar
   // la acción terminal. La confirmación visible debe describir el último efecto
   // exitoso, no el primer paso auxiliar del turno.
@@ -8488,7 +8508,11 @@ export async function sendReplyParts({
   if (!splitResult) {
     try {
       splitResult = forceSingleMessage
-        ? { messages: [fallbackReply].filter(Boolean), source: 'structured_offer', reason: 'server_single_message' }
+        ? {
+            messages: [fallbackReply].filter(Boolean),
+            source: typeof forceSingleMessage === 'string' ? forceSingleMessage : 'structured_offer',
+            reason: 'server_single_message'
+          }
         : isEmailConversationalChannel(normalizedChannel)
         ? { messages: [fallbackReply].filter(Boolean), source: 'email', reason: 'email_single_message' }
         : await splitter({
@@ -9319,9 +9343,11 @@ async function handleToolCallingV2InboundTurn({
         sourceMessageId: latest.id, inboundClaim,
         ownsTerminalState: ownTerminalState, send
       }),
-      forceSingleMessage: replyGuardResult?.prevented === true ||
-        repetitionGuardResult?.prevented === true ||
-        hasServerVisibleAppointmentAvailability(ctx.actions),
+      forceSingleMessage: isConfiguredLinkReply(reply, ctx.actions)
+        ? 'configured_link'
+        : replyGuardResult?.prevented === true ||
+          repetitionGuardResult?.prevented === true ||
+          hasServerVisibleAppointmentAvailability(ctx.actions),
       markReplyComplete: async ({
         deliveryPlanId,
         completionEffect: deliveredCompletionEffect
@@ -10935,7 +10961,9 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
       externalIdPrefix: 'convagent_payment_resume',
       dependencies: {
         splitter: splitMessageIntoBubbles,
-        forceSingleMessage: hasServerVisibleAppointmentAvailability(ctx.actions),
+        forceSingleMessage: isConfiguredLinkReply(reply, ctx.actions)
+          ? 'configured_link'
+          : hasServerVisibleAppointmentAvailability(ctx.actions),
         // La terminal ya confirmó un hecho real. Un inbound que llegue después
         // no vuelve obsoleta esta confirmación; se encola y se procesa aparte.
         loadNewerInbound: async () => null,
@@ -13437,6 +13465,8 @@ export async function runConversationalAgentPreview({
         source: replyGuardResult.prevented ? 'appointment_state_guard' : 'repetition_guard',
         reason: replyGuardResult.prevented ? replyGuardResult.reason : repetitionGuardResult.reason
       }
+    : isConfiguredLinkReply(turn.reply, turn.ctx.actions)
+    ? { messages: [turn.reply], source: 'configured_link', reason: 'server_single_message' }
     : hasServerVisibleAppointmentAvailability(turn.ctx.actions)
     ? { messages: [turn.reply].filter(Boolean), source: 'structured_offer', reason: 'server_single_message' }
     : isEmailConversationalChannel(previewChannel)

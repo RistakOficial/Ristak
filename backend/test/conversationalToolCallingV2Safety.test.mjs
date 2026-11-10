@@ -19,6 +19,7 @@ import {
   setNativePaymentReceiptAnalysisHookForTest
 } from '../src/agents/conversational/tools.js'
 import {
+  createToolCallingV2Agent,
   deliverVerifiedHandoffRequiredDataPrompt,
   deliverVerifiedHandoffTerminalMessage,
   ensureToolCallingV2VisibleReply,
@@ -8415,9 +8416,46 @@ test('send_link tipo trigger entrega sólo el destino y jamás agrega contact_id
   assert.equal(ctx.actions[0]?.outcome?.sentUrl, targetUrl)
 })
 
+test('el simulador muestra el texto configurado y la URL en un solo mensaje', async () => {
+  const message = 'El siguiente paso es completar tu registro.\nAl terminar, revisa tu correo para ver las instrucciones.'
+  const targetUrl = 'https://example.test/registro'
+  for (const toolName of ['send_trigger_link', 'send_goal_url']) {
+    const ctx = v2Context([
+      { id: 'send_link', enabled: true, url: targetUrl, message: `\n${message} ` },
+      { id: 'custom_goal', enabled: true, description: 'Completar el registro', completion: 'send_link' }
+    ])
+    ctx.config.replyDelivery = { splitMessagesEnabled: true, minMessageLengthToSplit: 30 }
+    let sentUrl = ''
+    const preview = await runConversationalAgentPreview({
+      messages: [{ role: 'user', content: 'Pásame el enlace para seguir.' }]
+    }, {
+      resolvePreviewRuntimeConfig: async () => ({ config: ctx.config, runtimeDefaults: {} }),
+      resolveAIRuntime: async () => ({ apiKey: null }),
+      hydratePreviewMessages: async (messages) => messages,
+      runNativeTurn: async ({ dryRun }) => {
+        assert.equal(dryRun, true)
+        const tool = createConversationalTools(ctx).find((entry) => entry.name === toolName)
+        const result = await tool.invoke(null, JSON.stringify({ intencionDetectada: null, resumen: null }))
+        assert.equal(result.ok, true)
+        const agent = createToolCallingV2Agent({ model: 'gpt-4.1-mini', instructions: 'Prueba', tools: [tool], dryRun })
+        const terminal = await agent.toolUseBehavior(null, [{ tool, output: result }])
+        assert.equal(terminal.isFinalOutput, true)
+        sentUrl = result.sentUrl
+        return { ctx, reply: ensureToolCallingV2VisibleReply('Listo, aquí está.', ctx.actions) }
+      },
+      recordEvent: async () => {}
+    })
+    assert.equal(new URL(sentUrl).pathname, '/registro')
+    assert.equal(new URL(sentUrl).searchParams.has('ristak_goal_id'), toolName === 'send_goal_url')
+    assert.deepEqual(preview.replyParts, [`${message}\n${sentUrl}`])
+    assert.equal(preview.conversationEnded, toolName === 'send_trigger_link')
+  }
+})
+
 test('send_link verificable independiente entrega URL directa sin crear meta ni pasar a humano', async () => {
   const contactId = `contact_v2_direct_link_${randomUUID()}`
   const targetUrl = 'https://example.com/recurso-directo?utm_source=ristak'
+  const message = 'Conoce el siguiente paso.\nAhí podrás elegir una opción.'
   try {
     await db.run(
       `INSERT INTO contacts (id, full_name, created_at, updated_at)
@@ -8429,6 +8467,7 @@ test('send_link verificable independiente entrega URL directa sin crear meta ni 
       enabled: true,
       linkKind: 'verified_goal',
       url: targetUrl,
+      message: ` ${message} \n`,
       trackingParam: 'goal_ref'
     }], { contactId, dryRun: false, agentId: null, executionId: `message_direct_link_${randomUUID()}` })
     ctx.config.id = null
@@ -8448,6 +8487,7 @@ test('send_link verificable independiente entrega URL directa sin crear meta ni 
     assert.equal(new URL(result.sentUrl).searchParams.has('goal_ref'), false)
     assert.equal(ctx.actions[0]?.objective, 'send_link')
     assert.equal(ctx.actions[0]?.outcome?.goalId, undefined)
+    assert.equal(ensureToolCallingV2VisibleReply('El texto de la IA es diferente.', ctx.actions), `${message}\n${targetUrl}`)
 
     const goalLinks = await db.get(
       'SELECT COUNT(*) AS total FROM conversational_agent_goal_links WHERE contact_id = ?',
@@ -8549,12 +8589,14 @@ test('con ambas capacidades, el envío general nunca se convierte en meta y sól
 test('custom_goal con send_link verificable reusa el mismo inbound, crea otra meta en otro inbound y nunca expone goalId', async () => {
   const contactId = `contact_v2_goal_${randomUUID()}`
   const targetUrl = 'https://example.com/finalizar'
+  const message = 'Aquí puedes terminar tu registro.'
   const trackedGoalItems = [
     {
       id: 'send_link',
       enabled: true,
       linkKind: 'verified_goal',
-      url: targetUrl
+      url: targetUrl,
+      message
     },
     {
       id: 'custom_goal',
@@ -8587,6 +8629,7 @@ test('custom_goal con send_link verificable reusa el mismo inbound, crea otra me
     assert.match(result.sentUrl, /^https:\/\/example\.com\/finalizar\?/)
     assert.ok(ctx.actions[0]?.outcome?.goalId)
     assert.equal(ctx.actions[0]?.outcome?.sentUrl, result.sentUrl)
+    assert.equal(ensureToolCallingV2VisibleReply('Aquí está.', ctx.actions), `${message}\n${result.sentUrl}`)
 
     const replay = await sendLink.invoke(null, JSON.stringify({
       intencionDetectada: 'Quiere finalizar',

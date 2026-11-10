@@ -12937,6 +12937,7 @@ export function createConversationalTools(ctx) {
     intencionDetectada: z.string().nullable().describe('Qué quiere lograr la persona; null si no hace falta contexto extra'),
     resumen: z.string().nullable().describe('Resumen breve para auditoría; null si no hace falta contexto extra')
   })
+  const linkMessage = linkCapability?.message?.trim()
   const sendTriggerLinkTool = tool({
     name: 'send_trigger_link',
     description: 'Entrega exclusivamente el enlace general configurado en Mandar enlace. Cuando la respuesta con la URL queda entregada, Ristak marca este objetivo como cumplido y detiene el chatbot. No crea, prepara, completa ni rastrea un Objetivo propio, aunque esa otra capacidad también esté activada.',
@@ -13001,6 +13002,7 @@ export function createConversationalTools(ctx) {
         actionCompleted: !ctx.dryRun,
         linkPrepared: true,
         sentUrl,
+        ...(linkMessage ? { linkMessage } : {}),
         deliveryConfirmed: false,
         objectiveCompleted: false,
         completesConversationAfterDelivery: true,
@@ -13075,9 +13077,11 @@ export function createConversationalTools(ctx) {
         effect: { liveEffect: 'ENVIARÍA el enlace configurado (el objetivo sigue PENDIENTE hasta la confirmación con ID real)', marksObjectiveCompleted: false }
       })
       if (ctx.dryRun) {
+        const sentUrl = buildGoalLinkPreview(targetUrl, trackingParam, 'goal_simulado', linkContext.linkParams)
         settleAction(action, 'simulated', {
           actionCompleted: false,
-          linkPrepared: false,
+          linkPrepared: Boolean(linkMessage),
+          ...(linkMessage ? { sentUrl, linkMessage } : {}),
           confirmationMode: 'trusted_integration',
           deliveryConfirmed: false,
           objectiveCompleted: false
@@ -13085,7 +13089,8 @@ export function createConversationalTools(ctx) {
         return {
           ok: true,
           simulated: true,
-          sentUrl: buildGoalLinkPreview(targetUrl, trackingParam, 'goal_simulado', linkContext.linkParams),
+          sentUrl,
+          ...(linkMessage ? { wouldSendConfiguredLink: true } : {}),
           trackingParam,
           linkParams: linkContext.linkParams,
           confirmationMode: 'trusted_integration',
@@ -13161,6 +13166,7 @@ export function createConversationalTools(ctx) {
       settleAction(action, 'ok', {
         goalId: link.id,
         sentUrl: link.sentUrl,
+        ...(linkMessage ? { linkMessage } : {}),
         linkPrepared: true,
         confirmationMode: 'trusted_integration',
         deliveryConfirmed: false,

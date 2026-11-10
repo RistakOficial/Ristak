@@ -37,6 +37,7 @@ import {
   CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH,
   getConversationalCapabilitiesConfig,
   getConversationalHandoffRulesInputLength,
+  getConversationalLinkMessageInputError,
   getEnabledConversationalCapabilities,
   getConversationalNativeRuntimeValidationErrors,
   getConversationalPromptConfig,
@@ -14191,6 +14192,8 @@ function agentInputToRowValues(input, base) {
   // Se valida el payload crudo antes de normalizarlo. Recortar aquí haría que
   // el panel aparentara haber guardado reglas que en realidad se perdieron.
   assertAgentHandoffRulesInput(input)
+  const linkMessageError = getConversationalLinkMessageInputError(input.capabilitiesConfig)
+  if (linkMessageError) throw buildAgentConfigError(linkMessageError, 'CONVERSATIONAL_LINK_MESSAGE_INVALID')
   const identity = normalizeAgentIdentity(input, base)
   const next = {
     name: input.name === undefined ? base.name : String(input.name || 'Agente').trim().slice(0, 120) || 'Agente',

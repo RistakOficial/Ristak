@@ -49,6 +49,7 @@ export const CONVERSATIONAL_CAPABILITY_IDS = Object.freeze([
 ])
 
 export const CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH = 4000
+export const CONVERSATIONAL_LINK_MESSAGE_MAX_LENGTH = 500
 
 const CAPABILITY_ID_SET = new Set(CONVERSATIONAL_CAPABILITY_IDS)
 const PAYMENT_MODES = new Set(['full_payment', 'deposit'])
@@ -161,6 +162,21 @@ export function getConversationalHandoffRulesInputLength(input) {
     )
   }
   return maxRulesLength
+}
+
+export function getConversationalLinkMessageInputError(input) {
+  const raw = parseConfigValue(input)
+  const items = Array.isArray(raw) ? raw : raw?.items
+  if (!Array.isArray(items)) return null
+
+  for (const item of items) {
+    if (cleanId(item?.id, 80) !== 'send_link' || item.message == null) continue
+    if (typeof item.message !== 'string') return 'Escribe el mensaje del enlace como texto.'
+    if (item.message.length > CONVERSATIONAL_LINK_MESSAGE_MAX_LENGTH) {
+      return `El mensaje del enlace admite hasta ${CONVERSATIONAL_LINK_MESSAGE_MAX_LENGTH} caracteres.`
+    }
+  }
+  return null
 }
 
 function cleanText(value, maxLength = 8000) {
@@ -481,13 +497,15 @@ function normalizeCapabilityItem(input, legacyTestMode = DEFAULT_CONVERSATIONAL_
 
   if (id === 'send_link') {
     const requestedKind = cleanId(input.linkKind || input.kind, 40)
+    const message = typeof input.message === 'string' ? input.message.slice(0, CONVERSATIONAL_LINK_MESSAGE_MAX_LENGTH) : ''
     return {
       id,
       enabled,
       linkKind: LINK_KINDS.has(requestedKind) ? requestedKind : 'verified_goal',
       triggerLinkId: cleanId(input.triggerLinkId, 180),
       url: cleanText(input.url, 2000),
-      trackingParam: cleanId(input.trackingParam, 64) || 'ristak_goal_id'
+      trackingParam: cleanId(input.trackingParam, 64) || 'ristak_goal_id',
+      ...(message ? { message } : {})
     }
   }
 
