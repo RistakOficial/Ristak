@@ -66,14 +66,25 @@ deduplicacion por persona. El detalle debe listar exactamente a las personas que
 forman el conteo. Un error de consulta no se convierte en una lista vacia; la UI
 debe distinguir entre "cero contactos" y "no se pudo cargar".
 
-Una asistencia puede provenir del estado canonico de `appointments` o de la
-señal idempotente `appointment_attendance_signals`. Cuando
-`attribution_calendar_ids` contiene calendarios, la señal no se filtra solamente
+Una asistencia puede provenir del estado canonico de `appointments`, de la
+señal idempotente `appointment_attendance_signals` o del estado de cliente que
+ya pago (`contacts.purchases_count > 0` o `contacts.total_paid > 0`). Esas
+estadisticas se actualizan con pagos reales exitosos de importe positivo, no
+con pagos pendientes, fallidos, reembolsados, de importe cero o en modo test.
+La asistencia se cuenta una sola vez por persona aunque haya varios pagos o
+coexistan las tres evidencias. Este fallback de cliente no exige una cita, no
+marca citas como atendidas ni dispara acciones de asistencia; solo completa la
+medicion. Publicidad y sus modales, asi como agregados y modales de Reportes,
+deben conservar la misma regla.
+
+Cuando `attribution_calendar_ids` contiene calendarios, la señal no se filtra solamente
 por contacto: se cruza obligatoriamente por `appointment_id` contra
 `appointments.calendar_id`. Reportes, la tabla paginada de Publicidad y sus
 modales deben aplicar exactamente ese mismo filtro. Una señal sin cita o ligada
 a un calendario excluido conserva su historial operativo, pero no recibe
 credito de marketing dentro de esa seleccion.
+El filtro de calendario aplica a la evidencia de citas/señales; el fallback de
+cliente sigue siendo evidencia del contacto, como en los agregados de Reportes.
 
 ## Recomendaciones entre contactos
 

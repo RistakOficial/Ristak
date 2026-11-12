@@ -258,7 +258,9 @@ function attendedAppointmentExists(params, calendarIds, { contactAlias = 'c' } =
   const calendarCondition = appointmentCalendarCondition(calendarIds, params)
   if (calendarCondition) appointmentConditions.push(calendarCondition)
   return `(
-    EXISTS (
+    COALESCE(${contactAlias}.purchases_count, 0) > 0
+    OR COALESCE(${contactAlias}.total_paid, 0) > 0
+    OR EXISTS (
       SELECT 1
       FROM appointment_attendance_signals aas
       ${signalCalendarCondition

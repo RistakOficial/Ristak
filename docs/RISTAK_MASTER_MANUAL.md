@@ -890,6 +890,22 @@ subconsulta. La lectura se cancela cuando el consumidor cierra la peticion y el
 frontend aplica un deadline de 20 segundos, por lo que una falla de base de datos
 termina en un estado reintentable y no en un modal girando indefinidamente.
 
+En cuentas sin una preferencia de columnas guardada, **Asistencias** empieza
+oculta en Publicidad, tanto en Clasica/Conjuntos/Anuncios como en Ganadores.
+El editor de columnas permite mostrarla y conserva la eleccion guardada; el
+default nuevo no sobrescribe preferencias existentes.
+
+El conteo de asistencias incluye a los clientes con `purchases_count > 0` o
+`total_paid > 0`, ademas de las citas atendidas y sus señales idempotentes.
+Las estadisticas de pago se calculan con importes positivos, estados exitosos y
+modo real; un pago pendiente, fallido, reembolsado, de importe cero o de prueba
+no crea esta evidencia. La regla es por persona, incluso si pago varias veces,
+tiene varias citas o tambien fue marcada como asistida. No exige una cita para
+el fallback de cliente ni cambia el estado operativo de ninguna cita. Tabla,
+Ganadores y detalles de Publicidad, junto con los detalles de Reportes, aplican
+la misma regla. La version del cache materializado de Publicidad cambia con
+esta semantica para no reutilizar conteos anteriores al ajuste.
+
 La cabecera, KPIs y graficas de Publicidad usan un solo read-model:
 `GET /api/meta/overview`. Meta Ads y contactos se agregan una vez para periodo
 actual + anterior; citas y visitantes se recorren una vez para el rango actual.

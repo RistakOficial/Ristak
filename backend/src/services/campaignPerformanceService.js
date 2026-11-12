@@ -509,7 +509,8 @@ export async function getCampaignPerformancePage({
             ELSE 0
           END) AS has_appointment,
           MAX(CASE
-            WHEN COALESCE(af.has_attendance, 0) > 0 OR COALESCE(atf.has_signal, 0) > 0 THEN 1
+            WHEN cc.purchases_count > 0 OR cc.total_paid > 0
+              OR COALESCE(af.has_attendance, 0) > 0 OR COALESCE(atf.has_signal, 0) > 0 THEN 1
             ELSE 0
           END) AS has_attendance,
           MAX(cc.total_paid) AS stored_ltv,
@@ -587,6 +588,7 @@ export async function getCampaignPerformancePage({
   if (metricSort) {
     const accountScope = await getCampaignPerformanceAccountScope()
     const persistentCacheKey = materializedCacheKey({
+      metricsVersion: 2,
       adsStart,
       adsEnd,
       startUtc: range.startUtc,

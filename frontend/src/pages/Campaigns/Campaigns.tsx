@@ -1807,7 +1807,7 @@ export const Campaigns: React.FC = () => {
     {
       key: 'attendances',
       header: 'Asistencias',
-      visible: true,
+      visible: false,
       render: (value: number, item: any) => {
         const hasAttendances = (value || 0) > 0
         return (
@@ -2359,7 +2359,7 @@ export const Campaigns: React.FC = () => {
     {
       key: 'attendances',
       header: 'Asistencias',
-      visible: true,
+      visible: false,
       render: (value, item) => {
         if (item.showPlaceholder) return <span className={styles.placeholderText}>—</span>
 

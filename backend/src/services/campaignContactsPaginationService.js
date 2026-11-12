@@ -305,7 +305,9 @@ export async function listCampaignContactsPage({
   const personHasAttendanceExpression = `EXISTS (
     SELECT 1 ${personProbePrefix}
       AND (
-        EXISTS (
+        COALESCE(person_contact.purchases_count, 0) > 0
+        OR COALESCE(person_contact.total_paid, 0) > 0
+        OR EXISTS (
           SELECT 1
           FROM appointment_attendance_signals person_signal
           ${signalCalendarJoin}
