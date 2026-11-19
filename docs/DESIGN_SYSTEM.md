@@ -142,6 +142,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Buscador | `<SearchField>`; para casos especializados `<ContactSearchInput>` / `<GlobalSearch>` | un `Search` + `<input>` + botón `X` con CSS local; un input con fondo `transparent`/`--bg`/glass (¡desaparece en Onyx!) |
 | Catálogo filtrable por carpetas | `<FolderFilterMenu>` en `toolbarStart` de `<Table>` + `<FolderManagerModal>` para crear/administrar | una columna lateral permanente de filtros/carpetas o un menú local duplicado por página |
 | Filtros tipo chip en móvil | `<PhoneFilterChips>` desde `components/phone/ui` | repetir `.filterChips`, `.aiAgentHubFilterChip` o carriles scrollables a mano |
+| Secciones plegables de un formulario | `<AccordionSection group="…" title="…">`; las secciones con el mismo grupo abren una a la vez y conservan los campos montados | duplicar el estado de apertura o los controles del formulario |
 | Tabs segmentados (en card) | `<TabList>` | rgba hardcodeados |
 | Tabs de sub-sección (underline) | `<SegmentTabs>` (recipe `[data-segdir]`) | un nav a mano |
 | Selector de opciones ricas | `<SelectionGrid>`; usa radios reales y admite título, estado, métricas, precio y motivo de bloqueo | repetir tarjetas seleccionables, radios invisibles o catálogos de planes dentro de cada página |

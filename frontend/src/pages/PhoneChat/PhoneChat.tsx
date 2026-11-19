@@ -154,6 +154,7 @@ import {
   DEFAULT_CONVERSATIONAL_PROMPT_CONFIG,
   buildConversationalLegacyEditableText,
   conversationalAgentService,
+  setConversationalDataRequirementsMode,
   getConversationalHandoffRulesLengthError,
   getConversationalLinkMessageLengthError,
   readConversationalAgentLiveCache,
@@ -21897,196 +21898,211 @@ export const PhoneChat: React.FC = () => {
             <div className={styles.agentGoalPanel}>
               <div className={styles.agentGoalSummary}>
                 <strong>Datos requeridos</strong>
-                <span>Elige en una sola lista qué puede pedir. Si no seleccionas nada, no insiste.</span>
+                <span>Elige qué datos puede pedir antes de completar una acción.</span>
               </div>
-              <label className={styles.agentMenuField}>
-                <span>Datos del contacto</span>
-                <CheckboxMultiSelect
-                  options={requiredDataOptions.map((option) => ({ value: option.field, label: option.label }))}
-                  value={dataRequirements.fields.map((item) => item.field)}
-                  onChange={setRequiredDataFields}
-                  placeholder="Ningún dato obligatorio"
-                  aria-label="Datos requeridos del contacto"
+              <label className={`${styles.agentCompactToggle} ${dataRequirements.mode === 'none' ? styles.agentCompactToggleActive : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={dataRequirements.mode === 'none'}
                   disabled={agentConfigSaving}
-                  className={styles.agentMenuSelectButton}
+                  onChange={(event) => saveNativeCapabilitiesPatch({
+                    dataRequirements: setConversationalDataRequirementsMode(dataRequirements, event.target.checked ? 'none' : 'selected')
+                  }, { pauseAgent: false })}
                 />
+                <span><strong>Sin datos requeridos</strong><small>Pausa los requisitos del contacto, del titular y de los invitados.</small></span>
               </label>
-              {requiredDataOptions.map((option) => {
-                const requirement = dataRequirements.fields.find((item) => item.field === option.field)
-                if (!requirement) return null
-                return (
-                  <div key={option.field} className={styles.agentExtraRow}>
-                    <strong>{option.label}</strong>
-                    <label className={styles.agentMenuField}>
-                      <span>Nivel</span>
-                      <PhoneSelect
-                        value={requirement.level}
-                        onChange={(level) => {
-                          if (level !== 'conditional') {
-                            updateRequiredDataItem(option.field, {
-                              level: level === 'optional' ? 'optional' : 'required',
-                              condition: undefined
-                            })
-                            return
-                          }
-                          const selected = requiredDataConditionOptions.find((item) => item.scope === requirement.scope) || requiredDataConditionOptions[0]
-                          updateRequiredDataItem(option.field, {
-                            level: 'conditional',
-                            scope: selected.scope,
-                            condition: { fact: selected.fact, operator: 'is_true', value: true }
-                          })
-                        }}
-                        options={[
-                          { value: 'required', label: 'Obligatorio' },
-                          { value: 'optional', label: 'Opcional' },
-                          { value: 'conditional', label: 'Condicional' }
-                        ]}
-                        title="Nivel del dato"
-                        ariaLabel={`Nivel de ${option.label}`}
-                        disabled={agentConfigSaving}
-                        buttonClassName={styles.agentMenuSelectButton}
-                      />
-                    </label>
-                    {requirement.level !== 'conditional' ? (
-                      <label className={styles.agentMenuField}>
-                        <span>Cuándo pedirlo</span>
-                        <PhoneSelect
-                          value={requirement.scope}
-                          onChange={(scope) => updateRequiredDataItem(option.field, {
-                            scope: scope === 'appointment' || scope === 'payment' ? scope : 'any_action'
-                          })}
-                          options={[
-                            { value: 'any_action', label: 'Para cualquier acción final' },
-                            { value: 'appointment', label: 'Para confirmar una cita nueva' },
-                            { value: 'payment', label: 'Para cobrar' }
-                          ]}
-                          title="Momento"
-                          ariaLabel={`Cuándo pedir ${option.label}`}
-                          disabled={agentConfigSaving}
-                          buttonClassName={styles.agentMenuSelectButton}
-                        />
-                      </label>
-                    ) : (
-                      <label className={styles.agentMenuField}>
-                        <span>Condición</span>
-                        <PhoneSelect
-                          value={requirement.condition?.fact || requiredDataConditionOptions[0].fact}
-                          onChange={(factValue) => {
-                            const fact = factValue as ConversationalRequiredDataConditionFact
-                            const selected = requiredDataConditionOptions.find((item) => item.fact === fact) || requiredDataConditionOptions[0]
-                            updateRequiredDataItem(option.field, {
-                              scope: selected.scope,
-                              condition: { fact: selected.fact, operator: 'is_true', value: true }
-                            })
-                          }}
-                          options={requiredDataConditionOptions.map((item) => ({ value: item.fact, label: item.label }))}
-                          title="Condición"
-                          ariaLabel={`Condición para ${option.label}`}
-                          disabled={agentConfigSaving}
-                          buttonClassName={styles.agentMenuSelectButton}
-                        />
-                      </label>
-                    )}
-                    {option.field === 'custom' && (
-                      <PhoneTextField
-                        label="Nombre del dato"
-                        value={requirement.label || ''}
-                        onChange={(label) => updateRequiredDataItemDraft('custom', { label })}
-                        onBlur={() => saveSelectedAgentPatch({
-                          capabilitiesConfig: selectedAgentDef.capabilitiesConfig || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG
-                        })}
-                        placeholder="Ejemplo: Número de expediente"
-                        disabled={agentConfigSaving}
-                      />
-                    )}
-                  </div>
-                )
-              })}
-
-              <label className={styles.agentMenuField}>
-                <span>Actualizar la ficha del contacto</span>
-                <PhoneSelect
-                  value={dataRequirements.updateContact.enabled ? dataRequirements.updateContact.policy : 'disabled'}
-                  onChange={(policy) => saveNativeCapabilitiesPatch({
-                    dataRequirements: {
-                      ...dataRequirements,
-                      updateContact: {
-                        enabled: policy !== 'disabled',
-                        policy: policy === 'fill_missing' || policy === 'confirm_changes' ? policy : 'replace_placeholders'
-                      }
-                    }
-                  })}
-                  options={[
-                    { value: 'disabled', label: 'No actualizarla' },
-                    { value: 'replace_placeholders', label: 'Llenar vacíos y reemplazar nombres provisionales' },
-                    { value: 'fill_missing', label: 'Sólo llenar datos vacíos' },
-                    { value: 'confirm_changes', label: 'Conservar distintos como alternativos para revisión' }
-                  ]}
-                  title="Actualización del contacto"
-                  ariaLabel="Cómo actualizar la ficha del contacto"
-                  disabled={agentConfigSaving}
-                  buttonClassName={styles.agentMenuSelectButton}
-                />
-              </label>
-              <p className={styles.agentMenuHint}>Si un nombre, teléfono o correo ya existe y está confirmado, la IA lo reutiliza y no vuelve a pedirlo.</p>
-
-              <label className={styles.agentMenuField}>
-                <span>Datos del titular distinto y de cada invitado</span>
-                <CheckboxMultiSelect
-                  options={guestDataOptions}
-                  value={dataRequirements.participants.guestFields}
-                  onChange={setRequiredGuestFields}
-                  placeholder="No exigir datos de invitados"
-                  aria-label="Datos requeridos de titular e invitados"
-                  disabled={agentConfigSaving}
-                  className={styles.agentMenuSelectButton}
-                />
-              </label>
-              {dataRequirements.participants.guestFields.length > 0 && (
-                <div className={styles.agentExtraRow}>
+              {dataRequirements.mode === 'selected' && (
+                <>
                   <label className={styles.agentMenuField}>
-                    <span>¿La cita puede ser para otra persona?</span>
+                    <span>Datos del contacto</span>
+                    <CheckboxMultiSelect
+                      options={requiredDataOptions.map((option) => ({ value: option.field, label: option.label }))}
+                      value={dataRequirements.fields.map((item) => item.field)}
+                      onChange={setRequiredDataFields}
+                      placeholder="Ningún dato obligatorio"
+                      aria-label="Datos requeridos del contacto"
+                      disabled={agentConfigSaving}
+                      className={styles.agentMenuSelectButton}
+                    />
+                  </label>
+                  {requiredDataOptions.map((option) => {
+                    const requirement = dataRequirements.fields.find((item) => item.field === option.field)
+                    if (!requirement) return null
+                    return (
+                      <div key={option.field} className={styles.agentExtraRow}>
+                        <strong>{option.label}</strong>
+                        <label className={styles.agentMenuField}>
+                          <span>Nivel</span>
+                          <PhoneSelect
+                            value={requirement.level}
+                            onChange={(level) => {
+                              if (level !== 'conditional') {
+                                updateRequiredDataItem(option.field, {
+                                  level: level === 'optional' ? 'optional' : 'required',
+                                  condition: undefined
+                                })
+                                return
+                              }
+                              const selected = requiredDataConditionOptions.find((item) => item.scope === requirement.scope) || requiredDataConditionOptions[0]
+                              updateRequiredDataItem(option.field, {
+                                level: 'conditional',
+                                scope: selected.scope,
+                                condition: { fact: selected.fact, operator: 'is_true', value: true }
+                              })
+                            }}
+                            options={[
+                              { value: 'required', label: 'Obligatorio' },
+                              { value: 'optional', label: 'Opcional' },
+                              { value: 'conditional', label: 'Condicional' }
+                            ]}
+                            title="Nivel del dato"
+                            ariaLabel={`Nivel de ${option.label}`}
+                            disabled={agentConfigSaving}
+                            buttonClassName={styles.agentMenuSelectButton}
+                          />
+                        </label>
+                        {requirement.level !== 'conditional' ? (
+                          <label className={styles.agentMenuField}>
+                            <span>Cuándo pedirlo</span>
+                            <PhoneSelect
+                              value={requirement.scope}
+                              onChange={(scope) => updateRequiredDataItem(option.field, {
+                                scope: scope === 'appointment' || scope === 'payment' ? scope : 'any_action'
+                              })}
+                              options={[
+                                { value: 'any_action', label: 'Para cualquier acción final' },
+                                { value: 'appointment', label: 'Para confirmar una cita nueva' },
+                                { value: 'payment', label: 'Para cobrar' }
+                              ]}
+                              title="Momento"
+                              ariaLabel={`Cuándo pedir ${option.label}`}
+                              disabled={agentConfigSaving}
+                              buttonClassName={styles.agentMenuSelectButton}
+                            />
+                          </label>
+                        ) : (
+                          <label className={styles.agentMenuField}>
+                            <span>Condición</span>
+                            <PhoneSelect
+                              value={requirement.condition?.fact || requiredDataConditionOptions[0].fact}
+                              onChange={(factValue) => {
+                                const fact = factValue as ConversationalRequiredDataConditionFact
+                                const selected = requiredDataConditionOptions.find((item) => item.fact === fact) || requiredDataConditionOptions[0]
+                                updateRequiredDataItem(option.field, {
+                                  scope: selected.scope,
+                                  condition: { fact: selected.fact, operator: 'is_true', value: true }
+                                })
+                              }}
+                              options={requiredDataConditionOptions.map((item) => ({ value: item.fact, label: item.label }))}
+                              title="Condición"
+                              ariaLabel={`Condición para ${option.label}`}
+                              disabled={agentConfigSaving}
+                              buttonClassName={styles.agentMenuSelectButton}
+                            />
+                          </label>
+                        )}
+                        {option.field === 'custom' && (
+                          <PhoneTextField
+                            label="Nombre del dato"
+                            value={requirement.label || ''}
+                            onChange={(label) => updateRequiredDataItemDraft('custom', { label })}
+                            onBlur={() => saveSelectedAgentPatch({
+                              capabilitiesConfig: selectedAgentDef.capabilitiesConfig || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG
+                            })}
+                            placeholder="Ejemplo: Número de expediente"
+                            disabled={agentConfigSaving}
+                          />
+                        )}
+                      </div>
+                    )
+                  })}
+
+                  <label className={styles.agentMenuField}>
+                    <span>Actualizar la ficha del contacto</span>
                     <PhoneSelect
-                      value={dataRequirements.participants.allowPrimaryAttendeeDifferentFromRequester ? 'yes' : 'no'}
-                      onChange={(value) => saveNativeCapabilitiesPatch({
+                      value={dataRequirements.updateContact.enabled ? dataRequirements.updateContact.policy : 'disabled'}
+                      onChange={(policy) => saveNativeCapabilitiesPatch({
                         dataRequirements: {
                           ...dataRequirements,
-                          participants: {
-                            ...dataRequirements.participants,
-                            allowPrimaryAttendeeDifferentFromRequester: value !== 'no'
+                          updateContact: {
+                            enabled: policy !== 'disabled',
+                            policy: policy === 'fill_missing' || policy === 'confirm_changes' ? policy : 'replace_placeholders'
                           }
                         }
                       })}
                       options={[
-                        { value: 'yes', label: 'Sí, guardar al titular por separado' },
-                        { value: 'no', label: 'No, sólo quien escribe e invitados' }
+                        { value: 'disabled', label: 'No actualizarla' },
+                        { value: 'replace_placeholders', label: 'Llenar vacíos y reemplazar nombres provisionales' },
+                        { value: 'fill_missing', label: 'Sólo llenar datos vacíos' },
+                        { value: 'confirm_changes', label: 'Conservar distintos como alternativos para revisión' }
                       ]}
-                      title="Titular de la cita"
-                      ariaLabel="Permitir un titular distinto"
+                      title="Actualización del contacto"
+                      ariaLabel="Cómo actualizar la ficha del contacto"
                       disabled={agentConfigSaving}
                       buttonClassName={styles.agentMenuSelectButton}
                     />
                   </label>
+                  <p className={styles.agentMenuHint}>Si un nombre, teléfono o correo ya existe y está confirmado, la IA lo reutiliza y no vuelve a pedirlo.</p>
+
                   <label className={styles.agentMenuField}>
-                    <span>Máximo de invitados</span>
-                    <PhoneSelect
-                      value={String(dataRequirements.participants.maxGuests)}
-                      onChange={(maxGuests) => saveNativeCapabilitiesPatch({
-                        dataRequirements: {
-                          ...dataRequirements,
-                          participants: { ...dataRequirements.participants, maxGuests: Number(maxGuests) }
-                        }
-                      })}
-                      options={[1, 2, 3, 5, 10, 20].map((value) => ({ value: String(value), label: String(value) }))}
-                      title="Máximo de invitados"
-                      ariaLabel="Máximo de invitados por cita"
+                    <span>Datos del titular distinto y de cada invitado</span>
+                    <CheckboxMultiSelect
+                      options={guestDataOptions}
+                      value={dataRequirements.participants.guestFields}
+                      onChange={setRequiredGuestFields}
+                      placeholder="No exigir datos de invitados"
+                      aria-label="Datos requeridos de titular e invitados"
                       disabled={agentConfigSaving}
-                      buttonClassName={styles.agentMenuSelectButton}
+                      className={styles.agentMenuSelectButton}
                     />
                   </label>
-                </div>
+                  {dataRequirements.participants.guestFields.length > 0 && (
+                    <div className={styles.agentExtraRow}>
+                      <label className={styles.agentMenuField}>
+                        <span>¿La cita puede ser para otra persona?</span>
+                        <PhoneSelect
+                          value={dataRequirements.participants.allowPrimaryAttendeeDifferentFromRequester ? 'yes' : 'no'}
+                          onChange={(value) => saveNativeCapabilitiesPatch({
+                            dataRequirements: {
+                              ...dataRequirements,
+                              participants: {
+                                ...dataRequirements.participants,
+                                allowPrimaryAttendeeDifferentFromRequester: value !== 'no'
+                              }
+                            }
+                          })}
+                          options={[
+                            { value: 'yes', label: 'Sí, guardar al titular por separado' },
+                            { value: 'no', label: 'No, sólo quien escribe e invitados' }
+                          ]}
+                          title="Titular de la cita"
+                          ariaLabel="Permitir un titular distinto"
+                          disabled={agentConfigSaving}
+                          buttonClassName={styles.agentMenuSelectButton}
+                        />
+                      </label>
+                      <label className={styles.agentMenuField}>
+                        <span>Máximo de invitados</span>
+                        <PhoneSelect
+                          value={String(dataRequirements.participants.maxGuests)}
+                          onChange={(maxGuests) => saveNativeCapabilitiesPatch({
+                            dataRequirements: {
+                              ...dataRequirements,
+                              participants: { ...dataRequirements.participants, maxGuests: Number(maxGuests) }
+                            }
+                          })}
+                          options={[1, 2, 3, 5, 10, 20].map((value) => ({ value: String(value), label: String(value) }))}
+                          title="Máximo de invitados"
+                          ariaLabel="Máximo de invitados por cita"
+                          disabled={agentConfigSaving}
+                          buttonClassName={styles.agentMenuSelectButton}
+                        />
+                      </label>
+                    </div>
+                  )}
+                  <p className={styles.agentMenuHint}>Si no eliges datos de invitados, usa sólo lo que compartan y no insiste por teléfono, correo ni apellido.</p>
+                </>
               )}
-              <p className={styles.agentMenuHint}>Si no eliges datos de invitados, usa sólo lo que compartan y no insiste por teléfono, correo ni apellido.</p>
             </div>
           </section>
 

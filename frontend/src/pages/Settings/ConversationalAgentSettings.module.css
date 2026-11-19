@@ -121,13 +121,6 @@
   margin-top: 24px;
 }
 
-.sectionTitle {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--color-text-primary);
-}
-
 .sectionHeading {
   display: flex;
   align-items: center;
@@ -1187,11 +1180,6 @@
     align-items: flex-start;
   }
 
-  .sectionTitle {
-    min-width: 0;
-    line-height: 1.25;
-  }
-
   .field,
   .fieldWide,
   .inputWrap {
@@ -2092,16 +2080,6 @@
   color: var(--color-text-tertiary);
 }
 
-/* Secciones internas del agente: separadores sutiles, sin cajas extra */
-.agentSection {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(148, 163, 184, 0.14);
-}
-
 .agentSectionHint {
   margin: -6px 0 0;
   font-size: 12.5px;
@@ -2223,6 +2201,15 @@
   gap: 10px;
   min-width: 0;
   margin: 14px 0 0 48px;
+}
+
+.requirementsMode {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 10px;
+  color: var(--text);
+  cursor: pointer;
 }
 
 .nativeInlineFields {

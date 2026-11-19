@@ -1107,6 +1107,27 @@ test('save_contact_data no se expone cuando Datos requeridos está apagado', () 
   assert.equal(tools.some((item) => item.name === 'save_contact_data'), false)
 })
 
+test('Sin datos requeridos excluye los campos en pausa de las instrucciones y herramientas de agenda', () => {
+  const capabilitiesConfig = normalizeConversationalCapabilitiesConfig({
+    items: [{ id: 'schedule_appointment', enabled: true, calendarId: 'calendar-test' }],
+    dataRequirements: {
+      mode: 'none',
+      fields: [{ field: 'custom', label: 'Número de expediente', level: 'required' }],
+      participants: { guestFields: ['email'] }
+    }
+  })
+  const capabilityManifest = buildConversationalCapabilityManifest({ capabilitiesConfig })
+  const prompt = buildNativeConversationalInstructions({ capabilitiesConfig, capabilityManifest })
+  assert.match(prompt, /No hay datos extra obligatorios configurados para el contacto solicitante/)
+  assert.doesNotMatch(prompt, /Número de expediente/)
+  const tools = createConversationalTools({
+    runtimeMode: 'tool_calling_v2', dryRun: true, actions: [],
+    capabilitiesConfig, config: { capabilitiesConfig }
+  })
+  assert.ok(tools.some((item) => item.name === 'get_free_slots'))
+  assert.ok(!tools.some((item) => item.name === 'save_contact_data'))
+})
+
 test('campos de titular o invitados nunca autorizan save_contact_data del solicitante', () => {
   const capabilitiesConfig = normalizeConversationalCapabilitiesConfig({
     dataRequirements: {

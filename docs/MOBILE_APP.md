@@ -545,6 +545,10 @@ del frontend y es la referencia funcional que deben mirar `mobile/` e `ios/app`
 cuando una feature exista en varias superficies. Las rutas legacy `/phone/*`
 redirigen a `/movil/*`.
 
+En el editor de agentes de `/movil`, **Control y datos → Sin datos requeridos**
+pausa los requisitos del contacto y de los invitados. Al desactivar la opción
+se recupera la selección anterior. El cambio se comparte con Chatbot de escritorio.
+
 En iOS la app SwiftUI de `ios/app` es la ruta oficial de iPhone/iPad para App
 Store. Al abrir desde Xcode o desde el icono del celular, el login muestra la
 marca Ristak, pide correo y contraseña, resuelve la empresa contra el portal

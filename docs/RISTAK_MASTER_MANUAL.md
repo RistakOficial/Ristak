@@ -9575,7 +9575,17 @@ cliente reenvíe una copia anterior de `editableText`; esa copia derivada no pue
 descartar una edición actual. Reenviar el texto sin cambios tampoco impide
 actualizar la preferencia de descripción general.
 
-**Datos requeridos** es una restricción operativa explícita: los campos marcados
+En **Chatbot → Agentes**, el editor de escritorio muestra cinco secciones
+cerradas. Al abrir una se cierra la anterior. Un segundo clic sobre el mismo
+título la cierra. El guardado automático sigue activo al cambiar de sección.
+
+En **Control y datos → Datos requeridos**, activa **Sin datos requeridos** para
+pausar las preguntas configuradas tanto para el contacto como para el titular
+distinto y los invitados. Al desactivar la opción se recuperan los campos,
+niveles y condiciones elegidos. Los agentes anteriores conservan la selección
+que ya tenían. El ajuste también está disponible en el editor web de `/movil`.
+
+Cuando están activos, los **Datos requeridos** son una restricción operativa explícita: los campos marcados
 para cualquier acción se exigen también antes de entregar un enlace. Si la
 estrategia encarga nombre, teléfono y correo al formulario de destino, no deben
 configurarse como requisitos previos del chatbot. La IA no elimina por su cuenta

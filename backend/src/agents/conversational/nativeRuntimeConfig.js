@@ -343,7 +343,7 @@ function normalizeRequirementField(input) {
   }
 }
 
-function normalizeDataRequirements(input = {}) {
+function normalizeDataRequirements(input = {}, fallbackMode) {
   const raw = input && typeof input === 'object' ? input : {}
   const updateContact = raw.updateContact && typeof raw.updateContact === 'object' ? raw.updateContact : {}
   const participants = raw.participants && typeof raw.participants === 'object' ? raw.participants : {}
@@ -369,12 +369,12 @@ function normalizeDataRequirements(input = {}) {
       .filter((value) => PARTICIPANT_FIELDS.has(value))
   )]
   const maxGuests = Number(participants.maxGuests)
-  // Ya no existe un switch separado para esta sección: la selección es la
-  // fuente de verdad. Así también saneamos configuraciones legacy donde quedó
-  // `enabled: false` junto a campos todavía elegidos.
-  const participantsEnabled = guestFields.length > 0
+  // En agentes anteriores a mode, los campos elegidos mandan sobre los flags históricos.
+  const mode = raw.mode === 'none' || raw.mode === 'selected' ? raw.mode : fallbackMode
+  const participantsEnabled = mode !== 'none' && guestFields.length > 0
   return {
-    enabled: fields.length > 0 || participantsEnabled,
+    ...(mode ? { mode } : {}),
+    enabled: mode !== 'none' && (fields.length > 0 || participantsEnabled),
     fields,
     updateContact: {
       enabled: updateContact.enabled === undefined ? true : toBoolean(updateContact.enabled),
@@ -571,7 +571,7 @@ export function normalizeConversationalPromptConfig(input, { materializeDefault 
   }
 }
 
-export function normalizeConversationalCapabilitiesConfig(input) {
+export function normalizeConversationalCapabilitiesConfig(input, { fallbackDataMode } = {}) {
   const raw = parseConfigValue(input)
   const sourceItems = Array.isArray(raw)
     ? raw
@@ -604,7 +604,7 @@ export function normalizeConversationalCapabilitiesConfig(input) {
     // Compatibilidad de lectura para clientes anteriores. La autoridad real
     // vive ahora en el testMode de cada capacidad; esta raíz es sólo su agregado.
     testMode: aggregateTestMode,
-    dataRequirements: normalizeDataRequirements(raw?.dataRequirements),
+    dataRequirements: normalizeDataRequirements(raw?.dataRequirements, fallbackDataMode),
     items
   }
 }
@@ -613,8 +613,22 @@ export function getConversationalPromptConfig(config = {}) {
   return normalizeConversationalPromptConfig(config.promptConfig, { materializeDefault: true })
 }
 
+// El editor conserva la selección en pausa. Las instrucciones, herramientas y
+// políticas de ejecución reciben únicamente los requisitos vigentes.
+export function getActiveDataRequirements(requirements = {}) {
+  const { mode, ...active } = requirements
+  if (mode !== 'none') return active
+  return {
+    ...active,
+    enabled: false,
+    fields: [],
+    participants: { ...active.participants, enabled: false, guestFields: [] }
+  }
+}
+
 export function getConversationalCapabilitiesConfig(config = {}) {
-  return normalizeConversationalCapabilitiesConfig(config.capabilitiesConfig)
+  const capabilities = normalizeConversationalCapabilitiesConfig(config.capabilitiesConfig)
+  return { ...capabilities, dataRequirements: getActiveDataRequirements(capabilities.dataRequirements) }
 }
 
 export function getConversationalSafetyPolicy(config = {}) {

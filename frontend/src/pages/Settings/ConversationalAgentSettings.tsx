@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Bot, CalendarCheck, CheckCircle2, ChevronDown, CircleSlash, CreditCard, FileText, Image as ImageIcon, KeyRound, Link2, Pause, PauseCircle, Play, Plus, RotateCcw, ShieldAlert, Target, Trash2, UserCheck, Users, Video, Wand2 } from 'lucide-react'
-import { Badge, Button, Card, CheckboxMultiSelect, CustomSelect, ExpandableTextareaField, Loading, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
+import { AccordionSection, Badge, Button, Card, CheckboxMultiSelect, CustomSelect, ExpandableTextareaField, Loading, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
 import { KpiCard } from '@/components/common/KpiCard/KpiCard'
 import {
   PhoneChatPreview,
@@ -32,6 +32,7 @@ import { aiRuntimeService } from '@/services/aiRuntimeService'
 import { hasModuleAccess, hasPaymentLinksAccess } from '@/utils/accessControl'
 import {
   conversationalAgentService,
+  setConversationalDataRequirementsMode,
   buildConversationalLegacyEditableText,
   CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH,
   CONVERSATIONAL_LINK_MESSAGE_MAX_LENGTH,
@@ -2197,8 +2198,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
         </div>
       </div>
 
-      <div className={styles.agentSection}>
-        <h3 className={styles.sectionTitle}>1. Capacitación y personalidad</h3>
+      <AccordionSection group={`agent-settings-${agent.id}`} title="1. Capacitación y personalidad">
         <p className={styles.agentSectionHint}>Son dos cosas distintas: qué debe saber y hacer, y cómo debe hablar. Puedes dejar las plantillas, editarlas o borrarlas completas.</p>
         <div className={styles.nativePromptFields}>
           <div className={styles.configQuestionList}>
@@ -2242,10 +2242,9 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
           />
         </div>
         <p className={styles.helper}>Ambos textos se guardan completos. Aunque borres los dos, las capacidades activadas conservan sus validaciones internas.</p>
-      </div>
+      </AccordionSection>
 
-      <div className={styles.agentSection}>
-        <h3 className={styles.sectionTitle}>2. Capacidades</h3>
+      <AccordionSection group={`agent-settings-${agent.id}`} title="2. Capacidades">
         <p className={styles.agentSectionHint}>Activa varias si las necesitas. Cada una pide sólo la configuración que hace falta para operar.</p>
         <div className={styles.nativeCapabilityList}>
           {capabilityRows.map(({ id, item, settings }) => {
@@ -2282,10 +2281,9 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
             )
           })}
         </div>
-      </div>
+      </AccordionSection>
 
-      <div className={styles.agentSection}>
-        <h3 className={styles.sectionTitle}>3. Control y datos</h3>
+      <AccordionSection group={`agent-settings-${agent.id}`} title="3. Control y datos">
         <p className={styles.agentSectionHint}>Define qué pasa con conversaciones riesgosas y qué datos sí debe solicitar.</p>
         <div className={styles.nativeCapabilityList}>
           <div className={styles.nativeCapabilityRow} data-enabled={safetyPolicy.enabled ? 'true' : undefined}>
@@ -2371,172 +2369,188 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
               <span className={styles.nativeCapabilityIcon}><UserCheck size={18} /></span>
               <div>
                 <strong>Datos requeridos</strong>
-                <span>Los datos obligatorios se piden antes de completar cualquiera de las capacidades activas: agendar, cobrar, mandar un enlace o pasar a una persona.</span>
+                <span>Elige qué debe pedir el agente antes de agendar, cobrar, enviar un enlace o pasar el chat al equipo.</span>
               </div>
-              <Badge variant={dataRequirements.enabled ? 'info' : 'neutral'}>
-                {dataRequirements.fields.length + dataRequirements.participants.guestFields.length || 'Ninguno'}
-              </Badge>
             </div>
             <div className={styles.nativeCapabilitySettings}>
-              <label className={styles.label}>Datos de la persona que escribe</label>
-              <CheckboxMultiSelect
-                options={requiredDataOptions.map((option) => ({ value: option.field, label: option.label }))}
-                value={dataRequirements.fields.map((item) => item.field)}
-                onChange={updateRequiredDataSelection}
-                placeholder="No pedir datos adicionales"
-                aria-label="Elegir datos requeridos del contacto"
-              />
-              {requiredDataOptions.flatMap((option) => {
-                const requirement = dataRequirements.fields.find((item) => item.field === option.field)
-                if (!requirement) return []
-                return [(
-                  <div key={option.field} className={styles.nativeDataRequirementRow}>
-                    <strong>{option.label}</strong>
-                    <div className={styles.nativeInlineFields}>
-                      <CustomSelect
-                        value={requirement.level}
-                        onChange={(event) => {
-                          const level = event.target.value as ConversationalRequiredDataItem['level']
-                          if (level !== 'conditional') {
-                            updateRequiredDataItem(option.field, { level, scope: 'any_action', condition: undefined })
-                            return
-                          }
-                          const selected = requiredDataConditionOptions.find((item) => item.scope === requirement.scope) || requiredDataConditionOptions[0]
-                          updateRequiredDataItem(option.field, {
-                            level,
-                            scope: selected.scope,
-                            condition: { fact: selected.fact, operator: 'is_true', value: true }
-                          })
-                        }}
-                        portal
-                        aria-label={`Obligación de ${option.label}`}
-                      >
-                        <option value="required">Obligatorio</option>
-                        <option value="optional">Opcional</option>
-                        <option value="conditional">Condicional</option>
-                      </CustomSelect>
-                      {requirement.level === 'conditional' && (
+              <label className={styles.requirementsMode}>
+                <Switch
+                  checked={dataRequirements.mode === 'none'}
+                  onChange={(withoutRequirements) => updateCapabilitiesConfig({
+                    dataRequirements: setConversationalDataRequirementsMode(dataRequirements, withoutRequirements ? 'none' : 'selected')
+                  })}
+                  aria-label="Sin datos requeridos"
+                />
+                Sin datos requeridos
+              </label>
+              <p className={styles.helper}>
+                {dataRequirements.mode === 'none'
+                  ? 'El agente puede continuar sin pedir datos adicionales del contacto, del titular ni de los invitados.'
+                  : 'Activa esta opción para poner en pausa los campos elegidos. Puedes recuperarlos al desactivarla.'}
+              </p>
+            </div>
+            {dataRequirements.mode === 'selected' && (
+              <div className={styles.nativeCapabilitySettings}>
+                <label className={styles.label}>Datos de la persona que escribe</label>
+                <CheckboxMultiSelect
+                  options={requiredDataOptions.map((option) => ({ value: option.field, label: option.label }))}
+                  value={dataRequirements.fields.map((item) => item.field)}
+                  onChange={updateRequiredDataSelection}
+                  placeholder="No pedir datos adicionales"
+                  aria-label="Elegir datos requeridos del contacto"
+                />
+                {requiredDataOptions.flatMap((option) => {
+                  const requirement = dataRequirements.fields.find((item) => item.field === option.field)
+                  if (!requirement) return []
+                  return [(
+                    <div key={option.field} className={styles.nativeDataRequirementRow}>
+                      <strong>{option.label}</strong>
+                      <div className={styles.nativeInlineFields}>
                         <CustomSelect
-                          value={requirement.condition?.fact || requiredDataConditionOptions[0].fact}
-                          aria-label={`Condición para ${option.label}`}
+                          value={requirement.level}
                           onChange={(event) => {
-                            const fact = event.target.value as ConversationalRequiredDataConditionFact
-                            const selected = requiredDataConditionOptions.find((item) => item.fact === fact) || requiredDataConditionOptions[0]
+                            const level = event.target.value as ConversationalRequiredDataItem['level']
+                            if (level !== 'conditional') {
+                              updateRequiredDataItem(option.field, { level, scope: 'any_action', condition: undefined })
+                              return
+                            }
+                            const selected = requiredDataConditionOptions.find((item) => item.scope === requirement.scope) || requiredDataConditionOptions[0]
                             updateRequiredDataItem(option.field, {
+                              level,
                               scope: selected.scope,
                               condition: { fact: selected.fact, operator: 'is_true', value: true }
                             })
                           }}
                           portal
+                          aria-label={`Obligación de ${option.label}`}
                         >
-                          {requiredDataConditionOptions.map((item) => (
-                            <option key={item.fact} value={item.fact}>{item.label}</option>
-                          ))}
+                          <option value="required">Obligatorio</option>
+                          <option value="optional">Opcional</option>
+                          <option value="conditional">Condicional</option>
                         </CustomSelect>
+                        {requirement.level === 'conditional' && (
+                          <CustomSelect
+                            value={requirement.condition?.fact || requiredDataConditionOptions[0].fact}
+                            aria-label={`Condición para ${option.label}`}
+                            onChange={(event) => {
+                              const fact = event.target.value as ConversationalRequiredDataConditionFact
+                              const selected = requiredDataConditionOptions.find((item) => item.fact === fact) || requiredDataConditionOptions[0]
+                              updateRequiredDataItem(option.field, {
+                                scope: selected.scope,
+                                condition: { fact: selected.fact, operator: 'is_true', value: true }
+                              })
+                            }}
+                            portal
+                          >
+                            {requiredDataConditionOptions.map((item) => (
+                              <option key={item.fact} value={item.fact}>{item.label}</option>
+                            ))}
+                          </CustomSelect>
+                        )}
+                      </div>
+                      {option.field === 'custom' && (
+                        <input
+                          className={styles.input}
+                          value={requirement.label || ''}
+                          placeholder="Ejemplo: Número de expediente"
+                          aria-label="Nombre del dato personalizado"
+                          onChange={(event) => updateRequiredDataItem('custom', { label: event.target.value })}
+                        />
                       )}
                     </div>
-                    {option.field === 'custom' && (
-                      <input
-                        className={styles.input}
-                        value={requirement.label || ''}
-                        placeholder="Ejemplo: Número de expediente"
-                        aria-label="Nombre del dato personalizado"
-                        onChange={(event) => updateRequiredDataItem('custom', { label: event.target.value })}
-                      />
-                    )}
-                  </div>
-                )]
-              })}
-              <label className={styles.label}>Qué hacer con datos confirmados</label>
-              <CustomSelect
-                value={dataRequirements.updateContact.enabled ? dataRequirements.updateContact.policy : 'none'}
-                onChange={(event) => {
-                  const value = event.target.value
-                  updateCapabilitiesConfig({
-                    dataRequirements: {
-                      ...dataRequirements,
-                      updateContact: {
-                        enabled: value !== 'none',
-                        policy: value === 'fill_missing' || value === 'confirm_changes' ? value : 'replace_placeholders'
+                  )]
+                })}
+                <label className={styles.label}>Qué hacer con datos confirmados</label>
+                <CustomSelect
+                  value={dataRequirements.updateContact.enabled ? dataRequirements.updateContact.policy : 'none'}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    updateCapabilitiesConfig({
+                      dataRequirements: {
+                        ...dataRequirements,
+                        updateContact: {
+                          enabled: value !== 'none',
+                          policy: value === 'fill_missing' || value === 'confirm_changes' ? value : 'replace_placeholders'
+                        }
                       }
-                    }
-                  })
-                }}
-                portal
-                aria-label="Política para actualizar el contacto"
-              >
-                <option value="none">No actualizar la ficha</option>
-                <option value="replace_placeholders">Llenar vacíos y reemplazar nombres provisionales</option>
-                <option value="fill_missing">Sólo llenar datos vacíos</option>
-                <option value="confirm_changes">Conservar distintos como alternativos para revisión</option>
-              </CustomSelect>
-              <p className={styles.helper}>Si el dato ya existe y está confirmado en la ficha, la IA lo reutiliza y no vuelve a pedirlo.</p>
+                    })
+                  }}
+                  portal
+                  aria-label="Política para actualizar el contacto"
+                >
+                  <option value="none">No actualizar la ficha</option>
+                  <option value="replace_placeholders">Llenar vacíos y reemplazar nombres provisionales</option>
+                  <option value="fill_missing">Sólo llenar datos vacíos</option>
+                  <option value="confirm_changes">Conservar distintos como alternativos para revisión</option>
+                </CustomSelect>
+                <p className={styles.helper}>Si el dato ya existe y está confirmado en la ficha, la IA lo reutiliza y no vuelve a pedirlo.</p>
 
-              <label className={styles.label}>Datos del titular distinto e invitados</label>
-              <CheckboxMultiSelect
-                options={guestDataOptions}
-                value={dataRequirements.participants.guestFields}
-                onChange={updateGuestDataSelection}
-                placeholder="No pedir datos de otras personas"
-                aria-label="Elegir datos del titular distinto e invitados"
-              />
-              {dataRequirements.participants.guestFields.length > 0 && (
-                <>
-                  <div className={styles.nativeInlineFields}>
-                    <div className={styles.field}>
-                      <label className={styles.label}>¿La cita puede ser para otra persona?</label>
-                      <CustomSelect
-                        value={dataRequirements.participants.allowPrimaryAttendeeDifferentFromRequester ? 'yes' : 'no'}
-                        onChange={(event) => updateCapabilitiesConfig({
-                          dataRequirements: {
-                            ...dataRequirements,
-                            participants: {
-                              ...dataRequirements.participants,
-                              enabled: true,
-                              allowPrimaryAttendeeDifferentFromRequester: event.target.value !== 'no'
+                <label className={styles.label}>Datos del titular distinto e invitados</label>
+                <CheckboxMultiSelect
+                  options={guestDataOptions}
+                  value={dataRequirements.participants.guestFields}
+                  onChange={updateGuestDataSelection}
+                  placeholder="No pedir datos de otras personas"
+                  aria-label="Elegir datos del titular distinto e invitados"
+                />
+                {dataRequirements.participants.guestFields.length > 0 && (
+                  <>
+                    <div className={styles.nativeInlineFields}>
+                      <div className={styles.field}>
+                        <label className={styles.label}>¿La cita puede ser para otra persona?</label>
+                        <CustomSelect
+                          value={dataRequirements.participants.allowPrimaryAttendeeDifferentFromRequester ? 'yes' : 'no'}
+                          onChange={(event) => updateCapabilitiesConfig({
+                            dataRequirements: {
+                              ...dataRequirements,
+                              participants: {
+                                ...dataRequirements.participants,
+                                enabled: true,
+                                allowPrimaryAttendeeDifferentFromRequester: event.target.value !== 'no'
+                              }
                             }
-                          }
-                        })}
-                        portal
-                      >
-                        <option value="yes">Sí, permitir titular distinto</option>
-                        <option value="no">No, sólo quien escribe</option>
-                      </CustomSelect>
-                    </div>
-                    <div className={styles.field}>
-                      <label className={styles.label}>Máximo de invitados por cita</label>
-                      <CustomSelect
-                        value={String(dataRequirements.participants.maxGuests)}
-                        onChange={(event) => updateCapabilitiesConfig({
-                          dataRequirements: {
-                            ...dataRequirements,
-                            participants: {
-                              ...dataRequirements.participants,
-                              enabled: true,
-                              maxGuests: Number(event.target.value)
+                          })}
+                          portal
+                        >
+                          <option value="yes">Sí, permitir titular distinto</option>
+                          <option value="no">No, sólo quien escribe</option>
+                        </CustomSelect>
+                      </div>
+                      <div className={styles.field}>
+                        <label className={styles.label}>Máximo de invitados por cita</label>
+                        <CustomSelect
+                          value={String(dataRequirements.participants.maxGuests)}
+                          onChange={(event) => updateCapabilitiesConfig({
+                            dataRequirements: {
+                              ...dataRequirements,
+                              participants: {
+                                ...dataRequirements.participants,
+                                enabled: true,
+                                maxGuests: Number(event.target.value)
+                              }
                             }
-                          }
-                        })}
-                        portal
-                        aria-label="Máximo de invitados por cita"
-                      >
-                        {[1, 2, 3, 5, 10, 20].map((value) => (
-                          <option key={value} value={value}>{value}</option>
-                        ))}
-                      </CustomSelect>
+                          })}
+                          portal
+                          aria-label="Máximo de invitados por cita"
+                        >
+                          {[1, 2, 3, 5, 10, 20].map((value) => (
+                            <option key={value} value={value}>{value}</option>
+                          ))}
+                        </CustomSelect>
+                      </div>
                     </div>
-                  </div>
-                </>
-              )}
-              <p className={styles.helper}>
-                {dataRequirements.participants.guestFields.length === 0
-                  ? 'La IA no pedirá teléfonos, correos ni apellidos de invitados por su cuenta.'
-                  : 'La IA pide únicamente los datos marcados para cada titular distinto o invitado.'}
-              </p>
-            </div>
+                  </>
+                )}
+                <p className={styles.helper}>
+                  {dataRequirements.participants.guestFields.length === 0
+                    ? 'La IA no pedirá teléfonos, correos ni apellidos de invitados por su cuenta.'
+                    : 'La IA pide únicamente los datos marcados para cada titular distinto o invitado.'}
+                </p>
+              </div>
+            )}
           </div>
         </div>
-      </div>
+      </AccordionSection>
     </>
   )
 }
@@ -3672,8 +3686,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             onFlushSave={onFlushSave}
           />
 
-          <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>3. Operación técnica del chat</h3>
+          <AccordionSection group={`agent-settings-${agent.id}`} title="4. Operación técnica del chat">
             <p className={styles.agentSectionHint}>
               Configura el motor de IA, tiempos, formato de mensajes, notificaciones y recordatorios.
             </p>
@@ -3946,10 +3959,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 </>
               )}
             </div>
-          </div>
+          </AccordionSection>
 
-          <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>4. Entrada y salida</h3>
+          <AccordionSection group={`agent-settings-${agent.id}`} title="5. Entrada y salida">
             <p className={styles.agentSectionHint}>
               Define a qué contactos puede tomar, con qué reglas entra y cuándo debe soltar la conversación.
             </p>
@@ -3998,7 +4010,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 onChange={(groups) => onChange({ filters: { ...agent.filters, exit: { groups } } })}
               />
             </div>
-          </div>
+          </AccordionSection>
 
         </div>
       </Card>

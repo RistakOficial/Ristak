@@ -13849,9 +13849,7 @@ function mapAgentRow(row) {
   const parsedCapabilitiesConfig = row.capabilities_config === null || row.capabilities_config === undefined
     ? null
     : parseJsonField(row.capabilities_config, null)
-  const storedCapabilitiesConfig = parsedCapabilitiesConfig === null
-    ? null
-    : normalizeConversationalCapabilitiesConfig(parsedCapabilitiesConfig)
+  const storedCapabilitiesConfig = normalizeConversationalCapabilitiesConfig(parsedCapabilitiesConfig)
   const identity = normalizeAgentIdentity({
     identityMode: row.identity_mode,
     identityUserId: row.identity_user_id,
@@ -13899,7 +13897,6 @@ function mapAgentRow(row) {
     updatedAt: row.updated_at || null
   }
   mapped.promptConfig = getConversationalPromptConfig(mapped)
-  mapped.capabilitiesConfig = getConversationalCapabilitiesConfig(mapped)
   mapped.capabilityManifest = buildConversationalCapabilityManifest(mapped)
   return mapped
 }
@@ -14272,9 +14269,10 @@ function agentInputToRowValues(input, base) {
   const capabilitiesSource = input.capabilitiesConfig === undefined || input.capabilitiesConfig === null
     ? base.capabilitiesConfig
     : input.capabilitiesConfig
-  next.capabilitiesConfig = capabilitiesSource === null || capabilitiesSource === undefined
-    ? normalizeConversationalCapabilitiesConfig(null)
-    : normalizeConversationalCapabilitiesConfig(capabilitiesSource)
+  // Un cliente anterior puede reenviar las capacidades sin conocer el modo de pausa.
+  next.capabilitiesConfig = normalizeConversationalCapabilitiesConfig(capabilitiesSource, {
+    fallbackDataMode: base.capabilitiesConfig?.dataRequirements?.mode
+  })
   return next
 }
 

@@ -672,6 +672,44 @@ test('participantes se habilitan por los campos seleccionados cuando ya no llega
   assert.equal(config.dataRequirements.participants.enabled, true)
 })
 
+test('Sin datos requeridos pausa y restaura la selección tras guardar y recargar', async () => {
+  const fields = [{
+    field: 'email', level: 'conditional', scope: 'appointment',
+    condition: { fact: 'appointment.has_guests', operator: 'is_true', value: true }
+  }]
+  const guestFields = ['name', 'phone']
+  const agent = await createConversationalAgent({
+    name: 'Pausa de requisitos', enabled: false,
+    capabilitiesConfig: { dataRequirements: { fields, participants: { guestFields, maxGuests: 3 } } }
+  })
+  const initial = agent.capabilitiesConfig
+  try {
+    await updateConversationalAgent(agent.id, {
+      capabilitiesConfig: { ...initial, dataRequirements: { ...initial.dataRequirements, mode: 'none' } }
+    })
+    // Simula el guardado de un cliente anterior que desconoce la nueva opción.
+    await updateConversationalAgent(agent.id, { capabilitiesConfig: initial })
+    const paused = await getConversationalAgent(agent.id)
+    const saved = paused.capabilitiesConfig.dataRequirements
+    assert.equal(saved.mode, 'none')
+    assert.deepEqual(saved.fields, fields)
+    assert.deepEqual(saved.participants.guestFields, guestFields)
+    const active = getConversationalCapabilitiesConfig(paused).dataRequirements
+    assert.equal(active.enabled, false)
+    assert.deepEqual(active.fields, [])
+    assert.deepEqual(active.participants.guestFields, [])
+    assert.equal(active.participants.maxGuests, 3)
+
+    await updateConversationalAgent(agent.id, {
+      capabilitiesConfig: { ...paused.capabilitiesConfig, dataRequirements: { ...saved, mode: 'selected' } }
+    })
+    const restored = await getConversationalAgent(agent.id)
+    assert.deepEqual(getConversationalCapabilitiesConfig(restored), getConversationalCapabilitiesConfig(agent))
+  } finally {
+    await removeAgent(agent.id)
+  }
+})
+
 test('los anticipos respetan la precisión de la moneda configurada', () => {
   const capabilities = normalizeConversationalCapabilitiesConfig({
     schemaVersion: 1,

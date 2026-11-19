@@ -1,0 +1,51 @@
+.section {
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.trigger {
+  padding: 14px 4px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.trigger::-webkit-details-marker {
+  display: none;
+}
+
+.trigger:hover {
+  color: var(--accent);
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: var(--radius-ctl);
+}
+
+.heading {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.heading svg {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.section[open] > .trigger svg {
+  transform: rotate(180deg);
+}
+
+.content {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 4px 0 16px;
+}

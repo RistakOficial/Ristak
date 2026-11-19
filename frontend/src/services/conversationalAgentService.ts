@@ -176,6 +176,7 @@ export interface ConversationalRequiredDataItem {
 }
 
 export interface ConversationalDataRequirements {
+  mode: 'none' | 'selected'
   enabled: boolean
   fields: ConversationalRequiredDataItem[]
   updateContact: {
@@ -794,7 +795,24 @@ export const DEFAULT_CONVERSATIONAL_TEST_MODE: ConversationalTestModeConfig = {
   notify: true
 }
 
+export function setConversationalDataRequirementsMode(
+  requirements: Pick<ConversationalDataRequirements, 'fields' | 'updateContact' | 'participants'>,
+  mode?: ConversationalDataRequirements['mode']
+): ConversationalDataRequirements {
+  const hasGuestFields = requirements.participants.guestFields.length > 0
+  const hasSelection = requirements.fields.length > 0 || hasGuestFields
+  const selected = mode === 'selected' || (mode !== 'none' && hasSelection)
+  const participantsEnabled = selected && hasGuestFields
+  return {
+    ...requirements,
+    mode: selected ? 'selected' : 'none',
+    enabled: selected && hasSelection,
+    participants: { ...requirements.participants, enabled: participantsEnabled }
+  }
+}
+
 export const DEFAULT_CONVERSATIONAL_DATA_REQUIREMENTS: ConversationalDataRequirements = {
+  mode: 'none',
   enabled: false,
   fields: [],
   updateContact: { enabled: true, policy: 'replace_placeholders' },
@@ -1129,8 +1147,7 @@ function normalizeCapabilitiesConfig(value: unknown): ConversationalCapabilities
       cleanupAfterMinutes: 5 as const,
       notify: rawTestMode.notify !== false
     },
-    dataRequirements: {
-      enabled: rawRequirements.enabled === true || rawFields.length > 0 || Boolean(rawRequirements.participants?.enabled) || Boolean(rawRequirements.participants?.guestFields?.length),
+    dataRequirements: setConversationalDataRequirementsMode({
       fields: rawFields.flatMap((field) => {
         if (!field || typeof field !== 'object') return []
         const rawField = field as ConversationalRequiredDataItem
@@ -1164,7 +1181,7 @@ function normalizeCapabilitiesConfig(value: unknown): ConversationalCapabilities
           .filter((field): field is 'name' | 'phone' | 'email' | 'relation' => ['name', 'phone', 'email', 'relation'].includes(field)),
         maxGuests: Math.min(20, Math.max(1, Number(rawRequirements.participants?.maxGuests) || 10))
       }
-    }
+    }, rawRequirements.mode)
   }
   if (!raw || !Array.isArray(raw.items)) return { ...normalizedBase, items: [] }
   const byId = new Map<ConversationalCapabilityId, ConversationalCapabilityItem>()

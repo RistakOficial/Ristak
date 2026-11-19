@@ -1,3 +1,5 @@
+import { getActiveDataRequirements } from './nativeRuntimeConfig.js'
+
 const CAPABILITY_AVAILABILITY_RULE = 'Esta capacidad está disponible, pero estar activada no inicia, adelanta ni obliga ningún paso. Úsala únicamente cuando la estrategia del negocio y el contexto completo indiquen que ya corresponde.'
 
 const CAPABILITY_INSTRUCTIONS = {
@@ -143,9 +145,7 @@ function dataRequirementsSection(config = {}, capabilityManifest = [], { followU
   if (followUpMode) {
     return 'Esta vuelta es sólo un seguimiento. No solicites ni guardes datos para ejecutar acciones; retoma la conversación y espera una respuesta real de la persona.'
   }
-  const requirements = config?.dataRequirements && typeof config.dataRequirements === 'object'
-    ? config.dataRequirements
-    : {}
+  const requirements = getActiveDataRequirements(config?.dataRequirements || {})
   const availableCapabilities = usableCapabilityIds(capabilityManifest, config)
   const scheduleAvailable = availableCapabilities.has('schedule_appointment')
   const paymentAvailable = availableCapabilities.has('collect_payment')
