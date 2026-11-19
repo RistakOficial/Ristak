@@ -698,8 +698,11 @@ export const Dashboard: React.FC = () => {
       end = today
       granularity = 'month'
     } else if (chartPeriodPreference === 'last12') {
-      start = new Date(today.getFullYear(), today.getMonth() - 11, 1)
-      end = today
+      const selectedMonth = dateRange.end
+      start = addMonths(selectedMonth, -11)
+      end = getMonthKey(selectedMonth) === getMonthKey(today)
+        ? today
+        : addDays(addMonths(selectedMonth, 1), -1)
       granularity = 'month'
     }
 

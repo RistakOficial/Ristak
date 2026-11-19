@@ -74,6 +74,10 @@ Usa estos formatos de forma intencional:
   del negocio antes de enviarse al backend.
 - Rangos de reportes: manda fecha inicial/final como fechas de negocio y deja
   que backend resuelva `startOfDay/endOfDay` con la zona del negocio.
+- En la gráfica **Últimos 12 meses** del Dashboard, la fecha final del selector
+  determina el mes de cierre. Cuenta once meses de calendario hacia atrás desde
+  ese mes. Para un mes pasado incluye hasta su último día y para el mes actual
+  usa el día de hoy en la zona del negocio.
 
 ## Reglas de Almacenamiento
 

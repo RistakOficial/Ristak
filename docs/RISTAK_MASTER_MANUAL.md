@@ -692,6 +692,13 @@ migracion para no bloquear despliegues ni quedar dentro de una transaccion. Si
 el volumen exige rollups o proyecciones incrementales, se implementan detras de
 los mismos endpoints agregados: no se vuelve a exponer el historico al frontend.
 
+En el Dashboard principal, la gráfica abre por defecto en **Últimos 12 meses**.
+El mes de la fecha final del selector aparece a la derecha, precedido por los
+once meses anteriores. Si eliges agosto de 2026, verás de septiembre de 2025
+a agosto de 2026. Los meses pasados se muestran completos y el mes en curso
+muestra lo acumulado hasta hoy. Los indicadores del Dashboard corresponden al
+rango exacto del selector.
+
 El Dashboard obtiene sus tres listas recientes desde
 `GET /api/dashboard/operational-snapshot`. Esa respuesta consulta solo la base
 local, entrega como maximo cinco pagos, cinco contactos y cinco citas, y no
