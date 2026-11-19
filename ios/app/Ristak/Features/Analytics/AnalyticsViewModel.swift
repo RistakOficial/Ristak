@@ -6,9 +6,20 @@ import Observation
 /// Estado de un panel independiente de Analíticas (KPIs, gráfica, embudo,
 /// origen). Cada panel carga, falla y reintenta por separado (doc 09 §7.7).
 struct AnalyticsPanelState<Value: Sendable & Equatable>: Equatable, Sendable {
+    var cacheKey: String?
     var value: Value?
-    var isLoading = false
+    var isLoading = true
     var errorMessage: String?
+}
+
+extension AnalyticsPanelState where Value: Decodable {
+    @MainActor
+    mutating func revealSnapshotIfWaiting() {
+        guard value == nil, isLoading, let cacheKey,
+              let saved = RistakSnapshotCache.shared.value(Value.self, for: cacheKey) else { return }
+        value = saved
+        isLoading = false
+    }
 }
 
 // MARK: - Vistas de la gráfica principal (doc 09 §7.3)
@@ -108,6 +119,19 @@ struct AnalyticsWhatsAppRow: Identifiable, Sendable, Equatable {
     let statusLabel: String
 }
 
+/// Consultas independientes de la pantalla. Cada una puede terminar, fallar o
+/// reintentarse aunque las demás sigan esperando al servidor.
+struct AnalyticsQueries {
+    var metrics = AnalyticsService.metrics
+    var financialOverview = AnalyticsService.financialOverview
+    var series = AnalyticsService.series
+    var funnel = AnalyticsService.funnel
+    var originDistribution = AnalyticsService.originDistribution
+    var originPhoneBreakdown = AnalyticsService.originPhoneBreakdown
+    var customLabels = AnalyticsService.customLabels
+    var phones = WhatsAppNumbersService.status
+}
+
 // MARK: - ViewModel
 
 /// Orquestación de la pantalla Analíticas (doc research/09):
@@ -156,41 +180,108 @@ final class AnalyticsViewModel {
     private(set) var accessDenied = false
 
     private var configStore: AppConfigStore?
-    /// La primera carga completa TERMINÓ sin ser cancelada. Si el `.task` de la
-    /// vista se cancela (cambio de tab) antes de terminar, esto queda en `false`
-    /// para que al volver al tab se reintente en vez de dejar KPIs en `$0.00`.
-    private var loadCompleted = false
-    /// La UI nunca presenta una carga parcial/fallida como si todo estuviera
-    /// fresco. Se conserva la cache, pero se avisa cuando la revalidacion no
-    /// pudo completar los cuatro paneles.
-    private(set) var lastSuccessfulRefreshAt: Date?
-    private(set) var lastRefreshFailed = false
+    private let queries: AnalyticsQueries
+    private let recovery: AnalyticsRecovery
+    private var cache: AnalyticsCache?
+    private let snapshotGrace: Duration
+    private var snapshotTasks: [AnalyticsRecovery.Panel: Task<Void, Never>] = [:]
+    private var offline = false
+    private var deniedGeneration: Int?
+    private(set) var includeWeb = false
 
-    // MARK: - Arranque / cambios de zona horaria
+    init(
+        queries: AnalyticsQueries = AnalyticsQueries(),
+        recovery: AnalyticsRecovery? = nil,
+        snapshotGrace: Duration = .milliseconds(350)
+    ) {
+        self.queries = queries
+        self.snapshotGrace = snapshotGrace
+        self.recovery = recovery ?? AnalyticsRecovery()
+    }
 
-    /// Punto de entrada del `.task(id: businessTimeZone)` de la vista raíz.
-    /// Recalcula el rango con la zona vigente; primera vez (o rango cambiado)
-    /// dispara la carga completa.
-    func start(config: AppConfigStore) async {
-        configStore = config
-        let newRange = resolveRange()
-        let rangeChanged = newRange != range
-        range = newRange
+    private var sessionToken: RistakSnapshotCache.NamespaceToken?
 
-        // Recarga si aún no hay una carga completada con éxito o si el rango
-        // cambió. Nota: si una carga previa se canceló (tab switch), los paneles
-        // quedaron EN «cargando» (nunca en 0 falso) y `loadCompleted` sigue en
-        // `false`, así que al reaparecer la vista se recarga solo.
-        guard !loadCompleted || rangeChanged else { return }
-        // SWR (#4): pinta al INSTANTE lo cacheado para esta combinación (KPIs,
-        // gráfica, embudo, origen) y solo después revalida en segundo plano.
-        hydrateAllFromCache()
-        let succeeded = await reloadAll()
-        // Solo consolidamos la carga si el task no fue cancelado a mitad
-        // (al reaparecer, `.task(id:)` vuelve a llamar `start` y recargará).
-        if !Task.isCancelled {
-            loadCompleted = succeeded
+    func start(config: AppConfigStore, includeWeb: Bool) async {
+        guard !Task.isCancelled else { return }
+        recovery.stop()
+        let token = RistakSnapshotCache.shared.namespaceToken()
+        if token != sessionToken {
+            metrics = .init()
+            chart = .init()
+            funnel = .init()
+            origin = .init()
+            labelsLoaded = false
+            labels = .defaults
+            whatsappPhones = []
         }
+        sessionToken = token
+        configStore = config
+        self.includeWeb = includeWeb
+        if !includeWeb {
+            if chartKind == .visitorsLeads { chartKind = .revenueSpend }
+            if originTab == .traffic { originTab = .leads }
+        }
+        cache = AnalyticsCache(config: config, includeWeb: includeWeb)
+        accessDenied = AnalyticsCache.accessDenied
+        if cache == nil {
+            range = nil
+            metrics = .init()
+            chart = .init()
+            funnel = .init()
+            origin = .init()
+            // El shell ya carga configuración al abrir sesión. Si esa consulta
+            // falló, esta pantalla la recupera mientras permanezca visible.
+            guard config.isLoaded else { return }
+            var delay = 2
+            while cache == nil {
+                await config.load()
+                guard !Task.isCancelled, isActiveSession else { return }
+                cache = AnalyticsCache(config: config, includeWeb: includeWeb)
+                if cache == nil {
+                    do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                    delay = min(delay * 2, 60)
+                }
+            }
+        }
+        range = resolveRange()
+        hydrateAllFromCache()
+        await reloadAll()
+    }
+
+    func stop() {
+        configStore = nil
+        primaryReloadGeneration += 1
+        primaryReloadInProgress = false
+        recovery.stop()
+        for task in snapshotTasks.values { task.cancel() }
+        snapshotTasks.removeAll()
+        offline = false
+        cancelOriginPhoneBreakdown(clearCompleted: false)
+    }
+
+    func setNetworkAvailable(_ available: Bool) {
+        offline = !available
+        guard offline, isActiveSession else { return }
+        metrics.revealSnapshotIfWaiting()
+        chart.revealSnapshotIfWaiting()
+        funnel.revealSnapshotIfWaiting()
+        origin.revealSnapshotIfWaiting()
+    }
+
+    private var isActiveSession: Bool {
+        configStore != nil && sessionToken == RistakSnapshotCache.shared.namespaceToken()
+    }
+
+    var chartKinds: [AnalyticsChartKind] {
+        AnalyticsChartKind.allCases.filter { includeWeb || $0 != .visitorsLeads }
+    }
+
+    var originTabs: [AnalyticsOriginTab] {
+        AnalyticsOriginTab.allCases.filter { includeWeb || $0 != .traffic }
+    }
+
+    private func isCurrent(_ request: AnalyticsRecovery.Request) -> Bool {
+        isActiveSession && recovery.isCurrent(request)
     }
 
     // MARK: - Periodo
@@ -201,7 +292,6 @@ final class AnalyticsViewModel {
         period = newPeriod
         customRange = nil
         range = resolveRange()
-        // Repinta al instante lo cacheado para el nuevo rango (o «…» si no hay).
         hydrateAllFromCache()
         Task { _ = await reloadAll() }
     }
@@ -218,7 +308,6 @@ final class AnalyticsViewModel {
         period = .custom
         customRange = newRange
         range = newRange
-        // Repinta al instante lo cacheado para el rango personalizado.
         hydrateAllFromCache()
         Task { _ = await reloadAll() }
         return nil
@@ -253,10 +342,9 @@ final class AnalyticsViewModel {
     // MARK: - Selecciones que recargan un solo panel (doc 09 §7.7)
 
     func selectChartKind(_ kind: AnalyticsChartKind) {
-        guard kind != chartKind else { return }
+        guard chartKinds.contains(kind), kind != chartKind else { return }
         chartKind = kind
         guard let range else { return }
-        // Pinta al instante la vista cacheada para esta combinación.
         hydrateChart(range)
         Task { _ = await loadChart(range) }
     }
@@ -297,6 +385,7 @@ final class AnalyticsViewModel {
     @discardableResult
     func reloadAll() async -> Bool {
         guard let range else { return false }
+        guard cache != nil, isActiveSession, !Task.isCancelled else { return false }
         // Toda recarga primaria invalida también el enriquecimiento ya terminado,
         // incluso si Origen salió del viewport. Al reaparecer, el panel debe leer
         // nuevamente el breakdown del mismo rango en vez de quedarse con cache vieja.
@@ -305,7 +394,6 @@ final class AnalyticsViewModel {
         let reloadGeneration = primaryReloadGeneration
         primaryReloadInProgress = true
         let performanceSpan = RistakObservability.begin(.analyticsLoad)
-        accessDenied = false
         async let labelsLoad: Void = loadLabelsIfNeeded()
         async let metricsLoad: Bool = loadMetrics(range)
         async let chartLoad: Bool = loadChart(range)
@@ -321,12 +409,14 @@ final class AnalyticsViewModel {
             phonesLoad
         )
         let succeeded = metricsOK && chartOK && funnelOK && originOK
-        if primaryReloadGeneration == reloadGeneration {
+        if primaryReloadGeneration == reloadGeneration && isActiveSession && !Task.isCancelled {
             primaryReloadInProgress = false
+            if metricsOK && deniedGeneration != reloadGeneration && accessDenied {
+                accessDenied = false
+                AnalyticsCache.accessDenied = false
+            }
             scheduleOriginPhoneBreakdownIfNeeded()
         }
-        lastRefreshFailed = !succeeded
-        if succeeded { lastSuccessfulRefreshAt = Date() }
         performanceSpan.finish(
             outcome: accessDenied ? .unavailable : (succeeded ? .success : .failed),
             itemCount: 4
@@ -354,13 +444,10 @@ final class AnalyticsViewModel {
         _ = await loadOrigin(range)
     }
 
-    // MARK: - Caché SWR: hidratación instantánea (doc Round 6 #4)
+    // MARK: - Respaldo por contexto
 
-    /// Pinta SÍNCRONAMENTE lo último cacheado para la combinación vigente
-    /// (rango × scope × vista) en los 4 paneles + etiquetas + números de
-    /// WhatsApp. Si un panel no tiene caché para su combinación, queda en
-    /// «cargando» (spinner/«…»); nunca en `$0.00` ni vacío falso. Debe llamarse
-    /// ANTES de disparar la revalidación de red.
+    /// Etiquetas y teléfonos ya conocidos están disponibles al entrar. Para
+    /// las cifras, la red tiene una ventana breve antes de recurrir al snapshot.
     private func hydrateAllFromCache() {
         guard let range else { return }
         // Etiquetas: títulos correctos al instante (sigue revalidando en red).
@@ -379,66 +466,88 @@ final class AnalyticsViewModel {
     }
 
     private func hydrateMetrics(_ range: AnalyticsDateRange) {
-        let cached = AnalyticsCache.readMetrics(range)
-        metrics.value = cached
-        metrics.isLoading = (cached == nil)
-        metrics.errorMessage = nil
+        preparePanel(.metrics, at: \.metrics, key: cache?.metricsKey(range))
     }
 
     private func hydrateChart(_ range: AnalyticsDateRange) {
-        let cached = AnalyticsCache.readChart(range, chartKind, financialScope)
-        chart.value = cached
-        chart.isLoading = (cached == nil)
-        chart.errorMessage = nil
+        preparePanel(.chart, at: \.chart, key: cache?.chartKey(range, chartKind, financialScope))
     }
 
     private func hydrateFunnel(_ range: AnalyticsDateRange) {
-        let cached = AnalyticsCache.readFunnel(range, funnelScope)
-        funnel.value = cached
-        funnel.isLoading = (cached == nil)
-        funnel.errorMessage = nil
+        preparePanel(.funnel, at: \.funnel, key: cache?.funnelKey(range, funnelScope))
     }
 
     private func hydrateOrigin(_ range: AnalyticsDateRange) {
         prepareOriginPhoneState(for: range)
-        let cached = AnalyticsCache.readOrigin(range)
-        origin.value = cached
-        origin.isLoading = (cached == nil)
-        origin.errorMessage = nil
+        preparePanel(.origin, at: \.origin, key: cache?.originKey(range))
+    }
+
+    private func preparePanel<Value: Decodable>(
+        _ panel: AnalyticsRecovery.Panel,
+        at path: ReferenceWritableKeyPath<AnalyticsViewModel, AnalyticsPanelState<Value>>,
+        key: String?
+    ) {
+        recovery.invalidate(panel)
+        snapshotTasks.removeValue(forKey: panel)?.cancel()
+        if self[keyPath: path].cacheKey == key, self[keyPath: path].value != nil { return }
+        self[keyPath: path] = AnalyticsPanelState(cacheKey: key)
+        guard let key, RistakSnapshotCache.shared.contains(key) else { return }
+        if offline {
+            self[keyPath: path].revealSnapshotIfWaiting()
+            return
+        }
+        let delay = snapshotGrace
+        snapshotTasks[panel] = Task { [weak self] in
+            do { try await Task.sleep(for: delay) } catch { return }
+            guard let self, self.isActiveSession, self[keyPath: path].cacheKey == key else { return }
+            self[keyPath: path].revealSnapshotIfWaiting()
+            self.snapshotTasks[panel] = nil
+        }
     }
 
     private func loadLabelsIfNeeded() async {
-        guard !labelsLoaded else { return }
-        // Fallos silenciosos: se quedan los defaults (Interesados/Clientes).
-        guard let fetched = try? await AnalyticsService.customLabels() else { return }
-        labels = fetched
-        labelsLoaded = true
-        AnalyticsCache.storeLabels(fetched)
+        guard !labelsLoaded, isActiveSession else { return }
+        let request = recovery.begin(.labels)
+        do {
+            let fetched = try await queries.customLabels()
+            guard isCurrent(request) else { return }
+            labels = fetched
+            labelsLoaded = true
+            AnalyticsCache.storeLabels(fetched)
+            recovery.finish(request)
+        } catch {
+            retryTemporary(error, request)
+        }
     }
 
     private func loadMetrics(_ range: AnalyticsDateRange) async -> Bool {
+        guard cache != nil, isActiveSession, self.range == range, !Task.isCancelled else { return false }
+        let request = recovery.begin(.metrics)
         // Spinner («…») SOLO si no hay valor cacheado; si lo hay, revalida en
         // silencio (nada de vacío → spinner → dato).
         if metrics.value == nil { metrics.isLoading = true }
         metrics.errorMessage = nil
         do {
-            let snapshot = try await AnalyticsService.metrics(
-                startDate: range.startDate,
-                endDate: range.endDate
+            let snapshot = try await queries.metrics(
+                range.startDate,
+                range.endDate
             )
-            guard self.range == range else { return false }
+            guard isCurrent(request), self.range == range else { return false }
             metrics.value = snapshot
             metrics.isLoading = false
-            AnalyticsCache.storeMetrics(snapshot, range)
+            cache?.storeMetrics(snapshot, range)
+            recovery.finish(request)
             return true
         } catch {
-            guard self.range == range else { return false }
-            metrics = applyFailure(classify(error), to: metrics, empty: nil)
+            guard isCurrent(request), self.range == range else { return false }
+            metrics = applyFailure(error, request: request, cacheKey: cache?.metricsKey(range), to: metrics, empty: nil)
             return false
         }
     }
 
     private func loadChart(_ range: AnalyticsDateRange) async -> Bool {
+        guard cache != nil, isActiveSession, self.range == range, !Task.isCancelled else { return false }
+        let request = recovery.begin(.chart)
         let kind = chartKind
         let scope = financialScope
         if chart.value == nil { chart.isLoading = true }
@@ -446,38 +555,39 @@ final class AnalyticsViewModel {
         do {
             let points: [AnalyticsChartPoint]
             if let pair = kind.seriesPair {
-                async let first = AnalyticsService.series(
+                async let first = queries.series(
                     pair.0,
-                    startDate: range.startDate,
-                    endDate: range.endDate,
-                    groupBy: range.groupBy
+                    range.startDate,
+                    range.endDate,
+                    range.groupBy
                 )
-                async let second = AnalyticsService.series(
+                async let second = queries.series(
                     pair.1,
-                    startDate: range.startDate,
-                    endDate: range.endDate,
-                    groupBy: range.groupBy
+                    range.startDate,
+                    range.endDate,
+                    range.groupBy
                 )
                 let (a, b) = try await (first, second)
                 points = Self.combineSeries(a, b)
             } else {
-                let raw = try await AnalyticsService.financialOverview(
-                    startDate: range.startDate,
-                    endDate: range.endDate,
-                    scope: scope
+                let raw = try await queries.financialOverview(
+                    range.startDate,
+                    range.endDate,
+                    scope
                 )
                 points = raw.map {
                     AnalyticsChartPoint(label: $0.label, value1: $0.value, value2: $0.value2)
                 }
             }
-            guard isCurrentChartRequest(range, kind, scope) else { return false }
+            guard isCurrent(request), isCurrentChartRequest(range, kind, scope) else { return false }
             chart.value = points
             chart.isLoading = false
-            AnalyticsCache.storeChart(points, range, kind, scope)
+            cache?.storeChart(points, range, kind, scope)
+            recovery.finish(request)
             return true
         } catch {
-            guard isCurrentChartRequest(range, kind, scope) else { return false }
-            chart = applyFailure(classify(error), to: chart, empty: [])
+            guard isCurrent(request), isCurrentChartRequest(range, kind, scope) else { return false }
+            chart = applyFailure(error, request: request, cacheKey: cache?.chartKey(range, kind, scope), to: chart, empty: [])
             return false
         }
     }
@@ -491,36 +601,41 @@ final class AnalyticsViewModel {
     }
 
     private func loadFunnel(_ range: AnalyticsDateRange) async -> Bool {
+        guard cache != nil, isActiveSession, self.range == range, !Task.isCancelled else { return false }
+        let request = recovery.begin(.funnel)
         let scope = funnelScope
         if funnel.value == nil { funnel.isLoading = true }
         funnel.errorMessage = nil
         do {
-            let rows = try await AnalyticsService.funnel(
-                startDate: range.startDate,
-                endDate: range.endDate,
-                scope: scope
+            let rows = try await queries.funnel(
+                range.startDate,
+                range.endDate,
+                scope, includeWeb
             )
-            guard self.range == range, funnelScope == scope else { return false }
+            guard isCurrent(request), self.range == range, funnelScope == scope else { return false }
             funnel.value = rows
             funnel.isLoading = false
-            AnalyticsCache.storeFunnel(rows, range, scope)
+            cache?.storeFunnel(rows, range, scope)
+            recovery.finish(request)
             return true
         } catch {
-            guard self.range == range, funnelScope == scope else { return false }
-            funnel = applyFailure(classify(error), to: funnel, empty: [])
+            guard isCurrent(request), self.range == range, funnelScope == scope else { return false }
+            funnel = applyFailure(error, request: request, cacheKey: cache?.funnelKey(range, scope), to: funnel, empty: [])
             return false
         }
     }
 
     private func loadOrigin(_ range: AnalyticsDateRange) async -> Bool {
+        guard cache != nil, isActiveSession, self.range == range, !Task.isCancelled else { return false }
+        let request = recovery.begin(.origin)
         if origin.value == nil { origin.isLoading = true }
         origin.errorMessage = nil
         do {
-            let snapshot = try await AnalyticsService.originDistribution(
-                startDate: range.startDate,
-                endDate: range.endDate
+            let snapshot = try await queries.originDistribution(
+                range.startDate,
+                range.endDate, includeWeb
             )
-            guard self.range == range else { return false }
+            guard isCurrent(request), self.range == range else { return false }
             // La respuesta principal excluye teléfonos. Conservar sólo esas
             // filas del snapshot SWR evita que una revalidación tardía borre
             // el enriquecimiento ya publicado para este mismo rango.
@@ -533,12 +648,13 @@ final class AnalyticsViewModel {
             )
             origin.value = merged
             origin.isLoading = false
-            AnalyticsCache.storeOrigin(merged, range)
+            cache?.storeOrigin(merged, range)
             scheduleOriginPhoneBreakdownIfNeeded()
+            recovery.finish(request)
             return true
         } catch {
-            guard self.range == range else { return false }
-            origin = applyFailure(classify(error), to: origin, empty: nil)
+            guard isCurrent(request), self.range == range else { return false }
+            origin = applyFailure(error, request: request, cacheKey: cache?.originKey(range), to: origin, empty: nil)
             return false
         }
     }
@@ -546,7 +662,7 @@ final class AnalyticsViewModel {
     private func scheduleOriginPhoneBreakdownIfNeeded() {
         guard
             phoneOriginRequested,
-            !primaryReloadInProgress,
+            isActiveSession, !accessDenied, !primaryReloadInProgress,
             let range,
             origin.value != nil
         else { return }
@@ -554,7 +670,9 @@ final class AnalyticsViewModel {
         let key = phoneOriginKey(for: range)
         guard phoneOriginCompletedRangeKey != key, phoneOriginInFlightRangeKey != key else { return }
 
-        cancelOriginPhoneBreakdown(clearCompleted: false)
+        if phoneOriginInFlightRangeKey != nil {
+            cancelOriginPhoneBreakdown(clearCompleted: false)
+        }
         phoneOriginGeneration += 1
         let generation = phoneOriginGeneration
         phoneOriginInFlightRangeKey = key
@@ -569,14 +687,15 @@ final class AnalyticsViewModel {
         key: String,
         generation: Int
     ) async {
+        let request = recovery.begin(.phoneBreakdown)
         do {
-            let snapshot = try await AnalyticsService.originPhoneBreakdown(
-                startDate: range.startDate,
-                endDate: range.endDate
+            let snapshot = try await queries.originPhoneBreakdown(
+                range.startDate,
+                range.endDate
             )
             try Task.checkCancellation()
             guard
-                phoneOriginGeneration == generation,
+                isCurrent(request), phoneOriginGeneration == generation,
                 phoneOriginInFlightRangeKey == key,
                 self.range == range,
                 let current = origin.value
@@ -593,18 +712,21 @@ final class AnalyticsViewModel {
             phoneOriginCompletedRangeKey = key
             phoneOriginInFlightRangeKey = nil
             phoneOriginTask = nil
-            AnalyticsCache.storeOrigin(merged, range)
+            cache?.storeOrigin(merged, range)
+            recovery.finish(request)
         } catch {
             guard
-                phoneOriginGeneration == generation,
+                isCurrent(request), phoneOriginGeneration == generation,
                 phoneOriginInFlightRangeKey == key
             else { return }
             phoneOriginInFlightRangeKey = nil
             phoneOriginTask = nil
+            retryTemporary(error, request)
         }
     }
 
     private func cancelOriginPhoneBreakdown(clearCompleted: Bool) {
+        recovery.invalidate(.phoneBreakdown)
         phoneOriginGeneration += 1
         phoneOriginTask?.cancel()
         phoneOriginTask = nil
@@ -629,76 +751,81 @@ final class AnalyticsViewModel {
     /// El panel Origen no depende de WhatsApp. Esta carga secundaria publica
     /// por separado y solo pisa cache cuando el endpoint respondio de verdad.
     private func loadWhatsAppPhones(_ range: AnalyticsDateRange) async {
+        guard isActiveSession, self.range == range, !Task.isCancelled else { return }
+        let request = recovery.begin(.phones)
         do {
-            let status = try await WhatsAppNumbersService.status()
-            guard self.range == range else { return }
+            let status = try await queries.phones()
+            guard isCurrent(request), self.range == range else { return }
             whatsappPhones = status.phoneNumbers
             AnalyticsCache.storePhones(status.phoneNumbers)
+            recovery.finish(request)
         } catch {
-            // Conservar telefonos cacheados ante un fallo temporal.
+            retryTemporary(error, request)
         }
     }
 
-    // MARK: - Clasificación de errores
+    // MARK: - Recuperación por panel
 
-    private enum LoadFailure {
-        case message(String)
-        case silentEmpty
-        /// Task cancelado (cambio de tab): se CONSERVA el estado de carga para
-        /// no pintar `$0.00` como si fuera real; la vista recarga al reaparecer.
-        case cancelled
-        case ignored
+    @discardableResult
+    private func retryTemporary(_ error: Error, _ request: AnalyticsRecovery.Request) -> Bool {
+        guard isCurrent(request), Self.isTemporary(error) else { return false }
+        if !accessDenied {
+            recovery.retry(request) { [weak self] in
+                guard let self, self.isCurrent(request), let range = self.range, !self.accessDenied else { return }
+                switch request.panel {
+                case .metrics: await self.retryMetrics()
+                case .chart: await self.retryChart()
+                case .funnel: await self.retryFunnel()
+                case .origin: await self.retryOrigin()
+                case .phones: await self.loadWhatsAppPhones(range)
+                case .labels: await self.loadLabelsIfNeeded()
+                case .phoneBreakdown: self.scheduleOriginPhoneBreakdownIfNeeded()
+                }
+            }
+        }
+        return true
     }
 
-    /// Aplica un fallo a un panel preservando el patrón SWR: si el panel YA
-    /// tiene datos (cacheados o de una carga previa), un error de red NO los
-    /// borra ni muestra la vista de error de pantalla completa del panel —
-    /// simplemente se conserva lo visible. El error inline solo aparece cuando
-    /// el panel está vacío (primera carga sin caché).
-    private func applyFailure<Value>(
-        _ failure: LoadFailure,
+    static func isTemporary(_ error: Error) -> Bool {
+        guard let api = error as? RistakAPIError else { return false }
+        switch api.kind {
+        case .network: return (api.underlying as? URLError)?.code != .cancelled
+        case .starting, .rateLimited: return true
+        case .server: return api.status == 0 || api.status == 408 || api.status >= 500
+        default: return false
+        }
+    }
+
+    private func applyFailure<Value: Decodable>(
+        _ error: Error,
+        request: AnalyticsRecovery.Request,
+        cacheKey: String?,
         to state: AnalyticsPanelState<Value>,
         empty: Value?
     ) -> AnalyticsPanelState<Value> {
         var next = state
-        switch failure {
-        case .message(let message):
-            next.isLoading = false
-            if next.value == nil { next.errorMessage = message }
-        case .silentEmpty:
-            // 403 feature-not-available: respuesta autoritativa → vaciar.
-            next.isLoading = false
+        if retryTemporary(error, request) {
+            next.revealSnapshotIfWaiting()
+            return next
+        }
+        if error is CancellationError { return next }
+        let api = error as? RistakAPIError
+        if (api?.underlying as? URLError)?.code == .cancelled { return next }
+        next.isLoading = false
+        let dashboardUnavailable = api?.kind == .featureUnavailable && api?.feature == "dashboard"
+        if dashboardUnavailable || api?.isAccessDenied == true || api?.isUnauthorized == true
+            || api?.kind == .adminRequired || api?.kind == .licenseBlocked {
+            deniedGeneration = primaryReloadGeneration
+            accessDenied = true
+            AnalyticsCache.accessDenied = true
+            next.value = nil
+        } else if api?.kind == .featureUnavailable {
+            if let cacheKey { RistakSnapshotCache.shared.remove(cacheKey) }
             next.value = empty
-        case .cancelled:
-            // Cambio de tab: conserva el estado tal cual (si venía de caché el
-            // valor sigue visible; si no, `isLoading` sigue → recarga al volver).
-            break
-        case .ignored:
-            next.isLoading = false
+        } else if next.value == nil {
+            next.errorMessage = api?.message ?? "No se pudo cargar la información."
         }
         return next
-    }
-
-    private func classify(_ error: Error) -> LoadFailure {
-        if error is CancellationError { return .cancelled }
-        guard let api = error as? RistakAPIError else {
-            return .message("No se pudo cargar la información.")
-        }
-        if api.kind == .network,
-           let urlError = api.underlying as? URLError,
-           urlError.code == .cancelled {
-            return .cancelled
-        }
-        switch api.kind {
-        case .accessDenied:
-            accessDenied = true
-            return .ignored
-        case .featureUnavailable:
-            // Silencioso en cargas (GET): panel vacío, sin alerta.
-            return .silentEmpty
-        default:
-            return .message(api.message)
-        }
     }
 
     // MARK: - Derivados: gráfica
@@ -754,14 +881,16 @@ final class AnalyticsViewModel {
     /// Filas a renderizar; si el backend devolvió vacío se muestran las 5
     /// etapas en 0 con los labels personalizados (doc 09 §7.4).
     var funnelDisplayRows: [DashboardFunnelRow] {
-        if let rows = funnel.value, !rows.isEmpty { return rows }
+        if let rows = funnel.value, !rows.isEmpty {
+            return rows.filter { includeWeb || $0.stage.lowercased() != "visitantes" }
+        }
         return [
             DashboardFunnelRow(stage: "Visitantes", value: 0),
             DashboardFunnelRow(stage: labels.leads, value: 0),
             DashboardFunnelRow(stage: "Citas", value: 0),
             DashboardFunnelRow(stage: "Asistencias", value: 0),
             DashboardFunnelRow(stage: labels.customers, value: 0),
-        ]
+        ].filter { includeWeb || $0.stage != "Visitantes" }
     }
 
     /// Pill de conversión total: `(última / primera) * 100`, `0.0%` si la

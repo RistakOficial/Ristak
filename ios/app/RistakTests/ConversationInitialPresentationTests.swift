@@ -7,7 +7,6 @@ final class ConversationInitialPresentationTests: XCTestCase {
             accessDenied: false,
             loadErrorMessage: "Servidor lento",
             hasLoadedOnce: false,
-            isLoadingInitial: true,
             timelineIsEmpty: false
         )
 
@@ -19,22 +18,36 @@ final class ConversationInitialPresentationTests: XCTestCase {
             accessDenied: false,
             loadErrorMessage: nil,
             hasLoadedOnce: true,
-            isLoadingInitial: true,
             timelineIsEmpty: false
         )
 
         XCTAssertEqual(state, .content)
     }
 
-    func testLoadingAppearsOnlyWithoutPrimaryContent() {
+    func testFirstFrameWaitsForPrimaryContent() {
         let state = ConversationInitialPresentation.resolve(
             accessDenied: false,
             loadErrorMessage: nil,
             hasLoadedOnce: false,
-            isLoadingInitial: true,
             timelineIsEmpty: true
         )
 
         XCTAssertEqual(state, .loading)
+    }
+
+    func testConfirmedEmptyThreadShowsItsEmptyState() {
+        XCTAssertEqual(ConversationInitialPresentation.resolve(
+            accessDenied: false,
+            loadErrorMessage: nil,
+            hasLoadedOnce: true,
+            timelineIsEmpty: true
+        ), .content)
+    }
+
+    func testDefinitiveMissingContactShowsRetryEvenIfAStoredTimelineWasAlreadyVisible() {
+        XCTAssertEqual(ConversationInitialPresentation.resolve(
+            accessDenied: false, loadErrorMessage: "Contacto no encontrado",
+            hasLoadedOnce: true, timelineIsEmpty: false, blocksCachedHistory: true
+        ), .error("Contacto no encontrado"))
     }
 }

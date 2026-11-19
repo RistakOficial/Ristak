@@ -30,6 +30,11 @@ struct ChatsRootView: View {
     /// Ruta del detalle (iPad).
     @State private var detailRoute: ChatsRoute?
 
+    private struct ConversationIdentity: Hashable {
+        let contactID: String
+        let namespace: String?
+    }
+
     enum ChatsRoute: Hashable {
         case conversation(contactID: String)
     }
@@ -236,6 +241,7 @@ struct ChatsRootView: View {
                     viewModel.applyActivity(activity)
                 }
             )
+            .id(ConversationIdentity(contactID: contactID, namespace: bootstrapIdentity.namespace))
         }
     }
 }

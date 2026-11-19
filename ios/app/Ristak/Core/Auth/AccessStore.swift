@@ -54,9 +54,19 @@ enum RistakAccessRules {
         .chat: .chat,
         .calendar: .appointments,
         .payments: .payments,
-        .analytics: .analytics,
+        .analytics: .dashboard,
         .settings: .settingsMobile,
     ]
+
+    static func canReadWebAnalytics(_ user: RistakUser?) -> Bool {
+        guard let user else { return false }
+        guard user.licenseEnforced else { return true }
+        let plan = (user.licensePlan ?? "").lowercased()
+            .split(whereSeparator: { $0.isWhitespace || $0 == "-" || $0 == "_" })
+        let professionalPlans = ["pro", "professional", "profesional", "premium"]
+        return plan.last.map { professionalPlans.contains(String($0)) } == true
+            && user.licenseFeatures["web_analytics"] == true
+    }
 
     static func isAdmin(_ user: RistakUser?) -> Bool {
         user?.role == .admin

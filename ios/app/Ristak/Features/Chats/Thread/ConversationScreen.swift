@@ -24,10 +24,10 @@ struct ConversationScreen: View {
     @State private var showsPaymentForContact = false
     /// Invalida reposicionamientos tardíos de una animación anterior del teclado.
     @State private var keyboardReanchorGeneration = 0
-    /// Mantiene cerrada la paginación superior hasta que la apertura quedó
-    /// materializada exactamente en el fondo.
-    @State private var openingScrollState = ConversationOpeningScrollState()
-    @State private var openingBottomTask: Task<Void, Never>?
+    // El borde sigue al último mensaje durante el primer layout, incluso si
+    // SwiftUI todavía está calculando las alturas de las secciones.
+    @State private var threadPosition = ScrollPosition(idType: String.self, edge: .bottom)
+    @State private var historyScrollIntent = ConversationHistoryScrollIntent()
     /// El historial sólo pagina al llegar aquí después de un gesto vertical
     /// real. Un relayout o una descarga de media nunca deben dispararlo.
     @State private var historyBoundaryIsNear = false
@@ -39,8 +39,6 @@ struct ConversationScreen: View {
     @Environment(NotificationRouter.self) private var notificationRouter
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-
-    private static let bottomAnchorID = "thread-bottom-anchor"
 
     init(
         contactID: String,
@@ -55,7 +53,9 @@ struct ConversationScreen: View {
     }
 
     var body: some View {
-        content
+        // El dueño del stream y de la primera carga permanece montado aunque
+        // el contenido cambie de carga a mensajes o a respaldo local.
+        ZStack { content }
             .navigationBarTitleDisplayMode(.inline)
             // Dentro del hilo el dock estorba (paridad mobile/: la conversación
             // toma toda la pantalla). Solo se oculta en compacto (iPhone); en el
@@ -90,8 +90,8 @@ struct ConversationScreen: View {
                 presence.startViewing(contactID: viewModel.contactID)
             }
             .onDisappear {
-                openingBottomTask?.cancel()
-                openingBottomTask = nil
+                keyboardReanchorGeneration &+= 1
+                historyScrollIntent.cancel()
                 viewModel.stopPolling()
                 presence.stopViewing()
             }
@@ -198,8 +198,8 @@ struct ConversationScreen: View {
             accessDenied: viewModel.accessDenied,
             loadErrorMessage: viewModel.loadErrorMessage,
             hasLoadedOnce: viewModel.hasLoadedOnce,
-            isLoadingInitial: viewModel.isLoadingInitial,
-            timelineIsEmpty: viewModel.timeline.isEmpty
+            timelineIsEmpty: viewModel.timeline.isEmpty,
+            blocksCachedHistory: viewModel.blocksCachedHistory
         ) {
         case .accessDenied:
             RistakEmptyState(
@@ -252,19 +252,16 @@ struct ConversationScreen: View {
                             }
                         }
                     }
-
-                    Color.clear
-                        .frame(height: 1)
-                        .id(Self.bottomAnchorID)
                 }
                 .padding(.horizontal, RistakTheme.Spacing.sm)
                 .scrollTargetLayout()
             }
             .background { ChatWallpaperBackground() }
             .accessibilityIdentifier("ristak-conversation-history")
-            // El fondo manda SOLO al entrar. Si también gobierna cambios de
-            // tamaño, la animación del teclado puede enviar el LazyVStack a una
-            // región todavía no materializada y dejar el hilo visualmente vacío.
+            // El borde es una posición del scroll, disponible incluso si SwiftUI
+            // todavía no ha materializado la última burbuja. El gesto del usuario
+            // reemplaza esa posición cuando decide leer el historial.
+            .scrollPosition($threadPosition)
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             // Cuando el historial es más corto que el viewport, el aire sobrante
             // va ARRIBA. El último globo queda pegado al composer, no flotando en
@@ -281,14 +278,12 @@ struct ConversationScreen: View {
             .simultaneousGesture(
                 DragGesture(minimumDistance: 6)
                     .onChanged { value in
-                        guard value.translation.height > abs(value.translation.width),
+                        guard abs(value.translation.height) > abs(value.translation.width),
                               !conversationDragIsActive else { return }
                         conversationDragIsActive = true
-                        openingBottomTask?.cancel()
-                        openingBottomTask = nil
-                        openingScrollState.userDidBeginScrolling()
-                        if historyBoundaryIsNear,
-                           openingScrollState.consumeHistoryPaginationIntent() {
+                        keyboardReanchorGeneration &+= 1
+                        historyScrollIntent.beginDrag(towardHistory: value.translation.height > 0)
+                        if historyBoundaryIsNear, historyScrollIntent.consume() {
                             viewModel.loadOlderIfNeeded()
                         }
                     }
@@ -296,9 +291,11 @@ struct ConversationScreen: View {
                         conversationDragIsActive = false
                     }
             )
+            .onScrollPhaseChange { _, phase in
+                if phase == .idle { historyScrollIntent.cancel() }
+            }
             .onScrollGeometryChange(for: Bool.self) { geometry in
-                geometry.contentOffset.y + geometry.containerSize.height
-                    >= geometry.contentSize.height - 140
+                geometry.visibleRect.maxY >= geometry.contentSize.height - 140
             } action: { _, isNearBottom in
                 viewModel.isNearBottom = isNearBottom
             }
@@ -307,18 +304,9 @@ struct ConversationScreen: View {
             } action: { _, isNearHistoryBoundary in
                 historyBoundaryIsNear = isNearHistoryBoundary
                 if isNearHistoryBoundary,
-                   openingScrollState.consumeHistoryPaginationIntent() {
+                   historyScrollIntent.consume() {
                     viewModel.loadOlderIfNeeded()
                 }
-            }
-            .onScrollGeometryChange(for: Int.self) { geometry in
-                Int(geometry.contentSize.height.rounded())
-            } action: { _, _ in
-                scheduleOpeningBottomAnchor(
-                    hasContent: !viewModel.timeline.isEmpty,
-                    primaryContentSettled: openingContentSettled,
-                    proxy: proxy
-                )
             }
             .refreshable {
                 await viewModel.refreshSilently()
@@ -328,9 +316,9 @@ struct ConversationScreen: View {
                     get: { viewModel.isNearBottom },
                     set: { viewModel.isNearBottom = $0 }
                 ),
-                onJumpStarted: prepareForManualBottomJump,
+                onJumpStarted: prepareForManualJump,
                 scrollToBottom: {
-                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                    threadPosition.scrollTo(edge: .bottom)
                 }
             )
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -344,20 +332,12 @@ struct ConversationScreen: View {
                 }
             }
             .onChange(of: viewModel.scrollToBottomSignal) { _, _ in
-                if openingScrollState.isAnchoring {
-                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-                } else {
+                guard !conversationDragIsActive else { return }
+                if threadPosition.edge != .bottom {
                     withAnimation(.snappy(duration: 0.25)) {
-                        proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                        threadPosition.scrollTo(edge: .bottom)
                     }
                 }
-            }
-            .onChange(of: openingContentSettled, initial: true) { _, settled in
-                scheduleOpeningBottomAnchor(
-                    hasContent: !viewModel.timeline.isEmpty,
-                    primaryContentSettled: settled,
-                    proxy: proxy
-                )
             }
             .onChange(of: viewModel.pendingScrollAnchorID) { _, anchorID in
                 guard let anchorID else { return }
@@ -366,6 +346,7 @@ struct ConversationScreen: View {
             }
             .onChange(of: quoteScrollTargetID) { _, targetID in
                 guard let targetID else { return }
+                prepareForManualJump()
                 withAnimation(.snappy(duration: 0.3)) {
                     proxy.scrollTo(targetID, anchor: .center)
                 }
@@ -375,17 +356,12 @@ struct ConversationScreen: View {
             // teclado. Capturamos el estado ANTES del relayout y estabilizamos el
             // fondo al principio y al terminar la animación del safe-area inset.
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
-                stabilizeForKeyboardTransition(notification, proxy: proxy)
+                stabilizeForKeyboardTransition(notification)
             }
             // La cascada necesita el ORDEN de mensajes (solo mensajes, sin días ni
             // markers) para saber cuál audio encadenar al terminar el actual.
             .onChange(of: viewModel.timeline, initial: true) { _, timeline in
                 audioCascade.updateOrder(cascadeEntries(from: timeline))
-                scheduleOpeningBottomAnchor(
-                    hasContent: !timeline.isEmpty,
-                    primaryContentSettled: openingContentSettled,
-                    proxy: proxy
-                )
             }
             .environment(audioCascade)
         }
@@ -396,56 +372,9 @@ struct ConversationScreen: View {
         )
     }
 
-    /// `defaultScrollAnchor` decide el offset inicial, pero no basta cuando un
-    /// `LazyVStack`, el composer y las imágenes terminan su layout en turnos
-    /// distintos. Reafirmamos el mismo fondo en unas cuantas ventanas de layout
-    /// muy cortas; cualquier gesto del usuario invalida inmediatamente la tarea.
-    private func scheduleOpeningBottomAnchor(
-        hasContent: Bool,
-        primaryContentSettled: Bool,
-        proxy: ScrollViewProxy
-    ) {
-        guard let generation = openingScrollState.contentDidChange(hasContent: hasContent) else {
-            return
-        }
-        openingBottomTask?.cancel()
-        openingBottomTask = Task { @MainActor in
-            let delays: [UInt64] = [0, 16_000_000, 64_000_000, 160_000_000, 320_000_000]
-            for delay in delays {
-                if delay == 0 {
-                    await Task.yield()
-                } else {
-                    do {
-                        try await Task.sleep(nanoseconds: delay)
-                    } catch {
-                        return
-                    }
-                }
-                guard openingScrollState.shouldContinueAnchoring(generation: generation) else {
-                    return
-                }
-                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-            }
-            openingScrollState.didEstablishBottom(generation: generation)
-            if primaryContentSettled {
-                openingScrollState.didFinishOpeningTracking(generation: generation)
-            }
-            openingBottomTask = nil
-        }
-    }
-
-    private var openingContentSettled: Bool {
-        viewModel.hasLoadedOnce
-            || viewModel.loadErrorMessage != nil
-            || viewModel.accessDenied
-    }
-
-    /// El toque manual manda sobre cualquier reposicionamiento automático que
-    /// todavía siga pendiente por apertura o teclado.
-    private func prepareForManualBottomJump() {
-        openingBottomTask?.cancel()
-        openingBottomTask = nil
-        openingScrollState.manualBottomJumpDidBegin()
+    /// Invalida cualquier salto de teclado pendiente y la intención de paginar.
+    private func prepareForManualJump() {
+        historyScrollIntent.cancel()
         keyboardReanchorGeneration &+= 1
     }
 
@@ -453,23 +382,20 @@ struct ConversationScreen: View {
     /// teclado cambiara el viewport. El segundo salto ocurre después de la
     /// duración reportada por UIKit: ahí el `LazyVStack` ya conoce su geometría
     /// definitiva y no puede quedarse apuntando a un hueco sin materializar.
-    private func stabilizeForKeyboardTransition(
-        _ notification: Notification,
-        proxy: ScrollViewProxy
-    ) {
-        guard viewModel.isNearBottom else { return }
+    private func stabilizeForKeyboardTransition(_ notification: Notification) {
+        guard viewModel.isNearBottom, !conversationDragIsActive else { return }
         keyboardReanchorGeneration &+= 1
         let generation = keyboardReanchorGeneration
         let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
 
-        proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+        threadPosition.scrollTo(edge: .bottom)
         DispatchQueue.main.async {
             guard generation == keyboardReanchorGeneration else { return }
-            proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            threadPosition.scrollTo(edge: .bottom)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + max(0, duration) + 0.05) {
             guard generation == keyboardReanchorGeneration else { return }
-            proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            threadPosition.scrollTo(edge: .bottom)
         }
     }
 

@@ -90,7 +90,10 @@ struct ConversationRealtimePollingPolicy: Equatable {
     private(set) var isConnected = false
     private(set) var hasEverConnected = false
 
-    var shouldScheduleFallback: Bool { !isConnected }
+    // El socket puede estar sano y la lectura del historial seguir fallando.
+    // Sin eventos posteriores, el ticker es lo que recupera un hilo abierto.
+    var needsInitialRecovery = false
+    var shouldScheduleFallback: Bool { !isConnected || needsInitialRecovery }
 
     /// Distingue el primer enlace del socket de una reconexión real. Repetir el
     /// mismo frame es `.none` y no reprograma timers ni descarga conversaciones.

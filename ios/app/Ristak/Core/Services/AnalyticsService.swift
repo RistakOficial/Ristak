@@ -114,7 +114,8 @@ enum AnalyticsService {
     static func funnel(
         startDate: String,
         endDate: String,
-        scope: DashboardScope = .all
+        scope: DashboardScope = .all,
+        includeWeb: Bool = true
     ) async throws -> [DashboardFunnelRow] {
         try await APIClient.shared.get(
             "/api/dashboard/funnel",
@@ -122,6 +123,7 @@ enum AnalyticsService {
                 "startDate": startDate,
                 "endDate": endDate,
                 "scope": scope.rawValue,
+                "includeWeb": includeWeb ? "1" : "0",
             ],
             timeout: APIClient.dashboardTimeout
         )
@@ -131,13 +133,14 @@ enum AnalyticsService {
 
     /// `GET /api/dashboard/origin-distribution` — listas top-10 sin `color`
     /// (pintar con el acento).
-    static func originDistribution(startDate: String, endDate: String) async throws -> OriginDistributionSnapshot {
+    static func originDistribution(startDate: String, endDate: String, includeWeb: Bool = true) async throws -> OriginDistributionSnapshot {
         try await APIClient.shared.get(
             "/api/dashboard/origin-distribution",
             query: [
                 "startDate": startDate,
                 "endDate": endDate,
                 "dimension": "sources",
+                "includeWeb": includeWeb ? "1" : "0",
                 "includePhoneBreakdown": "0",
             ],
             timeout: APIClient.dashboardTimeout

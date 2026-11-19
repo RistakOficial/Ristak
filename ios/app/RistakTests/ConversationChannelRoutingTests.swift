@@ -194,6 +194,17 @@ final class ConversationChannelRoutingTests: XCTestCase {
         XCTAssertTrue(policy.shouldScheduleFallback)
     }
 
+    func testOpenThreadKeepsRecoveringWhileSocketIsHealthyUntilRESTSucceeds() {
+        var policy = ConversationRealtimePollingPolicy()
+        _ = policy.setConnected(true)
+        policy.needsInitialRecovery = true
+        XCTAssertTrue(policy.shouldScheduleFallback)
+        _ = policy.setConnected(true)
+        XCTAssertTrue(policy.shouldScheduleFallback)
+        policy.needsInitialRecovery = false
+        XCTAssertFalse(policy.shouldScheduleFallback)
+    }
+
     func testInitialConnectionDoesNotDuplicateBootstrapButRealReconnectClosesGap() {
         var policy = ConversationRealtimePollingPolicy()
 

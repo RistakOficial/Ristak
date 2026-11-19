@@ -14,17 +14,17 @@ enum ConversationInitialPresentation: Equatable {
         accessDenied: Bool,
         loadErrorMessage: String?,
         hasLoadedOnce: Bool,
-        isLoadingInitial: Bool,
-        timelineIsEmpty: Bool
+        timelineIsEmpty: Bool,
+        blocksCachedHistory: Bool = false
     ) -> ConversationInitialPresentation {
         if accessDenied { return .accessDenied }
+        if blocksCachedHistory { return loadErrorMessage.map(Self.error) ?? .loading }
 
         // El contenido primario gana sobre fallos/cargas secundarias. Esto
         // conserva visible el fallback mientras la red o satélites terminan.
         if hasLoadedOnce || !timelineIsEmpty { return .content }
 
         if let loadErrorMessage { return .error(loadErrorMessage) }
-        if isLoadingInitial { return .loading }
-        return .content
+        return .loading
     }
 }

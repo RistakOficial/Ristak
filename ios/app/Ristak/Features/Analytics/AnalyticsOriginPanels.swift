@@ -40,7 +40,7 @@ struct AnalyticsOriginPanel: View {
     private var tabChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: RistakTheme.Spacing.xs) {
-                ForEach(AnalyticsOriginTab.allCases) { tab in
+                ForEach(model.originTabs) { tab in
                     RistakFilterChip(
                         title: tab.title(labels: model.labels),
                         isSelected: model.originTab == tab

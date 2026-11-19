@@ -20,7 +20,8 @@ struct JourneyService: Sendable {
     func fetchConversationEvents(
         contactId: String,
         limit: Int = JourneyService.defaultMessageLimit,
-        beforeMessageDate: String? = nil
+        beforeMessageDate: String? = nil,
+        verifyAgainstStoredMessages: Bool = false
     ) async throws -> [JourneyEvent] {
         let query: [String: String?] = [
             "includeBusinessMessages": "true",
@@ -29,6 +30,11 @@ struct JourneyService: Sendable {
             "messageLimit": String(limit),
             "beforeMessageDate": beforeMessageDate,
         ]
+        // Ante una página proyectada vacía con historial conocido, esta misma
+        // consulta acotada comprueba los mensajes en sus tablas de origen.
+        if verifyAgainstStoredMessages {
+            return try await client.get("/contacts/\(contactId)/journey", query: query)
+        }
         do {
             // Contrato dedicado de chat. Hoy comparte el parser del journey en
             // backend, pero mantiene el hilo fuera de la ruta pesada de

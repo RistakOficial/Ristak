@@ -27,7 +27,9 @@ struct AnalyticsFunnelPanel: View {
 
                     Spacer(minLength: RistakTheme.Spacing.xs)
 
-                    AnalyticsHeaderPill(text: model.funnelConversionLabel)
+                    if model.funnel.value != nil {
+                        AnalyticsHeaderPill(text: model.funnelConversionLabel)
+                    }
                 }
 
                 scopeChips

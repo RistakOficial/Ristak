@@ -25,104 +25,33 @@ final class ConversationOpeningAndBackgroundTests: XCTestCase {
         XCTAssertFalse(state.locksUserScrolling)
     }
 
-    func testHistoricalPaginationStaysClosedUntilBottomAndUserIntentAreEstablished() throws {
-        var state = ConversationOpeningScrollState()
-        XCTAssertFalse(state.canLoadOlderMessages)
-
-        let generation = try XCTUnwrap(state.contentDidChange(hasContent: true))
-        XCTAssertTrue(state.isAnchoring)
-        XCTAssertFalse(state.canLoadOlderMessages)
-
-        state.didEstablishBottom(generation: generation)
-        XCTAssertFalse(state.canLoadOlderMessages)
-        XCTAssertFalse(state.isAnchoring)
-
-        state.userDidBeginScrolling()
-        XCTAssertTrue(state.canLoadOlderMessages)
-        XCTAssertTrue(state.consumeHistoryPaginationIntent())
-        XCTAssertFalse(state.canLoadOlderMessages)
+    func testOpeningAndDraggingTowardLatestNeverRequestHistory() {
+        var intent = ConversationHistoryScrollIntent()
+        XCTAssertFalse(intent.consume())
+        intent.beginDrag(towardHistory: false)
+        XCTAssertFalse(intent.consume())
     }
 
-    func testNewLayoutInvalidatesAnOlderOpeningAnchor() throws {
-        var state = ConversationOpeningScrollState()
-        let first = try XCTUnwrap(state.contentDidChange(hasContent: true))
-        let second = try XCTUnwrap(state.contentDidChange(hasContent: true))
-
-        XCTAssertFalse(state.shouldContinueAnchoring(generation: first))
-        XCTAssertTrue(state.shouldContinueAnchoring(generation: second))
-        state.didEstablishBottom(generation: first)
-        XCTAssertFalse(state.canLoadOlderMessages)
-        state.didEstablishBottom(generation: second)
-        XCTAssertFalse(state.canLoadOlderMessages)
+    func testOneHistoryDragAllowsOnePageAndAnExplicitJumpCancelsIt() {
+        var intent = ConversationHistoryScrollIntent()
+        intent.beginDrag(towardHistory: true)
+        XCTAssertTrue(intent.consume())
+        XCTAssertFalse(intent.consume())
+        intent.beginDrag(towardHistory: true)
+        intent.cancel()
+        XCTAssertFalse(intent.consume())
     }
 
-    func testLayoutCanReanchorAfterFirstBottomUntilOpeningSettles() throws {
-        var state = ConversationOpeningScrollState()
-        let first = try XCTUnwrap(state.contentDidChange(hasContent: true))
-        state.didEstablishBottom(generation: first)
-
-        XCTAssertFalse(state.canLoadOlderMessages)
-        XCTAssertTrue(state.tracksOpeningLayout)
-
-        let relayout = try XCTUnwrap(state.contentDidChange(hasContent: true))
-        XCTAssertTrue(state.shouldContinueAnchoring(generation: relayout))
-        state.didEstablishBottom(generation: relayout)
-        state.didFinishOpeningTracking(generation: relayout)
-
-        XCTAssertFalse(state.tracksOpeningLayout)
-        XCTAssertNil(state.contentDidChange(hasContent: true))
+    func testEmptyProjectionChecksStoredMessagesOnlyWhenHistoryIsExpected() {
+        XCTAssertTrue(ConversationPagePolicy.needsSourceVerification(pageIsEmpty: true, historyExpected: true))
+        XCTAssertFalse(ConversationPagePolicy.needsSourceVerification(pageIsEmpty: true, historyExpected: false))
+        XCTAssertFalse(ConversationPagePolicy.needsSourceVerification(pageIsEmpty: false, historyExpected: true))
     }
 
-    func testUserScrollCancelsPendingOpeningReanchors() throws {
-        var state = ConversationOpeningScrollState()
-        let generation = try XCTUnwrap(state.contentDidChange(hasContent: true))
-
-        state.userDidBeginScrolling()
-
-        XCTAssertFalse(state.shouldContinueAnchoring(generation: generation))
-        XCTAssertTrue(state.canLoadOlderMessages)
-    }
-
-    func testManualBottomJumpCancelsOpeningWithoutArmingHistoricalPagination() throws {
-        var state = ConversationOpeningScrollState()
-        let generation = try XCTUnwrap(state.contentDidChange(hasContent: true))
-
-        state.manualBottomJumpDidBegin()
-
-        XCTAssertFalse(state.shouldContinueAnchoring(generation: generation))
-        XCTAssertFalse(state.canLoadOlderMessages)
-        XCTAssertFalse(state.consumeHistoryPaginationIntent())
-    }
-
-    func testTransientEmptyResponseRetriesAndPreservesExistingHistory() {
-        XCTAssertTrue(ConversationInitialEmptyResponsePolicy.shouldRetry(
-            freshMessageCount: 0,
-            existingMessageCount: 20,
-            seedMessageCount: 20,
-            seedHasLastMessageDate: true
-        ))
-        XCTAssertTrue(ConversationInitialEmptyResponsePolicy.shouldPreserveExisting(
-            freshMessageCount: 0,
-            existingMessageCount: 20
-        ))
-        XCTAssertFalse(ConversationInitialEmptyResponsePolicy.shouldRetry(
-            freshMessageCount: 0,
-            existingMessageCount: 0,
-            seedMessageCount: 0,
-            seedHasLastMessageDate: false
-        ))
-        XCTAssertTrue(ConversationInitialEmptyResponsePolicy.shouldFailAsTemporarilyUnavailable(
-            finalFreshMessageCount: 0,
-            existingMessageCount: 0,
-            seedMessageCount: 3,
-            seedHasLastMessageDate: true
-        ))
-        XCTAssertFalse(ConversationInitialEmptyResponsePolicy.shouldFailAsTemporarilyUnavailable(
-            finalFreshMessageCount: 0,
-            existingMessageCount: 0,
-            seedMessageCount: 0,
-            seedHasLastMessageDate: false
-        ))
+    func testConfirmedEmptyHistoryReplacesVisibleMessagesEvenOnASilentRefresh() {
+        XCTAssertTrue(ConversationPagePolicy.replacesPreviousMessages(isInitialLoad: true, verifiedEmpty: true))
+        XCTAssertTrue(ConversationPagePolicy.replacesPreviousMessages(isInitialLoad: false, verifiedEmpty: true))
+        XCTAssertFalse(ConversationPagePolicy.replacesPreviousMessages(isInitialLoad: false, verifiedEmpty: false))
     }
 
     func testBackgroundPushAcceptsOnlyChatWithContact() {

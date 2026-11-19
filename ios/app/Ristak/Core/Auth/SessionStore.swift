@@ -267,13 +267,17 @@ final class SessionStore {
                 // estuvo deliberadamente sin caché. Activarla solo después de
                 // conocer una identidad real evita el namespace compartido
                 // `sin-usuario` y deja disco listo antes de notificar a la UI.
-                RistakSnapshotCache.shared.configure(
-                    namespace: RistakSnapshotCache.namespace(
-                        baseURL: baseURL,
-                        userID: verifiedUser.id
-                    )
-                )
-                await RistakSnapshotCache.shared.preloadIntoMemory()
+                let cache = RistakSnapshotCache.shared
+                if let namespace = RistakSnapshotCache.namespace(baseURL: baseURL, userID: verifiedUser.id) {
+                    // El arranque ya precargó esta cuenta. Verificar la sesión
+                    // al volver a la app no requiere releer todo su historial.
+                    if !cache.isConfigured(for: namespace) {
+                        cache.configure(namespace: namespace)
+                        await cache.preloadIntoMemory()
+                    }
+                } else {
+                    cache.configure(namespace: nil)
+                }
                 guard isCurrentSession(generation: expectedGeneration, token: token) else { return }
                 user = verifiedUser
                 persistCachedUser(verifiedUser)

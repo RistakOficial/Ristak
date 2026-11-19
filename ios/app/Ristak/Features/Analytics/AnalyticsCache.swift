@@ -5,9 +5,8 @@ import Foundation
 /// Analíticas tiene las agregaciones más lentas del backend, así que aquí es
 /// donde más importa pintar al instante. Cada COMBINACIÓN (rango × scope × vista)
 /// guarda su propio snapshot bajo su propia clave, de modo que al abrir la
-/// pantalla o cambiar de rango/scope/vista se repinta al instante lo último que
-/// el usuario vio para ESA combinación y se revalida contra la red en segundo
-/// plano. Nunca se muestra `$0.00`, vacío ni spinner cuando ya hay algo cacheado.
+/// pantalla o cambiar de filtro se puede recuperar el último resultado de ESA
+/// combinación si la red no contesta a tiempo.
 ///
 /// Los modelos del Core (`DashboardMetricsSnapshot`, `OriginDistributionSnapshot`,
 /// etc.) son solo `Decodable`, así que NO podemos `store()` directo con ellos
@@ -17,24 +16,48 @@ import Foundation
 /// ese JSON directamente con el `init(from:)` tolerante del modelo. Round-trip
 /// idéntico al fetch en vivo, sin tocar el Core.
 @MainActor
-enum AnalyticsCache {
+struct AnalyticsCache: Equatable {
     private static var cache: RistakSnapshotCache { .shared }
+
+    let timeZone: TimeZone
+    let currency: String
+    let includeWeb: Bool
+
+    init?(config: AppConfigStore, includeWeb: Bool) {
+        guard let rawCurrency = config.appConfig[RistakAppConfigKey.accountCurrency],
+              let currency = config.accountCurrency,
+              rawCurrency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == currency,
+              Self.cache.value(String.self, for: RistakCacheKey.timezone) == config.businessTimeZone.identifier
+        else { return nil }
+        self.timeZone = config.businessTimeZone
+        self.currency = currency
+        self.includeWeb = includeWeb
+    }
+
+    /// Un rechazo confirmado prevalece sobre cualquier snapshot del usuario
+    /// hasta que el dashboard vuelva a responder con permiso.
+    static var accessDenied: Bool {
+        get { cache.value(Bool.self, for: "analytics:access-denied") ?? false }
+        set {
+            if newValue { cache.store(true, for: "analytics:access-denied") }
+            else { cache.remove("analytics:access-denied") }
+        }
+    }
 
     // MARK: - Claves (una por combinación)
 
-    /// Token estable del rango: `startDate_endDate` (identifica de forma única
-    /// los datos, incluidos los rangos personalizados; `groupBy` es determinista
-    /// a partir de esas fechas).
-    static func rangeToken(_ range: AnalyticsDateRange) -> String {
-        "\(range.startDate)_\(range.endDate)"
+    /// Las versiones anteriores no guardaban moneda, zona ni permiso web.
+    /// Una respuesta confirmada inicia el historial de esta combinación exacta.
+    func rangeToken(_ range: AnalyticsDateRange) -> String {
+        "\(timeZone.identifier):\(currency):\(includeWeb):\(range.startDate)_\(range.endDate):\(range.groupBy.rawValue)"
     }
 
-    static func metricsKey(_ range: AnalyticsDateRange) -> String {
+    func metricsKey(_ range: AnalyticsDateRange) -> String {
         "analytics:metrics:\(rangeToken(range))"
     }
 
     /// La gráfica depende de rango + vista + (scope solo en «Ingresos vs gastos»).
-    static func chartKey(
+    func chartKey(
         _ range: AnalyticsDateRange,
         _ kind: AnalyticsChartKind,
         _ scope: DashboardScope
@@ -43,11 +66,11 @@ enum AnalyticsCache {
         return "analytics:chart:\(rangeToken(range)):\(kind.rawValue):\(scopeToken)"
     }
 
-    static func funnelKey(_ range: AnalyticsDateRange, _ scope: DashboardScope) -> String {
+    func funnelKey(_ range: AnalyticsDateRange, _ scope: DashboardScope) -> String {
         "analytics:funnel:\(rangeToken(range)):\(scope.rawValue)"
     }
 
-    static func originKey(_ range: AnalyticsDateRange) -> String {
+    func originKey(_ range: AnalyticsDateRange) -> String {
         "analytics:origin:\(rangeToken(range))"
     }
 
@@ -59,52 +82,52 @@ enum AnalyticsCache {
 
     // MARK: - KPIs
 
-    static func readMetrics(_ range: AnalyticsDateRange) -> DashboardMetricsSnapshot? {
-        cache.value(DashboardMetricsSnapshot.self, for: metricsKey(range))
+    func readMetrics(_ range: AnalyticsDateRange) -> DashboardMetricsSnapshot? {
+        Self.cache.value(DashboardMetricsSnapshot.self, for: metricsKey(range))
     }
 
-    static func storeMetrics(_ snapshot: DashboardMetricsSnapshot, _ range: AnalyticsDateRange) {
-        cache.store(MetricsDTO(snapshot), for: metricsKey(range))
+    func storeMetrics(_ snapshot: DashboardMetricsSnapshot, _ range: AnalyticsDateRange) {
+        Self.cache.store(MetricsDTO(snapshot), for: metricsKey(range))
     }
 
     // MARK: - Gráfica
 
-    static func readChart(
+    func readChart(
         _ range: AnalyticsDateRange,
         _ kind: AnalyticsChartKind,
         _ scope: DashboardScope
     ) -> [AnalyticsChartPoint]? {
-        cache.value([AnalyticsChartPoint].self, for: chartKey(range, kind, scope))
+        Self.cache.value([AnalyticsChartPoint].self, for: chartKey(range, kind, scope))
     }
 
-    static func storeChart(
+    func storeChart(
         _ points: [AnalyticsChartPoint],
         _ range: AnalyticsDateRange,
         _ kind: AnalyticsChartKind,
         _ scope: DashboardScope
     ) {
         // `AnalyticsChartPoint` es Codable de la feature: round-trip nativo.
-        cache.store(points, for: chartKey(range, kind, scope))
+        Self.cache.store(points, for: chartKey(range, kind, scope))
     }
 
     // MARK: - Embudo
 
-    static func readFunnel(_ range: AnalyticsDateRange, _ scope: DashboardScope) -> [DashboardFunnelRow]? {
-        cache.value([DashboardFunnelRow].self, for: funnelKey(range, scope))
+    func readFunnel(_ range: AnalyticsDateRange, _ scope: DashboardScope) -> [DashboardFunnelRow]? {
+        Self.cache.value([DashboardFunnelRow].self, for: funnelKey(range, scope))
     }
 
-    static func storeFunnel(_ rows: [DashboardFunnelRow], _ range: AnalyticsDateRange, _ scope: DashboardScope) {
-        cache.store(rows.map(FunnelRowDTO.init), for: funnelKey(range, scope))
+    func storeFunnel(_ rows: [DashboardFunnelRow], _ range: AnalyticsDateRange, _ scope: DashboardScope) {
+        Self.cache.store(rows.map(FunnelRowDTO.init), for: funnelKey(range, scope))
     }
 
     // MARK: - Origen
 
-    static func readOrigin(_ range: AnalyticsDateRange) -> OriginDistributionSnapshot? {
-        cache.value(OriginDistributionSnapshot.self, for: originKey(range))
+    func readOrigin(_ range: AnalyticsDateRange) -> OriginDistributionSnapshot? {
+        Self.cache.value(OriginDistributionSnapshot.self, for: originKey(range))
     }
 
-    static func storeOrigin(_ snapshot: OriginDistributionSnapshot, _ range: AnalyticsDateRange) {
-        cache.store(OriginDTO(snapshot), for: originKey(range))
+    func storeOrigin(_ snapshot: OriginDistributionSnapshot, _ range: AnalyticsDateRange) {
+        Self.cache.store(OriginDTO(snapshot), for: originKey(range))
     }
 
     // MARK: - Números de WhatsApp

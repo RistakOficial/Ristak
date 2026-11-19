@@ -64,7 +64,7 @@ struct AnalyticsChartPanel: View {
     private var viewChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: RistakTheme.Spacing.xs) {
-                ForEach(AnalyticsChartKind.allCases) { kind in
+                ForEach(model.chartKinds) { kind in
                     RistakFilterChip(
                         title: kind.title(labels: model.labels),
                         isSelected: model.chartKind == kind

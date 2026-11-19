@@ -131,10 +131,10 @@ final class ConversationViewModel {
     private(set) var dayGroups: [ConversationDayGroup] = []
     private(set) var combinedMessages: [ChatMessage] = []
 
-    private(set) var isLoadingInitial = false
     private(set) var hasLoadedOnce = false
     private(set) var loadErrorMessage: String?
     private(set) var accessDenied = false
+    private(set) var blocksCachedHistory = false
     private(set) var isShowingCachedData = false
     /// La lectura del fallback local corre una sola vez por hilo.
     private var threadCacheHydrated = false
@@ -258,10 +258,7 @@ final class ConversationViewModel {
         self.contactID = contactID
         self.seedContact = seedContact
         self.onInboxActivity = onInboxActivity
-        // Prepara el fallback antes del primer render, pero no lo publica: la
-        // respuesta viva conserva autoridad sobre el primer paint.
-        prepareThreadCacheFallback()
-        // Igual para el estado del agente: el robot del header se pinta en el
+        // Para el estado del agente: el robot del header se pinta en el
         // PRIMER frame desde caché, sin esperar el fetch en frío (~10 s).
         hydrateAgentStatesFromCache()
         // El catálogo guardado por Ajustes permite rutear desde el primer toque,
@@ -306,45 +303,37 @@ final class ConversationViewModel {
         // Robot del header al instante desde caché (idempotente vs. el hidrato
         // del init). La revalidación de red sigue corriendo abajo.
         hydrateAgentStatesFromCache()
-        isLoadingInitial = timeline.isEmpty
         loadErrorMessage = nil
         accessDenied = false
         scheduleThreadCacheFallback()
-        defer { isLoadingInitial = false }
 
         // Nada de esto depende de la conversación: se lanza EN PARALELO para que
         // un journey lento no deje al composer sin números/canales durante el
         // bootstrap. Los catálogos son GET locales; no consultan Meta.
+        async let conversationTask: Void = loadConversation(reset: true)
         async let agentTask: Void = loadAgentStates()
         async let contactTask: Void = hydrateContactDetail()
         async let statusTask: Void = loadWhatsAppStatus()
         async let highLevelTask: Void = loadHighLevelChannels()
 
         do {
-            try await loadConversation(reset: true)
+            try await conversationTask
             hasLoadedOnce = true
             allowsSilentRecovery = true
             performanceOutcome = .success
-        } catch is ConversationHistoryTemporarilyUnavailableError {
-            _ = revealThreadCacheFallback()
-            // Inbox y conversación todavía discrepan. No declares éxito ni
-            // muestres un vacío falso: queda un estado reintentable y el gate
-            // permite una recuperación silenciosa acotada por SSE/fallback.
-            allowsSilentRecovery = true
-            loadErrorMessage = "Los mensajes todavía se están sincronizando. Reintenta en un momento."
-            performanceOutcome = .unavailable
         } catch let error as RistakAPIError {
-            _ = revealThreadCacheFallback()
-            if error.isAccessDenied {
+            if error.deniesThreadAccess {
+                cancelThreadCacheFallback()
                 accessDenied = true
                 performanceOutcome = .unavailable
-            } else if error.kind == .featureUnavailable {
-                // Silencioso en cargas: se queda el vacío estándar.
-                hasLoadedOnce = true
-                allowsSilentRecovery = true
-                performanceOutcome = .unavailable
             } else {
-                allowsSilentRecovery = true
+                allowsSilentRecovery = error.allowsThreadRecovery
+                if allowsSilentRecovery {
+                    _ = revealThreadCacheFallback()
+                } else {
+                    blocksCachedHistory = true
+                    cancelThreadCacheFallback()
+                }
                 loadErrorMessage = error.message
                 if error.kind == .network || error.kind == .starting || error.kind == .notConfigured {
                     performanceOutcome = .unavailable
@@ -368,11 +357,12 @@ final class ConversationViewModel {
         // El GET principal ya terminó. Un error de red no deja el gate muerto:
         // libera SSE/poll para que el chat se recupere solo. Acceso denegado y
         // cancelación sí permanecen cerrados.
-        isLoadingInitial = false
         let shouldDrainBootstrapRefresh = realtimeBootstrapGate.finishInitialAttempt(
             allowsSilentRecovery: allowsSilentRecovery && !Task.isCancelled
         )
-        if hasLoadedOnce {
+        realtimePollingPolicy.needsInitialRecovery = allowsSilentRecovery && !hasLoadedOnce && !Task.isCancelled
+        reconcileFallbackPolling()
+        if hasLoadedOnce, !Task.isCancelled {
             markRead()
         }
         if shouldDrainBootstrapRefresh {
@@ -398,8 +388,12 @@ final class ConversationViewModel {
     }
 
     func retryInitialLoad() {
-        hasLoadedOnce = false
-        Task { await loadInitial() }
+        // Un toque mientras el ticker o SSE recupera el hilo comparte su GET.
+        if realtimeBootstrapGate.initialAttemptFinished {
+            Task { await refreshSilently() }
+        } else {
+            Task { await loadInitial() }
+        }
     }
 
     /// Reconciliación silenciosa de SSE / push / fallback. Nunca alerta ni muestra
@@ -484,15 +478,26 @@ final class ConversationViewModel {
             if isBootstrapRecovery {
                 hasLoadedOnce = true
                 loadErrorMessage = nil
+                realtimePollingPolicy.needsInitialRecovery = false
+                reconcileFallbackPolling()
                 markRead()
             }
         } catch let error as RistakAPIError {
-            if error.isAccessDenied {
+            if error.deniesThreadAccess {
                 accessDenied = true
                 loadErrorMessage = error.message
-            } else if error.kind == .featureUnavailable {
-                hasLoadedOnce = true
-                loadErrorMessage = nil
+                realtimePollingPolicy.needsInitialRecovery = false
+                reconcileFallbackPolling()
+            } else if !error.allowsThreadRecovery {
+                hasLoadedOnce = false
+                blocksCachedHistory = true
+                loadErrorMessage = error.message
+                realtimePollingPolicy.needsInitialRecovery = false
+                reconcileFallbackPolling()
+            } else if isBootstrapRecovery {
+                loadErrorMessage = error.message
+                realtimePollingPolicy.needsInitialRecovery = true
+                reconcileFallbackPolling()
             }
         } catch is CancellationError {
             // La pantalla salió o la sesión cambió; el caller cierra el gate.
@@ -517,7 +522,7 @@ final class ConversationViewModel {
         let needsMarkers = reset || lastActivityFetch == nil
             || Date().timeIntervalSince(lastActivityFetch!) > 30
 
-        async let recentTask = fetchRecentConversationWithEmptyRecovery(enabled: reset)
+        async let recentTask = fetchRecentConversationWithEmptyRecovery()
         async let scheduledTask = fetchScheduledSafely()
         // Los markers (pagos/citas) viven en una SEGUNDA
         // petición; lánzala EN PARALELO a la de eventos —no en serie después del
@@ -526,45 +531,43 @@ final class ConversationViewModel {
         async let markersTask = fetchMarkersIfNeeded(needsMarkers)
 
         let recent = try await recentTask
+        try Task.checkCancellation()
         let events = recent.events
         let fresh = recent.messages
         var freshContexts = ConversationTimelineBuilder.buildCommentContexts(from: events)
 
+        let replacesPrevious = ConversationPagePolicy.replacesPreviousMessages(
+            isInitialLoad: reset, verifiedEmpty: recent.verifiedEmpty
+        )
         let merged: [ChatMessage]
-        if reset {
-            if ConversationInitialEmptyResponsePolicy.shouldPreserveExisting(
-                freshMessageCount: fresh.count,
-                existingMessageCount: serverMessages.count
-            ) {
-                // Un `200 []` transitorio nunca convierte un hilo cacheado en una
-                // pantalla vacía. El siguiente SSE/poll vuelve a confirmar.
-                merged = serverMessages
-                freshContexts = commentContexts
-            } else {
-                merged = fresh
-                oldestPageExhausted = fresh.count < JourneyService.defaultMessageLimit
-            }
+        if replacesPrevious {
+            merged = fresh
+            oldestPageExhausted = fresh.count < JourneyService.defaultMessageLimit
         } else {
             merged = ChatJourneyParser.mergeById(serverMessages + fresh)
         }
 
-        if !reset {
+        if !replacesPrevious {
             freshContexts.merge(commentContexts) { fresh, _ in fresh }
         }
 
         // Primer pintado: los mensajes visibles no deben esperar al journey
         // completo ni a programados. En un contacto sin caché esta suspensión
         // permite que SwiftUI pinte el hilo apenas responde `/conversation`.
-        let preservesVisibleCache = reset
-            && fresh.isEmpty
-            && isShowingCachedData
-            && !serverMessages.isEmpty
+        if recent.verifiedEmpty {
+            // Puede que el snapshot aún no se hubiera revelado y por tanto
+            // applyServerMessages([], ...) sea un no-op. Retíralo también del disco.
+            if serverMessages.isEmpty, !cachedThreadFallback.isEmpty, let permit = recent.writePermit {
+                ChatThreadSnapshotCache.save([], contactID: contactID, using: permit)
+            }
+            cachedThreadFallback = []
+        }
         applyServerMessages(
             merged,
             contexts: freshContexts,
             cacheWritePermit: recent.writePermit
         )
-        acceptFreshConversationResponse(keepingCachedFallback: preservesVisibleCache)
+        acceptFreshConversationResponse()
         hasOlderMessages = !oldestPageExhausted && serverMessages.count >= JourneyService.defaultMessageLimit
         await Task.yield()
 
@@ -573,6 +576,7 @@ final class ConversationViewModel {
         // timeline sin bloquear la conversación principal.
         let scheduled = await scheduledTask
         let freshMarkers = await markersTask
+        try Task.checkCancellation()
 
         if needsMarkers, let markers = freshMarkers {
             lastActivityFetch = Date()
@@ -590,57 +594,38 @@ final class ConversationViewModel {
         let events: [JourneyEvent]
         let messages: [ChatMessage]
         let writePermit: ChatThreadSnapshotCache.WritePermit?
+        let verifiedEmpty: Bool
     }
 
-    /// La proyección del inbox puede ver un mensaje apenas confirmado y la ruta
-    /// del hilo responder `[]` durante una ventana corta. Reintenta una sola vez
-    /// si la bandeja/caché demuestra que sí existe historial; nunca entra en loop
-    /// ni penaliza conversaciones realmente nuevas.
-    private func fetchRecentConversationWithEmptyRecovery(
-        enabled: Bool
-    ) async throws -> RecentConversationResult {
-        // Se reserva antes del primer GET (y cubre su retry). Una respuesta de
-        // apertura lenta no puede sobrescribir una precarga/push posterior.
-        let writePermit = ChatThreadSnapshotCache.beginWrite(contactID: contactID)
-
-        func fetch() async throws -> RecentConversationResult {
-            let payload = try await ChatRecentConversationLoader.shared.load(
-                contactID: contactID
-            )
-            return RecentConversationResult(
-                events: payload.events,
-                messages: ChatJourneyParser.buildMessages(
-                    contactId: contactID,
-                    events: payload.events,
-                    appBaseURL: payload.appBaseURL
-                ),
-                writePermit: writePermit
-            )
-        }
-
-        let first = try await fetch()
-        guard enabled else { return first }
-        let knownExistingMessageCount = max(serverMessages.count, cachedThreadFallback.count)
-        let shouldRetry = ConversationInitialEmptyResponsePolicy.shouldRetry(
-            freshMessageCount: first.messages.count,
-            existingMessageCount: knownExistingMessageCount,
-            seedMessageCount: seedContact?.messageCount ?? 0,
-            seedHasLastMessageDate: seedContact?.lastMessageDate != nil
+    /// Solo un vacío que contradice mensajes conocidos requiere contrastar la
+    /// proyección con la página de mensajes de origen. Ambas lecturas son acotadas.
+    private func fetchRecentConversationWithEmptyRecovery() async throws -> RecentConversationResult {
+        let permit = ChatThreadSnapshotCache.beginWrite(contactID: contactID)
+        let payload = try await ChatRecentConversationLoader.shared.load(contactID: contactID)
+        try Task.checkCancellation()
+        let messages = ChatJourneyParser.buildMessages(
+            contactId: contactID, events: payload.events, appBaseURL: payload.appBaseURL
         )
-        guard shouldRetry, !Task.isCancelled else { return first }
-
-        try await Task.sleep(for: .milliseconds(180))
-        let retry = try await fetch()
-        guard retry.messages.isEmpty else { return retry }
-        if ConversationInitialEmptyResponsePolicy.shouldFailAsTemporarilyUnavailable(
-            finalFreshMessageCount: retry.messages.count,
-            existingMessageCount: knownExistingMessageCount,
-            seedMessageCount: seedContact?.messageCount ?? 0,
-            seedHasLastMessageDate: seedContact?.lastMessageDate != nil
-        ) {
-            throw ConversationHistoryTemporarilyUnavailableError()
+        let seedHasMessages = (seedContact?.messageCount ?? 0) > 0
+            || seedContact?.lastMessageDate != nil || seedContact?.lastMessageText.isEmpty == false
+        let historyExpected = !serverMessages.isEmpty
+            || (!hasLoadedOnce && (!cachedThreadFallback.isEmpty || seedHasMessages))
+        guard ConversationPagePolicy.needsSourceVerification(
+            pageIsEmpty: messages.isEmpty, historyExpected: historyExpected
+        ) else {
+            return RecentConversationResult(events: payload.events, messages: messages,
+                                           writePermit: permit, verifiedEmpty: false)
         }
-        return first
+
+        let events = try await journeyService.fetchConversationEvents(
+            contactId: contactID, verifyAgainstStoredMessages: true
+        )
+        try Task.checkCancellation()
+        let stored = ChatJourneyParser.buildMessages(
+            contactId: contactID, events: events, appBaseURL: payload.appBaseURL
+        )
+        return RecentConversationResult(events: events, messages: stored,
+                                       writePermit: permit, verifiedEmpty: stored.isEmpty)
     }
 
     private func fetchScheduledSafely() async -> [ScheduledChatMessage]? {
@@ -660,9 +645,9 @@ final class ConversationViewModel {
     /// Prepara el hilo guardado sin publicarlo. No marca `hasLoadedOnce`: la
     /// petición viva conserva autoridad sobre el primer paint.
     private func prepareThreadCacheFallback() {
-        guard !threadCacheHydrated else { return }
+        guard !threadCacheHydrated, serverMessages.isEmpty,
+              RistakSnapshotCache.shared.namespaceToken() != nil else { return }
         threadCacheHydrated = true
-        guard serverMessages.isEmpty else { return }
         cachedThreadFallback = ChatThreadSnapshotCache.load(contactID: contactID)
         cachedThreadMarkerFallback = ChatThreadSnapshotCache.loadMarkers(contactID: contactID)
     }
@@ -687,7 +672,7 @@ final class ConversationViewModel {
 
     @discardableResult
     private func revealThreadCacheFallback() -> Bool {
-        guard ChatLiveFirstCachePolicy.shouldReveal(
+        guard !blocksCachedHistory, ChatLiveFirstCachePolicy.shouldReveal(
             hasCachedData: !cachedThreadFallback.isEmpty,
             freshResolved: initialFreshResponseResolved,
             requestIsCurrent: !hasLoadedOnce,
@@ -701,10 +686,12 @@ final class ConversationViewModel {
         return true
     }
 
-    private func acceptFreshConversationResponse(keepingCachedFallback: Bool) {
+    private func acceptFreshConversationResponse() {
         initialFreshResponseResolved = true
+        blocksCachedHistory = false
+        loadErrorMessage = nil
         cancelThreadCacheFallback()
-        if !keepingCachedFallback { isShowingCachedData = false }
+        isShowingCachedData = false
     }
 
     private func cancelThreadCacheFallback() {
@@ -1159,6 +1146,7 @@ final class ConversationViewModel {
     private func reconcileFallbackPolling() {
         let shouldSchedule = pollingStarted
             && !isScenePaused
+            && !accessDenied
             && realtimePollingPolicy.shouldScheduleFallback
         if shouldSchedule {
             guard !fallbackPollingScheduled else { return }
@@ -3123,5 +3111,17 @@ final class ConversationViewModel {
             )
             return false
         }
+    }
+}
+
+private extension RistakAPIError {
+    var deniesThreadAccess: Bool {
+        isUnauthorized || isAccessDenied || kind == .adminRequired
+            || kind == .licenseBlocked || kind == .featureUnavailable
+    }
+
+    var allowsThreadRecovery: Bool {
+        kind == .network || kind == .starting || kind == .rateLimited
+            || kind == .notConfigured || kind == .server
     }
 }

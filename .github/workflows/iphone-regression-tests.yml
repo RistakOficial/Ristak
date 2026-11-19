@@ -1,0 +1,50 @@
+name: iPhone regression tests
+
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+jobs:
+  iphone:
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select an available iPhone simulator
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "--json"]))["devices"]
+          candidates = [(runtime, device) for runtime, group in devices.items()
+                        if ".iOS-" in runtime for device in group if device["name"].startswith("iPhone")]
+          if not candidates:
+              raise SystemExit("No iPhone simulator installed")
+          def runtime_version(candidate):
+              return tuple(map(int, candidate[0].split(".iOS-")[1].split("-")))
+          runtime, device = max(candidates, key=runtime_version)
+          print(device["name"], runtime, flush=True)
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              print("IPHONE_DESTINATION=platform=iOS Simulator,id=" + device["udid"], file=env)
+          PY
+
+      - name: Test the iPhone app
+        run: |
+          set -o pipefail
+          xcodebuild test -project ios/app/Ristak.xcodeproj -scheme Ristak \
+            -destination "$IPHONE_DESTINATION" -parallel-testing-enabled NO \
+            -only-testing:RistakTests \
+            -only-testing:RistakUITests/RistakUITests/testRealInboxStartsWithSearchDrawerVisible \
+            -only-testing:RistakUITests/RistakUITests/testRealConversationOpensOnLatestCachedMessageOnFirstTap \
+            -only-testing:RistakUITests/RistakUITests/testScrollToBottomWinsWithOneTapWhileHistoryStillHasMomentum \
+            -resultBundlePath "$RUNNER_TEMP/iPhone.xcresult" | tee "$RUNNER_TEMP/xcodebuild.log"
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: iphone-test-results
+          path: |
+            ${{ runner.temp }}/iPhone.xcresult
+            ${{ runner.temp }}/xcodebuild.log
+          retention-days: 5

@@ -181,7 +181,7 @@ final class RistakUITests: XCTestCase {
         add(screenshot)
     }
 
-    func testScrollToBottomWinsWithOneTapWhileHistoryStillHasMomentum() {
+    private func openRealCachedThread() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = [
             "-ristak-ui-testing",
@@ -194,8 +194,27 @@ final class RistakUITests: XCTestCase {
         ]
         launchedApp = app
         app.launch()
+        let open = element(in: app, identifier: "open-scroll-fixture")
+        XCTAssertTrue(open.waitForExistence(timeout: 8))
+        open.tap()
+        return app
+    }
 
-        let history = element(in: app, identifier: "conversation-scroll-harness-root")
+    func testRealConversationOpensOnLatestCachedMessageOnFirstTap() {
+        let app = openRealCachedThread()
+        let latest = app.staticTexts["Mensaje de prueba 100"].firstMatch
+        let visible = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND hittable == true"),
+            object: latest
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 5), .completed)
+        XCTAssertFalse(app.staticTexts["Mensaje de prueba 1"].firstMatch.isHittable)
+        XCTAssertFalse(element(in: app, identifier: "ristak-conversation-scroll-to-bottom").isHittable)
+    }
+
+    func testScrollToBottomWinsWithOneTapWhileHistoryStillHasMomentum() {
+        let app = openRealCachedThread()
+        let history = element(in: app, identifier: "ristak-conversation-history")
         XCTAssertTrue(history.waitForExistence(timeout: 8))
 
         history.swipeDown(velocity: .fast)
@@ -212,7 +231,7 @@ final class RistakUITests: XCTestCase {
         history.swipeDown(velocity: .fast)
         button.tap()
 
-        let lastMessage = element(in: app, identifier: "scroll-harness-message-240")
+        let lastMessage = app.staticTexts["Mensaje de prueba 100"].firstMatch
         let lastMessageIsHittable = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == true AND hittable == true"),
             object: lastMessage
