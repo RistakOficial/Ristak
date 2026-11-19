@@ -40,13 +40,14 @@ function responseRecorder() {
 }
 
 test('Analíticas móvil abre con una petición abortable y deja los cambios de vista como cargas focales', async () => {
-  const [phone, frontendService, controller, routes, whatsappService, iosViewModel] = await Promise.all([
+  const [phone, frontendService, controller, routes, whatsappService, iosViewModel, analyticsRead] = await Promise.all([
     repoFile('frontend/src/pages/PhoneAnalytics/PhoneAnalytics.tsx'),
     repoFile('frontend/src/services/dashboardService.ts'),
     repoFile('backend/src/controllers/dashboardController.js'),
     repoFile('backend/src/routes/dashboard.routes.js'),
     repoFile('backend/src/services/whatsappApiService.js'),
-    repoFile('ios/app/Ristak/Features/Analytics/AnalyticsViewModel.swift')
+    repoFile('ios/app/Ristak/Features/Analytics/AnalyticsViewModel.swift'),
+    repoFile('frontend/src/pages/PhoneAnalytics/refreshAnalyticsRead.ts')
   ])
 
   assert.equal((phone.match(/dashboardService\.getMobileAnalyticsSnapshot\(/g) || []).length, 1)
@@ -57,7 +58,7 @@ test('Analíticas móvil abre con una petición abortable y deja los cambios de 
   assert.doesNotMatch(snapshotEffect, /getDashboardMetrics|getOriginDistribution|getFunnelData|getFinancialChart/)
   assert.match(phone, /requestId !== snapshotRequestIdRef\.current/)
   assert.match(phone, /snapshotReadyRangeRef\.current !== rangeKey/)
-  assert.match(phone, /controller\.abort\(\)/)
+  assert.match(analyticsRead, /controller\.abort\(\)/)
   assert.match(phone, /financialScope: requestedFinancialScope,\s*includePhoneBreakdown: false/)
 
   assert.match(frontendService, /MOBILE_ANALYTICS_CACHE_LIMIT = 8/)

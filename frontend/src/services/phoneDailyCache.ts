@@ -200,3 +200,13 @@ export function removePhoneDailyCache(key: string) {
   if (!storage) return
   storage.removeItem(getStorageKey(key))
 }
+
+export function removePhoneDailyCacheGroup(group: string) {
+  const storage = getStorage()
+  if (!storage) return
+  const prefix = getStorageKey(group) + ':'
+  for (let index = storage.length - 1; index >= 0; index--) {
+    const key = storage.key(index)
+    if (key?.startsWith(prefix)) storage.removeItem(key)
+  }
+}

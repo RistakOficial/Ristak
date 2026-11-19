@@ -13,7 +13,7 @@ function normalizeBaseUrl(value: string) {
 // SecureStore keys/values must never expose the bearer token. Two independent
 // 32-bit hashes keep this namespace compact and make an accidental collision
 // between operators on the same installation extremely unlikely.
-function hashNamespacePart(value: string) {
+export function hashCacheIdentity(value: string) {
   let first = 0x811c9dc5;
   let second = 0x9e3779b9;
   for (let index = 0; index < value.length; index += 1) {
@@ -28,7 +28,7 @@ export function getSessionCacheNamespace(baseUrl: string, token: string) {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
   const normalizedToken = String(token || '').trim();
   if (!normalizedBaseUrl || !normalizedToken) return '';
-  return `session-${hashNamespacePart(normalizedBaseUrl)}-${hashNamespacePart(normalizedToken)}`;
+  return `session-${hashCacheIdentity(normalizedBaseUrl)}-${hashCacheIdentity(normalizedToken)}`;
 }
 
 // Kept as the public ACL-cache name for backwards compatibility. Both the

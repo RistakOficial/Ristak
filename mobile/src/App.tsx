@@ -197,6 +197,7 @@ import {
   mergeNativeChatMessagesAuthoritatively,
   stripNativeMessageTransientCacheData,
 } from './chatMessageMerge';
+import { useAnalyticsOnline, useAnalyticsRead } from './useAnalyticsRead';
 import { toggleVisibleChatSelectionIds } from './chatSelectionState';
 import {
   CHAT_FALLBACK_REFRESH_INTERVAL_MS,
@@ -325,7 +326,6 @@ import type {
   ConversationalAgentDefinition,
   MessageTemplate,
   NativeMessageChannel,
-  DashboardFunnelRow,
   DashboardFunnelScope,
   DashboardMetrics,
   HighLevelPhoneNumber,
@@ -3021,7 +3021,6 @@ function ChatScreen({
   const chatListRequestAbortRef = useRef<AbortController | null>(null);
   const chatListRequestSettledRef = useRef<Promise<void> | null>(null);
   const chatLoadLatestRef = useRef<(silent?: boolean) => Promise<ChatContact[] | null>>(async () => null);
-  const conversationOpenRequestRef = useRef(0);
   const firstSyncRunningRef = useRef(false);
   const skipNextStandardLoadRef = useRef(false);
   const scheduleIntentRef = useRef<{ signature: string; scheduledId: string } | null>(null);
@@ -3097,18 +3096,12 @@ function ChatScreen({
     };
   }, [selectedChatPhone, selectedChatPhoneFilterActive]);
 
-  useEffect(() => () => {
-    chatMountedRef.current = false;
-    conversationOpenRequestRef.current += 1;
-    chatListGenerationRef.current += 1;
-    if (chatRealtimeRefreshTimeoutRef.current) {
-      clearTimeout(chatRealtimeRefreshTimeoutRef.current);
-      chatRealtimeRefreshTimeoutRef.current = null;
-    }
-    chatRefreshBurstGateRef.current.finish();
-    chatRefreshBurstGateRef.current = new ChatRefreshBurstGate();
-    chatListRequestAbortRef.current?.abort();
-    chatListRequestAbortRef.current = null;
+  useEffect(() => {
+    chatMountedRef.current = true;
+    return () => {
+      chatMountedRef.current = false;
+      chatListGenerationRef.current += 1;
+    };
   }, []);
 
   useEffect(() => () => {
@@ -3122,25 +3115,22 @@ function ChatScreen({
     chatListRequestAbortRef.current = null;
   }, [api]);
 
+  const selectedContactId = selected?.id;
   useEffect(() => {
-    onDockHiddenChange?.(Boolean(selected));
+    onDockHiddenChange?.(Boolean(selectedContactId));
     return () => onDockHiddenChange?.(false);
-  }, [onDockHiddenChange, selected]);
+  }, [onDockHiddenChange, selectedContactId]);
 
   const openChatConversation = useCallback((contact: ChatContact) => {
     // Cierra el teclado del buscador antes de traspasar la propiedad del
     // teclado del frame de la lista al frame de la conversación.
     Keyboard.dismiss();
-    const requestId = conversationOpenRequestRef.current + 1;
-    conversationOpenRequestRef.current = requestId;
-    if (!chatMountedRef.current || requestId !== conversationOpenRequestRef.current) return;
-    conversationRouteProgress.stopAnimation();
-    conversationRouteProgress.setValue(0);
+    if (!chatMountedRef.current) return;
     setConversationClosing(false);
     // Montar ya dispara la red. El archivo local se hidrata dentro del hilo en
     // paralelo y sólo se revela si rebasa la gracia live-first.
     setSelected(contact);
-  }, [conversationRouteProgress]);
+  }, []);
 
   const closeChatConversation = useCallback(() => {
     if (!selected || conversationClosing) return;
@@ -3496,7 +3486,7 @@ function ChatScreen({
   }, [api, requestSilentInboxRefresh]);
 
   useEffect(() => {
-    if (!selected) {
+    if (!selectedContactId) {
       conversationRouteProgress.stopAnimation();
       conversationRouteProgress.setValue(0);
       return undefined;
@@ -3509,14 +3499,18 @@ function ChatScreen({
       useNativeDriver: true,
     });
 
+    let active = true;
     animation.start(({ finished }) => {
-      if (finished && conversationClosing) {
+      if (active && finished && conversationClosing) {
         finishCloseChatConversation();
       }
     });
 
-    return () => animation.stop();
-  }, [conversationClosing, conversationRouteProgress, finishCloseChatConversation, selected]);
+    return () => {
+      active = false;
+      animation.stop();
+    };
+  }, [conversationClosing, conversationRouteProgress, finishCloseChatConversation, selectedContactId]);
 
   const loadMoreChats = useCallback(async () => {
     if (loading || refreshing || chatsLoadingMore || !chatsHasMore) return;
@@ -12682,41 +12676,6 @@ function AnalyticsSection({
   customLabels?: CustomLabels;
   hasWebAnalyticsAccess?: boolean;
 }) {
-  const cachedAnalyticsContext = peekCache<{ timezone?: string; currency?: string }>(
-    MOBILE_CACHE_KEYS.analyticsAccountContext,
-    {},
-  );
-  const cachedShellConfig = peekCache<Record<string, ConfigValue>>(SHELL_APP_CONFIG_CACHE_KEY, {});
-  const initialAnalyticsTimezone = normalizeRequiredBusinessTimezone(
-    cachedAnalyticsContext.timezone || cachedShellConfig.account_timezone,
-  );
-  const initialAnalyticsCurrency = normalizeRequiredCurrencyCode(
-    cachedAnalyticsContext.currency || cachedShellConfig.account_currency,
-  );
-  const initialAnalyticsContextReady = Boolean(initialAnalyticsTimezone && initialAnalyticsCurrency);
-  const initialAnalyticsRange = initialAnalyticsContextReady
-    ? getTodayRange(30, initialAnalyticsTimezone)
-    : { startDate: '', endDate: '' };
-  const initialAnalyticsMetricsKey = analyticsMetricsCacheKey(
-    initialAnalyticsRange.startDate,
-    initialAnalyticsRange.endDate,
-  );
-  const initialAnalyticsChartKey = analyticsChartCacheKey(
-    initialAnalyticsRange.startDate,
-    initialAnalyticsRange.endDate,
-    'revenue-spend',
-    'all',
-  );
-  const initialAnalyticsFunnelKey = analyticsFunnelCacheKey(
-    initialAnalyticsRange.startDate,
-    initialAnalyticsRange.endDate,
-    'all',
-  );
-  const initialAnalyticsOriginKey = analyticsOriginCacheKey(
-    initialAnalyticsRange.startDate,
-    initialAnalyticsRange.endDate,
-    hasWebAnalyticsAccess,
-  );
   const [period, setPeriod] = useState<AnalyticsPeriod>('30d');
   const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
   const [customRangeOpen, setCustomRangeOpen] = useState(false);
@@ -12729,42 +12688,27 @@ function AnalyticsSection({
   const [financialScope, setFinancialScope] = useState<DashboardFunnelScope>('all');
   const [funnelScope, setFunnelScope] = useState<DashboardFunnelScope>('all');
   const [originTab, setOriginTab] = useState<AnalyticsOriginTab>(hasWebAnalyticsAccess ? 'traffic' : 'leads');
-  const [metrics, setMetrics] = useState<DashboardMetrics | null>(() => (
-    peekCache<DashboardMetrics | null>(initialAnalyticsMetricsKey, null)
-  ));
-  const [chartData, setChartData] = useState<AnalyticsChartPoint[]>(() => (
-    peekCache<AnalyticsChartPoint[]>(initialAnalyticsChartKey, [])
-  ));
-  const [funnelData, setFunnelData] = useState<DashboardFunnelRow[]>(() => (
-    peekCache<DashboardFunnelRow[]>(initialAnalyticsFunnelKey, [])
-  ));
-  const [originData, setOriginData] = useState<OriginDistributionData>(() => (
-    peekCache<OriginDistributionData>(initialAnalyticsOriginKey, EMPTY_ORIGIN_DATA)
-  ));
-  const [detectedPhones, setDetectedPhones] = useState<WhatsAppApiPhoneNumber[]>(() => (
-    peekCache<WhatsAppApiPhoneNumber[]>(MOBILE_CACHE_KEYS.analyticsPhones, [])
-  ));
-  const [labels, setLabels] = useState<CustomLabels>(() => cleanAnalyticsLabels(customLabels));
-  const [businessTimezone, setBusinessTimezone] = useState(initialAnalyticsTimezone);
-  const [accountCurrency, setAccountCurrency] = useState(initialAnalyticsCurrency);
-  const [accountContextLoading, setAccountContextLoading] = useState(!initialAnalyticsContextReady);
-  const [accountContextError, setAccountContextError] = useState('');
-  const [loading, setLoading] = useState(() => !hasCachedValue(initialAnalyticsMetricsKey));
-  const [chartLoading, setChartLoading] = useState(() => !hasCachedValue(initialAnalyticsChartKey));
-  const [funnelLoading, setFunnelLoading] = useState(() => !hasCachedValue(initialAnalyticsFunnelKey));
-  const [originLoading, setOriginLoading] = useState(() => !hasCachedValue(initialAnalyticsOriginKey));
-  const [chartError, setChartError] = useState('');
-  const [funnelError, setFunnelError] = useState('');
-  const [originError, setOriginError] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
-  const [analyticsOverviewVersion, setAnalyticsOverviewVersion] = useState(0);
-  const analyticsOverviewGenerationRef = useRef(0);
-  const analyticsOverviewReadyRangeRef = useRef('');
-  const analyticsPhoneOriginRangeRef = useRef('');
-  const analyticsPhoneOriginAbortRef = useRef<AbortController | null>(null);
-  const analyticsContextRef = useRef({ timezone: initialAnalyticsTimezone, currency: initialAnalyticsCurrency });
+  const [refreshing, setRefreshing] = useState(false);
+  const online = useAnalyticsOnline();
+  const loadContext = useCallback(async (signal: AbortSignal) => {
+    const response = await api.getConfig(['account_timezone', 'account_currency'], signal);
+    const values = 'config' in response ? response.config : response;
+    const timezone = normalizeRequiredBusinessTimezone(
+      values && typeof values === 'object' && 'account_timezone' in values ? values.account_timezone : '',
+    );
+    const currency = normalizeRequiredCurrencyCode(
+      values && typeof values === 'object' && 'account_currency' in values ? values.account_currency : '',
+    );
+    if (!timezone || !currency) throw new Error('La cuenta no devolvió una zona horaria y moneda válidas.');
+    return { timezone, currency };
+  }, [api]);
+  const account = useAnalyticsRead(MOBILE_CACHE_KEYS.analyticsAccountContext, loadContext, online, reloadKey);
+  const businessTimezone = account.value?.timezone || '';
+  const accountCurrency = account.value?.currency || '';
+  const accountContextError = account.error;
+  const hasContext = Boolean(!accountContextError && businessTimezone && accountCurrency);
+  const labels = useMemo(() => cleanAnalyticsLabels(customLabels), [customLabels]);
 
   const activePeriod = ANALYTICS_PERIOD_OPTIONS.find((option) => option.id === period) || ANALYTICS_PERIOD_OPTIONS[0];
   const defaultCustomRange = useMemo(
@@ -12786,12 +12730,8 @@ function AnalyticsSection({
     return businessTimezone
       ? getTodayRange(activePeriod.days ?? 30, businessTimezone)
       : { startDate: '', endDate: '' };
-  }, [activePeriod.days, businessTimezone, customEndDate, customStartDate, period]);
+  }, [activePeriod.days, businessTimezone, customEndDate, customStartDate, online, period, reloadKey]);
   const groupBy = useMemo(() => getAnalyticsGroupBy(period, range.startDate, range.endDate), [period, range.endDate, range.startDate]);
-
-  useEffect(() => {
-    setLabels(cleanAnalyticsLabels(customLabels));
-  }, [customLabels]);
 
   useEffect(() => {
     if (!hasWebAnalyticsAccess && chartView === 'visitors-leads') {
@@ -12810,370 +12750,78 @@ function AnalyticsSection({
     setCustomDraftEndDate((current) => current || defaultCustomRange.endDate);
   }, [defaultCustomRange.endDate, defaultCustomRange.startDate]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const hadCachedContext = Boolean(analyticsContextRef.current.timezone && analyticsContextRef.current.currency);
-    if (!hadCachedContext) setAccountContextLoading(true);
-    setAccountContextError('');
+  const { startDate, endDate } = range;
+  const cacheRange = { startDate, endDate, timezone: businessTimezone, currency: accountCurrency };
+  // Date and money endpoints use the server's current configuration. Do not
+  // label a live response with a timezone or currency read from storage.
+  const fetchReport = online && account.live;
+  const loadMetrics = useCallback((signal: AbortSignal) => api.getDashboardMetrics(startDate, endDate, signal), [api, startDate, endDate]);
+  const metricsRead = useAnalyticsRead(hasContext ? analyticsMetricsCacheKey(cacheRange) : '', loadMetrics, fetchReport, reloadKey);
 
-    void api.getCustomLabels()
-      .then((labelsResponse) => {
-        if (cancelled) return;
-        const nextLabels = cleanAnalyticsLabels(labelsResponse);
-        setLabels(nextLabels);
-        writeCache(SHELL_CUSTOM_LABELS_CACHE_KEY, nextLabels);
-      })
-      .catch(() => undefined);
+  const loadChart = useCallback(async (signal: AbortSignal) => {
+    if (chartView === 'revenue-spend') return api.getFinancialOverview(startDate, endDate, financialScope, signal);
+    const series = {
+      'visitors-leads': ['visitors', 'leads'],
+      'leads-appointments': ['leads', 'appointments'],
+      'appointments-attendances': ['appointments', 'attendances'],
+      'attendances-sales': ['attendances', 'sales'],
+    } as const;
+    const [first, second] = series[chartView];
+    const [left, right] = await Promise.all([
+      api.getDashboardSeries(first, startDate, endDate, groupBy, signal),
+      api.getDashboardSeries(second, startDate, endDate, groupBy, signal),
+    ]);
+    return combineAnalyticsSeries(left, right);
+  }, [api, chartView, endDate, financialScope, groupBy, startDate]);
+  const chartKey = hasContext && (chartView !== 'visitors-leads' || hasWebAnalyticsAccess)
+    ? analyticsChartCacheKey(cacheRange, chartView, chartView === 'revenue-spend' ? financialScope : groupBy)
+    : '';
+  const chart = useAnalyticsRead(chartKey, loadChart, fetchReport, reloadKey);
 
-    void api.getConfig(['account_timezone', 'account_currency'])
-      .then((configResponse) => {
-        if (cancelled) return;
-        const values = configResponse && typeof configResponse === 'object' && 'config' in configResponse
-          ? configResponse.config
-          : configResponse;
-        const timezone = normalizeRequiredBusinessTimezone(
-          values && typeof values === 'object' && 'account_timezone' in values
-            ? values.account_timezone
-            : '',
-        );
-        const currency = normalizeRequiredCurrencyCode(
-          values && typeof values === 'object' && 'account_currency' in values
-            ? values.account_currency
-            : '',
-        );
-        if (!timezone || !currency) {
-          throw new Error('La cuenta no devolvi\u00f3 una zona horaria y moneda v\u00e1lidas.');
-        }
-        analyticsContextRef.current = { timezone, currency };
-        setBusinessTimezone(timezone);
-        setAccountCurrency(currency);
-        writeCache(MOBILE_CACHE_KEYS.analyticsAccountContext, { timezone, currency });
-      })
-      .catch((contextError) => {
-        if (cancelled) return;
-        console.warn('[RistakNative][analytics] account context failed', contextError);
-        if (!hadCachedContext) {
-          setBusinessTimezone('');
-          setAccountCurrency('');
-          setAccountContextError('No pudimos confirmar la zona horaria y moneda de tu cuenta. Reintenta para mostrar cifras correctas.');
-        }
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setAccountContextLoading(false);
-      });
+  const loadFunnel = useCallback((signal: AbortSignal) => (
+    api.getFunnelData(startDate, endDate, funnelScope, hasWebAnalyticsAccess, signal)
+  ), [api, endDate, funnelScope, hasWebAnalyticsAccess, startDate]);
+  const funnelKey = hasContext ? analyticsFunnelCacheKey(cacheRange, funnelScope, hasWebAnalyticsAccess) : '';
+  const funnel = useAnalyticsRead(funnelKey, loadFunnel, fetchReport, reloadKey);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [api, reloadKey]);
+  const loadOrigin = useCallback(async (signal: AbortSignal) => {
+    const response = await api.getOriginDistribution(startDate, endDate, hasWebAnalyticsAccess, signal);
+    return { ...EMPTY_ORIGIN_DATA, ...response, traffic: { ...EMPTY_ORIGIN_DATA.traffic, ...response.traffic } };
+  }, [api, endDate, hasWebAnalyticsAccess, startDate]);
+  const originKey = hasContext ? analyticsOriginCacheKey(cacheRange, hasWebAnalyticsAccess) : '';
+  const origin = useAnalyticsRead(originKey, loadOrigin, fetchReport, reloadKey);
 
-  const loadOverview = useCallback(async () => {
-    const generation = ++analyticsOverviewGenerationRef.current;
-    const overviewRangeKey = `${range.startDate}:${range.endDate}`;
-    analyticsOverviewReadyRangeRef.current = '';
-    analyticsPhoneOriginAbortRef.current?.abort();
-    analyticsPhoneOriginAbortRef.current = null;
-    analyticsPhoneOriginRangeRef.current = '';
-    const metricsCacheKey = analyticsMetricsCacheKey(range.startDate, range.endDate);
-    const originCacheKey = analyticsOriginCacheKey(range.startDate, range.endDate, hasWebAnalyticsAccess);
-    const hasCachedMetrics = hasCachedValue(metricsCacheKey);
-    const hasCachedOrigin = hasCachedValue(originCacheKey);
-    const cachedOrigin = peekCache<OriginDistributionData>(originCacheKey, EMPTY_ORIGIN_DATA);
-    // Repaint the exact range before the request. A dashboard range is never
-    // allowed to borrow the previous range's numbers while it refreshes.
-    if (hasCachedMetrics) setMetrics(peekCache<DashboardMetrics | null>(metricsCacheKey, null));
-    else setMetrics(null);
-    if (hasCachedOrigin) setOriginData(cachedOrigin);
-    else setOriginData({ ...EMPTY_ORIGIN_DATA });
-    if (!hasCachedMetrics) setLoading(true);
-    else setLoading(false);
-    if (!hasCachedOrigin) setOriginLoading(true);
-    else setOriginLoading(false);
-    setError('');
-    setOriginError('');
-
-    try {
-      const [metricsResult, originResult, whatsappResult] = await Promise.allSettled([
-        api.getDashboardMetrics(range.startDate, range.endDate),
-        api.getOriginDistribution(range.startDate, range.endDate, hasWebAnalyticsAccess),
-        api.getWhatsAppApiStatus(),
-      ]);
-
-      if (generation !== analyticsOverviewGenerationRef.current) return;
-      if (metricsResult.status === 'fulfilled') {
-        setMetrics(metricsResult.value);
-        writeCache(metricsCacheKey, metricsResult.value);
-      } else {
-        console.warn('[RistakNative][analytics] metrics failed', metricsResult.reason);
-        if (!hasCachedMetrics) {
-          setMetrics(null);
-          setError(metricsResult.reason instanceof Error ? metricsResult.reason.message : 'No se pudieron cargar los indicadores.');
-        }
-      }
-
-      if (originResult.status === 'fulfilled') {
-        const originResponse = originResult.value;
-        setOriginData((current) => {
-          const nextOrigin = {
-            ...EMPTY_ORIGIN_DATA,
-            ...originResponse,
-            traffic: {
-              ...EMPTY_ORIGIN_DATA.traffic,
-              ...(originResponse?.traffic || {}),
-            },
-            // La consulta inicial pide explícitamente no traer teléfonos. Se
-            // conserva el snapshot SWR hasta que la lectura secundaria lo
-            // reemplace, sin mezclar ninguna otra parte de la respuesta.
-            whatsappNumbers: originResponse?.whatsappNumbers?.length
-              ? originResponse.whatsappNumbers
-              : (current.whatsappNumbers || cachedOrigin.whatsappNumbers || []),
-          };
-          writeCache(originCacheKey, nextOrigin);
-          return nextOrigin;
-        });
-      } else {
-        console.warn('[RistakNative][analytics] origin failed', originResult.reason);
-        if (!hasCachedOrigin) {
-          setOriginError(originResult.reason instanceof Error ? originResult.reason.message : 'No se pudo cargar el origen de los resultados.');
-        }
-      }
-
-      if (whatsappResult.status === 'fulfilled') {
-        const nextPhones = (whatsappResult.value?.phoneNumbers || []).filter((phone) => (
-          Boolean(phone.id || phone.phone_number || phone.display_phone_number || phone.qr_connected_phone)
-        ));
-        setDetectedPhones(nextPhones);
-        writeCache(MOBILE_CACHE_KEYS.analyticsPhones, nextPhones);
-      } else {
-        console.warn('[RistakNative][analytics] WhatsApp phone lookup failed', whatsappResult.reason);
-      }
-    } catch (err) {
-      if (generation !== analyticsOverviewGenerationRef.current) return;
-      console.warn('[RistakNative][analytics] loadOverview failed', err);
-      const fallbackMessage = err instanceof Error ? err.message : 'No se pudieron cargar las analíticas.';
-      if (!hasCachedMetrics) {
-        setMetrics(null);
-        setError(fallbackMessage);
-      }
-      if (!hasCachedOrigin) setOriginError(fallbackMessage);
-    } finally {
-      if (generation !== analyticsOverviewGenerationRef.current) return;
-      analyticsOverviewReadyRangeRef.current = overviewRangeKey;
-      setAnalyticsOverviewVersion((current) => current + 1);
-      setLoading(false);
-      setOriginLoading(false);
-      setRefreshing(false);
-    }
-  }, [api, hasWebAnalyticsAccess, range.endDate, range.startDate]);
-
-  const loadPhoneOriginAfterFirstRender = useCallback(() => {
-    const requestKey = `${range.startDate}:${range.endDate}`;
-    if (
-      !range.startDate
-      || !range.endDate
-      || analyticsOverviewReadyRangeRef.current !== requestKey
-      || analyticsPhoneOriginRangeRef.current === requestKey
-    ) return;
-
-    analyticsPhoneOriginAbortRef.current?.abort();
-    const controller = new AbortController();
-    const generation = analyticsOverviewGenerationRef.current;
-    const originCacheKey = analyticsOriginCacheKey(
-      range.startDate,
-      range.endDate,
-      hasWebAnalyticsAccess,
-    );
-    analyticsPhoneOriginAbortRef.current = controller;
-    analyticsPhoneOriginRangeRef.current = requestKey;
-
-    void api.getOriginPhoneBreakdown(range.startDate, range.endDate, controller.signal)
-      .then((phoneOrigin) => {
-        if (
-          controller.signal.aborted
-          || generation !== analyticsOverviewGenerationRef.current
-          || analyticsPhoneOriginAbortRef.current !== controller
-        ) return;
-        setOriginData((current) => {
-          const nextOrigin = {
-            ...current,
-            whatsappNumbers: phoneOrigin?.whatsappNumbers || [],
-          };
-          writeCache(originCacheKey, nextOrigin);
-          return nextOrigin;
-        });
-      })
-      .catch((phoneOriginError) => {
-        if (
-          controller.signal.aborted
-          || generation !== analyticsOverviewGenerationRef.current
-          || analyticsPhoneOriginAbortRef.current !== controller
-        ) return;
-        analyticsPhoneOriginRangeRef.current = '';
-        console.warn('[RistakNative][analytics] phone origin failed', phoneOriginError);
-      })
-      .finally(() => {
-        if (analyticsPhoneOriginAbortRef.current === controller) {
-          analyticsPhoneOriginAbortRef.current = null;
-        }
-      });
-  }, [api, hasWebAnalyticsAccess, range.endDate, range.startDate]);
+  const loadPhones = useCallback(async (signal: AbortSignal) => {
+    const response = await api.getWhatsAppApiStatus(signal);
+    return (response.phoneNumbers || []).filter((phone) => (
+      Boolean(phone.id || phone.phone_number || phone.display_phone_number || phone.qr_connected_phone)
+    ));
+  }, [api]);
+  const phones = useAnalyticsRead(hasContext ? MOBILE_CACHE_KEYS.analyticsPhones : '', loadPhones, fetchReport, reloadKey);
+  const loadPhoneOrigin = useCallback(async (signal: AbortSignal) => {
+    const response = await api.getOriginPhoneBreakdown(startDate, endDate, signal);
+    return response.whatsappNumbers || [];
+  }, [api, endDate, startDate]);
+  // Keep the secondary breakdown off the critical path.
+  const phoneOrigin = useAnalyticsRead(originKey && origin.value ? analyticsOriginCacheKey(cacheRange, hasWebAnalyticsAccess, 'phone-origin') : '', loadPhoneOrigin, fetchReport, reloadKey);
+  const metrics = metricsRead.value;
+  const chartData = chart.value ?? [];
+  const funnelData = funnel.value ?? [];
+  const originData = origin.value ?? EMPTY_ORIGIN_DATA;
+  const chartError = chart.error;
+  const funnelError = funnel.error;
+  const originError = origin.error;
+  const loading = !metrics;
+  const chartLoading = chart.value === undefined;
+  const funnelLoading = funnel.value === undefined;
+  const originLoading = origin.value === undefined;
 
   useEffect(() => {
-    if (originLoading || originError) return undefined;
-    const task = InteractionManager.runAfterInteractions(loadPhoneOriginAfterFirstRender);
-    return () => task.cancel();
-  }, [analyticsOverviewVersion, loadPhoneOriginAfterFirstRender, originError, originLoading]);
-
-  useEffect(() => {
-    if (!businessTimezone || !accountCurrency || accountContextError) {
-      analyticsOverviewGenerationRef.current += 1;
-      setLoading(accountContextLoading);
-      setOriginLoading(accountContextLoading);
-      setRefreshing(false);
-      return;
-    }
-    void loadOverview();
-  }, [accountContextError, accountContextLoading, accountCurrency, businessTimezone, loadOverview, reloadKey]);
-
-  useEffect(() => () => {
-    analyticsOverviewGenerationRef.current += 1;
-    analyticsPhoneOriginAbortRef.current?.abort();
-    analyticsPhoneOriginAbortRef.current = null;
-    analyticsPhoneOriginRangeRef.current = '';
-    analyticsOverviewReadyRangeRef.current = '';
-  }, []);
-
-  useEffect(() => {
-    if (!businessTimezone || !accountCurrency || accountContextError) {
-      setChartData([]);
-      setChartLoading(accountContextLoading);
-      setChartError('');
-      return;
-    }
-    let active = true;
-    const chartCacheKey = analyticsChartCacheKey(
-      range.startDate,
-      range.endDate,
-      chartView,
-      chartView === 'revenue-spend' ? financialScope : 'none',
-    );
-    const hasCachedChart = hasCachedValue(chartCacheKey);
-    setChartData(peekCache<AnalyticsChartPoint[]>(chartCacheKey, []));
-
-    const loadChart = async () => {
-      if (!hasCachedChart) setChartLoading(true);
-      else setChartLoading(false);
-      setChartError('');
-
-      try {
-        if (chartView === 'revenue-spend') {
-          const response = await api.getFinancialOverview(range.startDate, range.endDate, financialScope);
-          if (!active) return;
-          const nextChart = (response || []).map((item) => ({
-            label: item.label,
-            value: item.value || 0,
-            value2: item.value2 || 0,
-          }));
-          setChartData(nextChart);
-          writeCache(chartCacheKey, nextChart);
-          return;
-        }
-
-        let response: AnalyticsChartPoint[] = [];
-        if (chartView === 'visitors-leads') {
-          if (!hasWebAnalyticsAccess) {
-            if (active) setChartData([]);
-            return;
-          }
-          const [visitors, leads] = await Promise.all([
-            api.getDashboardSeries('visitors', range.startDate, range.endDate, groupBy),
-            api.getDashboardSeries('leads', range.startDate, range.endDate, groupBy),
-          ]);
-          response = combineAnalyticsSeries(visitors, leads);
-        } else if (chartView === 'leads-appointments') {
-          const [leads, appointments] = await Promise.all([
-            api.getDashboardSeries('leads', range.startDate, range.endDate, groupBy),
-            api.getDashboardSeries('appointments', range.startDate, range.endDate, groupBy),
-          ]);
-          response = combineAnalyticsSeries(leads, appointments);
-        } else if (chartView === 'appointments-attendances') {
-          const [appointments, attendances] = await Promise.all([
-            api.getDashboardSeries('appointments', range.startDate, range.endDate, groupBy),
-            api.getDashboardSeries('attendances', range.startDate, range.endDate, groupBy),
-          ]);
-          response = combineAnalyticsSeries(appointments, attendances);
-        } else {
-          const [attendances, sales] = await Promise.all([
-            api.getDashboardSeries('attendances', range.startDate, range.endDate, groupBy),
-            api.getDashboardSeries('sales', range.startDate, range.endDate, groupBy),
-          ]);
-          response = combineAnalyticsSeries(attendances, sales);
-        }
-
-        if (active) {
-          setChartData(response);
-          writeCache(chartCacheKey, response);
-        }
-      } catch (chartLoadError) {
-        console.warn('[RistakNative][analytics] loadChart failed', chartLoadError);
-        if (active) {
-          if (!hasCachedChart) {
-            setChartData([]);
-            setChartError(chartLoadError instanceof Error ? chartLoadError.message : 'No se pudo cargar esta gráfica.');
-          }
-        }
-      } finally {
-        if (active) setChartLoading(false);
-      }
-    };
-
-    void loadChart();
-
-    return () => {
-      active = false;
-    };
-  }, [accountContextError, accountContextLoading, accountCurrency, api, businessTimezone, chartView, financialScope, groupBy, hasWebAnalyticsAccess, range.endDate, range.startDate, reloadKey]);
-
-  useEffect(() => {
-    if (!businessTimezone || !accountCurrency || accountContextError) {
-      setFunnelData([]);
-      setFunnelLoading(accountContextLoading);
-      setFunnelError('');
-      return;
-    }
-    let active = true;
-    const funnelCacheKey = analyticsFunnelCacheKey(range.startDate, range.endDate, funnelScope);
-    const hasCachedFunnel = hasCachedValue(funnelCacheKey);
-    setFunnelData(peekCache<DashboardFunnelRow[]>(funnelCacheKey, []));
-    if (!hasCachedFunnel) setFunnelLoading(true);
-    else setFunnelLoading(false);
-    setFunnelError('');
-
-    api.getFunnelData(range.startDate, range.endDate, funnelScope, hasWebAnalyticsAccess)
-      .then((response) => {
-        if (!active) return;
-        const nextFunnel = Array.isArray(response) ? response : [];
-        setFunnelData(nextFunnel);
-        writeCache(funnelCacheKey, nextFunnel);
-      })
-      .catch((funnelLoadError) => {
-        console.warn('[RistakNative][analytics] loadFunnel failed', funnelLoadError);
-        if (active) {
-          if (!hasCachedFunnel) {
-            setFunnelData([]);
-            setFunnelError(funnelLoadError instanceof Error ? funnelLoadError.message : 'No se pudo cargar el embudo.');
-          }
-        }
-      })
-      .finally(() => {
-        if (active) setFunnelLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [accountContextError, accountContextLoading, accountCurrency, api, businessTimezone, funnelScope, hasWebAnalyticsAccess, range.endDate, range.startDate, reloadKey]);
+    if (!refreshing) return;
+    const finishedMetrics = metricsRead.revision === reloadKey && !metricsRead.fetching;
+    const waitingForContext = !hasContext && account.revision === reloadKey && !account.fetching;
+    if (!online || account.error || finishedMetrics || waitingForContext) setRefreshing(false);
+  }, [account.error, account.fetching, account.revision, hasContext, metricsRead.fetching, metricsRead.revision, online, refreshing, reloadKey]);
 
   const chartOptions = useMemo<Array<{ id: AnalyticsChartView; label: string }>>(() => ([
     { id: 'revenue-spend' as const, label: 'Ingresos vs gastos' },
@@ -13211,8 +12859,8 @@ function AnalyticsSection({
   ]), [accountCurrency]);
 
   const hasChartData = chartData.some((point) => point.value > 0 || point.value2 > 0);
-  const analyticsContextPending = accountContextLoading || !businessTimezone || !accountCurrency;
-  const analyticsError = accountContextError || error;
+  const analyticsContextPending = !hasContext;
+  const analyticsError = accountContextError || metricsRead.error;
   const funnelRows = funnelData.filter((item) => hasWebAnalyticsAccess || item.stage?.trim().toLowerCase() !== 'visitantes');
   const funnelMax = Math.max(1, ...funnelRows.map((item) => item.value || 0));
   const totalConversion = funnelRows[0]?.value > 0
@@ -13232,11 +12880,12 @@ function AnalyticsSection({
   const originMax = Math.max(1, ...originRows.map((item) => item.value || 0));
   const originTotal = originRows.reduce((sum, item) => sum + (item.value || 0), 0);
   const phoneNumberRows = useMemo(
-    () => buildPhoneNumberRows(originData.whatsappNumbers || [], detectedPhones),
-    [detectedPhones, originData.whatsappNumbers],
+    () => buildPhoneNumberRows(phoneOrigin.value ?? originData.whatsappNumbers ?? [], phones.value ?? []),
+    [phones.value, phoneOrigin.value, originData.whatsappNumbers],
   );
   const phoneNumberMax = Math.max(1, ...phoneNumberRows.map((item) => item.value || 0));
-  const showPhoneNumberOrigin = phoneNumberRows.length >= 2;
+  const hasPhoneCounts = phoneOrigin.value !== undefined || Boolean(originData.whatsappNumbers?.length);
+  const showPhoneNumberOrigin = hasPhoneCounts && phoneNumberRows.length >= 2;
 
   const refresh = () => {
     setRefreshing(true);
@@ -13529,7 +13178,7 @@ function AnalyticsSection({
             <Text style={styles.analyticsPanelTitle}>Fuentes</Text>
           </View>
           <View style={styles.analyticsConversionPill}>
-            <Text style={styles.analyticsConversionPillText}>{originError ? '—' : formatNumber(originTotal)}</Text>
+            <Text style={styles.analyticsConversionPillText}>{originLoading || originError ? '—' : formatNumber(originTotal)}</Text>
           </View>
         </View>
 
@@ -21944,23 +21593,26 @@ function NativeConversationScreen({
           primaryJourneyMessages = buildMessagesFromJourney(contactId, normalizedPrimary, appBaseUrl);
           return shouldRecoverEmptyConversation(
             contactSummary,
-            messagesRef.current,
+            messagesRef.current.length ? messagesRef.current : conversationCacheFallbackRef.current,
             primaryJourneyMessages,
           );
         },
         () => api.getContactJourney(contactId, primaryAbortController.signal, false),
       );
       if (requestId !== loadRequestRef.current || activeConversationContactIdRef.current !== contactId) return;
-      acceptFreshConversation();
       const journey = openingResult.items;
       const usedFullJourneyRecovery = openingResult.usedRecovery;
       const messageJourney = normalizeJourneyEventsForMessages(journey);
       const journeyMessages = usedFullJourneyRecovery
         ? buildMessagesFromJourney(contactId, messageJourney, appBaseUrl)
         : primaryJourneyMessages;
-      if (!journeyMessages.length && !messagesRef.current.length && contactSummaryExpectsMessages(contactSummary)) {
+      if (!journeyMessages.length && contactSummaryExpectsMessages(contactSummary)) {
         throw new Error('El servidor no entregó el historial de este chat. Toca “Reintentar ahora”.');
       }
+      const initialOutbox = conversationFreshResolvedRef.current
+        ? []
+        : retainNativeLocalOutboxMessages(conversationCacheFallbackRef.current);
+      acceptFreshConversation();
       conversationLastReconcileAtRef.current = Date.now();
       const historyJourney = usedFullJourneyRecovery
         ? messageJourney.filter((event) => ['whatsapp_message', 'meta_message', 'email_message'].includes(event.type))
@@ -21995,6 +21647,7 @@ function NativeConversationScreen({
             !sendLockedRef.current,
             journeyMessages,
             current.filter((message) => message.id.startsWith('scheduled-')),
+            initialOutbox,
             retainedOutboxMessages,
           );
           return areNativeMessageArraysIdentical(current, foregroundMessages) ? current : foregroundMessages;
@@ -22198,8 +21851,17 @@ function NativeConversationScreen({
     let alive = true;
     void readCache<ChatMessage[]>(conversationCacheKey(contact.id), []).then((cached) => {
       if (!alive) return;
-      setConversationMessageMemCache(api, contact.id, cached);
-      conversationCacheFallbackRef.current = cached;
+      if (!conversationFreshResolvedRef.current) {
+        setConversationMessageMemCache(api, contact.id, cached);
+        conversationCacheFallbackRef.current = cached;
+      } else {
+        // If the live window arrived first, only local unacknowledged sends
+        // survive hydration. Older server messages must never replace it.
+        const outbox = retainNativeLocalOutboxMessages(cached);
+        if (outbox.length) {
+          setMessages((current) => mergeNativeChatMessagesAuthoritatively(!sendLockedRef.current, outbox, current));
+        }
+      }
     }).finally(() => {
       if (alive) setConversationCacheHydrated(true);
     });
@@ -22487,6 +22149,13 @@ function NativeConversationScreen({
     });
     return map;
   }, [messages]);
+
+  const anchorOpeningMessages = (layout: { viewportHeight?: number; contentHeight?: number }) => {
+    const list = listRef.current;
+    if (list && conversationLatestAnchorGateRef.current.consume(filteredMessages.length, layout)) {
+      list.scrollToOffset({ offset: 0, animated: false });
+    }
+  };
 
   const conversationKeyExtractor = useCallback((item: ConversationListItem) => item.id, []);
 
@@ -24490,12 +24159,10 @@ function NativeConversationScreen({
             maintainVisibleContentPosition={{ minIndexForVisible: 0, autoscrollToTopThreshold: 24 }}
             removeClippedSubviews={false}
             initialNumToRender={20}
-            onContentSizeChange={() => {
-              if (conversationLatestAnchorGateRef.current.consume(conversationRenderItems.length)) {
-                scrollConversationToLatest(false);
-              }
-            }}
+            onLayout={(event) => anchorOpeningMessages({ viewportHeight: event.nativeEvent.layout.height })}
+            onContentSizeChange={(_, height) => anchorOpeningMessages({ contentHeight: height })}
             onScrollBeginDrag={() => {
+              conversationLatestAnchorGateRef.current.cancel();
               conversationHistoryPaginationGateRef.current.userDidBeginScrolling();
             }}
             onEndReached={() => {

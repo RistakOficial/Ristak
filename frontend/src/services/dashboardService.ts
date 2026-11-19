@@ -421,7 +421,7 @@ async function fetchDashboardSeries(
     priority: DASHBOARD_HEAVY_PRIORITY.extendedChart,
     request: async requestSignal => {
       const response = await fetch(apiUrl(`${path}?${queryParams}`), { signal: requestSignal })
-      if (!response.ok) throw new Error(`No se pudo cargar ${label.toLocaleLowerCase('es-MX')}`)
+      if (!response.ok) throw Object.assign(new Error(`No se pudo cargar ${label.toLocaleLowerCase('es-MX')}`), { status: response.status })
       const data = await response.json()
       if (!Array.isArray(data)) throw new Error(`${label} respondió con datos incompletos`)
       return data
@@ -489,7 +489,7 @@ class DashboardService {
         priority: DASHBOARD_HEAVY_PRIORITY.metrics,
         request: async signal => {
           const response = await fetch(apiUrl(`/api/dashboard/mobile-analytics-snapshot?${queryParams}`), { signal })
-          if (!response.ok) throw new Error('No se pudo cargar Analíticas móvil')
+          if (!response.ok) throw Object.assign(new Error('No se pudo cargar Analíticas móvil'), { status: response.status })
           const result = await response.json()
           const data = result?.data as DashboardMobileAnalyticsSnapshot | undefined
           if (!data?.metrics || !data?.origin || !Array.isArray(data.funnel) || !Array.isArray(data.financialChart)) {
@@ -627,7 +627,7 @@ class DashboardService {
       const response = await fetch(apiUrl(`/api/dashboard/financial-overview?${queryParams}`), { signal: requestSignal });
 
       if (!response.ok) {
-        throw new Error('No se pudo cargar la gráfica financiera')
+        throw Object.assign(new Error('No se pudo cargar la gráfica financiera'), { status: response.status })
       }
 
       const result = await response.json();
@@ -852,7 +852,7 @@ class DashboardService {
           const message = result && typeof result === 'object' && 'error' in result
             ? String(result.error)
             : 'No se pudo cargar la distribución de origen.';
-          throw new Error(message);
+          throw Object.assign(new Error(message), { status: response.status });
         }
 
         const data = result && typeof result === 'object' && 'data' in result
@@ -897,7 +897,7 @@ class DashboardService {
       }
     });
     if (!response.ok) {
-      throw new Error(result?.error || 'No se pudo cargar el embudo.');
+      throw Object.assign(new Error(result?.error || 'No se pudo cargar el embudo.'), { status: response.status });
     }
     return Array.isArray(result?.data) ? result.data : [];
   }

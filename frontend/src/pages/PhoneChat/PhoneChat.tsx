@@ -234,11 +234,13 @@ import {
   type MobilePhotoAttachment,
   type MobileVideoAttachment
 } from '@/services/mobileAppService'
-import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
+import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache, removePhoneDailyCache } from '@/services/phoneDailyCache'
 import {
   MOBILE_CHAT_CACHE_FALLBACK_GRACE_MS,
   shouldRevealMobileChatCacheFallback
 } from './chatLiveFirstPolicy'
+import { ConversationReadQueue } from './conversationReadQueue'
+import { withRequestTimeout } from '@/services/requestTimeout'
 import { ConversationHistoryPaginationGate } from './conversationHistoryPaginationPolicy'
 import { filterApprovedWhatsAppApiTemplates, getWhatsAppApiProviderLabel, isWhatsAppPhoneApiAvailable, isWhatsAppTemplateCompatibleWithPhone, whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact, ContactCustomField } from '@/types'
@@ -5244,6 +5246,8 @@ export const PhoneChat: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const requestedContactParam = searchParams.get('contact')
+  const pendingRouteContact = useRef(requestedContactParam)
+  useLayoutEffect(() => { pendingRouteContact.current = requestedContactParam }, [searchParams, requestedContactParam])
   const requestedActionParam = searchParams.get('action')
   const { locationId, accessToken, user } = useAuth()
   const hasEmailAccess = hasLicenseFeature(user, ['email'])
@@ -5600,9 +5604,14 @@ export const PhoneChat: React.FC = () => {
   } | null>(null)
   const activeContactDetailsGenerationRef = useRef(0)
   const conversationOpenRef = useRef(false)
-  const conversationLoadGenerationRef = useRef(0)
+  const conversationReads = useRef(new ConversationReadQueue())
+  const conversationNeedsRecovery = useRef(false)
+  const conversationDenied = useRef(false)
+  const [messagesAccessDenied, setMessagesAccessDenied] = useState(false)
+  const confirmedEmptyOnce = useRef(false)
   const conversationActivityLoadedAtRef = useRef(0)
   const olderMessagesLoadingRef = useRef(false)
+  const historyRequestRef = useRef<AbortController | null>(null)
   const conversationHistoryPrependRef = useRef(false)
   const conversationHasOlderMessagesRef = useRef(false)
   const conversationHistoryExhaustedContactIdRef = useRef<string | null>(null)
@@ -5913,15 +5922,20 @@ export const PhoneChat: React.FC = () => {
     olderMessagesLoadingRef.current = true
     setOlderMessagesLoading(true)
     let restoreScheduled = false
+    const controller = new AbortController()
+    historyRequestRef.current = controller
+    const isCurrent = () => !controller.signal.aborted && activeContactIdRef.current === contactId
 
     try {
       const olderJourney = await contactsService.getContactConversation(contactId, {
         refreshExternalStatuses: false,
         messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT,
         beforeMessageDate: oldestCursor.beforeMessageDate,
-        beforeMessageCursor: oldestCursor.beforeMessageCursor
+        beforeMessageCursor: oldestCursor.beforeMessageCursor,
+        signal: controller.signal,
+        throwOnError: true
       })
-      if (activeContactIdRef.current !== contactId) return
+      if (!isCurrent()) return
 
       const receivedFullPage = olderJourney.filter(isConversationJourneyMessage).length >= CHAT_CONVERSATION_MESSAGE_LIMIT
       conversationHasOlderMessagesRef.current = receivedFullPage
@@ -5945,7 +5959,8 @@ export const PhoneChat: React.FC = () => {
       restoreScheduled = true
       window.requestAnimationFrame(() => {
         const currentPane = messagesPaneRef.current
-        if (!currentPane || activeContactIdRef.current !== contactId || previousScrollHeight <= 0) {
+        if (!isCurrent()) return
+        if (!currentPane || previousScrollHeight <= 0) {
           conversationHistoryPrependRef.current = false
           return
         }
@@ -5956,13 +5971,15 @@ export const PhoneChat: React.FC = () => {
         }
         restoreScrollTop()
         window.requestAnimationFrame(() => {
-          if (activeContactIdRef.current === contactId) {
-            restoreScrollTop()
-          }
+          if (!isCurrent()) return
+          restoreScrollTop()
           conversationHistoryPrependRef.current = false
         })
       })
+    } catch {
+      // Conserva el cursor para que el siguiente gesto pueda volver a pedir la página.
     } finally {
+      if (!isCurrent()) return
       olderMessagesLoadingRef.current = false
       setOlderMessagesLoading(false)
       if (!restoreScheduled) {
@@ -7638,14 +7655,16 @@ export const PhoneChat: React.FC = () => {
     setChats((currentChats) => (
       areChatListsEquivalent(currentChats, nextChats) ? currentChats : nextChats
     ))
+    const routeContact = requestedContact?.id === pendingRouteContact.current ? requestedContact : null
     setActiveContactId((current) => {
-      if (requestedContact) return requestedContact.id
+      if (routeContact) return routeContact.id
       if (current && nextChats.some((contact) => contact.id === current)) return current
       return null
     })
 
-    if (requestedContact) {
-      startConversationBottomLock(requestedContact.id)
+    if (routeContact) {
+      pendingRouteContact.current = null
+      startConversationBottomLock(routeContact.id)
       runConversationOpenBottomScrollSequence()
       setConversationOpen(true)
     }
@@ -7885,7 +7904,7 @@ export const PhoneChat: React.FC = () => {
           : null
         let nextChats = merged
 
-        if (requestedContactParam && !requestedContact) {
+        if (requestedContactParam && pendingRouteContact.current === requestedContactParam && !requestedContact) {
           const contact = await contactsService.getContactDetails(requestedContactParam).catch(() => null)
           if (contact && chatsRequestRef.current === controller) {
             requestedContact = toChatContact(contact)
@@ -8560,14 +8579,11 @@ export const PhoneChat: React.FC = () => {
     }
   }, [])
 
-  const loadConversation = useCallback(async (contactId: string, options: { showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean } = {}) => {
-    const loadGeneration = conversationLoadGenerationRef.current + 1
-    conversationLoadGenerationRef.current = loadGeneration
-    const isCurrentConversationLoad = () => (
-      conversationLoadGenerationRef.current === loadGeneration &&
-      activeContactIdRef.current === contactId
-    )
+  const readConversation = useCallback(async (contactId: string, options: { showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean }, signal: AbortSignal) => {
+    const isCurrentConversationLoad = () => !signal.aborted && activeContactIdRef.current === contactId
+    if (!isCurrentConversationLoad()) return
     const silentRefresh = options.silent === true
+    if (silentRefresh && conversationDenied.current) return
     const useCache = options.useCache !== false && !silentRefresh
     const shouldRefreshActivityJourney = !silentRefresh || Date.now() - conversationActivityLoadedAtRef.current >= CHAT_ACTIVITY_REFRESH_INTERVAL_MS
     if (!silentRefresh) {
@@ -8622,6 +8638,10 @@ export const PhoneChat: React.FC = () => {
     }
 
     if (!silentRefresh) {
+      conversationNeedsRecovery.current = true
+      confirmedEmptyOnce.current = false
+      conversationDenied.current = false
+      setMessagesAccessDenied(false)
       setMessages([])
       setAgentCompletionEvents([])
       setContactJourney([])
@@ -8635,20 +8655,13 @@ export const PhoneChat: React.FC = () => {
       if (hasCachedConversation) {
         // Igual que la bandeja: primero sale la red; el snapshot sólo entra si
         // la respuesta no llegó dentro de la gracia perceptual.
-        cacheRevealTimer = window.setTimeout(revealCachedConversation, MOBILE_CHAT_CACHE_FALLBACK_GRACE_MS)
+        if (navigator.onLine) {
+          cacheRevealTimer = window.setTimeout(revealCachedConversation, MOBILE_CHAT_CACHE_FALLBACK_GRACE_MS)
+        } else {
+          revealCachedConversation()
+        }
       }
     }
-
-    const scheduledMessagesPromise = whatsappApiService.getScheduledMessages(contactId).catch(() => [])
-    const agentCompletionsPromise = conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => [])
-    const activityJourneyPromise = shouldRefreshActivityJourney
-      ? contactsService.getContactJourney(contactId, {
-        refreshExternalStatuses: false,
-        throwOnError: true,
-        chatActivityOnly: true
-      }).then((events) => ({ events, loaded: true }))
-        .catch(() => ({ events: [] as JourneyEvent[], loaded: false }))
-      : Promise.resolve({ events: [] as JourneyEvent[], loaded: false })
 
     try {
       // Primero pinta mensajes. Los programados, resúmenes del agente y
@@ -8656,15 +8669,25 @@ export const PhoneChat: React.FC = () => {
       const journey = await contactsService.getContactConversation(contactId, {
         refreshExternalStatuses: false,
         messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT,
+        signal,
         throwOnError: true
       })
       if (!isCurrentConversationLoad()) return
+      const selected = chatsRef.current.find(row => row.id === contactId)
+      if (!journey.length && conversationNeedsRecovery.current && !confirmedEmptyOnce.current &&
+          (hasCachedConversation || selected?.messageCount || selected?.lastMessageText)) {
+        confirmedEmptyOnce.current = true
+        revealCachedConversation()
+        return
+      }
+      const recoveredOpening = conversationNeedsRecovery.current
+      conversationNeedsRecovery.current = false
       acceptFreshConversation()
       const receivedFullPage = journey.filter(isConversationJourneyMessage).length >= CHAT_CONVERSATION_MESSAGE_LIMIT
       conversationHasOlderMessagesRef.current = receivedFullPage &&
         conversationHistoryExhaustedContactIdRef.current !== contactId
       const cachedActivityEvents = contactJourneyRef.current.filter(isChatActivityEvent)
-      const nextJourney = silentRefresh
+      const nextJourney = silentRefresh && !recoveredOpening
         ? mergeJourneyEvents(contactJourneyRef.current, journey)
         : mergeJourneyEvents(journey, cachedActivityEvents)
       contactJourneyRef.current = nextJourney
@@ -8686,39 +8709,62 @@ export const PhoneChat: React.FC = () => {
         contact.id === contactId ? { ...contact, unreadCount: 0, agentGoalCompletedUnreviewed: false } : contact
       )))
 
+      if (!silentRefresh || recoveredOpening) {
+        writePhoneDailyCache(cacheKey, { journey: nextJourney, messages: nextMessages, agentCompletions: cachedAgentCompletions }, { maxEntryChars: 360_000 }, timezone)
+      }
+
       const [scheduledMessages, agentCompletions, activityJourney] = await Promise.all([
-        scheduledMessagesPromise,
-        agentCompletionsPromise,
-        activityJourneyPromise
+        withRequestTimeout({
+          request: signal => whatsappApiService.getScheduledMessages(contactId, { signal }),
+          timeoutMs: 8_000, timeoutMessage: 'Tiempo de espera de mensajes programados', signal
+        }).catch(() => null),
+        withRequestTimeout({
+          request: signal => conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }, { signal }),
+          timeoutMs: 8_000, timeoutMessage: 'Tiempo de espera de actividad del agente', signal
+        }).catch(() => null),
+        shouldRefreshActivityJourney
+          ? contactsService.getContactJourney(contactId, { refreshExternalStatuses: false, throwOnError: true, chatActivityOnly: true, signal }).catch(() => null)
+          : null
       ])
       if (!isCurrentConversationLoad()) return
 
-      const activityEvents = activityJourney.events.filter(isChatActivityEvent)
-      const canonicalJourney = activityJourney.loaded
+      const activityEvents = activityJourney?.filter(isChatActivityEvent)
+      const canonicalJourney = activityEvents
         ? mergeJourneyEvents(
-          nextJourney.filter((event) => !isChatActivityEvent(event)),
+          contactJourneyRef.current.filter((event) => !isChatActivityEvent(event)),
           activityEvents
         )
-        : nextJourney
-      const canonicalMessages = buildConversationMessages(canonicalJourney, scheduledMessages)
-      if (activityJourney.loaded) conversationActivityLoadedAtRef.current = Date.now()
+        : contactJourneyRef.current
+      const canonicalMessages = buildConversationMessages(canonicalJourney, scheduledMessages ?? [])
+      if (activityEvents) conversationActivityLoadedAtRef.current = Date.now()
       contactJourneyRef.current = canonicalJourney
       setContactJourney((currentJourney) => (
         areJourneyEventsEquivalent(currentJourney, canonicalJourney) ? currentJourney : canonicalJourney
       ))
-      setAgentCompletionEvents(agentCompletions)
+      if (agentCompletions) setAgentCompletionEvents(agentCompletions)
       setMessages((currentMessages) => {
         const mergedMessages = mergeConversationMessagesWithCurrent(canonicalMessages, currentMessages)
         return areMessagesEquivalent(currentMessages, mergedMessages) ? currentMessages : mergedMessages
       })
       writePhoneDailyCache(
         cacheKey,
-        { journey: canonicalJourney, messages: canonicalMessages, agentCompletions },
+        { journey: canonicalJourney, messages: canonicalMessages, agentCompletions: agentCompletions ?? cachedAgentCompletions },
         { maxEntryChars: 360_000 },
         timezone
       ) // (MOB-007)
-    } catch {
-      if (isCurrentConversationLoad() && !silentRefresh) {
+    } catch (error) {
+      if (!isCurrentConversationLoad()) return
+      const status = (error as { status?: number } | null)?.status
+      if (status === 401 || status === 403) {
+        removePhoneDailyCache(cacheKey)
+        conversationNeedsRecovery.current = false
+        conversationDenied.current = true
+        setMessagesAccessDenied(true)
+        setMessages([])
+        setContactJourney([])
+        setAgentCompletionEvents([])
+        contactJourneyRef.current = []
+      } else if (!silentRefresh) {
         const revealedFallback = cacheWasRevealed || revealCachedConversation()
         if (!revealedFallback) {
           setMessagesUsingCachedData(false)
@@ -8734,12 +8780,16 @@ export const PhoneChat: React.FC = () => {
         cacheRevealTimer = null
       }
       if (isCurrentConversationLoad()) {
-        setMessagesLoading(false)
+        if (!conversationNeedsRecovery.current || cacheWasRevealed) setMessagesLoading(false)
         setMessagesRefreshing(false)
-        finishConversationBottomLock(contactId)
+        if (!conversationNeedsRecovery.current) finishConversationBottomLock(contactId)
       }
     }
   }, [finishConversationBottomLock, locationId, persistChatsRead, timezone]) // (MOB-007)
+
+  const loadConversation = useCallback((contactId: string, options: { showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean } = {}) => (
+    conversationReads.current.run(contactId, !options.silent, signal => readConversation(contactId, options, signal))
+  ), [readConversation])
 
   const refreshActiveContactDetails = useCallback(async (
     contactId: string,
@@ -8822,8 +8872,7 @@ export const PhoneChat: React.FC = () => {
     })
     setMessagesLoading(false)
     setMessagesRefreshing(true)
-    messagesPaneNearBottomRef.current = true
-    queueMessagesPaneBottomScroll(0)
+    if (messagesPaneNearBottomRef.current) queueMessagesPaneBottomScroll(0)
   }, [applyRealtimePreviewToChatList, queueMessagesPaneBottomScroll])
 
   useEffect(() => {
@@ -9917,7 +9966,7 @@ export const PhoneChat: React.FC = () => {
   }, [clearQueuedBottomScrolls, conversationOpen])
 
   useLayoutEffect(() => {
-    if (!activeContact?.id || accessState !== 'allowed') {
+    if (!activeContact?.id || accessState !== 'allowed' || !conversationOpen) {
       conversationActivityLoadedAtRef.current = 0
       conversationInitialBottomLockRef.current = { contactId: null, active: false }
       setMessages([])
@@ -9931,8 +9980,13 @@ export const PhoneChat: React.FC = () => {
       return
     }
     conversationActivityLoadedAtRef.current = 0
-    loadConversation(activeContact.id)
-  }, [accessState, activeContact?.id, loadConversation])
+    void loadConversation(activeContact.id)
+    return () => {
+      conversationReads.current.cancel()
+      historyRequestRef.current?.abort()
+      conversationHistoryPrependRef.current = false
+    }
+  }, [accessState, activeContact?.id, conversationOpen, loadConversation])
 
   const shouldRefreshReceipts = useMemo(
     () => messages.some(shouldTrackOutboundReceipt),
@@ -10001,11 +10055,17 @@ export const PhoneChat: React.FC = () => {
       void refreshActiveContactDetails(openId).catch(() => undefined)
     }
     const reconcileOnReturn = () => reconcileOpenThread(true)
+    const retryOpening = window.setInterval(() => {
+      if (navigator.onLine && conversationNeedsRecovery.current) reconcileOpenThread(true)
+    }, 5_000)
     const interval = window.setInterval(() => reconcileOpenThread(false), CHAT_FALLBACK_REFRESH_INTERVAL_MS)
+    window.addEventListener('online', reconcileOnReturn)
     window.addEventListener('focus', reconcileOnReturn)
     document.addEventListener('visibilitychange', reconcileOnReturn)
     return () => {
       window.clearInterval(interval)
+      window.clearInterval(retryOpening)
+      window.removeEventListener('online', reconcileOnReturn)
       window.removeEventListener('focus', reconcileOnReturn)
       document.removeEventListener('visibilitychange', reconcileOnReturn)
     }
@@ -10181,6 +10241,7 @@ export const PhoneChat: React.FC = () => {
     })
 
     resizeObserver.observe(content)
+    resizeObserver.observe(pane)
 
     return () => {
       resizeObserver.disconnect()
@@ -10203,7 +10264,7 @@ export const PhoneChat: React.FC = () => {
       openedConversation ||
       finishedInitialLoad ||
       initialBottomLockActive ||
-      (messageWasAppended && (userWasAlreadyAtBottom || lastMessage?.direction === 'outbound'))
+      (messageWasAppended && (userWasAlreadyAtBottom || (lastMessage && isRecentOptimisticMessage(lastMessage))))
     )
 
     previousMessagesScrollRef.current = {
@@ -16919,6 +16980,10 @@ export const PhoneChat: React.FC = () => {
           <span>Abre una conversación para escribir, cobrar o agendar.</span>
         </div>
       )
+    }
+
+    if (messagesAccessDenied) {
+      return <div className={styles.emptyConversation}>Sin acceso a esta conversación.</div>
     }
 
     if (messagesLoading) {

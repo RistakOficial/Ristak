@@ -183,6 +183,9 @@ final class AnalyticsViewModel {
     private let queries: AnalyticsQueries
     private let recovery: AnalyticsRecovery
     private var cache: AnalyticsCache?
+    private var rangeSelectionTask: Task<Void, Never>?
+    private var chartSelectionTask: Task<Void, Never>?
+    private var funnelSelectionTask: Task<Void, Never>?
     private let snapshotGrace: Duration
     private var snapshotTasks: [AnalyticsRecovery.Panel: Task<Void, Never>] = [:]
     private var offline = false
@@ -203,6 +206,7 @@ final class AnalyticsViewModel {
 
     func start(config: AppConfigStore, includeWeb: Bool) async {
         guard !Task.isCancelled else { return }
+        cancelSelectionLoads()
         recovery.stop()
         let token = RistakSnapshotCache.shared.namespaceToken()
         if token != sessionToken {
@@ -248,7 +252,17 @@ final class AnalyticsViewModel {
         await reloadAll()
     }
 
+    private func cancelSelectionLoads() {
+        rangeSelectionTask?.cancel()
+        chartSelectionTask?.cancel()
+        funnelSelectionTask?.cancel()
+        rangeSelectionTask = nil
+        chartSelectionTask = nil
+        funnelSelectionTask = nil
+    }
+
     func stop() {
+        cancelSelectionLoads()
         configStore = nil
         primaryReloadGeneration += 1
         primaryReloadInProgress = false
@@ -292,8 +306,9 @@ final class AnalyticsViewModel {
         period = newPeriod
         customRange = nil
         range = resolveRange()
+        cancelSelectionLoads()
         hydrateAllFromCache()
-        Task { _ = await reloadAll() }
+        rangeSelectionTask = Task { _ = await reloadAll() }
     }
 
     /// Aplica un rango personalizado (fechas elegidas con date pickers).
@@ -308,8 +323,9 @@ final class AnalyticsViewModel {
         period = .custom
         customRange = newRange
         range = newRange
+        cancelSelectionLoads()
         hydrateAllFromCache()
-        Task { _ = await reloadAll() }
+        rangeSelectionTask = Task { _ = await reloadAll() }
         return nil
     }
 
@@ -345,24 +361,27 @@ final class AnalyticsViewModel {
         guard chartKinds.contains(kind), kind != chartKind else { return }
         chartKind = kind
         guard let range else { return }
+        chartSelectionTask?.cancel()
         hydrateChart(range)
-        Task { _ = await loadChart(range) }
+        chartSelectionTask = Task { _ = await loadChart(range) }
     }
 
     func selectFinancialScope(_ scope: DashboardScope) {
         guard scope != financialScope else { return }
         financialScope = scope
         guard let range, chartKind == .revenueSpend else { return }
+        chartSelectionTask?.cancel()
         hydrateChart(range)
-        Task { _ = await loadChart(range) }
+        chartSelectionTask = Task { _ = await loadChart(range) }
     }
 
     func selectFunnelScope(_ scope: DashboardScope) {
         guard scope != funnelScope else { return }
         funnelScope = scope
         guard let range else { return }
+        funnelSelectionTask?.cancel()
         hydrateFunnel(range)
-        Task { _ = await loadFunnel(range) }
+        funnelSelectionTask = Task { _ = await loadFunnel(range) }
     }
 
     /// El panel ya existente dispara esta carga cuando entra en pantalla. No
@@ -411,10 +430,6 @@ final class AnalyticsViewModel {
         let succeeded = metricsOK && chartOK && funnelOK && originOK
         if primaryReloadGeneration == reloadGeneration && isActiveSession && !Task.isCancelled {
             primaryReloadInProgress = false
-            if metricsOK && deniedGeneration != reloadGeneration && accessDenied {
-                accessDenied = false
-                AnalyticsCache.accessDenied = false
-            }
             scheduleOriginPhoneBreakdownIfNeeded()
         }
         performanceSpan.finish(
@@ -533,6 +548,10 @@ final class AnalyticsViewModel {
                 range.endDate
             )
             guard isCurrent(request), self.range == range else { return false }
+            if accessDenied && deniedGeneration != primaryReloadGeneration {
+                accessDenied = false
+                AnalyticsCache.accessDenied = false
+            }
             metrics.value = snapshot
             metrics.isLoading = false
             cache?.storeMetrics(snapshot, range)
@@ -540,7 +559,7 @@ final class AnalyticsViewModel {
             return true
         } catch {
             guard isCurrent(request), self.range == range else { return false }
-            metrics = applyFailure(error, request: request, cacheKey: cache?.metricsKey(range), to: metrics, empty: nil)
+            metrics = applyFailure(error, request: request, to: metrics, empty: nil)
             return false
         }
     }
@@ -587,7 +606,7 @@ final class AnalyticsViewModel {
             return true
         } catch {
             guard isCurrent(request), isCurrentChartRequest(range, kind, scope) else { return false }
-            chart = applyFailure(error, request: request, cacheKey: cache?.chartKey(range, kind, scope), to: chart, empty: [])
+            chart = applyFailure(error, request: request, to: chart, empty: [])
             return false
         }
     }
@@ -620,7 +639,7 @@ final class AnalyticsViewModel {
             return true
         } catch {
             guard isCurrent(request), self.range == range, funnelScope == scope else { return false }
-            funnel = applyFailure(error, request: request, cacheKey: cache?.funnelKey(range, scope), to: funnel, empty: [])
+            funnel = applyFailure(error, request: request, to: funnel, empty: [])
             return false
         }
     }
@@ -654,7 +673,7 @@ final class AnalyticsViewModel {
             return true
         } catch {
             guard isCurrent(request), self.range == range else { return false }
-            origin = applyFailure(error, request: request, cacheKey: cache?.originKey(range), to: origin, empty: nil)
+            origin = applyFailure(error, request: request, to: origin, empty: nil)
             return false
         }
     }
@@ -769,9 +788,10 @@ final class AnalyticsViewModel {
     @discardableResult
     private func retryTemporary(_ error: Error, _ request: AnalyticsRecovery.Request) -> Bool {
         guard isCurrent(request), Self.isTemporary(error) else { return false }
-        if !accessDenied {
+        if deniedGeneration != primaryReloadGeneration {
             recovery.retry(request) { [weak self] in
-                guard let self, self.isCurrent(request), let range = self.range, !self.accessDenied else { return }
+                guard let self, self.isCurrent(request), let range = self.range,
+                      self.deniedGeneration != self.primaryReloadGeneration else { return }
                 switch request.panel {
                 case .metrics: await self.retryMetrics()
                 case .chart: await self.retryChart()
@@ -799,7 +819,6 @@ final class AnalyticsViewModel {
     private func applyFailure<Value: Decodable>(
         _ error: Error,
         request: AnalyticsRecovery.Request,
-        cacheKey: String?,
         to state: AnalyticsPanelState<Value>,
         empty: Value?
     ) -> AnalyticsPanelState<Value> {
@@ -820,7 +839,7 @@ final class AnalyticsViewModel {
             AnalyticsCache.accessDenied = true
             next.value = nil
         } else if api?.kind == .featureUnavailable {
-            if let cacheKey { RistakSnapshotCache.shared.remove(cacheKey) }
+            if let key = state.cacheKey { RistakSnapshotCache.shared.remove(key) }
             next.value = empty
         } else if next.value == nil {
             next.errorMessage = api?.message ?? "No se pudo cargar la información."

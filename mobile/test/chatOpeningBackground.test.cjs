@@ -431,9 +431,14 @@ test('una notificacion resuelve y abre un contacto nuevo sin depender del inbox 
 
 test('el ancla al ultimo mensaje se consume una sola vez cuando ya existen filas', () => {
   const gate = new ConversationLatestAnchorGate();
-  assert.equal(gate.consume(0), false);
-  assert.equal(gate.consume(10), true);
-  assert.equal(gate.consume(11), false);
+  assert.equal(gate.consume(0, { viewportHeight: 0 }), false);
+  assert.equal(gate.consume(10, { contentHeight: 1200 }), false);
+  assert.equal(gate.consume(10, { viewportHeight: 600 }), true);
+  assert.equal(gate.consume(11, { contentHeight: 1300 }), false);
+  const reading = new ConversationLatestAnchorGate();
+  assert.equal(reading.consume(10, { viewportHeight: 600 }), false);
+  reading.cancel();
+  assert.equal(reading.consume(10, { contentHeight: 1200 }), false);
 });
 
 test('cada pagina historica exige y consume un arrastre real del usuario', () => {
@@ -447,7 +452,7 @@ test('cada pagina historica exige y consume un arrastre real del usuario', () =>
 test('App monta el hilo antes de leer caché y conserva el ancla nativa en offset cero', () => {
   assert.doesNotMatch(appSource, /preloadCacheKeys\(\[cacheKey\]\)\.finally\(mountConversation\)/);
   assert.match(appSource, /setSelected\(contact\);/);
-  assert.match(appSource, /conversationLatestAnchorGateRef\.current\.consume\(conversationRenderItems\.length\)/);
+  assert.match(appSource, /conversationLatestAnchorGateRef\.current\.consume\(filteredMessages\.length, layout\)/);
   assert.match(appSource, /scrollConversationToLatest\(false\)/);
   assert.match(appSource, /maintainVisibleContentPosition=\{\{ minIndexForVisible: 0, autoscrollToTopThreshold: 24 \}\}/);
   assert.match(appSource, /conversationHistoryPaginationGateRef\.current\.userDidBeginScrolling\(\)/);
@@ -460,6 +465,13 @@ test('App monta el hilo antes de leer caché y conserva el ancla nativa en offse
   assert.match(appSource, /api\.getContactJourney\(contactId, primaryAbortController\.signal, false\)/);
   assert.match(appSource, /loadConversationWithSuccessfulEmptyRecovery\(/);
   assert.doesNotMatch(appSource, /conversationInitialRetryTimerRef/);
+});
+
+test('el hilo valida la respuesta contradictoria antes de desactivar el respaldo', () => {
+  const load = appSource.slice(appSource.indexOf('const loadConversation = useCallback'), appSource.indexOf('conversationLoadLatestRef.current = loadConversation'));
+  const rejected = load.indexOf("throw new Error('El servidor no entregó el historial");
+  assert.ok(rejected >= 0 && rejected < load.indexOf('acceptFreshConversation()'));
+  assert.match(load, /messagesRef\.current\.length \? messagesRef\.current : conversationCacheFallbackRef\.current/);
 });
 
 test('el binario declara la capacidad headless y actualiza inbox mas hilos recientes', () => {

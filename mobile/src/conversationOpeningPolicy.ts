@@ -61,8 +61,17 @@ export async function loadConversationWithSuccessfulEmptyRecovery<T>(
 export class ConversationLatestAnchorGate {
   private pending = true;
 
-  consume(itemCount: number) {
-    if (!this.pending || itemCount <= 0) return false;
+  private viewportHeight = 0;
+  private contentHeight = 0;
+
+  cancel() {
+    this.pending = false;
+  }
+
+  consume(itemCount: number, layout: { viewportHeight?: number; contentHeight?: number }) {
+    if (layout.viewportHeight !== undefined) this.viewportHeight = layout.viewportHeight;
+    if (layout.contentHeight !== undefined) this.contentHeight = layout.contentHeight;
+    if (!this.pending || itemCount <= 0 || this.viewportHeight <= 0 || this.contentHeight <= 0) return false;
     this.pending = false;
     return true;
   }

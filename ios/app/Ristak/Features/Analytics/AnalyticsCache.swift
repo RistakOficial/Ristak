@@ -82,23 +82,11 @@ struct AnalyticsCache: Equatable {
 
     // MARK: - KPIs
 
-    func readMetrics(_ range: AnalyticsDateRange) -> DashboardMetricsSnapshot? {
-        Self.cache.value(DashboardMetricsSnapshot.self, for: metricsKey(range))
-    }
-
     func storeMetrics(_ snapshot: DashboardMetricsSnapshot, _ range: AnalyticsDateRange) {
         Self.cache.store(MetricsDTO(snapshot), for: metricsKey(range))
     }
 
     // MARK: - Gráfica
-
-    func readChart(
-        _ range: AnalyticsDateRange,
-        _ kind: AnalyticsChartKind,
-        _ scope: DashboardScope
-    ) -> [AnalyticsChartPoint]? {
-        Self.cache.value([AnalyticsChartPoint].self, for: chartKey(range, kind, scope))
-    }
 
     func storeChart(
         _ points: [AnalyticsChartPoint],
@@ -112,19 +100,11 @@ struct AnalyticsCache: Equatable {
 
     // MARK: - Embudo
 
-    func readFunnel(_ range: AnalyticsDateRange, _ scope: DashboardScope) -> [DashboardFunnelRow]? {
-        Self.cache.value([DashboardFunnelRow].self, for: funnelKey(range, scope))
-    }
-
     func storeFunnel(_ rows: [DashboardFunnelRow], _ range: AnalyticsDateRange, _ scope: DashboardScope) {
         Self.cache.store(rows.map(FunnelRowDTO.init), for: funnelKey(range, scope))
     }
 
     // MARK: - Origen
-
-    func readOrigin(_ range: AnalyticsDateRange) -> OriginDistributionSnapshot? {
-        Self.cache.value(OriginDistributionSnapshot.self, for: originKey(range))
-    }
 
     func storeOrigin(_ snapshot: OriginDistributionSnapshot, _ range: AnalyticsDateRange) {
         Self.cache.store(OriginDTO(snapshot), for: originKey(range))

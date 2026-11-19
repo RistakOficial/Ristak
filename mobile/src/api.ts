@@ -87,6 +87,7 @@ function createNativeExternalId(prefix: string) {
 }
 
 type RequestOptions = RequestInit & {
+  expectJson?: 'array' | 'object';
   params?: Record<string, string | number | boolean | undefined>;
   timeoutMs?: number;
 };
@@ -401,6 +402,7 @@ export class RistakApiClient {
     const {
       params,
       timeoutMs,
+      expectJson,
       signal: callerSignal,
       ...fetchOptions
     } = options;
@@ -435,7 +437,7 @@ export class RistakApiClient {
         signal: controller.signal,
       });
 
-      if (response.status === 204) {
+      if (response.status === 204 && !expectJson) {
         return {} as T;
       }
 
@@ -479,15 +481,20 @@ export class RistakApiClient {
         throw error;
       }
 
-      if (
-        payload && typeof payload === 'object'
-        && 'success' in payload && 'data' in payload
-        && (payload as { data?: unknown }).data !== undefined
-      ) {
-        return (payload as { data: T }).data;
+      let data = payload;
+      if (payload && typeof payload === 'object' && 'success' in payload && 'data' in payload && payload.data !== undefined) {
+        data = payload.data;
+      } else if (!expectJson && data == null) {
+        data = {};
       }
-
-      return (payload ?? {}) as T;
+      if (expectJson && (expectJson === 'array'
+        ? !Array.isArray(data)
+        : !data || typeof data !== 'object' || Array.isArray(data))) {
+        const error = new Error('El servidor devolvió una respuesta incompleta.') as ApiError;
+        error.code = 'invalid_response';
+        throw error;
+      }
+      return data as T;
     } catch (error) {
       if (timedOut) {
         const timeoutError = new Error('El servidor tardó demasiado en responder. Intenta de nuevo.') as ApiError;
@@ -768,6 +775,7 @@ export class RistakApiClient {
       ? { beforeMessageDate: options }
       : (options || {});
     return this.request<JourneyEvent[]>(`/contacts/${encodeURIComponent(contactId)}/conversation`, {
+      expectJson: 'array',
       timeoutMs: 10_000,
       signal: normalizedOptions.signal || legacySignal,
       params: {
@@ -781,6 +789,7 @@ export class RistakApiClient {
 
   getContactJourney(contactId: string, signal?: AbortSignal, chatActivityOnly = false) {
     return this.request<JourneyEvent[]>(`/contacts/${encodeURIComponent(contactId)}/journey`, {
+      expectJson: 'array',
       timeoutMs: 15_000,
       signal,
       params: {
@@ -1441,8 +1450,10 @@ export class RistakApiClient {
     return this.request<LicenseStatusResponse>('/license/status');
   }
 
-  getDashboardMetrics(startDate: string, endDate: string) {
+  getDashboardMetrics(startDate: string, endDate: string, signal?: AbortSignal) {
     return this.request<DashboardMetrics>('/dashboard/metrics', {
+      expectJson: 'object',
+      signal,
       params: {
         startDate,
         endDate,
@@ -1450,8 +1461,10 @@ export class RistakApiClient {
     });
   }
 
-  getFinancialOverview(startDate: string, endDate: string, scope: DashboardFunnelScope = 'all') {
+  getFinancialOverview(startDate: string, endDate: string, scope: DashboardFunnelScope = 'all', signal?: AbortSignal) {
     return this.request<DashboardFinancialPoint[]>('/dashboard/financial-overview', {
+      expectJson: 'array',
+      signal,
       params: {
         startDate,
         endDate,
@@ -1465,8 +1478,11 @@ export class RistakApiClient {
     startDate: string,
     endDate: string,
     groupBy: 'day' | 'month' = 'day',
+    signal?: AbortSignal,
   ) {
     return this.request<DashboardSeriesPoint[]>(`/dashboard/${kind}`, {
+      expectJson: 'array',
+      signal,
       params: {
         startDate,
         endDate,
@@ -1480,8 +1496,11 @@ export class RistakApiClient {
     endDate: string,
     scope: DashboardFunnelScope = 'all',
     includeWeb = true,
+    signal?: AbortSignal,
   ) {
     return this.request<DashboardFunnelRow[]>('/dashboard/funnel', {
+      expectJson: 'array',
+      signal,
       params: {
         startDate,
         endDate,
@@ -1491,8 +1510,10 @@ export class RistakApiClient {
     });
   }
 
-  getOriginDistribution(startDate: string, endDate: string, includeWeb = true) {
+  getOriginDistribution(startDate: string, endDate: string, includeWeb = true, signal?: AbortSignal) {
     return this.request<OriginDistributionData>('/dashboard/origin-distribution', {
+      expectJson: 'object',
+      signal,
       params: {
         startDate,
         endDate,
@@ -1505,6 +1526,7 @@ export class RistakApiClient {
 
   getOriginPhoneBreakdown(startDate: string, endDate: string, signal?: AbortSignal) {
     return this.request<OriginDistributionData>('/dashboard/origin-distribution', {
+      expectJson: 'object',
       signal,
       params: {
         startDate,
@@ -1518,8 +1540,8 @@ export class RistakApiClient {
     });
   }
 
-  getWhatsAppApiStatus() {
-    return this.request<WhatsAppApiStatus>('/whatsapp-api/status');
+  getWhatsAppApiStatus(signal?: AbortSignal) {
+    return this.request<WhatsAppApiStatus>('/whatsapp-api/status', { expectJson: 'object', signal });
   }
 
   getCustomLabels() {
@@ -1622,8 +1644,10 @@ export class RistakApiClient {
     });
   }
 
-  getConfig(keys: string[]) {
+  getConfig(keys: string[], signal?: AbortSignal) {
     return this.request<{ config?: Record<string, ConfigValue> } | Record<string, ConfigValue>>('/config', {
+      expectJson: 'object',
+      signal,
       params: {
         keys: keys.join(','),
       },

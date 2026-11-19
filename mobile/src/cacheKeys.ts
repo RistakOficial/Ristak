@@ -29,25 +29,31 @@ export function paymentRecentCacheKey(period: string, startDate: string, endDate
   return `payments:recent:${period}:${startDate}_${endDate}`;
 }
 
-export function analyticsMetricsCacheKey(startDate: string, endDate: string): string {
-  return `analytics:metrics:${startDate}_${endDate}`;
+export type AnalyticsRangeContext = {
+  startDate: string;
+  endDate: string;
+  timezone: string;
+  currency: string;
+};
+
+function analyticsRangeKey(range: AnalyticsRangeContext) {
+  return [range.startDate, range.endDate, range.timezone, range.currency].join('|');
 }
 
-export function analyticsChartCacheKey(
-  startDate: string,
-  endDate: string,
-  chartView: string,
-  scope: string,
-): string {
-  return `analytics:chart:${startDate}_${endDate}:${chartView}:${scope}`;
+export function analyticsMetricsCacheKey(range: AnalyticsRangeContext): string {
+  return `analytics:metrics:${analyticsRangeKey(range)}`;
 }
 
-export function analyticsFunnelCacheKey(startDate: string, endDate: string, scope: string): string {
-  return `analytics:funnel:${startDate}_${endDate}:${scope}`;
+export function analyticsChartCacheKey(range: AnalyticsRangeContext, chartView: string, scope: string): string {
+  return `analytics:chart:${analyticsRangeKey(range)}:${chartView}:${scope}`;
 }
 
-export function analyticsOriginCacheKey(startDate: string, endDate: string, hasWebAnalyticsAccess: boolean): string {
-  return `analytics:origin:${startDate}_${endDate}:${hasWebAnalyticsAccess ? 'web' : 'crm'}`;
+export function analyticsFunnelCacheKey(range: AnalyticsRangeContext, scope: string, includeWeb: boolean): string {
+  return `analytics:funnel:${analyticsRangeKey(range)}:${scope}:${includeWeb ? 'web' : 'crm'}`;
+}
+
+export function analyticsOriginCacheKey(range: AnalyticsRangeContext, includeWeb: boolean, family: 'origin' | 'phone-origin' = 'origin'): string {
+  return `analytics:${family}:${analyticsRangeKey(range)}:${includeWeb ? 'web' : 'crm'}`;
 }
 
 export function conversationCacheKey(contactId: string): string {

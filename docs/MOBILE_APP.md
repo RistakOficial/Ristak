@@ -164,8 +164,7 @@ overscroll; el mensaje mas reciente queda junto al composer. Android monta el
 hilo y dispara `/conversation` inmediatamente; el archivo local se lee en
 paralelo y queda oculto durante una gracia de 350 ms. Si la respuesta viva llega
 antes, el snapshot nunca se pinta. Si la red rebasa esa gracia o falla, se muestra
-la copia local con el aviso `Mostrando información guardada`. Un timeout o `5xx` sin snapshot produce error inline,
-sin abrir `/journey` ni iniciar reintentos ocultos, y deja un boton manual;
+la copia local con el aviso `Mostrando información guardada`. Un timeout o `5xx` sin snapshot deja disponible el reintento del hilo;
 nunca se presenta como `Aun no hay mensajes`. Un `200 []` contradictorio con el
 preview/conteo del inbox intenta una sola recuperacion por journey y jamas borra
 un snapshot visible.
@@ -195,8 +194,9 @@ respaldo adaptativo, no como ruta normal: Android reconcilia bandeja e hilo cada
 durante la desconexion, 2 min para la bandeja conectada y no mantiene polling
 periodico del hilo conectado. Tras una desconexion real, ambos clientes hacen
 una reconciliacion canonica al reconectar. La primera conexion no se trata como
-reconexion ni duplica el bootstrap; en iOS, si el GET inicial fallo con el stream
-sano, se permite una sola recuperacion silenciosa. Ningun cliente vuelve al poll
+reconexion ni duplica el bootstrap; en iOS, si la primera descarga del hilo falla con el stream
+sano, iOS sigue reintentando cada 25 segundos mientras el hilo esté visible.
+Tras una descarga válida deja de hacer ese sondeo. Ningun cliente vuelve al poll
 fijo de 12 s/4 s.
 
 Los nudges de SSE, push y polling comparten backpressure. Una rafaga admite como
@@ -821,22 +821,24 @@ grafica de doble serie reserva un techo visual del 20 % sobre el valor maximo
 —el dato mas alto ocupa como maximo 80 % del plot— y cada linea lleva un
 relleno degradado sutil hacia la base sin modificar los valores ni los callouts.
 
-En `ios/app`, una revalidacion solo se considera fresca cuando completaron
-metricas, grafica, embudo y origen. Si alguno falla, se conservan los snapshots
-disponibles pero la pantalla muestra que no todo pudo actualizarse, y al volver a
-foreground vuelve a intentar. La consulta de numeros de WhatsApp corre aparte de
-Origen: un fallo de telefonos no bloquea ese panel ni borra los numeros
-cacheados; la cache secundaria solo se reemplaza tras una respuesta exitosa.
+Al entrar a Analíticas en iPhone, Android y web móvil, la pantalla pide datos
+al servidor. Una respuesta rápida aparece directamente. Si la red tarda o se
+interrumpe, cada panel puede usar la última consulta guardada para esa cuenta,
+periodo y selección. Un periodo sin copia muestra carga hasta recibir cifras.
+Cambiar de usuario, rango o filtro descarta las respuestas de la consulta
+anterior. En la primera apertura tras actualizar, las copias antiguas que carecen
+de moneda, zona o permisos verificables requieren una consulta exitosa para
+generar el nuevo respaldo. Mientras la pantalla sigue abierta se reintentan las lecturas pendientes.
+Al volver a la app o recuperar internet se vuelve a consultar. Un panel que ya
+cargó conserva sus cifras si falla otro. La falta de permisos sí se muestra.
 
-La licencia `web_analytics` se respeta igual que en `/movil`: sin esa feature no
-se pide la serie de visitantes, `funnel` y `origin-distribution` mandan
-`includeWeb=0`, y la UI oculta `Visitantes`/`Trafico` en vez de convertir un 403
-silencioso en ceros falsos.
-
-En Android, contexto de cuenta, resumen/KPIs, grafica, embudo y origen conservan
-estado de carga y error independiente. Si falla una de esas consultas, su panel
-muestra el error con `Reintentar` y no lo convierte en cero ni en `Sin datos`;
-los paneles que si respondieron permanecen utilizables.
+En iPhone, el tráfico y la serie de
+visitantes requieren acceso a `web_analytics`. Con planes que solo incluyen el
+resumen, embudo y origen consultan `includeWeb=0`. Los números de WhatsApp son
+una carga aparte. Android carga por separado cuenta, indicadores, origen, embudo
+y gráfica, con reintentos de 2 a 30 segundos para los fallos transitorios.
+En web móvil, el resumen viaja en una petición y los desgloses se cargan cuando
+se necesitan. Al cerrar la pantalla se cancelan sus consultas y reintentos.
 
 El acceso a esta pantalla usa el modulo ACL `dashboard` tanto en Android como en
 `/movil`, porque su contrato principal son los endpoints `/api/dashboard/*` y el
@@ -1874,17 +1876,27 @@ llevar al ultimo
 mensaje durante la carga inicial o cuando el usuario ya esta abajo; si el
 usuario esta arrastrando o navegando el historial, ningun recalculo de contenido
 debe devolverlo forzosamente al ultimo mensaje.
-En iOS, durante la apertura el ancla inferior observa el timeline completo y la
-altura del contenido: vuelve a reafirmar el ultimo mensaje mientras se asienta la
-carga primaria y se detiene en cuanto termina esa fase o el usuario inicia su
-primer gesto vertical. Después conserva la posicion del usuario. Cargar mensajes
-anteriores exige que ese gesto alcance el borde superior; la materializacion del
-`LazyVStack` por sí sola no tiene permiso de paginar. Al abrir,
-cerrar o redimensionar el teclado, la conversación captura si el usuario estaba
-abajo antes del relayout y reafirma el centinela inferior al inicio y al final de
-la animación reportada por UIKit. Así el `LazyVStack` conserva materializadas las
-burbujas visibles; nunca debe quedar el fondo vacío hasta cerrar y volver a abrir
-el teclado.
+En iPhone y iPad, SwiftUI abre la conversación en su borde inferior, con
+el último mensaje junto al campo de escritura. Al subir a leer, el gesto toma
+control de la posición. Solo un gesto hacia el historial habilita la carga de
+mensajes anteriores. Al abrir o cerrar el teclado se conserva el borde inferior
+si el usuario estaba allí. La animación del teclado y el botón para volver al
+último mensaje respetan la navegación posterior del usuario.
+
+Al abrir un chat desde una notificación en iPhone, la conversación también se
+carga si la cuenta termina de identificarse después del toque. Una página vacía
+que contradice la bandeja o el historial guardado se contrasta con los mensajes
+de la actividad del contacto (`chatMessagesOnly`). Si esa segunda consulta
+también está vacía, se retira el historial guardado. Si falla, se conserva la
+copia y se vuelve a intentar. En `/movil`, los avisos que llegan durante la primera descarga
+se agrupan en una consulta posterior. En Android, la lista invertida espera a
+conocer el tamaño de los mensajes y del área visible antes de fijar su posición
+inicial. El primer arrastre entrega el control al usuario.
+La prueba manual de GitHub Actions `iPhone regression tests` ejecuta las
+pruebas unitarias y abre la bandeja y una conversación real en un simulador de
+iPhone. Comprueba el primer toque y la vuelta al último mensaje desde el
+historial. Se puede ejecutar sin credenciales de una cuenta o de las tiendas.
+
 Las fotos, videos, documentos, archivos y enlaces tocados desde el hilo o desde
 `Archivos del chat` no deben abrir Safari/Chrome en el primer tap: deben abrir el
 modal de enfoque propio de Ristak. Imagenes y videos se presentan dentro del

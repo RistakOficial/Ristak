@@ -478,9 +478,9 @@ test('los envios secundarios conservan identidad estable y Analiticas no disfraz
   assert.match(apiSource, /externalId: externalId \|\| createNativeExternalId\('native-template'\)/);
   assert.match(appSource, /quickPaymentIntentRef[\s\S]*id: intent\.transactionId/);
   assert.match(appSource, /scheduleSendIntentRef[\s\S]*api\.scheduleText\([\s\S]*scheduledId/);
-  assert.match(appSource, /setChartError\(/);
-  assert.match(appSource, /setFunnelError\(/);
-  assert.match(appSource, /setOriginError\(/);
+  assert.match(appSource, /chartError = chart.error/);
+  assert.match(appSource, /funnelError = funnel.error/);
+  assert.match(appSource, /originError = origin.error/);
   assert.doesNotMatch(appSource, /getOriginDistribution\([^\n]+\)\.catch\(\(\) => EMPTY_ORIGIN_DATA\)/);
 });
 

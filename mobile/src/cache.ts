@@ -303,6 +303,7 @@ export async function readCache<T>(key: string, fallback: T): Promise<T> {
     if (!raw) return fallback;
     const value = readEnvelope(raw);
     if (value === undefined) return fallback;
+    if (memory.has(targetPath)) return memory.get(targetPath) as T;
     memory.set(targetPath, value);
     return value as T;
   } catch {
