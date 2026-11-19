@@ -33,9 +33,9 @@ import type { WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
 import { formatCurrency, formatDate, formatDateToISO, formatNumber, formatRoas } from '@/utils/format'
 import { hasWebAnalyticsAccess as canAccessWebAnalytics } from '@/utils/accessControl'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
-import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache, removePhoneDailyCache, removePhoneDailyCacheGroup } from '@/services/phoneDailyCache'
+import { getPhoneDailyCacheKey, removePhoneDailyCacheGroup } from '@/services/phoneDailyCache'
 import { getApiBaseUrl } from '@/services/apiBaseUrl'
-import { refreshAnalyticsRead } from './refreshAnalyticsRead'
+import { getSavedAnalyticsSections, refreshPeriodReading, savePeriodReading } from './periodCache'
 import styles from './PhoneAnalytics.module.css'
 
 type AnalyticsPeriod = '30d' | '60d' | '180d' | 'year'
@@ -339,6 +339,10 @@ const PhoneAnalyticsContent: React.FC<{
   const [funnelLoading, setFunnelLoading] = useState(true)
   const [originLoading, setOriginLoading] = useState(true)
   const [snapshotVersion, setSnapshotVersion] = useState(0)
+  const [summaryThrough, setSummaryThrough] = useState('')
+  const [chartThrough, setChartThrough] = useState('')
+  const [funnelThrough, setFunnelThrough] = useState('')
+  const [numbersThrough, setNumbersThrough] = useState('')
   const [originPanelVisible, setOriginPanelVisible] = useState(false)
 
   const [day, setDay] = useState(() => todayDateOnlyInTimezone(timezone))
@@ -357,12 +361,13 @@ const PhoneAnalyticsContent: React.FC<{
   const [funnelDenied, setFunnelDenied] = useState(false)
   const groupBy = useMemo(() => getGroupBy(period), [period])
   const rangeKey = useMemo(() => `${formatDateToISO(range.start)}:${formatDateToISO(range.end)}:${hasWebAnalyticsAccess ? 1 : 0}`, [hasWebAnalyticsAccess, range.end, range.start])
+  const periodQuery = useMemo(() => ({ scope, period, rangeKey, through: day, timezone }), [scope, period, rangeKey, day, timezone])
   const activePeriod = PERIOD_OPTIONS.find((option) => option.id === period) || PERIOD_OPTIONS[0]
   const snapshotRequestIdRef = useRef(0)
   const snapshotReadyRangeRef = useRef('')
   const phoneOriginRangeRef = useRef('')
   const phoneOriginRequestIdRef = useRef(0)
-  const mobileSnapshotRef = useRef<DashboardMobileAnalyticsSnapshot | null>(null)
+  const mobileSnapshotRef = useRef<{ data: DashboardMobileAnalyticsSnapshot; through: string } | null>(null)
   const funnelScopeRef = useRef(funnelScope)
   const financialScopeRef = useRef(financialScope)
   const chartViewRef = useRef(chartView)
@@ -415,16 +420,24 @@ const PhoneAnalyticsContent: React.FC<{
       financialScope: requestedFinancialScope,
       includePhoneBreakdown: false
     }
-    const cacheKey = getPhoneDailyCacheKey(scope, rangeKey, requestedFunnelScope, requestedFinancialScope)
-    const cachedSnapshot = () => readPhoneDailyCache<DashboardMobileAnalyticsSnapshot>(cacheKey, timezone)?.data ?? null
-
-    const applySnapshot = (snapshot: DashboardMobileAnalyticsSnapshot, live: boolean) => {
+    const applySnapshot = (snapshot: DashboardMobileAnalyticsSnapshot, through: string, live: boolean) => {
       if (requestId !== snapshotRequestIdRef.current) return
-      if (live) writePhoneDailyCache(cacheKey, snapshot, {}, timezone)
+      setSummaryThrough(through)
       setDenied(false)
       const becameReady = snapshotReadyRangeRef.current !== rangeKey
+      const previousScopes = mobileSnapshotRef.current?.data.scopes
+      const scopesChanged = previousScopes?.financial !== snapshot.scopes.financial || previousScopes?.funnel !== snapshot.scopes.funnel
+      const financialChart = snapshot.financialChart.map(item => ({
+        label: item.label, value: item.value || 0, value2: item.value2 || 0
+      }))
+      if (live) {
+        // Los indicadores y el origen son comunes al periodo. Cada serie conserva
+        // la atribución con la que se obtuvo, también cuando llegó en el resumen.
+        savePeriodReading(periodQuery, ['funnel', snapshot.scopes.funnel], { data: snapshot.funnel, through })
+        savePeriodReading(periodQuery, ['chart', 'revenue-spend', snapshot.scopes.financial, groupBy], { data: financialChart, through })
+      }
       const snapshotPhoneNumbers = snapshot.origin?.whatsappNumbers || []
-      mobileSnapshotRef.current = snapshot
+      mobileSnapshotRef.current = { data: snapshot, through }
       snapshotReadyRangeRef.current = rangeKey
       setMetrics(snapshot.metrics)
       setOriginData(current => ({
@@ -446,36 +459,39 @@ const PhoneAnalyticsContent: React.FC<{
 
       if (funnelScopeRef.current === snapshot.scopes.funnel) {
         setFunnelData(snapshot.funnel)
+        setFunnelThrough(through)
         setFunnelLoading(false)
       }
       if (
         chartViewRef.current === 'revenue-spend' &&
         financialScopeRef.current === snapshot.scopes.financial
       ) {
-        setChartData(snapshot.financialChart.map(item => ({
-          label: item.label,
-          value: item.value || 0,
-          value2: item.value2 || 0
-        })))
+        setChartData(financialChart)
+        setChartThrough(through)
         setChartLoading(false)
       }
       setLoading(false)
       setOriginLoading(false)
-      if (becameReady) setSnapshotVersion(version => version + 1)
+      if (becameReady || scopesChanged) setSnapshotVersion(version => version + 1)
     }
 
     mobileSnapshotRef.current = null
     snapshotReadyRangeRef.current = ''
     phoneOriginRangeRef.current = ''
+    setSummaryThrough('')
+    setFunnelThrough('')
+    setChartThrough('')
+    setNumbersThrough('')
     setLoading(true)
     setOriginLoading(true)
     setFunnelLoading(true)
     setChartLoading(true)
     setDetectedPhones([])
     setDenied(false)
-    return refreshAnalyticsRead({
+    return refreshPeriodReading(periodQuery, ['summary'], {
+      legacyFilters: [requestedFunnelScope, requestedFinancialScope],
+      isCurrent: () => requestId === snapshotRequestIdRef.current,
       read: signal => dashboardService.getMobileAnalyticsSnapshot(snapshotParams, { signal, forceRefresh: true }),
-      cached: cachedSnapshot,
       apply: applySnapshot,
       denied: () => {
         removePhoneDailyCacheGroup(getPhoneDailyCacheKey(scope))
@@ -485,69 +501,69 @@ const PhoneAnalyticsContent: React.FC<{
         setDenied(true)
       }
     })
-  }, [scope, timezone, hasWebAnalyticsAccess, range.end, range.start, rangeKey])
+  }, [periodQuery, scope, groupBy, hasWebAnalyticsAccess, range.end, range.start, rangeKey])
 
   useEffect(() => {
     if (!originPanelVisible || snapshotReadyRangeRef.current !== rangeKey) return
     const requestId = ++phoneOriginRequestIdRef.current
-    const cacheKey = getPhoneDailyCacheKey(scope, rangeKey, 'numbers')
-    return refreshAnalyticsRead({
+    return refreshPeriodReading(periodQuery, ['numbers'], {
+      isCurrent: () => requestId === phoneOriginRequestIdRef.current && snapshotReadyRangeRef.current === rangeKey,
       read: async signal => (await dashboardService.getOriginDistribution({
         start: range.start, end: range.end, includeWeb: false, includeWhatsapp: false,
         dimension: 'sources', includeBreakdowns: false, includePhoneBreakdown: true, signal
       })).whatsappNumbers || [],
-      cached: () => readPhoneDailyCache<WhatsAppNumberOriginDatum[]>(cacheKey, timezone)?.data ?? null,
-      apply: (numbers, live) => {
-        if (requestId !== phoneOriginRequestIdRef.current) return
-        if (live) writePhoneDailyCache(cacheKey, numbers, {}, timezone)
+      apply: (numbers, through) => {
+        setNumbersThrough(through)
         phoneOriginRangeRef.current = rangeKey
         setOriginData(current => ({ ...current, whatsappNumbers: numbers }))
       },
       denied: () => {
-        removePhoneDailyCache(cacheKey)
+        setNumbersThrough('')
         phoneOriginRangeRef.current = ''
         setOriginData(current => ({ ...current, whatsappNumbers: [] }))
       }
     })
-  }, [scope, timezone, originPanelVisible, range.end, range.start, rangeKey, snapshotVersion])
+  }, [periodQuery, originPanelVisible, range.end, range.start, rangeKey, snapshotVersion])
 
   useEffect(() => {
     if (snapshotReadyRangeRef.current !== rangeKey) return
     setFunnelDenied(false)
     const snapshot = mobileSnapshotRef.current
-    if (snapshot?.scopes.funnel === funnelScope) {
-      setFunnelData(snapshot.funnel)
+    if (snapshot?.data.scopes.funnel === funnelScope) {
+      setFunnelData(snapshot.data.funnel)
+      setFunnelThrough(snapshot.through)
       setFunnelLoading(false)
       return
     }
 
-    const cacheKey = getPhoneDailyCacheKey(scope, rangeKey, 'funnel', funnelScope)
     setFunnelLoading(true)
-    return refreshAnalyticsRead({
+    return refreshPeriodReading(periodQuery, ['funnel', funnelScope], {
+      isCurrent: () => snapshotReadyRangeRef.current === rangeKey && funnelScopeRef.current === funnelScope
+        && mobileSnapshotRef.current?.data.scopes.funnel !== funnelScope,
       read: signal => dashboardService.getFunnelData(
         { start: range.start, end: range.end, scope: funnelScope, includeWeb: hasWebAnalyticsAccess }, signal
       ),
-      cached: () => readPhoneDailyCache<typeof funnelData>(cacheKey, timezone)?.data ?? null,
-      apply: (data, live) => {
-        if (live) writePhoneDailyCache(cacheKey, data, {}, timezone)
+      apply: (data, through) => {
+        setFunnelThrough(through)
         setFunnelData(data)
         setFunnelLoading(false)
         setFunnelDenied(false)
       },
       denied: () => {
-        removePhoneDailyCache(cacheKey)
+        setFunnelThrough('')
         setFunnelData([])
         setFunnelDenied(true)
       }
     })
-  }, [scope, timezone, funnelScope, hasWebAnalyticsAccess, range.end, range.start, rangeKey, snapshotVersion])
+  }, [periodQuery, funnelScope, hasWebAnalyticsAccess, range.end, range.start, rangeKey, snapshotVersion])
 
   useEffect(() => {
     if (snapshotReadyRangeRef.current !== rangeKey) return
     setChartDenied(false)
     const snapshot = mobileSnapshotRef.current
-    if (chartView === 'revenue-spend' && snapshot?.scopes.financial === financialScope) {
-      setChartData(snapshot.financialChart.map(item => ({
+    if (chartView === 'revenue-spend' && snapshot?.data.scopes.financial === financialScope) {
+      setChartThrough(snapshot.through)
+      setChartData(snapshot.data.financialChart.map(item => ({
         label: item.label,
         value: item.value || 0,
         value2: item.value2 || 0
@@ -556,7 +572,6 @@ const PhoneAnalyticsContent: React.FC<{
       return
     }
 
-    const cacheKey = getPhoneDailyCacheKey(scope, rangeKey, 'chart', chartView, financialScope, groupBy)
     setChartLoading(true)
     const loadChart = async (signal: AbortSignal): Promise<ChartPoint[]> => {
       if (chartView === 'revenue-spend') {
@@ -608,22 +623,23 @@ const PhoneAnalyticsContent: React.FC<{
       return response
     }
 
-    return refreshAnalyticsRead({
+    return refreshPeriodReading(periodQuery, ['chart', chartView, financialScope, groupBy], {
+      isCurrent: () => snapshotReadyRangeRef.current === rangeKey && chartViewRef.current === chartView && financialScopeRef.current === financialScope
+        && !(chartView === 'revenue-spend' && mobileSnapshotRef.current?.data.scopes.financial === financialScope),
       read: loadChart,
-      cached: () => readPhoneDailyCache<ChartPoint[]>(cacheKey, timezone)?.data ?? null,
-      apply: (data, live) => {
-        if (live) writePhoneDailyCache(cacheKey, data, {}, timezone)
+      apply: (data, through) => {
+        setChartThrough(through)
         setChartData(data)
         setChartLoading(false)
         setChartDenied(false)
       },
       denied: () => {
-        removePhoneDailyCache(cacheKey)
+        setChartThrough('')
         setChartData([])
         setChartDenied(true)
       }
     })
-  }, [scope, timezone, chartView, financialScope, groupBy, hasWebAnalyticsAccess, range.end, range.start, rangeKey, snapshotVersion])
+  }, [periodQuery, chartView, financialScope, groupBy, hasWebAnalyticsAccess, range.end, range.start, rangeKey, snapshotVersion])
 
   const chartOptions = useMemo<Array<{ id: ChartView; label: string }>>(() => {
     const options: Array<{ id: ChartView; label: string }> = [
@@ -718,6 +734,13 @@ const PhoneAnalyticsContent: React.FC<{
   )
   const showPhoneNumberOrigin = !originLoading && phoneOriginRangeRef.current === rangeKey && phoneNumberRows.length >= 2
   const phoneNumberMax = Math.max(1, ...phoneNumberRows.map((item) => item.value || 0))
+  const savedSections = getSavedAnalyticsSections(day, [
+    ['Indicadores y origen', !loading && summaryThrough],
+    ['Gráfica', !chartLoading && !chartDenied && chartThrough],
+    ['Embudo', !funnelLoading && !funnelDenied && funnelThrough],
+    ['Origen por número', showPhoneNumberOrigin && numbersThrough]
+  ])
+
   const handlePeriodSelect = (nextPeriod: AnalyticsPeriod) => {
     setPeriod(nextPeriod)
     setPeriodMenuOpen(false)
@@ -765,6 +788,11 @@ const PhoneAnalyticsContent: React.FC<{
         </header>
 
         {denied ? <p className={styles.emptyState} role="status">Sin acceso a las analíticas de esta cuenta.</p> : <>
+        {Array.from(savedSections, ([through, sections]) => (
+          <p className={styles.savedReading} key={through} role="status">
+            Datos guardados hasta el {formatDate(through, { timezone, includeYear: true })} · {sections.join(', ')}
+          </p>
+        ))}
         <section className={styles.metricsGrid} aria-label="Tarjetas principales">
           {metricCards.map(({ key, title, Icon, tone, formatter }) => {
             const metric = metrics?.[key]

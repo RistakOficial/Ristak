@@ -3,7 +3,8 @@ import { AppState } from 'react-native';
 import * as Network from 'expo-network';
 import { resolveCacheNamespace } from './cache';
 import { startAnalyticsRead } from './analyticsRead';
-import { analyticsSnapshot } from './analyticsSnapshots';
+import type { AnalyticsReportQuery } from './cacheKeys';
+import { analyticsSnapshot, type SavedAnalytics } from './analyticsSnapshots';
 
 export function useAnalyticsOnline() {
   const [active, setActive] = useState(AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
@@ -31,46 +32,51 @@ export function useAnalyticsOnline() {
   return online && active;
 }
 
-type PanelState<T> = { key: string; value?: T; live: boolean; fetching: boolean; error: string; revision: number };
+type PanelState<T> = { key: string; value?: T; previousEndDate?: string; live: boolean; fetching: boolean; error: string; revision: number };
 
 export function useAnalyticsRead<T>(
-  key: string,
+  request: string | AnalyticsReportQuery,
   load: (signal: AbortSignal) => Promise<T>,
   online: boolean,
   revision: number,
 ) {
   const namespace = resolveCacheNamespace();
-  const identity = namespace + '/' + key;
+  const key = typeof request === 'string' ? request : request.exactKey;
+  const periodKey = typeof request === 'string' ? '' : request.periodKey;
+  const startDate = typeof request === 'string' ? '' : request.startDate;
+  const endDate = typeof request === 'string' ? '' : request.endDate;
+  const identity = namespace + '/' + key + '/' + periodKey;
   const [state, setState] = useState<PanelState<T>>({ key: '', live: false, fetching: false, error: '', revision: -1 });
   useEffect(() => {
     if (!key) return;
     setState((current) => ({
-      key: identity, value: current.key === identity ? current.value : undefined, live: false, fetching: online, error: '', revision,
+      key: identity, value: current.key === identity ? current.value : undefined,
+      previousEndDate: current.key === identity ? current.previousEndDate : undefined, live: false, fetching: online, error: '', revision,
     }));
-    const snapshot = analyticsSnapshot(key, namespace);
-    return startAnalyticsRead<T>({
+    const snapshot = analyticsSnapshot({ exactKey: key, periodKey, startDate, endDate }, namespace);
+    return startAnalyticsRead<T, SavedAnalytics<T>>({
       online,
       load,
       readSaved: () => snapshot.read<T>(),
-      showSaved: (value) => {
-        if (snapshot.current()) setState((current) => ({ ...current, value }));
+      showSaved: ({ value, previousEndDate }) => {
+        if (snapshot.current()) setState((current) => ({ ...current, value, previousEndDate }));
       },
       showLive: (value) => {
         if (!snapshot.current()) return;
         void snapshot.save(value);
-        setState((current) => ({ ...current, value, live: true, error: '' }));
+        setState((current) => ({ ...current, value, previousEndDate: undefined, live: true, error: '' }));
       },
       showError: (error) => {
         const status = (error as { status?: number } | null)?.status;
         if (status === 401 || status === 403) snapshot.revoke();
         setState((current) => ({
-          ...current, value: undefined, live: false, error: error instanceof Error ? error.message : 'No se pudieron cargar estos datos.',
+          ...current, value: undefined, previousEndDate: undefined, live: false, error: error instanceof Error ? error.message : 'No se pudieron cargar estos datos.',
         }));
       },
       setFetching: (fetching) => setState((current) => ({ ...current, fetching })),
     });
-  }, [identity, key, load, namespace, online, revision]);
+  }, [endDate, identity, key, load, namespace, online, periodKey, revision, startDate]);
   return state.key === identity
     ? { ...state, live: state.live && online && state.revision === revision }
-    : { value: undefined, live: false, fetching: false, error: '', revision: -1 };
+    : { value: undefined, previousEndDate: undefined, live: false, fetching: false, error: '', revision: -1 };
 }

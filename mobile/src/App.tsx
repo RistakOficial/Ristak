@@ -141,6 +141,8 @@ import {
 } from './storage';
 import { hasCachedValue, peekCache, preloadCache, preloadCacheKeys, readCache, writeCache, writeCacheNow, clearAllCache, setCacheNamespace } from './cache';
 import {
+  analyticsReportQuery,
+  type AnalyticsPeriod,
   analyticsChartCacheKey,
   analyticsFunnelCacheKey,
   analyticsMetricsCacheKey,
@@ -758,7 +760,6 @@ type ChatFilterPreset = {
   locked?: boolean;
   separatorBefore?: boolean;
 };
-type AnalyticsPeriod = '30d' | '60d' | '180d' | 'year' | 'custom';
 type AnalyticsChartView = 'revenue-spend' | 'visitors-leads' | 'leads-appointments' | 'appointments-attendances' | 'attendances-sales';
 type AnalyticsOriginTab = 'traffic' | 'leads' | 'appointments' | 'conversions';
 type AnalyticsChartPoint = {
@@ -12400,13 +12401,13 @@ function getDateOnlySpanDays(startDate: string, endDate: string) {
   return Math.max(0, Math.round((end - start) / 86400000) + 1);
 }
 
-function formatDateOnlyRangeLabel(value: string) {
+function formatDateOnlyRangeLabel(value: string, includeYear = false) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
   if (!match || !isValidDateOnly(value)) return value;
   const day = match[3];
   const month = Number(match[2]);
   const monthLabel = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'][month - 1] || '';
-  return `${day}-${monthLabel}`;
+  return includeYear ? `${day}-${monthLabel}-${match[1]}` : `${day}-${monthLabel}`;
 }
 
 function getAnalyticsGroupBy(period: AnalyticsPeriod, startDate?: string, endDate?: string): 'day' | 'month' {
@@ -12667,6 +12668,11 @@ function AnalyticsDualLineChart({
   );
 }
 
+function AnalyticsSavedThrough({ endDate }: { endDate?: string }) {
+  if (!endDate) return null;
+  return <Text style={styles.analyticsMiniCaption}>Datos hasta el {formatDateOnlyRangeLabel(endDate, true)}.</Text>;
+}
+
 function AnalyticsSection({
   api,
   customLabels = DEFAULT_CUSTOM_LABELS,
@@ -12689,6 +12695,7 @@ function AnalyticsSection({
   const [funnelScope, setFunnelScope] = useState<DashboardFunnelScope>('all');
   const [originTab, setOriginTab] = useState<AnalyticsOriginTab>(hasWebAnalyticsAccess ? 'traffic' : 'leads');
   const [reloadKey, setReloadKey] = useState(0);
+  const [dayRevision, setDayRevision] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const online = useAnalyticsOnline();
   const loadContext = useCallback(async (signal: AbortSignal) => {
@@ -12730,7 +12737,19 @@ function AnalyticsSection({
     return businessTimezone
       ? getTodayRange(activePeriod.days ?? 30, businessTimezone)
       : { startDate: '', endDate: '' };
-  }, [activePeriod.days, businessTimezone, customEndDate, customStartDate, online, period, reloadKey]);
+  }, [activePeriod.days, businessTimezone, customEndDate, customStartDate, dayRevision, online, period, reloadKey]);
+  useEffect(() => {
+    if (!businessTimezone || !range.endDate || period === 'custom') return;
+    // The app may stay open, or resume the next day while still offline.
+    const updateDay = () => setDayRevision((current) => current + 1);
+    const { endTime } = getBusinessRangeTimestamps(range.endDate, range.endDate, businessTimezone);
+    const timer = Number.isFinite(endTime) ? setTimeout(updateDay, Math.max(1, endTime + 1 - Date.now())) : undefined;
+    const resume = AppState.addEventListener('change', (state) => { if (state === 'active') updateDay(); });
+    return () => {
+      clearTimeout(timer);
+      resume.remove();
+    };
+  }, [businessTimezone, period, range.endDate]);
   const groupBy = useMemo(() => getAnalyticsGroupBy(period, range.startDate, range.endDate), [period, range.endDate, range.startDate]);
 
   useEffect(() => {
@@ -12756,7 +12775,7 @@ function AnalyticsSection({
   // label a live response with a timezone or currency read from storage.
   const fetchReport = online && account.live;
   const loadMetrics = useCallback((signal: AbortSignal) => api.getDashboardMetrics(startDate, endDate, signal), [api, startDate, endDate]);
-  const metricsRead = useAnalyticsRead(hasContext ? analyticsMetricsCacheKey(cacheRange) : '', loadMetrics, fetchReport, reloadKey);
+  const metricsRead = useAnalyticsRead(hasContext ? analyticsReportQuery(cacheRange, period, analyticsMetricsCacheKey) : '', loadMetrics, fetchReport, reloadKey);
 
   const loadChart = useCallback(async (signal: AbortSignal) => {
     if (chartView === 'revenue-spend') return api.getFinancialOverview(startDate, endDate, financialScope, signal);
@@ -12774,21 +12793,21 @@ function AnalyticsSection({
     return combineAnalyticsSeries(left, right);
   }, [api, chartView, endDate, financialScope, groupBy, startDate]);
   const chartKey = hasContext && (chartView !== 'visitors-leads' || hasWebAnalyticsAccess)
-    ? analyticsChartCacheKey(cacheRange, chartView, chartView === 'revenue-spend' ? financialScope : groupBy)
+    ? analyticsReportQuery(cacheRange, period, (scope) => analyticsChartCacheKey(scope, chartView, chartView === 'revenue-spend' ? financialScope : groupBy))
     : '';
   const chart = useAnalyticsRead(chartKey, loadChart, fetchReport, reloadKey);
 
   const loadFunnel = useCallback((signal: AbortSignal) => (
     api.getFunnelData(startDate, endDate, funnelScope, hasWebAnalyticsAccess, signal)
   ), [api, endDate, funnelScope, hasWebAnalyticsAccess, startDate]);
-  const funnelKey = hasContext ? analyticsFunnelCacheKey(cacheRange, funnelScope, hasWebAnalyticsAccess) : '';
+  const funnelKey = hasContext ? analyticsReportQuery(cacheRange, period, (scope) => analyticsFunnelCacheKey(scope, funnelScope, hasWebAnalyticsAccess)) : '';
   const funnel = useAnalyticsRead(funnelKey, loadFunnel, fetchReport, reloadKey);
 
   const loadOrigin = useCallback(async (signal: AbortSignal) => {
     const response = await api.getOriginDistribution(startDate, endDate, hasWebAnalyticsAccess, signal);
     return { ...EMPTY_ORIGIN_DATA, ...response, traffic: { ...EMPTY_ORIGIN_DATA.traffic, ...response.traffic } };
   }, [api, endDate, hasWebAnalyticsAccess, startDate]);
-  const originKey = hasContext ? analyticsOriginCacheKey(cacheRange, hasWebAnalyticsAccess) : '';
+  const originKey = hasContext ? analyticsReportQuery(cacheRange, period, (scope) => analyticsOriginCacheKey(scope, hasWebAnalyticsAccess)) : '';
   const origin = useAnalyticsRead(originKey, loadOrigin, fetchReport, reloadKey);
 
   const loadPhones = useCallback(async (signal: AbortSignal) => {
@@ -12803,7 +12822,10 @@ function AnalyticsSection({
     return response.whatsappNumbers || [];
   }, [api, endDate, startDate]);
   // Keep the secondary breakdown off the critical path.
-  const phoneOrigin = useAnalyticsRead(originKey && origin.value ? analyticsOriginCacheKey(cacheRange, hasWebAnalyticsAccess, 'phone-origin') : '', loadPhoneOrigin, fetchReport, reloadKey);
+  const phoneOriginKey = originKey && origin.value
+    ? analyticsReportQuery(cacheRange, period, (scope) => analyticsOriginCacheKey(scope, hasWebAnalyticsAccess, 'phone-origin'))
+    : '';
+  const phoneOrigin = useAnalyticsRead(phoneOriginKey, loadPhoneOrigin, fetchReport, reloadKey);
   const metrics = metricsRead.value;
   const chartData = chart.value ?? [];
   const funnelData = funnel.value ?? [];
@@ -12880,11 +12902,11 @@ function AnalyticsSection({
   const originMax = Math.max(1, ...originRows.map((item) => item.value || 0));
   const originTotal = originRows.reduce((sum, item) => sum + (item.value || 0), 0);
   const phoneNumberRows = useMemo(
-    () => buildPhoneNumberRows(phoneOrigin.value ?? originData.whatsappNumbers ?? [], phones.value ?? []),
-    [phones.value, phoneOrigin.value, originData.whatsappNumbers],
+    () => buildPhoneNumberRows(phoneOrigin.value ?? [], phones.value ?? []),
+    [phones.value, phoneOrigin.value],
   );
   const phoneNumberMax = Math.max(1, ...phoneNumberRows.map((item) => item.value || 0));
-  const hasPhoneCounts = phoneOrigin.value !== undefined || Boolean(originData.whatsappNumbers?.length);
+  const hasPhoneCounts = phoneOrigin.value !== undefined;
   const showPhoneNumberOrigin = hasPhoneCounts && phoneNumberRows.length >= 2;
 
   const refresh = () => {
@@ -12998,6 +13020,7 @@ function AnalyticsSection({
 
       {accountContextError ? null : (
       <>
+      <AnalyticsSavedThrough endDate={metricsRead.previousEndDate} />
       <View style={styles.analyticsMetricsGrid}>
         {metricCards.map(({ key, title, Icon, tone, formatter }) => {
           const metric = metrics?.[key];
@@ -13026,6 +13049,7 @@ function AnalyticsSection({
             <Text numberOfLines={2} style={styles.analyticsPanelTitle}>
               {chartOptions.find((option) => option.id === chartView)?.label || 'Ingresos vs gastos'}
             </Text>
+            <AnalyticsSavedThrough endDate={chart.previousEndDate} />
           </View>
         </View>
 
@@ -13105,6 +13129,7 @@ function AnalyticsSection({
           <View style={styles.analyticsPanelTitleWrap}>
             <Text style={styles.analyticsSectionLabel}>Embudo</Text>
             <Text style={styles.analyticsPanelTitle}>Conversiones</Text>
+            <AnalyticsSavedThrough endDate={funnel.previousEndDate} />
           </View>
           <View style={styles.analyticsConversionPill}>
             <Text style={styles.analyticsConversionPillText}>{funnelRows.length ? `${totalConversion}%` : '—'}</Text>
@@ -13176,6 +13201,7 @@ function AnalyticsSection({
           <View style={styles.analyticsPanelTitleWrap}>
             <Text style={styles.analyticsSectionLabel}>Origen</Text>
             <Text style={styles.analyticsPanelTitle}>Fuentes</Text>
+            <AnalyticsSavedThrough endDate={origin.previousEndDate} />
           </View>
           <View style={styles.analyticsConversionPill}>
             <Text style={styles.analyticsConversionPillText}>{originLoading || originError ? '—' : formatNumber(originTotal)}</Text>
@@ -13241,6 +13267,7 @@ function AnalyticsSection({
               <View style={styles.analyticsPanelTitleWrap}>
                 <Text style={styles.analyticsSectionLabel}>WhatsApp</Text>
                 <Text style={styles.analyticsPanelTitle}>Origen por número</Text>
+                <AnalyticsSavedThrough endDate={phoneOrigin.previousEndDate} />
               </View>
             </View>
 

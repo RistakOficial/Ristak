@@ -9,13 +9,13 @@ export function isTemporaryAnalyticsFailure(error: unknown) {
     || /network|failed to fetch|offline/i.test(failure?.message || '');
 }
 
-export function startAnalyticsRead<T>({
+export function startAnalyticsRead<T, Saved = T>({
   online, readSaved, load, showSaved, showLive, showError, setFetching,
 }: {
   online: boolean;
-  readSaved: () => Promise<T | undefined>;
+  readSaved: () => Promise<Saved | undefined>;
   load: (signal: AbortSignal) => Promise<T>;
-  showSaved: (value: T) => void;
+  showSaved: (value: Saved) => void;
   showLive: (value: T) => void;
   showError: (error: unknown) => void;
   setFetching: (fetching: boolean) => void;
@@ -26,7 +26,7 @@ export function startAnalyticsRead<T>({
   let retryDelay = 2_000;
   let allowSaved = !online;
   let settled = false;
-  let saved: T | undefined;
+  let saved: Saved | undefined;
 
   const revealSaved = () => {
     allowSaved = true;

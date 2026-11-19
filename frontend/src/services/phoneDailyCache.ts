@@ -8,6 +8,7 @@ const DEFAULT_MAX_ENTRY_CHARS = 420_000
 interface CachedRecord<T> {
   dayKey: string
   savedAt: number
+  retainAcrossDays?: boolean
   data: T
 }
 
@@ -18,6 +19,7 @@ export interface PhoneDailyCacheEntry<T> {
 }
 
 interface WriteOptions {
+  retainAcrossDays?: boolean
   maxEntryChars?: number
 }
 
@@ -66,7 +68,7 @@ function getStorageKey(key: string) {
 }
 
 function getCacheEntries(storage: Storage) {
-  const entries: Array<{ key: string; value: string; savedAt: number; dayKey: string }> = []
+  const entries: Array<{ key: string; value: string; savedAt: number; dayKey: string; retainAcrossDays?: boolean }> = []
   const cachePrefix = `${phoneDailyStorage.getKey(CACHE_STORAGE_PREFIX)}:`
 
   for (let index = 0; index < storage.length; index += 1) {
@@ -85,6 +87,7 @@ function getCacheEntries(storage: Storage) {
       entries.push({
         key,
         value,
+        retainAcrossDays: parsed.retainAcrossDays === true,
         savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0,
         dayKey: typeof parsed.dayKey === 'string' ? parsed.dayKey : ''
       })
@@ -102,22 +105,21 @@ export function prunePhoneDailyCache(timezone?: string) {
   if (!storage) return
 
   const todayKey = getTodayKey(new Date(), timezone) // (MOB-007) día del negocio si hay tz
-  const currentEntries = getCacheEntries(storage)
-  currentEntries.forEach((entry) => {
-    if (entry.dayKey !== todayKey) {
+  try {
+    const retained = getCacheEntries(storage).filter((entry) => {
+      if (entry.retainAcrossDays || entry.dayKey === todayKey) return true
       storage.removeItem(entry.key)
+      return false
+    }).sort((left, right) => left.savedAt - right.savedAt)
+
+    let totalChars = retained.reduce((total, entry) => total + entry.value.length, 0)
+    for (const entry of retained) {
+      if (totalChars <= MAX_TOTAL_CACHE_CHARS) break
+      storage.removeItem(entry.key)
+      totalChars -= entry.value.length
     }
-  })
-
-  const freshEntries = getCacheEntries(storage)
-    .filter((entry) => entry.dayKey === todayKey)
-    .sort((left, right) => right.savedAt - left.savedAt)
-
-  let totalChars = freshEntries.reduce((total, entry) => total + entry.value.length, 0)
-  for (const entry of [...freshEntries].reverse()) {
-    if (totalChars <= MAX_TOTAL_CACHE_CHARS) break
-    storage.removeItem(entry.key)
-    totalChars -= entry.value.length
+  } catch {
+    // Un navegador con storage bloqueado sigue pudiendo mostrar la lectura de red.
   }
 }
 
@@ -133,16 +135,16 @@ export function readPhoneDailyCache<T>(key: string, timezone?: string): PhoneDai
   if (!storage) return null
 
   const storageKey = getStorageKey(key)
-  const raw = storage.getItem(storageKey)
-  if (!raw) return null
-
   try {
+    const raw = storage.getItem(storageKey)
+    if (!raw) return null
     const parsed = JSON.parse(raw) as Partial<CachedRecord<T>>
     if (!parsed || typeof parsed !== 'object') {
       storage.removeItem(storageKey)
       return null
     }
-    if (parsed.dayKey !== getTodayKey(new Date(), timezone) || typeof parsed.savedAt !== 'number' || !('data' in parsed)) { // (MOB-007) día del negocio si hay tz
+    const expired = !parsed.retainAcrossDays && parsed.dayKey !== getTodayKey(new Date(), timezone)
+    if (expired || typeof parsed.savedAt !== 'number' || !('data' in parsed)) {
       storage.removeItem(storageKey)
       return null
     }
@@ -153,7 +155,7 @@ export function readPhoneDailyCache<T>(key: string, timezone?: string): PhoneDai
       ageMs: Date.now() - parsed.savedAt
     }
   } catch {
-    storage.removeItem(storageKey)
+    removePhoneDailyCache(key)
     return null
   }
 }
@@ -166,6 +168,7 @@ export function writePhoneDailyCache<T>(key: string, data: T, options: WriteOpti
   const record: CachedRecord<T> = {
     dayKey: getTodayKey(new Date(), timezone), // (MOB-007) día del negocio si hay tz
     savedAt: Date.now(),
+    retainAcrossDays: options.retainAcrossDays || undefined,
     data
   }
   const value = JSON.stringify(record)
@@ -173,7 +176,7 @@ export function writePhoneDailyCache<T>(key: string, data: T, options: WriteOpti
   const storageKey = getStorageKey(key)
 
   if (value.length > maxEntryChars) {
-    storage.removeItem(storageKey)
+    removePhoneDailyCache(key)
     prunePhoneDailyCache(timezone) // (MOB-007) propaga tz para no purgar el bucket del negocio
     return false
   }
@@ -189,7 +192,7 @@ export function writePhoneDailyCache<T>(key: string, data: T, options: WriteOpti
       prunePhoneDailyCache(timezone) // (MOB-007)
       return true
     } catch {
-      storage.removeItem(storageKey)
+      removePhoneDailyCache(key)
       return false
     }
   }
@@ -198,15 +201,23 @@ export function writePhoneDailyCache<T>(key: string, data: T, options: WriteOpti
 export function removePhoneDailyCache(key: string) {
   const storage = getStorage()
   if (!storage) return
-  storage.removeItem(getStorageKey(key))
+  try {
+    storage.removeItem(getStorageKey(key))
+  } catch {
+    // Storage no disponible.
+  }
 }
 
 export function removePhoneDailyCacheGroup(group: string) {
   const storage = getStorage()
   if (!storage) return
   const prefix = getStorageKey(group) + ':'
-  for (let index = storage.length - 1; index >= 0; index--) {
-    const key = storage.key(index)
-    if (key?.startsWith(prefix)) storage.removeItem(key)
+  try {
+    for (let index = storage.length - 1; index >= 0; index--) {
+      const key = storage.key(index)
+      if (key?.startsWith(prefix)) storage.removeItem(key)
+    }
+  } catch {
+    // Storage no disponible.
   }
 }

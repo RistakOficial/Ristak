@@ -36,23 +36,42 @@ export type AnalyticsRangeContext = {
   currency: string;
 };
 
-function analyticsRangeKey(range: AnalyticsRangeContext) {
-  return [range.startDate, range.endDate, range.timezone, range.currency].join('|');
+export type AnalyticsPeriod = '30d' | '60d' | '180d' | 'year' | 'custom';
+type AnalyticsScope = AnalyticsRangeContext | { period: Exclude<AnalyticsPeriod, 'custom'>; timezone: string; currency: string };
+export type AnalyticsReportQuery = { exactKey: string; periodKey: string; startDate: string; endDate: string };
+
+export function analyticsReportQuery(
+  range: AnalyticsRangeContext,
+  period: AnalyticsPeriod,
+  build: (scope: AnalyticsScope) => string,
+): AnalyticsReportQuery {
+  return {
+    exactKey: build(range),
+    periodKey: period === 'custom' ? '' : build({ period, timezone: range.timezone, currency: range.currency }),
+    startDate: range.startDate,
+    endDate: range.endDate,
+  };
 }
 
-export function analyticsMetricsCacheKey(range: AnalyticsRangeContext): string {
+function analyticsRangeKey(range: AnalyticsScope) {
+  return 'period' in range
+    ? ['period', range.period, range.timezone, range.currency].join('|')
+    : [range.startDate, range.endDate, range.timezone, range.currency].join('|');
+}
+
+export function analyticsMetricsCacheKey(range: AnalyticsScope): string {
   return `analytics:metrics:${analyticsRangeKey(range)}`;
 }
 
-export function analyticsChartCacheKey(range: AnalyticsRangeContext, chartView: string, scope: string): string {
+export function analyticsChartCacheKey(range: AnalyticsScope, chartView: string, scope: string): string {
   return `analytics:chart:${analyticsRangeKey(range)}:${chartView}:${scope}`;
 }
 
-export function analyticsFunnelCacheKey(range: AnalyticsRangeContext, scope: string, includeWeb: boolean): string {
+export function analyticsFunnelCacheKey(range: AnalyticsScope, scope: string, includeWeb: boolean): string {
   return `analytics:funnel:${analyticsRangeKey(range)}:${scope}:${includeWeb ? 'web' : 'crm'}`;
 }
 
-export function analyticsOriginCacheKey(range: AnalyticsRangeContext, includeWeb: boolean, family: 'origin' | 'phone-origin' = 'origin'): string {
+export function analyticsOriginCacheKey(range: AnalyticsScope, includeWeb: boolean, family: 'origin' | 'phone-origin' = 'origin'): string {
   return `analytics:${family}:${analyticsRangeKey(range)}:${includeWeb ? 'web' : 'crm'}`;
 }
 

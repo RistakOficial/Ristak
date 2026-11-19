@@ -824,9 +824,12 @@ relleno degradado sutil hacia la base sin modificar los valores ni los callouts.
 Al entrar a Analíticas en iPhone, Android y web móvil, la pantalla pide datos
 al servidor. Una respuesta rápida aparece directamente. Si la red tarda o se
 interrumpe, cada panel puede usar la última consulta guardada para esa cuenta,
-periodo y selección. Un periodo sin copia muestra carga hasta recibir cifras.
-Cambiar de usuario, rango o filtro descarta las respuestas de la consulta
-anterior. En la primera apertura tras actualizar, las copias antiguas que carecen
+periodo y selección. Si cambia el día del negocio, los periodos relativos como
+«Últimos 30 días» pueden mostrar el informe anterior de ese mismo periodo y
+filtro. Cada panel que lo use indica su fecha de corte y retira la indicación
+al recibir el dato vigente. Un rango personalizado requiere coincidencia de
+fechas. Un periodo sin copia muestra carga hasta recibir cifras. Cambiar de
+usuario, rango o filtro descarta las respuestas de la consulta anterior. En la primera apertura tras actualizar, las copias antiguas que carecen
 de moneda, zona o permisos verificables requieren una consulta exitosa para
 generar el nuevo respaldo. Mientras la pantalla sigue abierta se reintentan las lecturas pendientes.
 Al volver a la app o recuperar internet se vuelve a consultar. Un panel que ya

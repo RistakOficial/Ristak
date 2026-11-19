@@ -57,7 +57,7 @@ test('pagos, analiticas y ajustes hidratan su ultimo estado y revalidan sin ocul
 
   assert.match(appSource, /writeCache\(MOBILE_CACHE_KEYS\.paymentAccess, nextAccess\)/);
   const snapshots = fs.readFileSync(path.join(__dirname, '../src/analyticsSnapshots.ts'), 'utf8');
-  assert.match(appSource, /useAnalyticsRead\(hasContext \? analyticsMetricsCacheKey/);
+  assert.match(appSource, /analyticsReportQuery\(cacheRange, period, analyticsMetricsCacheKey/);
   assert.match(snapshots, /writeCache<Snapshot<T>>\(dataKey, \{ query, access: access.token, value \}\)/);
   assert.match(appSource, /writeCache\(MOBILE_CACHE_KEYS\.settingsWhatsAppStatus, status\)/);
   assert.match(appSource, /if \(!hasCachedRecentPayments\) \{\s+setRecentPayments\(\[\]\)/);

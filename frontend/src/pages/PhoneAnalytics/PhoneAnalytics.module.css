@@ -88,6 +88,13 @@
   display: none;
 }
 
+.savedReading {
+  margin: 0;
+  color: var(--phone-analytics-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .header {
   min-width: 0;
   padding: 2px 0 0;

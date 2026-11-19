@@ -128,7 +128,7 @@ test('una respuesta interrumpida no cuenta como lista vacía de mensajes o anal�
   assert.deepEqual(await api.getFinancialOverview('2026-01-01', '2026-01-31'), []);
 });
 
-test('salvo datos por moneda y zona; un rechazo invalida todos los rangos incluso tras reiniciar sin red', async (t) => {
+function createSnapshotTestStorage(t) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const files = new Map();
   const fileModule = require.resolve('expo-file-system/legacy');
@@ -141,11 +141,11 @@ test('salvo datos por moneda y zona; un rechazo invalida todos los rangos inclus
   } };
   const cacheModule = require.resolve('../src/cache.ts');
   const snapshotModule = require.resolve('../src/analyticsSnapshots.ts');
-  const coldBoot = () => {
+  const coldBoot = (namespace = 'operator-1') => {
     delete require.cache[cacheModule];
     delete require.cache[snapshotModule];
-    require(cacheModule).setCacheNamespace('operator-1');
-    return (query) => require(snapshotModule).analyticsSnapshot(query, 'operator-1');
+    require(cacheModule).setCacheNamespace(namespace);
+    return (query) => require(snapshotModule).analyticsSnapshot(query, namespace);
   };
   t.after(() => {
     delete require.cache[cacheModule];
@@ -153,6 +153,11 @@ test('salvo datos por moneda y zona; un rechazo invalida todos los rangos inclus
     if (previousModule) require.cache[fileModule] = previousModule;
     else delete require.cache[fileModule];
   });
+  return coldBoot;
+}
+
+test('salvo datos por moneda y zona; un rechazo invalida todos los rangos incluso tras reiniciar sin red', async (t) => {
+  const coldBoot = createSnapshotTestStorage(t);
   const { analyticsMetricsCacheKey } = require('../src/cacheKeys.ts');
   const report = { startDate: '2026-10-01', endDate: '2026-10-31', timezone: 'America/Ciudad_Juarez', currency: 'MXN' };
   const first = analyticsMetricsCacheKey(report);
@@ -163,7 +168,7 @@ test('salvo datos por moneda y zona; un rechazo invalida todos los rangos inclus
   t.mock.timers.tick(450);
   await flush();
   open = coldBoot();
-  assert.equal(await open(first).read(), 420);
+  assert.deepEqual(await open(first).read(), { value: 420 });
   assert.equal(await open(analyticsMetricsCacheKey({ ...report, timezone: 'Europe/Madrid' })).read(), undefined);
   assert.equal(await open(analyticsMetricsCacheKey({ ...report, currency: 'EUR' })).read(), undefined);
   const staleRequest = open(second);
@@ -174,8 +179,42 @@ test('salvo datos por moneda y zona; un rechazo invalida todos los rangos inclus
   assert.equal(await open(first).read(), undefined);
   assert.equal(await open(second).read(), undefined);
   await open(second).save(170);
-  assert.equal(await open(second).read(), 170);
+  assert.deepEqual(await open(second).read(), { value: 170 });
   assert.equal(await open(first).read(), undefined);
+});
+
+test('cada panel restaura su último cierre del mismo selector y conserva el rango exacto al actualizar', async (t) => {
+  const boot = createSnapshotTestStorage(t);
+  const { analyticsReportQuery, analyticsChartCacheKey, analyticsFunnelCacheKey } = require('../src/cacheKeys.ts');
+  const dec31 = { startDate: '2026-12-02', endDate: '2026-12-31', timezone: 'America/Ciudad_Juarez', currency: 'MXN' };
+  const jan1 = { ...dec31, startDate: '2026-12-03', endDate: '2027-01-01' };
+  const jan2 = { ...jan1, startDate: '2026-12-04', endDate: '2027-01-02' };
+  const chart = (range, period = '30d', scope = 'all') => analyticsReportQuery(range, period, (r) => analyticsChartCacheKey(r, 'revenue-spend', scope));
+  const funnel = (range, web = true) => analyticsReportQuery(range, '30d', (r) => analyticsFunnelCacheKey(r, 'all', web));
+  let open = boot();
+  await open(chart(dec31)).save([10]);
+  await open(funnel(dec31)).save([30]);
+  t.mock.timers.tick(450);
+  await flush();
+
+  open = boot();
+  assert.deepEqual(await open(chart(jan1)).read(), { value: [10], previousEndDate: '2026-12-31' });
+  assert.equal(await open(chart(jan1, '60d')).read(), undefined);
+  assert.equal(await open(chart(jan1, 'custom')).read(), undefined);
+  assert.equal(await open(chart(jan1, '30d', 'campaigns')).read(), undefined);
+  assert.equal(await open(chart({ ...jan1, currency: 'EUR' })).read(), undefined);
+  assert.equal(await open(chart({ ...jan1, timezone: 'Europe/Madrid' })).read(), undefined);
+  assert.equal(await open(funnel(jan1, false)).read(), undefined);
+
+  await open(chart(jan1)).save([]);
+  assert.deepEqual(await open(chart(jan1)).read(), { value: [] });
+  assert.deepEqual(await open(funnel(jan1)).read(), { value: [30], previousEndDate: '2026-12-31' });
+  await open(chart(dec31)).save([99]);
+  assert.deepEqual(await open(chart(jan2)).read(), { value: [], previousEndDate: '2027-01-01' });
+  assert.deepEqual(await open(chart(dec31, 'custom')).read(), { value: [99] });
+  open(chart(jan2)).revoke();
+  assert.equal(await open(chart(jan2)).read(), undefined);
+  assert.equal(await boot('operator-2')(funnel(jan1)).read(), undefined);
 });
 
 test('los carruseles de Analiticas conservan aire inicial y scroll hasta el borde', () => {
