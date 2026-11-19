@@ -15,7 +15,7 @@ final class CalendarAppointmentOutboxTests: XCTestCase {
         super.tearDown()
     }
 
-    func testOfflineAppointmentPersistsExactIdempotencyKeyAndMergesIntoRange() async {
+    func testOfflineAppointmentPersistsExactIdempotencyKeyAndMergesIntoRange() async throws {
         let requestID = "ios-appointment:test-1"
         let draft = AppointmentDraftRequest(
             calendarId: "calendar-1",
