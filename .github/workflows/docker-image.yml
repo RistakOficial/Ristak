@@ -78,6 +78,12 @@ jobs:
           npm rebuild --prefix backend sqlite3
           node --test --test-concurrency=1 backend/test/conversationalHistoryBoundary.test.mjs backend/test/conversationalQrDeliveryRecovery.test.mjs backend/test/conversationalDurableRecovery.test.mjs backend/test/conversationalDurableRecoveryPostgres.test.mjs
 
+      - name: Verificar las métricas de Chatbot en SQLite y PostgreSQL
+        env:
+          TEST_POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/ristak_bootstrap
+          RISTAK_SQLITE_PATH: ${{ runner.temp }}/chatbot-metrics.sqlite
+        run: node --test --test-concurrency=1 backend/test/conversationalAgentMetricsProjection.test.mjs backend/test/conversationalAgentMetricsProjectionPostgres.test.mjs
+
       - name: Verificar filtros de notificaciones con PostgreSQL real
         env:
           TEST_POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/ristak_bootstrap

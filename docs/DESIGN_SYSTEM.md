@@ -165,7 +165,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Elegir impuesto de suscripción | `<PaymentTaxFields>`; usa `<TabList>` para la elección explícita, modo de cálculo y total recurrente con la moneda recibida | duplicar los selectores fiscales entre alta y edición |
 | Programar mensaje de chat | `<ChatScheduleModal>`; recibe la zona de la cuenta y usa `<DatePicker>` | copiar el modal de programación dentro de cada chat o usar fechas del navegador |
 | Confirmar borrar/desconectar/revocar | `showConfirm(...)` del `NotificationContext` (o `<Modal type="confirm" typeToConfirm="…">`) — ver §4.1 | `window.confirm`, un modal de confirmación a mano, copiar el JSX de otro borrado |
-| Card / KPI | `<Card>` / `<KpiCard>` (llevan `data-ristak-card`) | — |
+| Card / KPI | `<Card>` / `<KpiCard>` (llevan `data-ristak-card`). En un KPI, `description` explica el cálculo al apuntar o enfocar el título con el teclado. | — |
 | Tabla | `<Table>` (o la receta §6) | una `<table>` desde cero |
 | Header / contenedor de página | `<PageHeader>` / `<PageContainer>` | un header a mano |
 | Estado de carga | `<Loading>`; usa `compact` para listas o paneles angostos y el modo normal para el contenido principal | spinners sueltos dentro de párrafos o cards vacías |

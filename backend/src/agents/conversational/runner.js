@@ -12008,6 +12008,7 @@ export async function handleInboundConversationalMessage({
     dependencies.queueUnclaimedRetry ||
     queueUnclaimedMandatoryHandoffRetry
   let activeClaim = null
+  let resolvedAgentId = null
   let ownsRun = false
   let mandatoryHandoffPolicyConfiguredForRun = false
   let mandatoryHandoffRuntimeInfrastructureReady = false
@@ -12220,6 +12221,7 @@ export async function handleInboundConversationalMessage({
         activationMessageId
       })
 	      let agentConfig = resolved.agentConfig
+	      resolvedAgentId = agentConfig?.id || null
 	      let agentState = resolved.state
 	      let deferredAutomaticRelease = resolved.deferredAutomaticRelease || null
 	      if (!agentConfig) {
@@ -12718,6 +12720,7 @@ export async function handleInboundConversationalMessage({
       eventType: 'error',
       detail: {
         messageId: failedClaim?.messageId || messageId || null,
+        agentId: failedClaim?.agentId || resolvedAgentId,
         message: retryableError.message,
         channel: normalizedChannel,
         retryQueued,

@@ -373,7 +373,10 @@ async function cleanupEventTypeAcrossSeeds(database, seedByKey, eventType, {
   while (true) {
     const cursorFilter = cursorPredicate(cursor, 'event_row')
     const rows = await database.all(`
-      SELECT event_row.id, event_row.contact_id, event_row.detail_json, event_row.created_at
+      -- El cursor debe regresar a PostgreSQL con el valor exacto de la columna.
+      -- Un Date de JS pierde microsegundos y se serializa en la zona del proceso.
+      SELECT event_row.id, event_row.contact_id, event_row.detail_json,
+             CAST(event_row.created_at AS TEXT) AS created_at
       FROM conversational_agent_events AS event_row
       WHERE event_row.event_type = ?
         ${cursorFilter.sql}

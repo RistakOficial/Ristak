@@ -13933,6 +13933,10 @@ function buildEmptyAgentMetric(agent) {
     aiProvider: agent.aiProvider || DEFAULT_CONVERSATIONAL_AI_PROVIDER,
     model: agent.model,
     assignedConversations: 0,
+    answeredConversations: 0,
+    successfulAnsweredConversations: 0,
+    errorEvents: 0,
+    successRate: 0,
     completedConversations: 0,
     pausedConversations: 0,
     humanTakeovers: 0,
@@ -13947,9 +13951,11 @@ export function buildConversationalAgentMetrics({
   agents = [],
   stateRows = [],
   stateSummaryRows = null,
+  activitySummaryRows = null,
   eventSummary = {}
 } = {}) {
   const metricsByAgent = new Map(agents.map((agent) => [agent.id, buildEmptyAgentMetric(agent)]))
+  const existingAgentIds = new Set(metricsByAgent.keys())
   const assignedAgentIds = new Set()
   let answeredConversations = 0
   const totals = {
@@ -13957,6 +13963,8 @@ export function buildConversationalAgentMetrics({
     activeAgents: agents.filter((agent) => agent.enabled).length,
     assignedConversations: 0,
     agentsWithAssignedConversations: 0,
+    answeredConversations: 0,
+    successfulAnsweredConversations: 0,
     completedConversations: 0,
     pausedConversations: 0,
     humanTakeovers: 0,
@@ -14025,7 +14033,8 @@ export function buildConversationalAgentMetrics({
       totals.skippedConversations += skippedConversations
       totals.discardedConversations += discardedConversations
       answeredConversations += toMetricNumber(row.answered_conversations)
-      if (assignedConversations > 0) assignedAgentIds.add(agentId)
+      agentMetric.answeredConversations += toMetricNumber(row.answered_conversations)
+      if (assignedConversations > 0 && existingAgentIds.has(agentId)) assignedAgentIds.add(agentId)
 
       const activity = row.last_activity_at || null
       if (activity && (!agentMetric.lastActivityAt || activity > agentMetric.lastActivityAt)) {
@@ -14038,12 +14047,19 @@ export function buildConversationalAgentMetrics({
     const agentMetric = ensureMetricForAgent(agentId)
     agentMetric.totalConversations += 1
     totals.totalTrackedConversations += 1
-    if (row.last_reply_at) answeredConversations += 1
+    if (row.last_reply_at) {
+      answeredConversations += 1
+      agentMetric.answeredConversations += 1
+      if (isCompletedAgentState(row)) {
+        agentMetric.successfulAnsweredConversations += 1
+        totals.successfulAnsweredConversations += 1
+      }
+    }
 
     if (row.status === 'active' && !row.signal) {
       agentMetric.assignedConversations += 1
       totals.assignedConversations += 1
-      assignedAgentIds.add(agentId)
+      if (existingAgentIds.has(agentId)) assignedAgentIds.add(agentId)
     }
     if (isCompletedAgentState(row)) {
       agentMetric.completedConversations += 1
@@ -14073,9 +14089,26 @@ export function buildConversationalAgentMetrics({
   }
 
   totals.agentsWithAssignedConversations = assignedAgentIds.size
-  const closedConversations = totals.completedConversations + totals.discardedConversations + totals.errorEvents
-  totals.successRate = closedConversations > 0
-    ? Math.round((totals.completedConversations / closedConversations) * 100)
+  totals.answeredConversations = answeredConversations
+  if (Array.isArray(activitySummaryRows)) {
+    // El estado actual cambia al liberar o reabrir un chat. Los contadores de
+    // actividad provienen únicamente de entregas y cierres confirmados.
+    for (const metric of [totals, ...metricsByAgent.values()]) {
+      metric.answeredConversations = 0
+      metric.successfulAnsweredConversations = 0
+      metric.completedConversations = 0
+      metric.errorEvents = 0
+    }
+    for (const row of activitySummaryRows) {
+      const metric = row.scope ? ensureMetricForAgent(row.scope) : totals
+      metric.answeredConversations = toMetricNumber(row.answered_conversations)
+      metric.successfulAnsweredConversations = toMetricNumber(row.successful_answered_conversations)
+      metric.completedConversations = toMetricNumber(row.completed_conversations)
+      metric.errorEvents = toMetricNumber(row.error_events)
+    }
+  }
+  totals.successRate = totals.answeredConversations > 0
+    ? Math.round((totals.successfulAnsweredConversations / totals.answeredConversations) * 100)
     : 0
   totals.responseRate = totals.totalTrackedConversations > 0
     ? Math.round((answeredConversations / totals.totalTrackedConversations) * 100)
@@ -14085,20 +14118,33 @@ export function buildConversationalAgentMetrics({
     : 0
   totals.byAgent = Array.from(metricsByAgent.values())
     .sort((a, b) => (b.assignedConversations - a.assignedConversations) || (b.completedConversations - a.completedConversations))
+  for (const metric of totals.byAgent) {
+    metric.successRate = metric.answeredConversations > 0
+      ? Math.round((metric.successfulAnsweredConversations / metric.answeredConversations) * 100)
+      : 0
+  }
 
   return totals
 }
 
 export async function getConversationalAgentMetrics() {
   const [agentRows, metricAggregates] = await Promise.all([
-    db.all('SELECT * FROM conversational_agents ORDER BY position ASC, created_at ASC'),
+    db.all('SELECT id, name, enabled, ai_provider, model FROM conversational_agents ORDER BY position ASC, created_at ASC'),
     loadConversationalAgentMetricAggregates()
   ])
 
   const metrics = buildConversationalAgentMetrics({
-    agents: agentRows.map(mapAgentRow),
-    stateSummaryRows: metricAggregates.stateSummaryRows,
-    eventSummary: metricAggregates.eventSummary
+    agents: agentRows.map(row => {
+      const aiProvider = normalizeConversationalAIProvider(row.ai_provider)
+      return {
+        id: row.id,
+        name: row.name || 'Agente',
+        enabled: toBoolean(row.enabled),
+        aiProvider,
+        model: normalizeConversationalAgentModel(row.model, aiProvider)
+      }
+    }),
+    ...metricAggregates
   })
   return {
     ...metrics,
@@ -17937,6 +17983,7 @@ export async function setConversationSignal(contactId, signal, {
     status: cleanStatus,
     summarySource: completionSummary.summarySource,
     agentId: effectiveAgentId,
+    channel: currentState?.channel || cleanChannel || null,
     objectiveCompleted
   }
   if (cleanOriginalSummary && ![cleanSummary, cleanActionSummary, cleanStateSummary].includes(cleanOriginalSummary)) {

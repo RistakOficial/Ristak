@@ -11523,6 +11523,32 @@ nunca un booleano escrito por el modelo.
 
 ### Metricas y seguridad
 
+En **Chatbot → Agentes**, las tarjetas combinan la situación actual de los
+agentes con los resultados de sus conversaciones.
+
+- **Agentes publicados** muestra cuántos están publicados y cuántos existen.
+- **Agentes asignados** cuenta una vez a cada agente actual que tiene al menos
+  un chat activo asignado.
+- **Chats atendidos** cuenta cada combinación de contacto y canal en la que un
+  agente envió una respuesta. Las partes de un mismo mensaje y las respuestas
+  posteriores cuentan como un solo chat. Si dos agentes responden al mismo
+  chat, aparece una vez en el total y una vez en el detalle de cada agente.
+- **Metas cumplidas** cuenta los cierres en los que el agente confirmó su
+  objetivo. Limpiar la señal, reabrir el chat o cambiar de agente conserva la
+  meta en el historial.
+- **Tasa de éxito** es el porcentaje de chats atendidos en los que se cumplió
+  al menos una meta. Un chat con varias metas cuenta una vez en este
+  porcentaje. Una meta histórica sin canal identificable se conserva en
+  **Metas cumplidas**. Mientras no haya chats atendidos, la tasa muestra un guion.
+- **Errores detectados** cuenta los fallos registrados por el chatbot. El total
+  incluye fallos registrados sin agente identificable.
+
+Los totales incluyen entregas antiguas del chatbot cuyo registro perdió la
+identidad del agente. El detalle de cada agente muestra sólo la actividad que
+se le puede atribuir. La página consulta las cifras al abrirse, al recuperar
+el foco y cada minuto mientras está visible. Durante la preparación del
+historial o si falla la consulta, muestra un aviso y permite reintentar.
+
 Las metricas separan metas completadas, handoffs, citas, links de pago,
 seguimientos enviados/suprimidos, errores de herramientas, tasa de respuesta,
 acciones ejecutadas y numero real de vueltas del modelo. Un estado `human` con
@@ -11534,14 +11560,14 @@ La pantalla de metricas no agrega `conversational_agent_state` ni
 `conversational_agent_events` completos en cada apertura. La proyeccion durable
 `098*` conserva un ledger sentinel por estado/evento, summaries por agente para
 conversaciones y 64 shards para eventos globales. Los triggers cubren insert,
-update, reasignacion y delete en la misma transaccion. El fast path lee los
-agentes actuales mas esas filas acotadas y conserva agentes eliminados,
-precedencia de ultima actividad, tasa de respuesta y las doce familias de evento
-del contrato anterior. Durante backfill lee únicamente los summaries ya
-convergidos y responde `projection.status=warming`; no agrega las filas
-`version < 1` ni escanea tablas fuente en el GET. Si el esquema aun no existe
-devuelve un snapshot vacío con `projection.status=unavailable`. Al estar `ready`
-el mismo read-model vuelve a ser exacto. Las
+update, reasignacion y delete en la misma transaccion. Las migraciones `172*`
+añaden un resumen de actividad por chat y por agente a partir de las entregas,
+los cierres confirmados y los fallos. Incluyen entregas parciales y omiten las
+pruebas. Un proceso en segundo plano recupera los eventos anteriores con un
+índice de pendientes. La ruta `GET /api/conversational-agent/metrics` lee el
+catálogo de agentes y los resúmenes. Durante la recuperación indica
+`projection.status=warming`. Si falta el esquema o falló la recuperación,
+indica `unavailable`. Cuando termina, indica `ready`. Las
 pausas vencidas se buscan por el indice parcial `098*` desde un job de sistema
 cada cinco segundos; abrir Metricas o un listado es lectura pura y no cambia el
 CRM. Cada lote se reclama dentro de una transaccion (`FOR UPDATE SKIP LOCKED` en

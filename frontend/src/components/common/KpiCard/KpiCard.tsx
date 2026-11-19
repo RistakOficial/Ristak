@@ -1,5 +1,6 @@
 import React from 'react'
 import { Card } from '../Card/Card'
+import { HelpTooltip } from '../HelpTooltip'
 import { cn } from '@/utils/cn'
 
 type IconProp = React.ReactNode | React.ElementType<{ className?: string }>
@@ -7,6 +8,7 @@ type IconProp = React.ReactNode | React.ElementType<{ className?: string }>
 interface KpiCardProps {
   title: string
   value: string | number
+  description?: string
   delta?: number
   deltaLabel?: string
   icon?: IconProp
@@ -18,6 +20,7 @@ interface KpiCardProps {
 export const KpiCard: React.FC<KpiCardProps> = ({
   title,
   value,
+  description,
   delta,
   deltaLabel,
   icon,
@@ -62,7 +65,11 @@ export const KpiCard: React.FC<KpiCardProps> = ({
       >
         <div className="min-w-0 flex-1">
           <p className="mb-1 text-[length:var(--app-kpi-title-size,0.875rem)] text-[var(--color-text-tertiary)]">
-            {title}
+            {description ? (
+              <HelpTooltip content={description}>
+                <span className="cursor-help" tabIndex={0}>{title}</span>
+              </HelpTooltip>
+            ) : title}
           </p>
           {loading ? (
             <span

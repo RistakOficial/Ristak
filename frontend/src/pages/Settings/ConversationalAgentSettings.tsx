@@ -28,6 +28,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAIAvailability, useAnchoredPortal, useAppConfig } from '@/hooks'
+import { useConversationalAgentMetrics } from '@/hooks/useConversationalAgentMetrics'
 import { aiRuntimeService } from '@/services/aiRuntimeService'
 import { hasModuleAccess, hasPaymentLinksAccess } from '@/utils/accessControl'
 import {
@@ -65,7 +66,6 @@ import {
   type ConversationalRequiredDataConditionFact,
   type ConversationalRequiredDataField,
   type ConversationalRequiredDataItem,
-  type ConversationalAgentMetrics,
   type ConversationalContactScope,
   type ConversationalAgentTestAttachment,
   type ConversationalAgentTestEffectResult,
@@ -225,18 +225,16 @@ function normalizeCurrencyCode(value?: string | null) {
   return String(value || '').trim().toUpperCase().slice(0, 12)
 }
 
-function toMetricNumber(value: unknown) {
-  const nextValue = Number(value)
-  return Number.isFinite(nextValue) ? nextValue : 0
+function formatMetricInteger(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? value.toLocaleString('es-MX')
+    : '—'
 }
 
-function formatMetricInteger(value: unknown) {
-  return Math.max(0, Math.round(toMetricNumber(value))).toLocaleString('es-MX')
-}
-
-function formatMetricPercent(value: unknown) {
-  const percent = Math.max(0, Math.min(100, Math.round(toMetricNumber(value))))
-  return `${percent}%`
+function formatMetricSuccessRate(metrics?: { answeredConversations: number; successRate: number } | null) {
+  return metrics && metrics.answeredConversations > 0 && Number.isFinite(metrics.successRate)
+    ? `${formatMetricInteger(metrics.successRate)}%`
+    : '—'
 }
 
 function normalizePositivePlanLimit(value: unknown) {
@@ -244,23 +242,6 @@ function normalizePositivePlanLimit(value: unknown) {
   const number = Number(value)
   if (!Number.isFinite(number) || number <= 0) return null
   return Math.floor(number)
-}
-
-function getConversationalDashboardMetrics(
-  metrics: ConversationalAgentMetrics | null,
-  agents: ConversationalAgentDef[]
-) {
-  return {
-    totalAgents: agents.length,
-    activeAgents: agents.filter((agent) => agent.enabled).length,
-    agentsWithAssignedConversations: metrics?.agentsWithAssignedConversations ?? 0,
-    assignedConversations: metrics?.assignedConversations ?? 0,
-    completedConversations: metrics?.completedConversations ?? 0,
-    successRate: metrics?.successRate ?? 0,
-    errorEvents: metrics?.errorEvents ?? 0,
-    skippedConversations: metrics?.skippedConversations ?? 0,
-    pausedConversations: metrics?.pausedConversations ?? 0
-  }
 }
 
 const systemReplyDeliveryDefaults: Pick<
@@ -4271,16 +4252,20 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const [config, setConfig] = useState<ConversationalAgentConfig | null>(null)
   const [agents, setAgents] = useState<ConversationalAgentDef[]>([])
   const [aiProviders, setAIProviders] = useState<ConversationalAIProviderStatus[]>([])
-  const [metrics, setMetrics] = useState<ConversationalAgentMetrics | null>(null)
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [products, setProducts] = useState<ProductItem[]>([])
   const [productsLoading, setProductsLoading] = useState(false)
   const [productsError, setProductsError] = useState('')
   const [filterOptions, setFilterOptions] = useState<AgentFilterOptions | undefined>(undefined)
   const [loading, setLoading] = useState(true)
+  const [directoryError, setDirectoryError] = useState('')
+  const [directoryRetry, setDirectoryRetry] = useState(0)
   const [creating, setCreating] = useState(false)
   const [resettingAgentSkipsId, setResettingAgentSkipsId] = useState<string | null>(null)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(() => routeAgentId || null)
+  const {
+    snapshot, metrics, loading: metricsLoading, notice: metricsNotice, refresh: refreshMetrics
+  } = useConversationalAgentMetrics(!selectedAgentId && !routeAgentId)
   const [providerModalId, setProviderModalId] = useState<ConversationalAIProviderId | null>(null)
   const [aiProvidersExpanded, setAIProvidersExpanded] = useState(false)
   const [providerApiKey, setProviderApiKey] = useState('')
@@ -4367,15 +4352,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     setAgents(merged)
   }, [])
 
-  const refreshMetrics = useCallback(async () => {
-    try {
-      const nextMetrics = await conversationalAgentService.getMetrics()
-      setMetrics(nextMetrics)
-    } catch {
-      // La configuración sigue funcionando; las métricas se reintentan al recargar.
-    }
-  }, [])
-
   const refreshAgentData = useCallback(async () => {
     const versionsAtRequestStart = new Map(agentMutationVersionsRef.current)
     const [nextConfig, nextAgents, nextProviders] = await Promise.all([
@@ -4393,13 +4369,13 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     const load = async () => {
       const versionsAtRequestStart = new Map(agentMutationVersionsRef.current)
       setLoading(true)
+      setDirectoryError('')
       setProductsLoading(true)
       try {
-        const [nextConfig, nextAgents, nextProviders, nextMetrics, calendarList, productsResponse, nextOptions] = await Promise.all([
+        const [nextConfig, nextAgents, nextProviders, calendarList, productsResponse, nextOptions] = await Promise.all([
           conversationalAgentService.getConfig(),
           conversationalAgentService.listAgents(),
           conversationalAgentService.listAIProviders(),
-          conversationalAgentService.getMetrics().catch(() => null),
           calendarsService.getCalendars(),
           apiClient.get<{ products?: ProductItem[] }>('/products', {
             params: {
@@ -4418,7 +4394,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         setConfig(nextConfig)
         applyServerAgentsPreservingDrafts(nextAgents, versionsAtRequestStart)
         setAIProviders(nextConfig.aiProviders || nextProviders)
-        setMetrics(nextMetrics)
         setCalendars(calendarList.filter((cal) => cal.isActive !== false))
         setProducts(Array.isArray(productsResponse.data?.products)
           ? productsResponse.data.products.filter((product) => getProductId(product))
@@ -4427,7 +4402,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         setFilterOptions(nextOptions)
       } catch (error: any) {
         if (!cancelled) {
-          showToast('error', 'Error', error?.message || 'No se pudo cargar Chatbot')
+          setDirectoryError(error?.message || 'No se pudo cargar la configuración de los agentes.')
         }
       } finally {
         if (!cancelled) {
@@ -4440,10 +4415,30 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     return () => {
       cancelled = true
     }
-  }, [applyServerAgentsPreservingDrafts, businessProfileVersion, showToast])
+  }, [applyServerAgentsPreservingDrafts, businessProfileVersion, directoryRetry])
 
   useEffect(() => {
-    if (loading) return
+    if (!snapshot || loading || directoryError || selectedAgentId || routeAgentId) return
+    const directory = agentsRef.current
+    const byId = new Map(snapshot.byAgent.map((agent) => [agent.agentId, agent]))
+    const changed = directory.length !== snapshot.totalAgents || directory.some((agent) => {
+      const latest = byId.get(agent.id)
+      return !latest || latest.enabled !== agent.enabled || latest.name !== agent.name
+    })
+    if (!changed) return
+
+    let cancelled = false
+    const versions = new Map(agentMutationVersionsRef.current)
+    conversationalAgentService.listAgents().then((latest) => {
+      if (!cancelled) applyServerAgentsPreservingDrafts(latest, versions)
+    }).catch(() => {
+      if (!cancelled) setDirectoryError('No se pudo actualizar la lista de agentes.')
+    })
+    return () => { cancelled = true }
+  }, [snapshot, loading, directoryError, selectedAgentId, routeAgentId, applyServerAgentsPreservingDrafts])
+
+  useEffect(() => {
+    if (loading || directoryError) return
 
     if (!routeAgentId) {
       setSelectedAgentId(current => current ? null : current)
@@ -4457,7 +4452,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
 
     setSelectedAgentId(null)
     navigate(buildConversationalAgentPath(null, routeBase), { replace: true })
-  }, [agents, loading, navigate, routeAgentId, routeBase])
+  }, [agents, directoryError, loading, navigate, routeAgentId, routeBase])
 
   const saveAgentNow = useCallback((
     agentId: string,
@@ -4548,6 +4543,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
             agentsRef.current = nextAgents
             if (mountedRef.current) setAgents(nextAgents)
           }
+          if (effectiveEnabled !== undefined) void refreshMetrics()
           return next
         } catch (error: any) {
           const stillDirty = dirtyAgentIdsRef.current.has(agentId)
@@ -4582,7 +4578,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       if (queues.get(agentId) === operation) queues.delete(agentId)
     }).catch(() => undefined)
     return operation
-  }, [refreshAgentData, showToast])
+  }, [refreshAgentData, refreshMetrics, showToast])
 
   saveAgentNowRef.current = saveAgentNow
 
@@ -4764,7 +4760,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       setAgents(nextAgents)
       setSelectedAgentId(agent.id)
       navigate(buildConversationalAgentPath(agent.id, routeBase))
-      void refreshMetrics()
       return agent
     } catch (error: any) {
       if (isConversationalAgentEntryConflictError(error)) {
@@ -4808,7 +4803,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       setAgents(nextAgents)
       setSelectedAgentId(agent.id)
       navigate(buildConversationalAgentPath(agent.id, routeBase))
-      void refreshMetrics()
       showToast('success', 'Agente creado en pausa', 'Configura sus condiciones de entrada antes de publicarlo.')
     } catch (error: any) {
       showToast('error', 'No se pudo crear', error?.message || 'Inténtalo otra vez.')
@@ -4884,7 +4878,15 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
 
   const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) || null : null
   const metricsByAgentId = new Map((metrics?.byAgent || []).map((item) => [item.agentId, item]))
-  const dashboardMetrics = getConversationalDashboardMetrics(metrics, agents)
+  const loadingMetricCards = metricsLoading && !snapshot && !metricsNotice
+  const directoryErrorMessage = directoryError && (
+    <div className="flex flex-wrap items-center gap-3" role="status">
+      <p className={styles.helper}>{directoryError}</p>
+      <Button size="sm" variant="secondary" onClick={() => setDirectoryRetry((attempt) => attempt + 1)}>
+        Reintentar carga de agentes
+      </Button>
+    </div>
+  )
   const providerModalOption = providerModalId ? getConversationalAIProviderOption(providerModalId) : null
   const rootClassName = [styles.container, className].filter(Boolean).join(' ')
   const directoryClassName = [styles.container, styles.conversationalDirectoryPage, className].filter(Boolean).join(' ')
@@ -4993,14 +4995,14 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     )
   }
 
-  if (loading) {
+  if ((routeAgentId || selectedAgentId) && (loading || directoryError)) {
     return (
       <div className={directoryClassName}>
         <PageHeader
           title="Chatbot"
           subtitle="Supervisa los chatbots que atienden conversaciones, cumplen metas y escalan chats cuando necesitan ayuda humana."
         />
-        <Loading message="Cargando Chatbot…" page="ai-agent" />
+        {loading ? <Loading message="Cargando Chatbot…" page="ai-agent" /> : directoryErrorMessage}
       </div>
     )
   }
@@ -5053,6 +5055,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
                 size="sm"
                 className={styles.aiProviderManagerToggle}
                 onClick={() => setAIProvidersExpanded((current) => !current)}
+                disabled={loading || Boolean(directoryError)}
                 aria-expanded={aiProvidersExpanded}
                 aria-controls="conversational-ai-provider-list"
                 aria-label={aiProvidersExpanded ? 'Ocultar modelos de IA disponibles' : 'Mostrar modelos de IA disponibles'}
@@ -5105,71 +5108,93 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
             <Button
               onClick={handleCreateAgent}
               loading={creating}
-              disabled={loading || creating || conversationalAgentLimitReached}
+              disabled={loading || Boolean(directoryError) || creating || conversationalAgentLimitReached}
               title={conversationalAgentLimitReached ? conversationalAgentLimitMessage : undefined}
             >
               <Plus size={16} />
               Nuevo agente
             </Button>
-            <Badge variant={conversationalAgentLimitReached ? 'warning' : 'neutral'}>
-              {conversationalAgentLimitText}
-            </Badge>
+            {!loading && !directoryError && (
+              <Badge variant={conversationalAgentLimitReached ? 'warning' : 'neutral'}>
+                {conversationalAgentLimitText}
+              </Badge>
+            )}
           </>
         )}
       />
 
+      {metricsNotice && (
+        <div className="flex flex-wrap items-center gap-3" role="status">
+          <p className={styles.helper}>{metricsNotice}</p>
+          <Button size="sm" variant="secondary" loading={metricsLoading} onClick={() => void refreshMetrics()}>
+            Reintentar métricas
+          </Button>
+        </div>
+      )}
+
       <div data-conversational-agent-kpi-grid className="grid grid-cols-2 gap-[var(--app-grid-gap,1rem)] sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           title="Agentes publicados"
-          value={`${formatMetricInteger(dashboardMetrics.activeAgents)}/${formatMetricInteger(dashboardMetrics.totalAgents)}`}
-          loading={loading}
+          description="Agentes publicados del total de agentes configurados."
+          value={snapshot ? `${formatMetricInteger(snapshot.activeAgents)}/${formatMetricInteger(snapshot.totalAgents)}` : '—'}
+          loading={loadingMetricCards}
           icon={<Bot className="w-5 h-5" />}
         />
         <KpiCard
           title="Agentes asignados"
-          value={formatMetricInteger(dashboardMetrics.agentsWithAssignedConversations)}
-          loading={loading}
+          description="Agentes con al menos una conversación activa asignada actualmente."
+          value={formatMetricInteger(metrics?.agentsWithAssignedConversations)}
+          loading={loadingMetricCards}
           icon={<UserCheck className="w-5 h-5" />}
         />
         <KpiCard
-          title="Chats atendiendo"
-          value={formatMetricInteger(dashboardMetrics.assignedConversations)}
-          loading={loading}
+          title="Chats atendidos"
+          description="Conversaciones donde un agente ya respondió. Cada contacto se cuenta una vez por canal, aunque reciba varias respuestas."
+          value={formatMetricInteger(metrics?.answeredConversations)}
+          loading={loadingMetricCards}
           icon={<Users className="w-5 h-5" />}
         />
         <KpiCard
           title="Metas cumplidas"
-          value={formatMetricInteger(dashboardMetrics.completedConversations)}
-          loading={loading}
+          description="Cierres en los que un agente cumplió su meta."
+          value={formatMetricInteger(metrics?.completedConversations)}
+          loading={loadingMetricCards}
           icon={<CheckCircle2 className="w-5 h-5" />}
         />
         <KpiCard
           title="Tasa de éxito"
-          value={formatMetricPercent(dashboardMetrics.successRate)}
-          loading={loading}
+          description="Porcentaje de chats atendidos en los que se cumplió al menos una meta. El guion indica que aún no hay chats atendidos."
+          value={formatMetricSuccessRate(metrics)}
+          loading={loadingMetricCards}
           icon={<Target className="w-5 h-5" />}
         />
         <KpiCard
           title="Errores detectados"
-          value={formatMetricInteger(dashboardMetrics.errorEvents)}
-          loading={loading}
+          description="Errores registrados por el chatbot, incluidos los que no tienen un agente identificado. Una conversación puede registrar varios errores."
+          value={formatMetricInteger(metrics?.errorEvents)}
+          loading={loadingMetricCards}
           icon={<AlertTriangle className="w-5 h-5" />}
         />
         <KpiCard
           title="Omitidos"
-          value={formatMetricInteger(dashboardMetrics.skippedConversations)}
-          loading={loading}
+          description="Conversaciones que actualmente están marcadas como omitidas."
+          value={formatMetricInteger(metrics?.skippedConversations)}
+          loading={loadingMetricCards}
           icon={<CircleSlash className="w-5 h-5" />}
         />
         <KpiCard
           title="Pausados"
-          value={formatMetricInteger(dashboardMetrics.pausedConversations)}
-          loading={loading}
+          description="Conversaciones en las que el agente está en pausa actualmente."
+          value={formatMetricInteger(metrics?.pausedConversations)}
+          loading={loadingMetricCards}
           icon={<PauseCircle className="w-5 h-5" />}
         />
       </div>
 
-      {!loading && agents.length === 0 && (
+      {loading && <Loading message="Cargando agentes…" compact />}
+      {directoryErrorMessage}
+
+      {!loading && !directoryError && agents.length === 0 && (
         <Card padding="md" className={styles.emptyAgentDirectory}>
           <div className={styles.iconBox}>
             <Bot size={22} />
@@ -5188,14 +5213,14 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         </Card>
       )}
 
-      {!loading && agents.length > 0 && (
+      {!loading && !directoryError && agents.length > 0 && (
         <div className={styles.agentDirectoryGrid}>
           {agents.map((agent) => {
             const provider = getConversationalAIProviderOption(agent.aiProvider)
             const modelLabel = getConversationalModelLabel(agent.aiProvider, agent.model)
             const entryRules = agent.filters.entry.groups.reduce((total, group) => total + group.conditions.length, 0)
             const agentMetrics = metricsByAgentId.get(agent.id)
-            const skippedCount = agentMetrics?.skippedConversations ?? 0
+            const skippedCount = agentMetrics?.skippedConversations
             const resettingSkips = resettingAgentSkipsId === agent.id
             const directoryPurpose = `${(agent.capabilitiesConfig?.items || []).filter((item) => item.enabled).length} capacidades · flujo directo`
 
@@ -5227,8 +5252,11 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
                   <div className={styles.agentDirectoryMeta}>
                     <span>{provider.label} · {modelLabel}</span>
                     <span>{entryRules > 0 ? `${entryRules} ${entryRules === 1 ? 'regla' : 'reglas'}` : 'Cualquier chat'}</span>
-                    <span>{agentMetrics?.assignedConversations ?? 0} atendiendo</span>
-                    <span>{agentMetrics?.completedConversations ?? 0} cumplidos</span>
+                    <span>Asignados: {formatMetricInteger(agentMetrics?.assignedConversations)}</span>
+                    <span>Atendidos: {formatMetricInteger(agentMetrics?.answeredConversations)}</span>
+                    <span>Metas cumplidas: {formatMetricInteger(agentMetrics?.completedConversations)}</span>
+                    <span>Éxito: {formatMetricSuccessRate(agentMetrics)}</span>
+                    <span>Errores: {formatMetricInteger(agentMetrics?.errorEvents)}</span>
                     {agent.hideAttendedNotifications && <span>Silencia hasta meta</span>}
                   </div>
                 </button>

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import pg from 'pg'
+import { verifyConversationalDashboardHistory } from './helpers/conversationalDashboardScenario.mjs'
 
 const connectionString = String(
   process.env.CONVERSATIONAL_AGENT_METRICS_TEST_POSTGRES_URL ||
@@ -28,10 +29,13 @@ function collectPlanNodes(plan, rows = []) {
 
 async function createSourceSchema(client) {
   await client.query(`
+    CREATE TABLE contacts (id TEXT PRIMARY KEY, full_name TEXT NOT NULL);
     CREATE TABLE conversational_agent_state (
       id TEXT PRIMARY KEY,
+      contact_id TEXT,
       agent_id TEXT,
       status TEXT NOT NULL DEFAULT 'active',
+      channel TEXT DEFAULT 'whatsapp',
       signal TEXT,
       signal_at TIMESTAMP,
       last_reply_at TIMESTAMP,
@@ -40,8 +44,10 @@ async function createSourceSchema(client) {
     );
     CREATE TABLE conversational_agent_events (
       id TEXT PRIMARY KEY,
+      contact_id TEXT,
       agent_id TEXT,
       event_type TEXT NOT NULL,
+      detail_json TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `)
@@ -49,6 +55,19 @@ async function createSourceSchema(client) {
 
 async function applyProjectionMigrations(client) {
   for (const name of migrationNames) {
+    await client.query(await readFile(new URL(name, migrationsUrl), 'utf8'))
+  }
+}
+
+async function applyActivityMigrations(client) {
+  for (const name of [
+    '092_safe_jsonb.postgres.sql',
+    '162a_conversational_event_metric_bulk_cleanup.postgres.sql',
+    '163a_conversational_event_metric_cleanup_trigger_guards.postgres.sql',
+    '164a_conversational_event_metric_direct_cleanup.postgres.sql',
+    '172a_conversational_agent_activity_metrics.postgres.sql',
+    '172b_conversational_agent_activity_pending.postgres.sql'
+  ]) {
     await client.query(await readFile(new URL(name, migrationsUrl), 'utf8'))
   }
 }
@@ -355,8 +374,48 @@ test('PostgreSQL real conserva exactitud incremental y fast path O(agentes + 64)
     ))
     assert.ok(Number(summaryScan['Actual Rows']) <= 64)
     assert.ok(Number(eventFastPlan['Execution Time']) < 1000)
+
+    // Una instalación con la proyección 098 ya certificada debe reconstruir
+    // únicamente los eventos de actividad, sin recorrer el historial en cada lote.
+    await applyActivityMigrations(client)
+    await client.query('ANALYZE conversational_agent_events')
+    const activityPlan = await client.query(`
+      EXPLAIN (FORMAT JSON, COSTS OFF)
+      SELECT id FROM ristak_conversational_activity_pending ORDER BY id LIMIT 1000
+    `)
+    assert.ok(collectPlanNodes(activityPlan.rows[0]['QUERY PLAN'][0].Plan).some(node =>
+      node['Index Name'] === 'idx_conversational_agent_activity_pending'
+    ), 'el histórico de actividad debe localizar pendientes por índice')
   } finally {
     await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`).catch(() => undefined)
+    await client.end()
+  }
+})
+
+test('PostgreSQL aplica las mismas reglas de atención, metas y errores que SQLite', {
+  skip: !connectionString,
+  timeout: 60_000
+}, async () => {
+  const client = new pg.Client({ connectionString })
+  const schema = `ristak_agent_dashboard_${randomUUID().replaceAll('-', '')}`
+  await client.connect()
+  try {
+    await client.query(`CREATE SCHEMA "${schema}"`)
+    await client.query(`SET search_path TO "${schema}"`)
+    await createSourceSchema(client)
+    await applyProjectionMigrations(client)
+    await applyActivityMigrations(client)
+    const query = (sql, params = []) => {
+      let index = 0
+      return client.query(sql.replace(/\?/g, () => `$${++index}`), params)
+    }
+    await verifyConversationalDashboardHistory({
+      all: async (...args) => (await query(...args)).rows,
+      get: async (...args) => (await query(...args)).rows[0],
+      run: query
+    })
+  } finally {
+    await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`)
     await client.end()
   }
 })

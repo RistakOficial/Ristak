@@ -2,6 +2,7 @@ import type { ConversationalAIProviderId } from '@/constants/conversationalAIPro
 import { getStoredBusinessTimezone } from '@/utils/timezone'
 import defaultConversationalPersonalityMarkdown from '../../../shared/conversational/default-personality.md?raw'
 import { apiUrl } from './apiBaseUrl'
+import { withRequestTimeout } from './requestTimeout'
 
 export type ConversationalObjective = 'citas' | 'ventas' | 'datos' | 'filtrar' | 'custom'
 export type ConversationalSuccessAction = 'book_appointment' | 'ready_for_human' | 'ready_to_buy' | 'send_goal_url' | 'send_trigger_link' | 'internal_signal' | 'none'
@@ -643,6 +644,10 @@ export interface ConversationalAgentMetricByAgent {
   aiProvider: ConversationalAIProviderId
   model: string
   assignedConversations: number
+  answeredConversations: number
+  successfulAnsweredConversations: number
+  successRate: number
+  errorEvents: number
   completedConversations: number
   pausedConversations: number
   humanTakeovers: number
@@ -656,6 +661,8 @@ export interface ConversationalAgentMetrics {
   totalAgents: number
   activeAgents: number
   assignedConversations: number
+  answeredConversations: number
+  successfulAnsweredConversations: number
   agentsWithAssignedConversations: number
   completedConversations: number
   pausedConversations: number
@@ -1631,8 +1638,13 @@ export const conversationalAgentService = {
     return request<AgentFilterOptions>('/filter-options')
   },
 
-  getMetrics(): Promise<ConversationalAgentMetrics> {
-    return request<ConversationalAgentMetrics>('/metrics')
+  getMetrics(signal?: AbortSignal): Promise<ConversationalAgentMetrics> {
+    return withRequestTimeout({
+      signal,
+      timeoutMs: 20_000,
+      timeoutMessage: 'Las métricas del chatbot tardaron demasiado en cargar.',
+      request: (signal) => request<ConversationalAgentMetrics>('/metrics', { signal })
+    })
   },
 
   async createAgent(input: ConversationalAgentDefInput = {}): Promise<ConversationalAgentDef> {

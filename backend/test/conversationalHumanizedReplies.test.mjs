@@ -1139,8 +1139,8 @@ test('calcula métricas del agente conversacional por estado y errores', () => {
       { id: 'agent_2', name: 'Soporte', enabled: false, model: 'gpt-5.4-mini' }
     ],
     stateRows: [
-      { agent_id: 'agent_1', status: 'active', signal: null, updated_at: '2026-06-13T10:00:00Z' },
-      { agent_id: 'agent_1', status: 'completed', signal: 'ready_for_human', updated_at: '2026-06-13T10:05:00Z' },
+      { agent_id: 'agent_1', status: 'active', signal: null, last_reply_at: '2026-06-13T10:00:00Z' },
+      { agent_id: 'agent_1', status: 'completed', signal: 'ready_for_human', last_reply_at: '2026-06-13T10:05:00Z' },
       { agent_id: 'agent_2', status: 'discarded', signal: 'discarded', updated_at: '2026-06-13T10:10:00Z' },
       { agent_id: 'agent_2', status: 'human', signal: 'ready_for_human', updated_at: '2026-06-13T10:15:00Z' }
     ],
@@ -1161,7 +1161,9 @@ test('calcula métricas del agente conversacional por estado y errores', () => {
   assert.equal(metrics.discardedConversations, 1)
   assert.equal(metrics.humanTakeovers, 1)
   assert.equal(metrics.errorEvents, 1)
-  assert.equal(metrics.successRate, 33)
+  assert.equal(metrics.answeredConversations, 2)
+  assert.equal(metrics.successfulAnsweredConversations, 1)
+  assert.equal(metrics.successRate, 50)
   assert.equal(metrics.byAgent.find((agent) => agent.agentId === 'agent_1')?.completedConversations, 1)
 })
 

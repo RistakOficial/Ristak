@@ -3,7 +3,7 @@ import { BACKFILL_JOB_PRIORITY } from '../jobs/backfillJobCoordinator.js'
 import { scheduleProjectionBackfillJob } from '../jobs/projectionBackfillScheduler.js'
 import { logger } from '../utils/logger.js'
 
-export const CONVERSATIONAL_AGENT_METRICS_PROJECTION_VERSION = 1
+export const CONVERSATIONAL_AGENT_METRICS_PROJECTION_VERSION = 2
 
 const BATCH_SIZE = databaseDialect === 'postgres' ? 1_000 : 180
 const MAX_BATCHES_PER_RUN = 10_000
@@ -20,7 +20,7 @@ function placeholders(values) {
 }
 
 function projectionUnavailable(error) {
-  return /(?:no such table|no such column|does not exist|undefined table|undefined column).*?(?:conversational_agent_(?:state|event)_metric|conversational_agent_metrics_projection|agent_metrics_projection_version)|(?:conversational_agent_(?:state|event)_metric|conversational_agent_metrics_projection|agent_metrics_projection_version).*?(?:no such|does not exist)/i
+  return /(?:no such table|no such column|does not exist|undefined table|undefined column).*?(?:conversational_agent_(?:state|event)_metric|conversational_agent_metrics_projection|agent_metrics_projection_version|conversational_agent_activity|ristak_conversational_activity)|(?:conversational_agent_(?:state|event)_metric|conversational_agent_metrics_projection|agent_metrics_projection_version|conversational_agent_activity|ristak_conversational_activity).*?(?:no such|does not exist)/i
     .test(String(error?.message || ''))
 }
 
@@ -47,18 +47,19 @@ async function hasPendingRows(database = db) {
   const stateRow = await database.get(`
     SELECT id
     FROM conversational_agent_state
-    WHERE agent_metrics_projection_version < ?
+    WHERE agent_metrics_projection_version < 1
     LIMIT 1
-  `, [CONVERSATIONAL_AGENT_METRICS_PROJECTION_VERSION])
+  `)
   if (stateRow) return true
 
   const eventRow = await database.get(`
     SELECT id
     FROM conversational_agent_events
-    WHERE agent_metrics_projection_version < ?
+    WHERE agent_metrics_projection_version < 1
     LIMIT 1
-  `, [CONVERSATIONAL_AGENT_METRICS_PROJECTION_VERSION])
-  return Boolean(eventRow)
+  `)
+  if (eventRow) return true
+  return Boolean(await database.get('SELECT id FROM ristak_conversational_activity_pending LIMIT 1'))
 }
 
 /**
@@ -74,9 +75,12 @@ export async function isConversationalAgentMetricsProjectionReady() {
   }
 }
 
-export async function getConversationalAgentMetricsProjectionStatus() {
-  const state = await readConversationalAgentMetricsProjectionState()
+export async function getConversationalAgentMetricsProjectionStatus(database = db) {
+  const state = await readConversationalAgentMetricsProjectionState(database)
   if (!state || Number(state.projection_version) !== CONVERSATIONAL_AGENT_METRICS_PROJECTION_VERSION) {
+    return { available: false, ready: false, status: 'unavailable' }
+  }
+  if (state.status === 'failed') {
     return { available: false, ready: false, status: 'unavailable' }
   }
   if (String(state.status || '').toLowerCase() !== 'ready') {
@@ -124,7 +128,7 @@ const eventMetricSums = `
 `
 
 async function loadProjectionSnapshot(database = db, projectionStatus = 'ready') {
-  const [stateSummaryRows, eventSummary] = await Promise.all([
+  const [stateSummaryRows, eventSummary, activitySummaryRows] = await Promise.all([
     database.all(`
       SELECT ${stateMetricColumns}
       FROM conversational_agent_state_metric_summary
@@ -133,10 +137,16 @@ async function loadProjectionSnapshot(database = db, projectionStatus = 'ready')
     database.get(`
       SELECT ${eventMetricSums}
       FROM conversational_agent_event_metric_summary
+    `),
+    database.all(`
+      SELECT scope, answered_conversations, successful_answered_conversations,
+             completed_conversations, error_events
+      FROM conversational_agent_activity_summary
     `)
   ])
   return {
     stateSummaryRows,
+    activitySummaryRows,
     eventSummary: eventSummary || {},
     projectionReady: projectionStatus === 'ready',
     projectionStatus
@@ -148,22 +158,24 @@ async function loadProjectionSnapshot(database = db, projectionStatus = 'ready')
  * Durante el backfill puede ser parcial, pero su costo no crece con el
  * historico y projectionStatus deja claro que aun esta convergiendo.
  */
-export async function loadConversationalAgentMetricAggregates() {
-  const status = await getConversationalAgentMetricsProjectionStatus()
+export async function loadConversationalAgentMetricAggregates(database = db) {
+  const status = await getConversationalAgentMetricsProjectionStatus(database)
   if (!status.available) {
     return {
       stateSummaryRows: [],
+      activitySummaryRows: [],
       eventSummary: {},
       projectionReady: false,
       projectionStatus: 'unavailable'
     }
   }
   try {
-    return await loadProjectionSnapshot(db, status.status)
+    return await loadProjectionSnapshot(database, status.status)
   } catch (error) {
     if (!projectionUnavailable(error)) throw error
     return {
       stateSummaryRows: [],
+      activitySummaryRows: [],
       eventSummary: {},
       projectionReady: false,
       projectionStatus: 'unavailable'
@@ -171,14 +183,16 @@ export async function loadConversationalAgentMetricAggregates() {
   }
 }
 
-async function backfillSourceBatch(database, { table, updateColumn }) {
+async function backfillSourceBatch(database, { table, updateColumn, activity = false }) {
+  const source = activity ? 'ristak_conversational_activity_pending' : table
+  const pending = activity ? '' : 'WHERE agent_metrics_projection_version < 1'
   const rows = await database.all(`
     SELECT id
-    FROM ${table}
-    WHERE agent_metrics_projection_version < ?
+    FROM ${source}
+    ${pending}
     ORDER BY id
     LIMIT ?
-  `, [CONVERSATIONAL_AGENT_METRICS_PROJECTION_VERSION, BATCH_SIZE])
+  `, [BATCH_SIZE])
   if (!rows.length) return 0
 
   const ids = rows.map(row => String(row.id || '')).filter(Boolean)
@@ -187,6 +201,7 @@ async function backfillSourceBatch(database, { table, updateColumn }) {
     UPDATE ${table}
     SET ${updateColumn} = ${updateColumn}
     WHERE id IN (${placeholders(ids)})
+      ${activity ? 'AND activity_metrics_version = 0' : 'AND agent_metrics_projection_version < 1'}
   `, ids)
   return Number(result?.changes ?? result?.rowCount ?? ids.length)
 }
@@ -200,20 +215,17 @@ async function tryMarkReady(database) {
       AND NOT EXISTS (
         SELECT 1
         FROM conversational_agent_state
-        WHERE agent_metrics_projection_version < ?
+        WHERE agent_metrics_projection_version < 1
         LIMIT 1
       )
       AND NOT EXISTS (
         SELECT 1
         FROM conversational_agent_events
-        WHERE agent_metrics_projection_version < ?
+        WHERE agent_metrics_projection_version < 1
         LIMIT 1
       )
-  `, [
-    CONVERSATIONAL_AGENT_METRICS_PROJECTION_VERSION,
-    CONVERSATIONAL_AGENT_METRICS_PROJECTION_VERSION,
-    CONVERSATIONAL_AGENT_METRICS_PROJECTION_VERSION
-  ])
+      AND NOT EXISTS (SELECT 1 FROM ristak_conversational_activity_pending LIMIT 1)
+  `, [CONVERSATIONAL_AGENT_METRICS_PROJECTION_VERSION])
   return Number(result?.changes ?? result?.rowCount ?? 0) > 0
 }
 
@@ -241,6 +253,11 @@ async function runUnlockedBackfill(database = db) {
     changed += await backfillSourceBatch(database, {
       table: 'conversational_agent_events',
       updateColumn: 'event_type'
+    })
+    changed += await backfillSourceBatch(database, {
+      table: 'conversational_agent_events',
+      updateColumn: 'detail_json',
+      activity: true
     })
 
     if (!changed) {
