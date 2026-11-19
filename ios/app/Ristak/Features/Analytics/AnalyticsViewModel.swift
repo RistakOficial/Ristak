@@ -6,7 +6,8 @@ import Observation
 /// Estado de un panel independiente de Analíticas (KPIs, gráfica, embudo,
 /// origen). Cada panel carga, falla y reintenta por separado (doc 09 §7.7).
 struct AnalyticsPanelState<Value: Sendable & Equatable>: Equatable, Sendable {
-    var cacheKey: String?
+    var query: AnalyticsCacheQuery?
+    var previousRange: AnalyticsDateRange?
     var value: Value?
     var isLoading = true
     var errorMessage: String?
@@ -15,9 +16,9 @@ struct AnalyticsPanelState<Value: Sendable & Equatable>: Equatable, Sendable {
 extension AnalyticsPanelState where Value: Decodable {
     @MainActor
     mutating func revealSnapshotIfWaiting() {
-        guard value == nil, isLoading, let cacheKey,
-              let saved = RistakSnapshotCache.shared.value(Value.self, for: cacheKey) else { return }
-        value = saved
+        guard value == nil, isLoading, let saved = query?.snapshot(Value.self) else { return }
+        value = saved.value
+        previousRange = saved.previousRange
         isLoading = false
     }
 }
@@ -186,6 +187,7 @@ final class AnalyticsViewModel {
     private var rangeSelectionTask: Task<Void, Never>?
     private var chartSelectionTask: Task<Void, Never>?
     private var funnelSelectionTask: Task<Void, Never>?
+    private let now: () -> Date
     private let snapshotGrace: Duration
     private var snapshotTasks: [AnalyticsRecovery.Panel: Task<Void, Never>] = [:]
     private var offline = false
@@ -195,8 +197,10 @@ final class AnalyticsViewModel {
     init(
         queries: AnalyticsQueries = AnalyticsQueries(),
         recovery: AnalyticsRecovery? = nil,
-        snapshotGrace: Duration = .milliseconds(350)
+        snapshotGrace: Duration = .milliseconds(350),
+        now: @escaping () -> Date = Date.init
     ) {
+        self.now = now
         self.queries = queries
         self.snapshotGrace = snapshotGrace
         self.recovery = recovery ?? AnalyticsRecovery()
@@ -352,7 +356,7 @@ final class AnalyticsViewModel {
 
     private func resolveRange() -> AnalyticsDateRange? {
         if period == .custom { return customRange }
-        return AnalyticsService.dateRange(for: period, timeZone: businessTimeZone)
+        return AnalyticsService.dateRange(for: period, timeZone: businessTimeZone, now: now())
     }
 
     // MARK: - Selecciones que recargan un solo panel (doc 09 §7.7)
@@ -481,32 +485,32 @@ final class AnalyticsViewModel {
     }
 
     private func hydrateMetrics(_ range: AnalyticsDateRange) {
-        preparePanel(.metrics, at: \.metrics, key: cache?.metricsKey(range))
+        preparePanel(.metrics, at: \.metrics, query: cache?.query(.metrics, range: range, period: period))
     }
 
     private func hydrateChart(_ range: AnalyticsDateRange) {
-        preparePanel(.chart, at: \.chart, key: cache?.chartKey(range, chartKind, financialScope))
+        preparePanel(.chart, at: \.chart, query: cache?.query(.chart(chartKind, financialScope), range: range, period: period))
     }
 
     private func hydrateFunnel(_ range: AnalyticsDateRange) {
-        preparePanel(.funnel, at: \.funnel, key: cache?.funnelKey(range, funnelScope))
+        preparePanel(.funnel, at: \.funnel, query: cache?.query(.funnel(funnelScope), range: range, period: period))
     }
 
     private func hydrateOrigin(_ range: AnalyticsDateRange) {
         prepareOriginPhoneState(for: range)
-        preparePanel(.origin, at: \.origin, key: cache?.originKey(range))
+        preparePanel(.origin, at: \.origin, query: cache?.query(.origin, range: range, period: period))
     }
 
     private func preparePanel<Value: Decodable>(
         _ panel: AnalyticsRecovery.Panel,
         at path: ReferenceWritableKeyPath<AnalyticsViewModel, AnalyticsPanelState<Value>>,
-        key: String?
+        query: AnalyticsCacheQuery?
     ) {
         recovery.invalidate(panel)
         snapshotTasks.removeValue(forKey: panel)?.cancel()
-        if self[keyPath: path].cacheKey == key, self[keyPath: path].value != nil { return }
-        self[keyPath: path] = AnalyticsPanelState(cacheKey: key)
-        guard let key, RistakSnapshotCache.shared.contains(key) else { return }
+        if self[keyPath: path].query == query, self[keyPath: path].value != nil { return }
+        self[keyPath: path] = AnalyticsPanelState(query: query)
+        guard let query else { return }
         if offline {
             self[keyPath: path].revealSnapshotIfWaiting()
             return
@@ -514,7 +518,7 @@ final class AnalyticsViewModel {
         let delay = snapshotGrace
         snapshotTasks[panel] = Task { [weak self] in
             do { try await Task.sleep(for: delay) } catch { return }
-            guard let self, self.isActiveSession, self[keyPath: path].cacheKey == key else { return }
+            guard let self, self.isActiveSession, self[keyPath: path].query == query else { return }
             self[keyPath: path].revealSnapshotIfWaiting()
             self.snapshotTasks[panel] = nil
         }
@@ -553,6 +557,7 @@ final class AnalyticsViewModel {
                 AnalyticsCache.accessDenied = false
             }
             metrics.value = snapshot
+            metrics.previousRange = nil
             metrics.isLoading = false
             cache?.storeMetrics(snapshot, range)
             recovery.finish(request)
@@ -600,6 +605,7 @@ final class AnalyticsViewModel {
             }
             guard isCurrent(request), isCurrentChartRequest(range, kind, scope) else { return false }
             chart.value = points
+            chart.previousRange = nil
             chart.isLoading = false
             cache?.storeChart(points, range, kind, scope)
             recovery.finish(request)
@@ -633,6 +639,7 @@ final class AnalyticsViewModel {
             )
             guard isCurrent(request), self.range == range, funnelScope == scope else { return false }
             funnel.value = rows
+            funnel.previousRange = nil
             funnel.isLoading = false
             cache?.storeFunnel(rows, range, scope)
             recovery.finish(request)
@@ -658,14 +665,16 @@ final class AnalyticsViewModel {
             // La respuesta principal excluye teléfonos. Conservar sólo esas
             // filas del snapshot SWR evita que una revalidación tardía borre
             // el enriquecimiento ya publicado para este mismo rango.
+            let savedNumbers = origin.previousRange == nil ? origin.value?.whatsappNumbers : nil
             let merged = OriginDistributionSnapshot(
                 traffic: snapshot.traffic,
                 leads: snapshot.leads,
                 appointments: snapshot.appointments,
                 conversions: snapshot.conversions,
-                whatsappNumbers: origin.value?.whatsappNumbers ?? snapshot.whatsappNumbers
+                whatsappNumbers: savedNumbers ?? snapshot.whatsappNumbers
             )
             origin.value = merged
+            origin.previousRange = nil
             origin.isLoading = false
             cache?.storeOrigin(merged, range)
             scheduleOriginPhoneBreakdownIfNeeded()
@@ -683,7 +692,7 @@ final class AnalyticsViewModel {
             phoneOriginRequested,
             isActiveSession, !accessDenied, !primaryReloadInProgress,
             let range,
-            origin.value != nil
+            origin.value != nil, origin.previousRange == nil
         else { return }
 
         let key = phoneOriginKey(for: range)
@@ -717,7 +726,7 @@ final class AnalyticsViewModel {
                 isCurrent(request), phoneOriginGeneration == generation,
                 phoneOriginInFlightRangeKey == key,
                 self.range == range,
-                let current = origin.value
+                origin.previousRange == nil, let current = origin.value
             else { return }
 
             let merged = OriginDistributionSnapshot(
@@ -838,9 +847,13 @@ final class AnalyticsViewModel {
             accessDenied = true
             AnalyticsCache.accessDenied = true
             next.value = nil
+            next.previousRange = nil
         } else if api?.kind == .featureUnavailable {
-            if let key = state.cacheKey { RistakSnapshotCache.shared.remove(key) }
+            for key in state.query?.matchingKeys() ?? [] {
+                RistakSnapshotCache.shared.remove(key)
+            }
             next.value = empty
+            next.previousRange = nil
         } else if next.value == nil {
             next.errorMessage = api?.message ?? "No se pudo cargar la información."
         }
@@ -953,7 +966,9 @@ final class AnalyticsViewModel {
     /// El panel solo se muestra con ≥ 2 filas (doc 09 §7.6) y con el panel de
     /// origen ya resuelto (comparten carga).
     var showsWhatsAppPanel: Bool {
-        !origin.isLoading && origin.errorMessage == nil && whatsappRows.count >= 2
+        guard !origin.isLoading, origin.errorMessage == nil, let range, let snapshot = origin.value else { return false }
+        let hasBreakdown = !snapshot.whatsappNumbers.isEmpty || phoneOriginCompletedRangeKey == phoneOriginKey(for: range)
+        return hasBreakdown && whatsappRows.count >= 2
     }
 
     /// Cruce de `whatsapp-api/status.phoneNumbers` con

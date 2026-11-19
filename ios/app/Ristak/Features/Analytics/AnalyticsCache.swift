@@ -19,16 +19,19 @@ import Foundation
 struct AnalyticsCache: Equatable {
     private static var cache: RistakSnapshotCache { .shared }
 
+    let namespace: RistakSnapshotCache.NamespaceToken
     let timeZone: TimeZone
     let currency: String
     let includeWeb: Bool
 
     init?(config: AppConfigStore, includeWeb: Bool) {
-        guard let rawCurrency = config.appConfig[RistakAppConfigKey.accountCurrency],
+        guard let namespace = Self.cache.namespaceToken(),
+              let rawCurrency = config.appConfig[RistakAppConfigKey.accountCurrency],
               let currency = config.accountCurrency,
               rawCurrency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == currency,
               Self.cache.value(String.self, for: RistakCacheKey.timezone) == config.businessTimeZone.identifier
         else { return nil }
+        self.namespace = namespace
         self.timeZone = config.businessTimeZone
         self.currency = currency
         self.includeWeb = includeWeb
@@ -46,32 +49,38 @@ struct AnalyticsCache: Equatable {
 
     // MARK: - Claves (una por combinación)
 
-    /// Las versiones anteriores no guardaban moneda, zona ni permiso web.
-    /// Una respuesta confirmada inicia el historial de esta combinación exacta.
-    func rangeToken(_ range: AnalyticsDateRange) -> String {
-        "\(timeZone.identifier):\(currency):\(includeWeb):\(range.startDate)_\(range.endDate):\(range.groupBy.rawValue)"
+    enum Panel {
+        case metrics, chart(AnalyticsChartKind, DashboardScope), funnel(DashboardScope), origin
+
+        var family: String {
+            switch self {
+            case .metrics: "metrics"
+            case .chart: "chart"
+            case .funnel: "funnel"
+            case .origin: "origin"
+            }
+        }
+
+        var filters: String {
+            switch self {
+            case .chart(let kind, let scope): ":\(kind.rawValue):\(kind.showsScope ? scope.rawValue : "none")"
+            case .funnel(let scope): ":\(scope.rawValue)"
+            case .metrics, .origin: ""
+            }
+        }
+    }
+
+    /// Conserva el formato exacto ya guardado por versiones con ámbito verificable.
+    func query(_ panel: Panel, range: AnalyticsDateRange, period: AnalyticsPeriod? = nil) -> AnalyticsCacheQuery {
+        AnalyticsCacheQuery(
+            prefix: "analytics:\(panel.family):\(timeZone.identifier):\(currency):\(includeWeb):",
+            suffix: ":\(range.groupBy.rawValue)\(panel.filters)",
+            range: range, period: period, timeZone: timeZone, namespace: namespace
+        )
     }
 
     func metricsKey(_ range: AnalyticsDateRange) -> String {
-        "analytics:metrics:\(rangeToken(range))"
-    }
-
-    /// La gráfica depende de rango + vista + (scope solo en «Ingresos vs gastos»).
-    func chartKey(
-        _ range: AnalyticsDateRange,
-        _ kind: AnalyticsChartKind,
-        _ scope: DashboardScope
-    ) -> String {
-        let scopeToken = kind.showsScope ? scope.rawValue : "none"
-        return "analytics:chart:\(rangeToken(range)):\(kind.rawValue):\(scopeToken)"
-    }
-
-    func funnelKey(_ range: AnalyticsDateRange, _ scope: DashboardScope) -> String {
-        "analytics:funnel:\(rangeToken(range)):\(scope.rawValue)"
-    }
-
-    func originKey(_ range: AnalyticsDateRange) -> String {
-        "analytics:origin:\(rangeToken(range))"
+        query(.metrics, range: range).exactKey
     }
 
     /// Estado de números de WhatsApp: es a nivel de cuenta, no depende del rango.
@@ -95,19 +104,19 @@ struct AnalyticsCache: Equatable {
         _ scope: DashboardScope
     ) {
         // `AnalyticsChartPoint` es Codable de la feature: round-trip nativo.
-        Self.cache.store(points, for: chartKey(range, kind, scope))
+        Self.cache.store(points, for: query(.chart(kind, scope), range: range).exactKey)
     }
 
     // MARK: - Embudo
 
     func storeFunnel(_ rows: [DashboardFunnelRow], _ range: AnalyticsDateRange, _ scope: DashboardScope) {
-        Self.cache.store(rows.map(FunnelRowDTO.init), for: funnelKey(range, scope))
+        Self.cache.store(rows.map(FunnelRowDTO.init), for: query(.funnel(scope), range: range).exactKey)
     }
 
     // MARK: - Origen
 
     func storeOrigin(_ snapshot: OriginDistributionSnapshot, _ range: AnalyticsDateRange) {
-        Self.cache.store(OriginDTO(snapshot), for: originKey(range))
+        Self.cache.store(OriginDTO(snapshot), for: query(.origin, range: range).exactKey)
     }
 
     // MARK: - Números de WhatsApp
@@ -128,6 +137,72 @@ struct AnalyticsCache: Equatable {
 
     static func storeLabels(_ labels: DashboardCustomLabels) {
         cache.store(LabelsDTO(labels), for: labelsKey)
+    }
+}
+
+/// El centro de la clave es el intervalo real devuelto por el servidor. El
+/// prefijo identifica cuenta (por namespace), zona, moneda y permiso web;
+/// el sufijo distingue agrupación, gráfica y filtros de atribución.
+struct AnalyticsCacheQuery: Equatable, Sendable {
+    let prefix: String
+    let suffix: String
+    let range: AnalyticsDateRange
+    let period: AnalyticsPeriod?
+    let timeZone: TimeZone
+    let namespace: RistakSnapshotCache.NamespaceToken
+
+    var exactKey: String { "\(prefix)\(range.startDate)_\(range.endDate)\(suffix)" }
+
+    @MainActor
+    func snapshot<Value: Decodable>(_ type: Value.Type) -> (value: Value, previousRange: AnalyticsDateRange?)? {
+        let storage = RistakSnapshotCache.shared
+        guard storage.isCurrent(namespace) else { return nil }
+        if let exact = storage.value(type, for: exactKey) { return (exact, nil) }
+        guard let period, period != .custom else { return nil }
+
+        // ISO YYYY-MM-DD ordena por fecha. Como todos los candidatos válidos
+        // duran el mismo número de días, el inicio más reciente también tiene
+        // el fin más reciente. Sólo decodificamos un payload que podría servir.
+        for key in matchingKeys().sorted(by: >) {
+            let dates = key.dropFirst(prefix.count).dropLast(suffix.count).split(separator: "_")
+            guard dates.count == 2 else { continue }
+            let end = String(dates[1])
+            guard end < range.endDate,
+                  let noon = AnalyticsDateRange.businessNoon(end, timeZone: timeZone),
+                  let candidate = AnalyticsService.dateRange(for: period, timeZone: timeZone, now: noon),
+                  candidate.startDate == dates[0], candidate.endDate == end,
+                  let value = storage.value(type, for: key) else { continue }
+            return (value, candidate)
+        }
+        return nil
+    }
+
+    @MainActor
+    func matchingKeys() -> [String] {
+        let storage = RistakSnapshotCache.shared
+        guard storage.isCurrent(namespace) else { return [] }
+        return storage.keys(withPrefix: prefix).filter { $0.hasSuffix(suffix) }
+    }
+}
+
+extension AnalyticsDateRange {
+    @MainActor
+    var savedReportLabel: String {
+        func label(_ date: String) -> String {
+            "\(AnalyticsViewModel.chartAxisLabel(date)) \(date.prefix(4))"
+        }
+        return "Informe guardado del \(label(startDate)) al \(label(endDate))"
+    }
+
+    /// Un día de calendario del negocio, anclado a mediodía para cálculos de
+    /// calendario y selectores que necesitan un instante.
+    static func businessNoon(_ iso: String?, timeZone: TimeZone) -> Date? {
+        guard let iso, AnalyticsService.isValidBusinessDateString(iso) else { return nil }
+        let parts = iso.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2], hour: 12))
     }
 }
 

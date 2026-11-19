@@ -195,6 +195,13 @@ final class RistakSnapshotCache {
         return try? Self.decoder.decode(T.self, from: data)
     }
 
+    /// Sólo claves ya precargadas de la sesión activa. Al cambiar de cuenta
+    /// se vacía este diccionario antes de precargar los datos del nuevo usuario.
+    func keys(withPrefix prefix: String) -> [String] {
+        guard currentNamespace != nil else { return [] }
+        return memory.keys.filter { $0.hasPrefix(prefix) }
+    }
+
     /// `Data` JSON crudo cacheado para `key` (para quien ya maneja `Data`).
     func rawData(for key: String) -> Data? {
         memory[key]

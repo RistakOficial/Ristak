@@ -26,6 +26,7 @@ struct AnalyticsOriginPanel: View {
 
                 tabChips
 
+                AnalyticsSavedRangeLabel(range: model.origin.previousRange)
                 content
             }
         }
@@ -121,6 +122,7 @@ struct AnalyticsWhatsAppPanel: View {
                     .font(.title3.bold())
                     .foregroundStyle(RistakTheme.textPrimary)
 
+                AnalyticsSavedRangeLabel(range: model.origin.previousRange)
                 let rows = model.whatsappRows
                 let maxValue = max(1, rows.map(\.value).max() ?? 1)
                 VStack(spacing: RistakTheme.Spacing.md) {

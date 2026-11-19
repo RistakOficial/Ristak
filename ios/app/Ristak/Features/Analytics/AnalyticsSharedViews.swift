@@ -1,5 +1,20 @@
 import SwiftUI
 
+/// Mantiene la fecha al lado de las cifras antiguas aunque los demás paneles
+/// ya hayan conseguido su lectura del periodo actual.
+struct AnalyticsSavedRangeLabel: View {
+    let range: AnalyticsDateRange?
+
+    var body: some View {
+        if let range {
+            Text(range.savedReportLabel)
+                .font(.footnote)
+                .foregroundStyle(RistakTheme.textDim)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
 // MARK: - Barra de progreso horizontal
 
 /// Barra horizontal de los paneles Embudo/Origen: pista neutra + relleno de

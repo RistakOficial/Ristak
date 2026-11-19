@@ -31,6 +31,7 @@ struct AnalyticsKPISection: View {
     ]
 
     var body: some View {
+        AnalyticsSavedRangeLabel(range: model.metrics.previousRange)
         if let message = model.metrics.errorMessage {
             SectionCard {
                 AnalyticsPanelErrorView(message: message) {

@@ -52,6 +52,7 @@ struct AnalyticsChartPanel: View {
                     scopeChips
                 }
 
+                AnalyticsSavedRangeLabel(range: model.chart.previousRange)
                 legend
 
                 chartContent

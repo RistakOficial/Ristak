@@ -25,8 +25,8 @@ struct AnalyticsCustomRangeView: View {
         let fallbackEnd = Date()
         let fallbackStart = Calendar(identifier: .gregorian)
             .date(byAdding: .day, value: -29, to: fallbackEnd) ?? fallbackEnd
-        _startDate = State(initialValue: Self.businessDate(fromISO: initialRange?.startDate, timeZone: timeZone) ?? fallbackStart)
-        _endDate = State(initialValue: Self.businessDate(fromISO: initialRange?.endDate, timeZone: timeZone) ?? fallbackEnd)
+        _startDate = State(initialValue: AnalyticsDateRange.businessNoon(initialRange?.startDate, timeZone: timeZone) ?? fallbackStart)
+        _endDate = State(initialValue: AnalyticsDateRange.businessNoon(initialRange?.endDate, timeZone: timeZone) ?? fallbackEnd)
     }
 
     var body: some View {
@@ -71,21 +71,5 @@ struct AnalyticsCustomRangeView: View {
         // dispositivo (regla dura de fechas).
         .environment(\.timeZone, timeZone)
         .frame(minWidth: 320)
-    }
-
-    /// `YYYY-MM-DD` (día de negocio) → Date al mediodía de esa zona, para que
-    /// el picker muestre el día correcto sin corrimientos.
-    private static func businessDate(fromISO iso: String?, timeZone: TimeZone) -> Date? {
-        guard let iso else { return nil }
-        let parts = iso.split(separator: "-").compactMap { Int($0) }
-        guard parts.count == 3 else { return nil }
-        var components = DateComponents()
-        components.year = parts[0]
-        components.month = parts[1]
-        components.day = parts[2]
-        components.hour = 12
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        return calendar.date(from: components)
     }
 }

@@ -5,8 +5,12 @@ import XCTest
 final class AnalyticsRecoveryTests: XCTestCase {
     private let storage = RistakSnapshotCache.shared
 
-    private func configureAccount(currency: String = "USD", zone: String = "America/Denver") -> AppConfigStore {
-        storage.configure(namespace: "analytics-tests.\(UUID().uuidString)")
+    private func configureAccount(
+        currency: String = "USD",
+        zone: String = "America/Denver",
+        namespace: String = "analytics-tests.\(UUID().uuidString)"
+    ) -> AppConfigStore {
+        storage.configure(namespace: namespace)
         storage.store([RistakAppConfigKey.accountCurrency: currency], for: RistakCacheKey.appConfig)
         storage.store(zone, for: RistakCacheKey.timezone)
         let config = AppConfigStore()
@@ -17,7 +21,9 @@ final class AnalyticsRecoveryTests: XCTestCase {
     private func model(
         _ probe: AnalyticsMetricsProbe,
         delay: Duration = .milliseconds(10),
-        grace: Duration = .milliseconds(350)
+        grace: Duration = .milliseconds(350),
+        now: @escaping () -> Date = Date.init,
+        customize: (inout AnalyticsQueries) -> Void = { _ in }
     ) -> AnalyticsViewModel {
         var queries = AnalyticsQueries()
         queries.metrics = { _, _ in try await probe.metrics() }
@@ -28,7 +34,8 @@ final class AnalyticsRecoveryTests: XCTestCase {
         queries.originPhoneBreakdown = { _, _ in try JSONDecoder().decode(OriginDistributionSnapshot.self, from: Data("{}".utf8)) }
         queries.customLabels = { .defaults }
         queries.phones = { try JSONDecoder().decode(WhatsAppAPIStatus.self, from: Data("{}".utf8)) }
-        return AnalyticsViewModel(queries: queries, recovery: AnalyticsRecovery(delays: [delay]), snapshotGrace: grace)
+        customize(&queries)
+        return AnalyticsViewModel(queries: queries, recovery: AnalyticsRecovery(delays: [delay]), snapshotGrace: grace, now: now)
     }
 
     private func waitUntil(_ condition: @MainActor () async -> Bool) async throws {
@@ -123,6 +130,101 @@ final class AnalyticsRecoveryTests: XCTestCase {
         await probe.resume(21)
         await load.value
         XCTAssertEqual(offline.metrics.value?.ingresosNetos?.value, 21)
+    }
+
+    func testNextBusinessDayOfflineShowsLastWindowWithDatesUntilLiveZeroArrives() async throws {
+        let tenant = "analytics-tests.\(UUID().uuidString)"
+        let config = configureAccount(zone: "America/Mexico_City", namespace: tenant)
+        defer { storage.reset() }
+        // La primera apertura ya es 20 de noviembre en UTC y aún 19 en el negocio.
+        let before = try XCTUnwrap(RistakDateParsing.date(fromISO: "2026-11-20T05:50:00Z"))
+        let after = try XCTUnwrap(RistakDateParsing.date(fromISO: "2026-11-20T06:10:00Z"))
+        let seed = model(AnalyticsMetricsProbe([.value(19)]), now: { before })
+        await seed.start(config: config, includeWeb: false)
+        seed.stop()
+        await storage.flushPendingWrites()
+        storage.configure(namespace: nil)
+        storage.configure(namespace: tenant)
+        await storage.preloadIntoMemory()
+        let restoredConfig = AppConfigStore()
+        restoredConfig.hydrateFromCache()
+
+        let probe = AnalyticsMetricsProbe([.offline, .paused])
+        let reopened = model(probe, now: { after })
+        defer { reopened.stop() }
+        await reopened.start(config: restoredConfig, includeWeb: false)
+        XCTAssertEqual(reopened.range?.endDate, "2026-11-20")
+        XCTAssertEqual(reopened.metrics.value?.ingresosNetos?.value, 19)
+        XCTAssertEqual(reopened.metrics.previousRange?.savedReportLabel, "Informe guardado del 21 oct 2026 al 19 nov 2026")
+        XCTAssertNil(reopened.chart.previousRange)
+        try await waitUntil { await probe.isPaused }
+        await probe.resume(0)
+        try await waitUntil { reopened.metrics.value?.ingresosNetos?.value == 0 }
+        XCTAssertNil(reopened.metrics.previousRange)
+    }
+
+    func testCurrentOriginNeverMixesInNumbersFromPreviousWindow() async throws {
+        let config = configureAccount()
+        defer { storage.reset() }
+        let cache = try XCTUnwrap(AnalyticsCache(config: config, includeWeb: true))
+        let earlier = try XCTUnwrap(AnalyticsDateRange.businessNoon("2026-11-19", timeZone: config.businessTimeZone))
+        let today = try XCTUnwrap(AnalyticsDateRange.businessNoon("2026-11-20", timeZone: config.businessTimeZone))
+        let savedRange = try XCTUnwrap(AnalyticsService.dateRange(for: .d30, timeZone: config.businessTimeZone, now: earlier))
+        let old = try JSONDecoder().decode(OriginDistributionSnapshot.self, from: Data("""
+        {"whatsappNumbers":[{"name":"Ventas","value":77},{"name":"Recepción","value":40}]}
+        """.utf8))
+        cache.storeOrigin(old, savedRange)
+
+        let originGate = AnalyticsMetricsProbe([.paused])
+        let model = model(AnalyticsMetricsProbe([.value(0)]), now: { today }) { queries in
+            queries.originDistribution = { _, _, _ in
+                _ = try await originGate.metrics()
+                return try JSONDecoder().decode(OriginDistributionSnapshot.self, from: Data("{}".utf8))
+            }
+        }
+        defer { model.stop() }
+        model.setNetworkAvailable(false)
+        let load = Task { await model.start(config: config, includeWeb: true) }
+        try await waitUntil { await originGate.isPaused }
+        XCTAssertEqual(model.origin.previousRange, savedRange)
+        XCTAssertTrue(model.showsWhatsAppPanel)
+        await originGate.resume(0)
+        await load.value
+        XCTAssertNil(model.origin.previousRange)
+        XCTAssertEqual(model.origin.value?.whatsappNumbers.count, 0)
+        XCTAssertFalse(model.showsWhatsAppPanel)
+        let current = try XCTUnwrap(model.range)
+        let exact = cache.query(.origin, range: current, period: .custom)
+        XCTAssertEqual(exact.snapshot(OriginDistributionSnapshot.self)?.value.whatsappNumbers.count, 0)
+    }
+
+    func testRelativeLookupChoosesLatestMatchingWindowAndCustomStaysExact() throws {
+        let config = configureAccount()
+        defer { storage.reset() }
+        let cache = try XCTUnwrap(AnalyticsCache(config: config, includeWeb: true))
+        let zone = config.businessTimeZone
+        let today = try XCTUnwrap(AnalyticsDateRange.businessNoon("2026-11-03", timeZone: zone))
+        let requested = try XCTUnwrap(AnalyticsService.dateRange(for: .d30, timeZone: zone, now: today))
+        func store(_ period: AnalyticsPeriod, _ end: String, _ scope: DashboardScope, _ value: Double) throws {
+            let day = try XCTUnwrap(AnalyticsDateRange.businessNoon(end, timeZone: zone))
+            let range = try XCTUnwrap(AnalyticsService.dateRange(for: period, timeZone: zone, now: day))
+            cache.storeChart([AnalyticsChartPoint(label: end, value1: value, value2: 0)], range, .revenueSpend, scope)
+        }
+        try store(.d30, "2026-11-01", .all, 1)
+        try store(.d30, "2026-11-02", .all, 2)
+        try store(.d60, "2026-11-03", .all, 60)
+        try store(.d30, "2026-11-03", .campaigns, 40)
+        try store(.d30, "2026-11-04", .all, 100)
+        let panel = AnalyticsCache.Panel.chart(.revenueSpend, .all)
+        let query = cache.query(panel, range: requested, period: .d30)
+        let previous = try XCTUnwrap(query.snapshot([AnalyticsChartPoint].self))
+        XCTAssertEqual(previous.value.first?.value1, 2)
+        XCTAssertEqual(previous.previousRange?.endDate, "2026-11-02")
+        XCTAssertNil(cache.query(panel, range: requested, period: .custom).snapshot([AnalyticsChartPoint].self))
+        let withoutWeb = try XCTUnwrap(AnalyticsCache(config: config, includeWeb: false))
+        XCTAssertNil(withoutWeb.query(panel, range: requested, period: .d30).snapshot([AnalyticsChartPoint].self))
+        storage.configure(namespace: "another-tenant.\(UUID().uuidString)")
+        XCTAssertNil(query.snapshot([AnalyticsChartPoint].self))
     }
 
     func testLateSameRangeResponseCannotReplaceNewerReconnection() async throws {

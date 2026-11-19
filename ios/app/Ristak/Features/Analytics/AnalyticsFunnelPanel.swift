@@ -34,6 +34,7 @@ struct AnalyticsFunnelPanel: View {
 
                 scopeChips
 
+                AnalyticsSavedRangeLabel(range: model.funnel.previousRange)
                 content
             }
         }
