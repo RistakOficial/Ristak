@@ -2,6 +2,7 @@ import XCTest
 @testable import Ristak
 
 final class PushPermissionPolicyTests: XCTestCase {
+    @MainActor
     func testAutomaticRegistrationNeverRequestsPermission() {
         XCTAssertTrue(PushRegistrar.shouldRegisterAutomatically(for: .granted))
         XCTAssertFalse(PushRegistrar.shouldRegisterAutomatically(for: .notDetermined))
