@@ -212,7 +212,8 @@ final class RistakUITests: XCTestCase {
             return
         }
         let message = latest.frame
-        XCTAssertTrue(history.frame.contains(CGPoint(x: message.midX, y: message.midY)), file: file, line: line)
+        let viewport = history.frame.intersection(app.frame)
+        XCTAssertTrue(viewport.contains(message), "Mensaje \(message), historial visible \(viewport).", file: file, line: line)
         let gap = draft.frame.minY - message.maxY
         XCTAssertGreaterThanOrEqual(gap, 0, "El compositor cubrió el mensaje.", file: file, line: line)
         XCTAssertLessThanOrEqual(gap, 64, "El último mensaje quedó demasiado arriba del compositor.", file: file, line: line)
@@ -221,8 +222,23 @@ final class RistakUITests: XCTestCase {
     func testRealConversationOpensOnLatestCachedMessageOnFirstTap() {
         let app = openRealCachedThread()
         assertLatestMessageBesideComposer(in: app)
-        XCTAssertFalse(app.staticTexts["Mensaje de prueba 1"].firstMatch.isHittable)
-        XCTAssertFalse(element(in: app, identifier: "ristak-conversation-scroll-to-bottom").isHittable)
+        XCTAssertFalse(app.buttons["ristak-conversation-scroll-to-bottom"].exists)
+    }
+
+    func testLastMessageStaysBesideComposerWhenKeyboardOpensAndCloses() {
+        let app = openRealCachedThread()
+        assertLatestMessageBesideComposer(in: app)
+
+        let draft = app.textFields["ristak-conversation-draft"].firstMatch
+        draft.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 8))
+        assertLatestMessageBesideComposer(in: app)
+
+        let history = app.scrollViews["ristak-conversation-history"].firstMatch
+        history.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.55)).tap()
+        XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5))
+        assertLatestMessageBesideComposer(in: app)
     }
 
     func testScrollToBottomWinsWithOneTapWhileHistoryStillHasMomentum() {

@@ -1896,8 +1896,8 @@ conocer el tamaño de los mensajes y del área visible antes de fijar su posici�
 inicial. El primer arrastre entrega el control al usuario.
 La prueba manual de GitHub Actions `iPhone regression tests` ejecuta las
 pruebas unitarias y abre la bandeja y una conversación real en un simulador de
-iPhone. Comprueba el primer toque y la vuelta al último mensaje desde el
-historial. Se puede ejecutar sin credenciales de una cuenta o de las tiendas.
+iPhone. Comprueba la posición del último mensaje al abrir el chat con un toque,
+al mostrar y cerrar el teclado y al volver desde el historial con la flecha. Se puede ejecutar sin credenciales de una cuenta o de las tiendas.
 
 Las fotos, videos, documentos, archivos y enlaces tocados desde el hilo o desde
 `Archivos del chat` no deben abrir Safari/Chrome en el primer tap: deben abrir el

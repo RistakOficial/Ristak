@@ -37,6 +37,7 @@ jobs:
             -only-testing:RistakTests \
             -only-testing:RistakUITests/RistakUITests/testRealInboxStartsWithSearchDrawerVisible \
             -only-testing:RistakUITests/RistakUITests/testRealConversationOpensOnLatestCachedMessageOnFirstTap \
+            -only-testing:RistakUITests/RistakUITests/testLastMessageStaysBesideComposerWhenKeyboardOpensAndCloses \
             -only-testing:RistakUITests/RistakUITests/testScrollToBottomWinsWithOneTapWhileHistoryStillHasMomentum \
             -resultBundlePath "$RUNNER_TEMP/iPhone.xcresult" | tee "$RUNNER_TEMP/xcodebuild.log"
 
