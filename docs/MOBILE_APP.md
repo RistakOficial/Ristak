@@ -1877,7 +1877,9 @@ mensaje durante la carga inicial o cuando el usuario ya esta abajo; si el
 usuario esta arrastrando o navegando el historial, ningun recalculo de contenido
 debe devolverlo forzosamente al ultimo mensaje.
 En iPhone y iPad, SwiftUI abre la conversación en su borde inferior, con
-el último mensaje junto al campo de escritura. Al subir a leer, el gesto toma
+el último mensaje junto al campo de escritura. El historial termina donde empieza
+el compositor, incluso cuando iOS coloca el buscador en la barra inferior.
+Al subir a leer, el gesto toma
 control de la posición. Solo un gesto hacia el historial habilita la carga de
 mensajes anteriores. Al abrir o cerrar el teclado se conserva el borde inferior
 si el usuario estaba allí. La animación del teclado y el botón para volver al

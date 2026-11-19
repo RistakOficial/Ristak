@@ -7,8 +7,7 @@ import UniformTypeIdentifiers
 /// campo multilinea, reloj para programar, cámara directa, mic/enviar, tray de
 /// adjuntos, barra de respuesta y banner del agente conversacional.
 ///
-/// Va montada con `safeAreaInset(edge: .bottom)` — un solo dueño del teclado
-/// (memoria del proyecto): sin avoidance anidado.
+/// Comparte la altura disponible con el historial y sigue el área segura del teclado.
 struct ComposerView: View {
     @Bindable var viewModel: ConversationViewModel
     @Environment(ShellState.self) private var shell
@@ -398,6 +397,7 @@ struct ComposerView: View {
 
             HStack(alignment: .bottom, spacing: RistakTheme.Spacing.xxs) {
                 TextField("Mensaje", text: $viewModel.draftText, axis: .vertical)
+                    .accessibilityIdentifier("ristak-conversation-draft")
                     .lineLimit(1...6)
                     .focused($isTextFieldFocused)
                     .textInputAutocapitalization(.sentences)

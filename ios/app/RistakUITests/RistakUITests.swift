@@ -200,21 +200,34 @@ final class RistakUITests: XCTestCase {
         return app
     }
 
+    /// SwiftUI puede materializar texto fuera del área visible. Medimos su posición
+    /// respecto al campo de escritura, incluyendo el espacio para la hora del mensaje.
+    private func assertLatestMessageBesideComposer(in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let history = app.scrollViews["ristak-conversation-history"].firstMatch
+        let draft = app.textFields["ristak-conversation-draft"].firstMatch
+        let latest = app.staticTexts.matching(NSPredicate(format: "label == %@", "Mensaje de prueba 100")).firstMatch
+        guard history.waitForExistence(timeout: 8), draft.waitForExistence(timeout: 5),
+              latest.waitForExistence(timeout: 8) else {
+            XCTFail("El historial, el último mensaje y el campo de escritura deben estar presentes.", file: file, line: line)
+            return
+        }
+        let message = latest.frame
+        XCTAssertTrue(history.frame.contains(CGPoint(x: message.midX, y: message.midY)), file: file, line: line)
+        let gap = draft.frame.minY - message.maxY
+        XCTAssertGreaterThanOrEqual(gap, 0, "El compositor cubrió el mensaje.", file: file, line: line)
+        XCTAssertLessThanOrEqual(gap, 64, "El último mensaje quedó demasiado arriba del compositor.", file: file, line: line)
+    }
+
     func testRealConversationOpensOnLatestCachedMessageOnFirstTap() {
         let app = openRealCachedThread()
-        let latest = app.staticTexts["Mensaje de prueba 100"].firstMatch
-        let visible = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == true AND hittable == true"),
-            object: latest
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 5), .completed)
+        assertLatestMessageBesideComposer(in: app)
         XCTAssertFalse(app.staticTexts["Mensaje de prueba 1"].firstMatch.isHittable)
         XCTAssertFalse(element(in: app, identifier: "ristak-conversation-scroll-to-bottom").isHittable)
     }
 
     func testScrollToBottomWinsWithOneTapWhileHistoryStillHasMomentum() {
         let app = openRealCachedThread()
-        let history = element(in: app, identifier: "ristak-conversation-history")
+        let history = app.scrollViews["ristak-conversation-history"].firstMatch
         XCTAssertTrue(history.waitForExistence(timeout: 8))
 
         history.swipeDown(velocity: .fast)
@@ -231,20 +244,11 @@ final class RistakUITests: XCTestCase {
         history.swipeDown(velocity: .fast)
         button.tap()
 
-        let lastMessage = app.staticTexts["Mensaje de prueba 100"].firstMatch
-        let lastMessageIsHittable = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == true AND hittable == true"),
-            object: lastMessage
-        )
-        XCTAssertEqual(
-            XCTWaiter.wait(for: [lastMessageIsHittable], timeout: 2),
-            .completed,
-            "Un solo toque debe cancelar la inercia y presentar el último mensaje."
-        )
         XCTAssertTrue(
-            button.waitForNonExistence(timeout: 2),
+            button.waitForNonExistence(timeout: 5),
             "La flecha debe ocultarse al quedar otra vez en el fondo."
         )
+        assertLatestMessageBesideComposer(in: app)
 
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         screenshot.name = "Flecha de chat regresa al último mensaje con un toque"

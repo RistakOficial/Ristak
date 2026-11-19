@@ -6,7 +6,7 @@ import UIKit
 ///
 /// - Hilo con ids estables y merges identity-preserving (memoria del
 ///   proyecto): jamás scroll-jumps en refresh; «bajar al final» flotante.
-/// - Composer como `safeAreaInset(bottom)` — un solo dueño del teclado.
+/// - Historial y compositor comparten la región que deja libre el teclado.
 /// - Presencia (start/stop con scenePhase + appear), SSE + nudges de push en
 ///   foreground y fallback de 25 s solo durante desconexión.
 struct ConversationScreen: View {
@@ -183,7 +183,6 @@ struct ConversationScreen: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
             }
-            .accessibilityIdentifier("ristak-conversation-root")
     }
 
     private var bindableViewModel: Bindable<ConversationViewModel> {
@@ -219,6 +218,23 @@ struct ConversationScreen: View {
     }
 
     private var threadContent: some View {
+        VStack(spacing: 0) {
+            messageHistory
+            if access.canWrite(module: .chat) {
+                if let confirmation = viewModel.activeAppointmentConfirmation {
+                    appointmentConfirmationBar(confirmation)
+                }
+                ComposerView(viewModel: viewModel)
+            }
+        }
+        .searchable(
+            text: bindableViewModel.searchQuery,
+            placement: .navigationBarDrawer(displayMode: .automatic),
+            prompt: "Buscar en este chat"
+        )
+    }
+
+    private var messageHistory: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 // Cabeceras de día pegajosas (paridad /movil `position: sticky`):
@@ -256,8 +272,9 @@ struct ConversationScreen: View {
                 .padding(.horizontal, RistakTheme.Spacing.sm)
                 .scrollTargetLayout()
             }
-            .background { ChatWallpaperBackground() }
             .accessibilityIdentifier("ristak-conversation-history")
+            .contentMargins(.bottom, 0, for: .scrollContent)
+            .background { ChatWallpaperBackground() }
             // El borde es una posición del scroll, disponible incluso si SwiftUI
             // todavía no ha materializado la última burbuja. El gesto del usuario
             // reemplaza esa posición cuando decide leer el historial.
@@ -321,16 +338,6 @@ struct ConversationScreen: View {
                     threadPosition.scrollTo(edge: .bottom)
                 }
             )
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if access.canWrite(module: .chat) {
-                    VStack(spacing: 0) {
-                        if let confirmation = viewModel.activeAppointmentConfirmation {
-                            appointmentConfirmationBar(confirmation)
-                        }
-                        ComposerView(viewModel: viewModel)
-                    }
-                }
-            }
             .onChange(of: viewModel.scrollToBottomSignal) { _, _ in
                 guard !conversationDragIsActive else { return }
                 if threadPosition.edge != .bottom {
@@ -354,7 +361,7 @@ struct ConversationScreen: View {
             }
             // `willChangeFrame` cubre abrir, cerrar, QuickType y cambios de
             // teclado. Capturamos el estado ANTES del relayout y estabilizamos el
-            // fondo al principio y al terminar la animación del safe-area inset.
+            // fondo al principio y al terminar la animación del teclado.
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
                 stabilizeForKeyboardTransition(notification)
             }
@@ -365,11 +372,6 @@ struct ConversationScreen: View {
             }
             .environment(audioCascade)
         }
-        .searchable(
-            text: bindableViewModel.searchQuery,
-            placement: .navigationBarDrawer(displayMode: .automatic),
-            prompt: "Buscar en este chat"
-        )
     }
 
     /// Invalida cualquier salto de teclado pendiente y la intención de paginar.
