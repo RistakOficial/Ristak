@@ -35358,6 +35358,28 @@ function renderImportedCustomSocialProfileSlot(tagName = 'div', attrs = {}, inne
   return `<${tagName}${renderHtmlAttributes(dataAttrs)}>${content}</${tagName}>`
 }
 
+export async function resolveSiteCalendarWindow(host, calendar, input = {}) {
+  const blockId = cleanString(input.siteCalendarBlock)
+  if (!blockId) return {}
+  const path = cleanString(input.siteCalendarPath)
+  const source = path.startsWith('/') && !path.startsWith('//')
+    ? await resolvePublicSiteForHost(host, { path }) : null
+  const page = source?.ok && getImportedRenderPage(source.site, source.pageId, source.pagePath)
+  const block = source?.ok && source.site.blocks.find(item => item.id === blockId)
+  const settings = block?.settings || {}
+  const blockPage = cleanString(settings.pageId || settings.page_id)
+  if (!block || block.blockType !== 'calendar_embed' ||
+      (!page || blockPage !== page.id ||
+        normalizePublicRouteSegments(path).join('/') !== normalizePublicRouteSegments(buildPublicPageRoutePath(source.site, page.id)).join('/')) ||
+      cleanString(settings.calendarId || settings.calendar_id) !== calendar.id ||
+      settings.calendarFutureBusinessDays !== 3) {
+    const error = new Error('Contexto de calendario embebido inválido')
+    error.status = 400
+    throw error
+  }
+  return { futureBusinessDays: 3 }
+}
+
 function getImportedCustomCalendarConfig(slot = {}, block = {}, context = {}) {
   const settings = block.settings || {}
   const calendarSlug = cleanString(settings.calendarSlug || settings.calendar_slug || block.content)
@@ -35366,6 +35388,7 @@ function getImportedCustomCalendarConfig(slot = {}, block = {}, context = {}) {
   const calendarCompletionRedirect = getCalendarEmbedCompletionRedirect(block, context)
   const metaParams = buildCalendarEmbedMetaParams(calendarMetaOverride)
   return {
+    siteCalendarBlock: !context.preview && settings.calendarFutureBusinessDays === 3 ? cleanString(block.id) : '',
     slotId: cleanString(slot.id),
     calendarId: cleanString(settings.calendarId || settings.calendar_id),
     calendarSlug,
@@ -35713,7 +35736,7 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
       const hash = hashIndex >= 0 ? source.slice(hashIndex) : '';
       const base = hashIndex >= 0 ? source.slice(0, hashIndex) : source;
       const query = [];
-      ['startDate', 'endDate', 'timezone'].forEach(key => {
+      ['startDate', 'endDate', 'timezone', 'siteCalendarBlock', 'siteCalendarPath'].forEach(key => {
         if (params[key]) query.push(encodeURIComponent(key) + '=' + encodeURIComponent(params[key]));
       });
       if (!query.length) return source;
@@ -35728,7 +35751,7 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
     };
     window.ristakCalendarGetSlots = async (slotId, params = {}) => {
       const config = getConfig(slotId);
-      const data = await fetch(withParams(config.slotsUrl, params), { credentials: 'same-origin' }).then(parseJson);
+      const data = await fetch(withParams(config.slotsUrl, Object.assign({}, params, config.siteCalendarBlock ? { siteCalendarBlock: config.siteCalendarBlock, siteCalendarPath: window.location.pathname } : {})), { credentials: 'same-origin' }).then(parseJson);
       return data.slots || data;
     };
     window.ristakCalendarBook = async (slotId, payload = {}) => {
@@ -35754,7 +35777,7 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
           siteEventParameters: config.metaEventParameters || {}
         });
       }
-      const data = await fetch(config.bookUrl, {
+      const data = await fetch(withParams(config.bookUrl, config.siteCalendarBlock ? { siteCalendarBlock: config.siteCalendarBlock, siteCalendarPath: window.location.pathname } : {}), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',

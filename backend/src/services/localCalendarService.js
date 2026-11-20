@@ -567,7 +567,7 @@ function getCalendarAvailableDayHorizon(calendar, now, amount) {
   return null
 }
 
-function getCalendarBookingWindow(calendar, zone, currentTimeMs = Date.now()) {
+function getCalendarBookingWindow(calendar, zone, currentTimeMs = Date.now(), options = {}) {
   const now = DateTime.fromMillis(Number(currentTimeMs), { zone })
   if (!now.isValid) return { nowMs: Date.now(), earliestStartMs: Date.now(), latestStartMs: null }
 
@@ -579,15 +579,29 @@ function getCalendarBookingWindow(calendar, zone, currentTimeMs = Date.now()) {
   const horizonAmount = Number(calendar.allowBookingFor)
   const horizonUnit = cleanString(calendar.allowBookingForUnit || 'days').toLowerCase()
   const usesAvailableDays = ['day', 'days', 'día', 'días', 'dia', 'dias'].includes(horizonUnit)
-  const latest = Number.isFinite(horizonAmount) && horizonAmount > 0
+  let latest = Number.isFinite(horizonAmount) && horizonAmount > 0
     ? usesAvailableDays
       ? getCalendarAvailableDayHorizon(calendar, now, horizonAmount)
       : addCalendarRuleDuration(now, horizonAmount, horizonUnit)
     : null
 
+  // Trusted Site-block policy only; never derived from visitor-supplied day counts.
+  const futureDays = options.futureBusinessDays
+  const weekdaysOnly = Number.isInteger(futureDays) && futureDays > 0 && futureDays <= 31
+  if (weekdaysOnly) {
+    let cursor = now.startOf('day')
+    let remaining = futureDays
+    while (remaining > 0) {
+      cursor = cursor.plus({ days: 1 })
+      if (cursor.weekday <= 5) remaining -= 1
+    }
+    latest = cursor.endOf('day')
+  }
+
   return {
     nowMs: now.toMillis(),
-    earliestStartMs: earliest.toMillis(),
+    weekdaysOnly,
+    earliestStartMs: weekdaysOnly ? Math.max(earliest.toMillis(), now.plus({ days: 1 }).startOf('day').toMillis()) : earliest.toMillis(),
     latestStartMs: latest?.isValid ? latest.toMillis() : null
   }
 }
@@ -8097,9 +8111,10 @@ export async function checkSlotAvailability(calendarId, startTime, endTime, opti
   const zone = isValidTimezone(options.timezone) ? options.timezone : await getAccountTimezone()
   const enforceCalendarRules = options.enforceCalendarRules === true
   if (enforceCalendarRules) {
-    const bookingWindow = getCalendarBookingWindow(calendar, zone, options.currentTimeMs)
+    const bookingWindow = getCalendarBookingWindow(calendar, zone, options.currentTimeMs, options)
     if (
-      slotStartMs < bookingWindow.earliestStartMs
+      (bookingWindow.weekdaysOnly && DateTime.fromMillis(slotStartMs, { zone }).weekday > 5)
+      || slotStartMs < bookingWindow.earliestStartMs
       || (Number.isFinite(bookingWindow.latestStartMs) && slotStartMs > bookingWindow.latestStartMs)
     ) {
       return {
@@ -8312,7 +8327,7 @@ export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone
   const buffers = Number.isFinite(appointmentLimit)
     ? getCalendarBufferMinutes(calendar)
     : { before: 0, after: 0 }
-  const bookingWindow = getCalendarBookingWindow(calendar, zone, options.currentTimeMs)
+  const bookingWindow = getCalendarBookingWindow(calendar, zone, options.currentTimeMs, options)
   const conflictMarginMs = (buffers.before + buffers.after) * 60 * 1000
 
   // Las citas existentes están en UTC en la BD; comparamos por instante absoluto.
@@ -8409,7 +8424,8 @@ export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone
           overlaps(bufferedSlotStartMs, bufferedSlotEndMs, blockStart, blockEnd)
         ))
         const outsideBookingWindow = (
-          slotStartMs < bookingWindow.earliestStartMs
+          (bookingWindow.weekdaysOnly && DateTime.fromMillis(slotStartMs, { zone }).weekday > 5)
+          || slotStartMs < bookingWindow.earliestStartMs
           || (Number.isFinite(bookingWindow.latestStartMs) && slotStartMs > bookingWindow.latestStartMs)
         )
 

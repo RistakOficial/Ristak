@@ -1895,3 +1895,13 @@ dominios de páginas como secrets de Render.
 - Debe existir aviso de privacidad adecuado para la jurisdicción del negocio.
 - `ip-api.com` se usa para geolocalización básica de IPs públicas.
 - No hay `tenant_id`; la app es single-tenant por instancia/base de datos.
+
+#### Optional per-block calendar horizon
+
+Native custom calendar slots support persisted `settings.calendarFutureBusinessDays: 3`.
+Only opted-in blocks send their block ID and public page path to availability and
+booking. The backend validates the published route/page/block/calendar before
+applying three future Monday–Friday dates, excluding today. This does not modify
+the calendar's direct link or tracking metadata; previews continue to make no
+booking writes. See `DATE_TIME_GUIDELINES.md` for notice, capacity and boundary rules.
+Do not set this on other blocks to activate a single landing page.

@@ -327,3 +327,24 @@ rg "toLocaleDateString\\('es-MX'|toLocaleString\\('es-MX'|new Intl\\.DateTimeFor
 ```
 
 Si aparece algo, justifícalo claramente o corrígelo.
+
+### Site-only future business-day booking horizon
+
+A custom native Sites calendar block can opt in with the persisted setting
+`calendarFutureBusinessDays: 3`. This is not a global calendar setting. The public
+Sites runtime passes `siteCalendarBlock` and `siteCalendarPath` on both free-slots
+and booking requests. The server resolves the published host/path and validates
+the rendered page, calendar block and matching calendar ID before enabling it.
+Invalid context is rejected; absent context preserves the direct calendar defaults.
+Visitor-supplied day counts are never trusted.
+
+In this mode the horizon ends at the end of the third Monday–Friday date after
+today in the business timezone. Today and weekends are excluded. A full or blocked
+date still consumes one of those three dates: no replacement fourth day. Minimum
+notice (including a full `allowBookingAfter: 1 days`), hours, capacity, buffers and
+conflicts remain in force. The same policy applies to slot listing and the final
+transactional booking check. Preview remains no-write and uses ordinary preview
+availability, without claiming a published Site context.
+
+Regression tests: `siteCalendarWindow.test.mjs` and the Site-specific scenario in
+`localCalendarFreeSlots.test.mjs`. Tests use isolated local fixtures only.

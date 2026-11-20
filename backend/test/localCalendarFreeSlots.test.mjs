@@ -1199,3 +1199,33 @@ test('ensureHighLevelContactForAppointment liga el contacto local con HighLevel'
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }
 })
+
+test('Site future-business window keeps three dates even when one is fully blocked', async () => {
+  const calendarId = `rstk_cal_site_future_${randomUUID()}`
+  const timezone = 'America/Ciudad_Juarez'
+  const now = DateTime.fromISO('2026-11-19T07:00:00', { zone: timezone })
+  const options = { timezone, currentTimeMs: now.toMillis(), futureBusinessDays: 3, enforceCalendarRules: true, allowDefaultOpenHours: false }
+  let blockId
+  try {
+    await upsertLocalCalendar({
+      id: calendarId, name: 'Test future Site policy', source: 'ristak',
+      slotDuration: 60, slotInterval: 60, allowBookingAfter: 1, allowBookingAfterUnit: 'days',
+      allowBookingFor: 3, allowBookingForUnit: 'days',
+      openHours: [{ daysOfTheWeek: [0,1,2,3,4,5,6], hours: [{ openHour: 9, openMinute: 0, closeHour: 12, closeMinute: 0 }] }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+    const query = () => getLocalFreeSlots(calendarId, '2026-11-19', '2026-11-26', timezone, options)
+    assert.deepEqual((await query()).filter(d => d.slots.length).map(d => d.date), ['2026-11-20', '2026-11-23', '2026-11-24'])
+    blockId = (await createLocalBlockedSlot({ calendarId,
+      startTime: now.plus({ days: 1 }).startOf('day').toISO(),
+      endTime: now.plus({ days: 1 }).endOf('day').toISO(), title: 'Test full date'
+    })).id
+    assert.deepEqual((await query()).filter(d => d.slots.length).map(d => d.date), ['2026-11-23', '2026-11-24'])
+    for (const [date, available] of [['2026-11-19', false], ['2026-11-21', false], ['2026-11-24', true], ['2026-11-25', false]]) {
+      const start = DateTime.fromISO(`${date}T09:00:00`, { zone: timezone })
+      assert.equal((await checkSlotAvailability(calendarId, start.toISO(), start.plus({ hours: 1 }).toISO(), options)).available, available, date)
+    }
+  } finally {
+    if (blockId) await deleteLocalBlockedSlot(blockId)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId])
+  }
+})

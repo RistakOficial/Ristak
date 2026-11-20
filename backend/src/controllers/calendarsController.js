@@ -13,6 +13,7 @@ import { sendAppointmentConfirmationNotification, sendAppointmentStatusNotificat
 import {
   getRequestHost,
   resolvePublicCalendarHostForHost,
+  resolveSiteCalendarWindow,
   resolvePublicPrefillContact,
   sendCalendarBookingSiteMetaEvent
 } from '../services/sitesService.js';
@@ -902,7 +903,7 @@ async function ensurePublicCalendarRequest(req, slugOrId) {
   return { host, calendar };
 }
 
-async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate }) {
+async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, windowOptions = {} }) {
   const businessTimezone = await getAccountTimezone();
   return localCalendarService.getLocalFreeSlots(
     calendar.id,
@@ -913,7 +914,8 @@ async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate }) {
     addDateOnlyDays(endDate, 2),
     businessTimezone,
     {
-      allowDefaultOpenHours: false
+      allowDefaultOpenHours: false,
+      ...windowOptions
     }
   );
 }
@@ -1991,10 +1993,12 @@ export async function getPublicFreeSlots(req, res) {
       maxDays: CALENDAR_AVAILABILITY_MAX_RANGE_DAYS,
       label: 'La disponibilidad'
     });
-    const { calendar } = await ensurePublicCalendarRequest(req, slug);
+    const { calendar, host } = await ensurePublicCalendarRequest(req, slug);
+    const windowOptions = await resolveSiteCalendarWindow(host, calendar, req.query);
     const slots = await getCalendarFreeSlotsForPublic(calendar, {
       startDate: range.startDate,
-      endDate: range.endDate
+      endDate: range.endDate,
+      windowOptions
     });
 
     res.json({
@@ -2046,6 +2050,7 @@ export async function createPublicAppointment(req, res) {
   try {
     const { slug } = req.params;
     const { calendar, host } = await ensurePublicCalendarRequest(req, slug);
+    const windowOptions = await resolveSiteCalendarWindow(host, calendar, req.query);
     const body = req.body || {};
     const context = await getHighLevelContext(req, {});
     const start = new Date(body.startTime || body.start_time || '');
@@ -2070,7 +2075,8 @@ export async function createPublicAppointment(req, res) {
     const endDate = addDateOnlyDays(startDate, 1);
     const availableSlots = await getCalendarFreeSlotsForPublic(calendar, {
       startDate,
-      endDate
+      endDate,
+      windowOptions
     });
     const requestedMs = start.getTime();
     const isAvailable = availableSlots
@@ -2201,6 +2207,7 @@ export async function createPublicAppointment(req, res) {
         {
           enforceCalendarRules: true,
           timezone: businessTimezone,
+          ...windowOptions,
           // La política de empalme vive en el calendario; el navegador no puede ampliarla.
         }
       );
