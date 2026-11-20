@@ -28,6 +28,108 @@ y oferta privada. MDP responde `test_validated`, pero no crea alumnos ni activa
 productos. Sólo los pagos `live|production` preparan el acceso comercial y los
 módulos empiezan su vigencia en el primer ingreso del alumno.
 
+## Asociación informativa de pagos con inscripciones existentes
+
+Este flujo es independiente del webhook comercial anterior. Conserva el pago,
+el plan y los accesos originales: no da altas, cobra, envía mensajes, cambia
+fechas ni suspende alumnos. Tampoco interpreta un intento fallido aislado como
+deuda ni equipara el fin de un calendario financiero con el fin del acceso.
+
+La migración aditiva `170_program_payment_associations.sql` crea:
+
+- `program_payment_product_mappings`: relación explícita entre el ID **local**
+  de un producto Ristak y el ID de un programa Magnetismo verificado. Dos
+  productos con nombres similares requieren decisiones independientes. No se
+  infieren equivalencias por importe, duración o SKU vacío.
+- `program_payment_associations`: referencia única por pago o plan a un contacto,
+  alumno e inscripción existente, con revisión de la evidencia y clasificación.
+- `program_payment_association_events`: auditoría de cada alta de vínculo y su
+  actor, razón y huella, en la misma transacción que el vínculo. Conserva el
+  historial aunque desaparezca el pago/contacto/producto. No guarda recibos,
+  notas, cuerpos de mensajes, credenciales ni el contenido del progreso.
+
+Las siete herramientas MCP `payments_program_*` se descubren con
+`mcp_search_capabilities`. Todas requieren administrador y el scope existente
+`ristak.read` o `ristak.write`, además del permiso del módulo Pagos. Consultar
+planes sigue respetando la licencia `payment_plans`; no se agregan permisos.
+
+1. Consultar catálogo y programa; preparar `payments_program_mapping_create`
+   con `productId`, `programId` y `reason`. Su default es `dryRun=true`.
+   Para guardar, repetir con `dryRun=false` y una clave de idempotencia nueva.
+2. Recorrer `payments_program_review` con `sourceType=payment` y después `plan`.
+   Cada página tiene hasta 100 fuentes, `hasMore` y `nextAfterId`. Cada revisión
+   diaria completa empieza sin cursor; no reutilizar eternamente el último ID,
+   pues pagos y planes existentes pueden cambiar. Los eventos del inbox MCP
+   sirven como avisos de fuentes concretas que siempre deben releerse.
+3. Usar `payments_program_link_preview` para una fuente. Sólo una referencia
+   explícita y coherente a un producto mapeado permite continuar automáticamente.
+   La descripción orienta la revisión, pero no demuestra producto, duración ni
+   condiciones comerciales. Una consulta individual o una fuente sin producto
+   requiere decisión del usuario; no basta que Marco ya sea alumno. Si decide
+   asociarla, incluir `decision={confirmed:true,productId,reason}` únicamente
+   para esa fuente exacta. Productos mezclados, referencias incompatibles y
+   estados/modos desconocidos quedan bloqueados. No se reparte un pago entre
+   varios programas.
+4. La vista previa consulta `get_student({email})` en el MCP de Magnetismo.
+   Exige un contacto Ristak activo con correo exacto único, un alumno activo con
+   el mismo correo y una inscripción del programa con estado conocido. No usa
+   nombres, teléfonos, búsqueda parcial, alias de correo ni un alta comercial
+   para resolver identidad. Varias inscripciones requieren `enrollmentId`.
+   Puede asociar una inscripción vencida o pausada conservando ese estado.
+5. Aplicar `payments_program_link` con `dryRun=false`, `expectedFingerprint`
+   recién obtenido, los mismos argumentos de decisión/inscripción y una clave
+   de idempotencia nueva. Relee evidencia y destino, rechaza cambios y no
+   reasigna vínculos existentes. Plan y pagos ligados por relaciones canónicas
+   deben apuntar al mismo producto/alumno/inscripción. Inserción y auditoría son
+   atómicas; la unicidad durable evita duplicados aun después de caducar la
+   caché MCP. PostgreSQL usa un snapshot serializable y aborta ante conflictos.
+6. `payments_program_links_list` lista vínculos por páginas.
+   `payments_program_link_context` relee estados y cuotas; con
+   `includeProgress=true` añade avance observado, último video y siguiente paso.
+   Ver un video no demuestra haber completado un trabajo. Un cambio de correo
+   o identidad exige revisión y no reasigna el alumno.
+
+Los resúmenes conservan moneda e importes originales sin sumarlos ni convertirlos.
+Los vencimientos `YYYY-MM-DD` conservan su fecha de negocio y se identifican como
+`business_date`; los timestamps almacenados completos se publican como instantes
+UTC (`utc_instant`). Las fechas y estados de acceso se informan por separado.
+El progreso y el acceso son observaciones remotas, no una transacción distribuida
+con Magnetismo. Una revisión posterior vuelve a verificar el estado actual.
+
+### Conexión de consulta y activación
+
+El cliente usa exclusivamente una **llave MCP ya existente** del administrador:
+
+```env
+MDP_PAYMENTS_MCP_URL=https://tu-mdp.com/mcp
+MDP_PAYMENTS_MCP_TOKEN=
+```
+
+Estas variables opcionales se configuran en el backend por el propietario de la
+conexión. No reutilizar `MDP_PROGRAM_BRIDGE_SECRET`: autoriza otro contrato. No
+crear ni rotar una llave para completar esta integración sin autorización; las
+llaves guardadas como hash en Magnetismo no se pueden recuperar. Ausencia de
+configuración produce `target_not_configured`; la revisión local sigue disponible.
+
+Se fija el endpoint HTTPS `/mcp`, se rechazan redirects y sólo se permiten las
+consultas `get_course_tree`, `get_student` y `get_student_progress`. Cada consulta
+tiene límite de ocho segundos y 2 MiB; errores/protocolos desconocidos bloquean
+sin registrar secretos ni el cuerpo remoto. Cada mapping fija una huella del
+endpoint para evitar cruzar destinos por un cambio de configuración. Mover la
+cuenta a otro origen exige revisar los vínculos, no reasignarlos automáticamente.
+
+El código no arranca crons ni crea tareas programadas. Después de revisar y
+desplegar el cambio y configurar la conexión autorizada, un asistente puede
+recorrer la revisión diariamente y ante avisos nuevos del inbox. Sólo asocia
+casos inequívocos; presenta los demás al usuario. Una política de suspensiones,
+tolerancias, reembolsos o conciliación de deuda requiere definición e
+implementación separada antes de habilitar cualquier cambio automático de acceso.
+
+Fuentes: `programPaymentSourceService.js`, `programPaymentAssociationService.js`,
+`magnetismoPaymentVerificationClient.js` y `mcp/programPaymentTools.js` del backend.
+Contrato remoto de consulta contrastado con Magnetismo `83180c3`; las pruebas
+usan SQLite aislado y respuestas MCP simuladas, sin tocar alumnos ni pagos reales.
+
 ## Variables
 
 ```env
