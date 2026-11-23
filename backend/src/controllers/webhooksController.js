@@ -13,6 +13,7 @@ import {
   activatePendingPaymentFlowsForContact,
   markPaymentFlowInvoicePaid
 } from '../services/paymentFlowService.js';
+import { getHighLevelInvoicePaidAt } from '../services/invoicesSyncService.js';
 import { PAYMENT_MODE_LIVE, getWebhookPaymentMode, normalizePaymentMode } from '../utils/paymentMode.js';
 import {
   isSuccessfulPaymentStatus,
@@ -840,7 +841,7 @@ async function findUniqueRecentInvoicePayment({ paymentId, contactId, amount, pa
   if (!contactId || amount <= 0) return null;
 
   const candidates = await db.all(
-    `SELECT id, contact_id, ghl_invoice_id, payment_mode, status, description, created_at, updated_at, date
+    `SELECT id, contact_id, ghl_invoice_id, payment_mode, paid_at, status, description, created_at, updated_at, date
      FROM payments
      WHERE contact_id = ?
        AND id != ?
@@ -862,7 +863,7 @@ async function findUniqueRecentInvoicePayment({ paymentId, contactId, amount, pa
 async function findExistingInvoicePayment({ invoiceId, paymentId, contactId, amount, description, invoiceNumber, reference, paymentDate }) {
   if (invoiceId) {
     const existing = await db.get(
-      'SELECT id, contact_id, ghl_invoice_id, payment_mode, status FROM payments WHERE ghl_invoice_id = ? OR id = ? LIMIT 1',
+      'SELECT id, contact_id, ghl_invoice_id, payment_mode, paid_at, status FROM payments WHERE ghl_invoice_id = ? OR id = ? LIMIT 1',
       [invoiceId, invoiceId]
     );
 
@@ -875,7 +876,7 @@ async function findExistingInvoicePayment({ invoiceId, paymentId, contactId, amo
     const referencePlaceholders = referenceCandidates.map(() => '?').join(', ');
     const normalizedCandidates = referenceCandidates.map(value => value.toLowerCase());
     const existingByNumber = await db.get(
-      `SELECT id, contact_id, ghl_invoice_id, payment_mode, status
+      `SELECT id, contact_id, ghl_invoice_id, payment_mode, paid_at, status
        FROM payments
        WHERE contact_id = ?
          AND (
@@ -897,7 +898,7 @@ async function findExistingInvoicePayment({ invoiceId, paymentId, contactId, amo
 
   if (cleanDescription) {
     const invoiceBackedMatch = await db.get(
-      `SELECT id, contact_id, ghl_invoice_id, payment_mode, status
+      `SELECT id, contact_id, ghl_invoice_id, payment_mode, paid_at, status
        FROM payments
        WHERE contact_id = ?
          AND id != ?
@@ -920,7 +921,7 @@ async function findExistingInvoicePayment({ invoiceId, paymentId, contactId, amo
   if (!cleanDescription.toLowerCase().includes('primer pago')) return null;
 
   return await db.get(
-    `SELECT id, contact_id, ghl_invoice_id, payment_mode, status
+    `SELECT id, contact_id, ghl_invoice_id, payment_mode, paid_at, status
      FROM payments
      WHERE contact_id = ?
        AND id != ?
@@ -1309,7 +1310,7 @@ export const handlePaymentWebhook = async (req, res) => {
     // Compatibilidad de persistencia legacy. La reconciliación v2 recibe el
     // status crudo y falla cerrado cuando el proveedor no lo mandó.
     const status = reportedStatus || 'succeeded';
-    const paymentDate = payment.fulfilledAt || payment.fulfilled_at || payment.paymentDate || payment.payment_date || payment.date || payment.transactionDate || payment.created_at || payment.createdAt || new Date().toISOString();
+    const paymentDate = firstValue(payment.paidAt, payment.paid_at, payment.fulfilledAt, payment.fulfilled_at, payment.paymentDate, payment.payment_date, payment.transactionDate, payment.transaction_date, payment.date, payment.created_at, payment.createdAt) || new Date().toISOString();
     const createdAt = payment.created_at || payment.createdAt || new Date().toISOString();
     const existingInvoicePayment = await findExistingInvoicePayment({
       invoiceId,
@@ -1333,7 +1334,7 @@ export const handlePaymentWebhook = async (req, res) => {
     if (!dedupedInvoicePayment && effectiveInvoiceId) {
       try {
         const existingByGhlInvoiceId = await db.get(
-          'SELECT id, contact_id, ghl_invoice_id, payment_mode, status FROM payments WHERE ghl_invoice_id = ? LIMIT 1',
+          'SELECT id, contact_id, ghl_invoice_id, payment_mode, paid_at, status FROM payments WHERE ghl_invoice_id = ? LIMIT 1',
           [effectiveInvoiceId]
         );
         if (existingByGhlInvoiceId) {
@@ -1378,6 +1379,13 @@ export const handlePaymentWebhook = async (req, res) => {
     let processedPaymentId = '';
     const previousPaymentStatus = dedupedInvoicePayment?.status || '';
 
+    const paidAt = await getHighLevelInvoicePaidAt(payment, {
+      incomingStatus: status,
+      newlyPaid: !isSuccessfulPaymentStatus(previousPaymentStatus),
+      transactionDate: payment.date,
+      event: data
+    });
+
     if (dedupedInvoicePayment) {
       await db.run(
         `UPDATE payments
@@ -1396,6 +1404,7 @@ export const handlePaymentWebhook = async (req, res) => {
              title = COALESCE(title, ?),
              description = COALESCE(description, ?),
              date = COALESCE(date, ?),
+             paid_at = COALESCE(paid_at, ?),
              ghl_invoice_id = COALESCE(ghl_invoice_id, ?),
              invoice_number = COALESCE(invoice_number, ?),
              updated_at = CURRENT_TIMESTAMP
@@ -1411,6 +1420,7 @@ export const handlePaymentWebhook = async (req, res) => {
           title,
           description,
           paymentDate,
+          paidAt,
           effectiveInvoiceId || null,
           invoiceNumber || null,
           dedupedInvoicePayment.id // DB-006: reusar fila existente por ghl_invoice_id
@@ -1430,9 +1440,9 @@ export const handlePaymentWebhook = async (req, res) => {
       const query = usePostgres
         ? `INSERT INTO payments (
              id, contact_id, amount, currency, status, payment_method, payment_mode,
-             payment_provider, reference, title, description, date, created_at, ghl_invoice_id, invoice_number
+             payment_provider, reference, title, description, date, created_at, ghl_invoice_id, invoice_number, paid_at
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
            ON CONFLICT (id) DO UPDATE SET
              amount = EXCLUDED.amount,
              status = EXCLUDED.status,
@@ -1448,12 +1458,13 @@ export const handlePaymentWebhook = async (req, res) => {
              description = EXCLUDED.description,
              ghl_invoice_id = COALESCE(payments.ghl_invoice_id, EXCLUDED.ghl_invoice_id),
              invoice_number = COALESCE(payments.invoice_number, EXCLUDED.invoice_number),
+             paid_at = COALESCE(payments.paid_at, EXCLUDED.paid_at),
              updated_at = CURRENT_TIMESTAMP`
         : `INSERT INTO payments (
              id, contact_id, amount, currency, status, payment_method, payment_mode,
-             payment_provider, reference, title, description, date, created_at, ghl_invoice_id, invoice_number
+             payment_provider, reference, title, description, date, created_at, ghl_invoice_id, invoice_number, paid_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              amount = excluded.amount,
              status = excluded.status,
@@ -1469,6 +1480,7 @@ export const handlePaymentWebhook = async (req, res) => {
              description = excluded.description,
              ghl_invoice_id = COALESCE(ghl_invoice_id, excluded.ghl_invoice_id),
              invoice_number = COALESCE(invoice_number, excluded.invoice_number),
+             paid_at = COALESCE(paid_at, excluded.paid_at),
              updated_at = CURRENT_TIMESTAMP`;
 
       await db.run(query, [
@@ -1486,7 +1498,8 @@ export const handlePaymentWebhook = async (req, res) => {
         paymentDate,
         createdAt,
         effectiveInvoiceId || null,
-        invoiceNumber || null
+        invoiceNumber || null,
+        paidAt
       ]);
       processedPaymentId = rowId;
     }
@@ -1539,12 +1552,14 @@ export const handlePaymentWebhook = async (req, res) => {
         }
       }
 
-      await triggerMetaPaymentPurchaseEvent(contactId, {
-        id: processedPaymentId,
-        amount,
-        currency,
-        paymentMode
-      });
+      if (paidAt || dedupedInvoicePayment?.paid_at) {
+        await triggerMetaPaymentPurchaseEvent(contactId, {
+          id: processedPaymentId,
+          amount,
+          currency,
+          paymentMode
+        });
+      }
 
       await completeConversationalAgentSalePaymentFromInvoice({
         contactId,
@@ -2322,11 +2337,18 @@ export const handleInvoiceWebhook = async (req, res) => {
         values.push(getWebhookPaymentMode(data, { invoice: invoicePayload }, await getConfiguredPaymentModeFallback()));
       }
 
-      values.push(invoiceId);
       const previousPayment = await db.get(
         'SELECT status FROM payments WHERE ghl_invoice_id = ? LIMIT 1',
         [invoiceId]
       ).catch(() => null);
+      if (newStatus === 'paid') {
+        const paidAt = await getHighLevelInvoicePaidAt(invoicePayload, {
+          previousStatus: previousPayment?.status, incomingStatus: newStatus, event: data
+        });
+        setFields.push('paid_at = COALESCE(paid_at, ?)');
+        values.push(paidAt);
+      }
+      values.push(invoiceId);
 
       await db.run(
         `UPDATE payments SET ${setFields.join(', ')} WHERE ghl_invoice_id = ?`,
@@ -2370,7 +2392,7 @@ export const handleInvoiceWebhook = async (req, res) => {
           contactStatsUpdate = await updateSingleContactStats(payment.contact_id);
           logger.success(`Estadísticas actualizadas para contacto: ${payment.contact_id}`);
 
-          if (isSuccessfulPaymentStatus(payment.status || newStatus)) {
+          if (payment.paid_at && isSuccessfulPaymentStatus(payment.status || newStatus)) {
             await triggerMetaPaymentPurchaseEvent(payment.contact_id, {
               id: payment.id,
               amount: payment.amount,

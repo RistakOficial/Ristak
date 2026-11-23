@@ -1,12 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
+import http from 'node:http'
+import { API_URLS } from '../src/config/constants.js'
 
-import { db, setAppConfig } from '../src/config/database.js'
+import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import {
   createMercadoPagoPaymentLink,
   createMercadoPagoPaymentPlan,
   createMercadoPagoRecurringSubscription,
+  refreshMercadoPagoAuthorizedPayment,
   ensurePublicMercadoPagoPreference,
   expireUnusedMercadoPagoPreference,
   createPublicMercadoPagoCardPayment,
@@ -312,7 +315,7 @@ test('Mercado Pago cobra tarjeta en la pagina publica sin confiar en el monto de
         [ids.paymentId]
       )
       assert.equal(saved.status, 'paid')
-      assert.equal(saved.amount, 123.45)
+      assert.equal(Number(saved.amount), 123.45)
       assert.equal(saved.payment_method, 'credit_card')
       assert.equal(saved.mercadopago_payment_id, 'mp_card_payment_1')
       assert.ok(saved.paid_at)
@@ -972,9 +975,12 @@ test('Mercado Pago crea link abierto de suscripcion con preapproval plan', async
         [subscription.id]
       )
       assert.equal(activated.status, 'active')
+      const startReceipt = await db.get('SELECT status, paid_at FROM payments WHERE public_payment_id = ?', [subscription.subscriptionStartPublicPaymentId])
+      assert.equal(startReceipt.status, 'pending')
+      assert.equal(startReceipt.paid_at, null)
       assert.equal(activated.mercadopago_preapproval_id, 'mp_preapproval_authorized_1')
       assert.equal(activated.mercadopago_preapproval_plan_id, 'mp_preapproval_plan_test_1')
-      assert.equal(activated.mercadopago_next_payment_date, new Date(nextPaymentDate).toISOString())
+      assert.equal(new Date(activated.mercadopago_next_payment_date).toISOString(), new Date(nextPaymentDate).toISOString())
     } finally {
       await cleanup(ids)
     }
@@ -1533,7 +1539,7 @@ test('Mercado Pago registra cobro recurrente por webhook subscription_authorized
       )
 
       assert.equal(payment.status, 'paid')
-      assert.equal(payment.amount, 199.5)
+      assert.equal(Number(payment.amount), 199.5)
       assert.equal(payment.currency, 'MXN')
       assert.equal(payment.payment_method, 'mercadopago_subscription')
       assert.equal(payment.payment_provider, 'mercadopago')
@@ -1541,6 +1547,85 @@ test('Mercado Pago registra cobro recurrente por webhook subscription_authorized
       assert.ok(String(payment.metadata_json).includes(ids.subscriptionId))
     } finally {
       await cleanup(ids)
+    }
+  })
+})
+
+
+test('Mercado Pago preserves each collected subscription cycle and retries an unaccepted Purchase for the same payment', async t => {
+  await initializeMasterKey()
+  await snapshotMercadoPagoConfig(async () => {
+    const suffix = Date.now()
+    const contactId = `mp_cycle_contact_${suffix}`
+    const subscriptionId = `mp_cycle_subscription_${suffix}`
+    const startId = `mp_cycle_start_${suffix}`
+    const approval = `mp_cycle_authorization_${suffix}`
+    const metaRule = 'meta_payment_purchase_event_config'
+    const previousRule = await getAppConfig(metaRule)
+    const previousConfig = await db.all('SELECT * FROM meta_config')
+    const attempts = []
+    const paidAt = new Date(Date.now() - 60_000).toISOString()
+    const server = http.createServer(async (req, res) => {
+      let body = ''
+      for await (const chunk of req) body += chunk
+      attempts.push(JSON.parse(body).data[0])
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ events_received: attempts.length === 1 ? 0 : 1 }))
+    })
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    t.mock.getter(API_URLS, 'META_GRAPH', () => `http://127.0.0.1:${server.address().port}`)
+    try {
+      await db.run('DELETE FROM meta_config')
+      await db.run('INSERT INTO meta_config (ad_account_id, access_token, pixel_id) VALUES (?, ?, ?)', ['local', encrypt('local'), 'local'])
+      await setAppConfig(metaRule, JSON.stringify({ enabled: true, channel: 'site', eventName: 'Purchase' }))
+      await db.run('INSERT INTO contacts (id, full_name, email) VALUES (?, ?, ?)', [contactId, 'Test', 'cycle@example.test'])
+      await db.run(
+        `INSERT INTO subscriptions (id, contact_id, name, amount, currency, interval_type, interval_count, start_date,
+         payment_provider, payment_mode, mercadopago_preapproval_id, metadata_json)
+         VALUES (?, ?, 'Cycle', 100, 'MXN', 'monthly', 1, CURRENT_DATE, 'mercadopago', 'live', ?, ?)`,
+        [subscriptionId, contactId, approval, JSON.stringify({ subscriptionStartPayment: { paymentId: startId } })]
+      )
+      await db.run(
+        `INSERT INTO payments (id, contact_id, amount, currency, status, payment_provider, payment_mode, reference)
+         VALUES (?, ?, 100, 'MXN', 'pending', 'mercadopago', 'live', ?)`, [startId, contactId, approval]
+      )
+      setMercadoPagoFetchForTest(async url => {
+        const id = new URL(url).pathname.split('/').pop()
+        return { ok: true, status: 200, json: async () => ({
+          id, preapproval_id: approval, external_reference: subscriptionId, transaction_amount: id === 'period_one' ? 100 : 125,
+          currency_id: 'MXN', debit_date: paidAt, payment: { id: `charge_${id}`, status: 'approved', date_approved: paidAt }
+        }) }
+      })
+      await refreshMercadoPagoAuthorizedPayment('period_one')
+      await refreshMercadoPagoAuthorizedPayment('period_one')
+      assert.equal(attempts.length, 2)
+      assert.equal(attempts[0].event_id, attempts[1].event_id)
+      assert.equal(attempts[0].custom_data.payment_id, startId)
+
+      // Older preapproval refreshes overwrote the reference. The saved
+      // authorization must still identify the original receipt on replay.
+      await db.run('UPDATE payments SET reference = ?, mercadopago_payment_id = NULL WHERE id = ?', [approval, startId])
+      await Promise.all(['period_one', 'period_two', 'period_two'].map(id => refreshMercadoPagoAuthorizedPayment(id)))
+      const rows = await db.all('SELECT id, reference, amount, paid_at FROM payments WHERE contact_id = ? ORDER BY reference', [contactId])
+      assert.deepEqual(rows.map(row => [row.reference, Number(row.amount)]), [
+        ['mp_authorized_payment:period_one', 100], ['mp_authorized_payment:period_two', 125]
+      ])
+      assert.equal(rows[0].id, startId)
+      assert.equal(new Date(rows[0].paid_at).toISOString(), paidAt)
+      assert.equal(new Set(attempts.map(event => event.event_id)).size, 2)
+      assert.ok(attempts.some(event => event.custom_data.payment_id === rows[1].id && event.custom_data.value === 125))
+    } finally {
+      await new Promise(resolve => server.close(resolve))
+      await db.run('DELETE FROM meta_conversion_event_logs WHERE contact_id = ?', [contactId])
+      await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId])
+      await cleanup({ contactId, subscriptionId })
+      await db.run('DELETE FROM meta_config')
+      for (const row of previousConfig) {
+        const columns = Object.keys(row)
+        await db.run(`INSERT INTO meta_config (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`, Object.values(row))
+      }
+      if (previousRule == null) await db.run('DELETE FROM app_config WHERE config_key = ?', [metaRule])
+      else await setAppConfig(metaRule, previousRule)
     }
   })
 })

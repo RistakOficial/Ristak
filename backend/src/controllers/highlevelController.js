@@ -14,6 +14,7 @@ import { syncWebhookCustomValues, getHighLevelConfig } from '../services/webhook
 import { getGHLClient } from '../services/ghlClient.js';
 import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js';
 import { createInstallmentPaymentFlow } from '../services/paymentFlowService.js';
+import { reportConfirmedPaymentToMeta } from '../services/metaConversionEventsService.js';
 import { registerGigstackPaymentForTransactionInBackground } from '../services/gigstackInvoiceService.js';
 import { dispatchProductPostWebhooksForPaymentInBackground } from '../services/productPostWebhookService.js';
 import { sendPaymentNotification } from '../services/pushNotificationsService.js';
@@ -45,7 +46,8 @@ import {
   businessTodayDateOnly,
   getAccountTimezone,
   normalizeDateOnlyInTimezone,
-  normalizeToUtcIso
+  normalizeToUtcIso,
+  resolvePaymentTimestamp
 } from '../utils/dateUtils.js';
 import * as localCalendarService from '../services/localCalendarService.js';
 import {
@@ -309,26 +311,6 @@ function textToHighLevelEmailHtml(text = '') {
     .filter(Boolean)
     .map(block => `<p>${block.split(/\n/).map(line => escapeEmailHtml(line)).join('<br>')}</p>`)
     .join('');
-}
-
-function resolvePaymentTimestamp(rawDate, timezone = DEFAULT_PAYMENT_TIMEZONE) {
-  const now = new Date();
-  const value = cleanString(rawDate);
-  if (!value) return now.toISOString();
-
-  if (value.includes('T') || value.includes(' ')) {
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? now.toISOString() : parsed.toISOString();
-  }
-
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const today = businessTodayDateOnly(timezone, now);
-    if (value === today) return now.toISOString();
-    return normalizeToUtcIso(`${value}T12:00:00`, timezone);
-  }
-
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? now.toISOString() : parsed.toISOString();
 }
 
 function normalizeBaseUrl(value = '') {
@@ -2347,9 +2329,9 @@ export const recordPayment = async (req, res) => {
     try {
       await db.run(
         `UPDATE payments
-         SET status = 'paid', payment_method = ?, reference = ?, payment_mode = ?, date = ?, updated_at = CURRENT_TIMESTAMP
+         SET status = 'paid', payment_method = ?, reference = ?, payment_mode = ?, date = ?, paid_at = COALESCE(paid_at, ?), updated_at = CURRENT_TIMESTAMP
          WHERE ghl_invoice_id = ?`,
-        [normalizedMethod, reference || null, paymentMode, resolvedPaymentDate, invoiceId]
+        [normalizedMethod, reference || null, paymentMode, resolvedPaymentDate, resolvedPaymentDate, invoiceId]
       );
       logger.success(`Estado actualizado a 'paid' para invoice: ${invoiceId}`);
 
@@ -2403,6 +2385,7 @@ export const recordPayment = async (req, res) => {
       );
 
       if (savedPayment?.id) {
+        await reportConfirmedPaymentToMeta(savedPayment.id);
         dispatchProductPostWebhooksForPaymentInBackground(savedPayment.id, {
           status: 'paid',
           previousStatus: previousPayment?.status || ''

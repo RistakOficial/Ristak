@@ -30,6 +30,7 @@ import {
 import { getPaymentPlanAuditSummary, hardDeleteRemovablePaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
 import {
   buildMetaPublicPurchasePixelEvent,
+  reportConfirmedPaymentToMeta,
   triggerMetaPaymentPurchaseEvent
 } from './metaConversionEventsService.js'
 import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
@@ -3457,6 +3458,7 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
       ['registered', first.payment?.id || null, flowId]
     )
     response.firstPaymentPaymentId = first.payment?.id || null
+    await reportConfirmedPaymentToMeta(response.firstPaymentPaymentId)
     updateSingleContactStats(plan.contact.id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por primer pago Rebill ${first.payment?.id}: ${error.message}`)
     })

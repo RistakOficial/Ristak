@@ -284,6 +284,7 @@ vienen de la base usa `parseStoredUtcDateTime()`.
 - En planes Stripe, Conekta y Rebill, una fecha programada sin hora usa las 10:00
   del negocio. La opción explícita de cobro inmediato debe enviar el instante UTC
   actual; no debe degradarse a una fecha de calendario que pueda cobrarse después.
+- Meta CAPI conserva el instante UTC de cobro como `event_time` en los reintentos. Al confirmar una cuota se usa el instante de pago registrado o elegido por el usuario. El vencimiento y la emisión de la factura representan eventos distintos.
 - Meta Ads y reportes: las agrupaciones por día deben usar la zona configurada,
   no UTC puro.
 - Links públicos: el backend debe enviar la zona de la cuenta y el frontend debe

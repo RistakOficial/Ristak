@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
 import { paymentTaxSnapshotForTotal } from '../utils/paymentTaxSnapshot.js'
-import { db, getAppConfig, setAppConfig } from '../config/database.js'
+import { databaseDialect, db, getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
@@ -24,6 +24,7 @@ import { syncOfflinePaymentPlanFromLocalPayment } from './offlinePaymentPlanServ
 import { isGatewayPaymentFailureStatus, mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
   buildMetaPublicPurchasePixelEvent,
+  reportConfirmedPaymentToMeta,
   triggerMetaPaymentPurchaseEvent
 } from './metaConversionEventsService.js'
 import { getPaymentPlanAuditSummary, hardDeleteRemovablePaymentPlan, shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
@@ -890,6 +891,10 @@ function mapPublicPayment(row, config, baseUrl = '', settings = null, timezone =
 
 async function attachMetaPublicPurchaseEvent(publicPayment, row) {
   if (!publicPayment || !row) return publicPayment
+  // Older releases marked subscription authorization as a paid receipt. Its
+  // public link must wait for evidence of an actual debit before firing Pixel.
+  if (publicPayment.subscriptionStart && !row.mercadopago_payment_id
+    && !cleanString(row.reference).startsWith('mp_authorized_payment:')) return publicPayment
   const metaPurchaseEvent = await buildMetaPublicPurchasePixelEvent({
     ...row,
     amount: publicPayment.amount,
@@ -2588,6 +2593,7 @@ export async function createMercadoPagoPaymentPlan(input = {}, { baseUrl } = {})
         [first.payment.id, flowId]
       )
       response.firstPaymentPaymentId = first.payment.id
+      await reportConfirmedPaymentToMeta(response.firstPaymentPaymentId)
       updateSingleContactStats(plan.contact.id).catch((error) => {
         logger.warn(`No se pudieron actualizar stats del contacto por primer pago Mercado Pago ${first.payment.id}: ${error.message}`)
       })
@@ -3317,11 +3323,11 @@ async function updateSubscriptionFromMercadoPagoPreapproval(preapproval = {}) {
   const metadata = parseJson(existing.metadata_json, {})
   const startPayment = getSubscriptionStartPaymentFromMetadata(metadata)
   const syncedAt = new Date().toISOString()
-  const startPaymentStatus = mapped.status === 'active'
-    ? 'paid'
-    : mapped.status === 'cancelled'
-      ? 'cancelled'
-      : 'pending_checkout'
+  // A preapproval authorizes future debits; only an authorized_payment can
+  // confirm collection and claim the public start-payment row.
+  const startPaymentStatus = mapped.status === 'cancelled' && startPayment.status !== 'paid'
+    ? 'cancelled'
+    : startPayment.status || 'pending_checkout'
 
   await db.run(
     `UPDATE subscriptions
@@ -3375,43 +3381,6 @@ async function updateSubscriptionFromMercadoPagoPreapproval(preapproval = {}) {
   )
 
   const updated = await db.get('SELECT * FROM subscriptions WHERE id = ?', [existing.id])
-  if (startPayment.paymentId) {
-    const previousStartPayment = await db.get('SELECT status FROM payments WHERE id = ?', [startPayment.paymentId])
-    await db.run(
-      `UPDATE payments
-       SET status = ?,
-           payment_method = 'mercadopago_subscription',
-           payment_provider = 'mercadopago',
-           reference = COALESCE(?, reference),
-           mercadopago_payment_id = COALESCE(?, mercadopago_payment_id),
-           paid_at = CASE WHEN ? = 'paid' THEN COALESCE(paid_at, ?) ELSE paid_at END,
-           date = CASE WHEN ? = 'paid' THEN COALESCE(date, ?) ELSE date END,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-      [
-        startPaymentStatus === 'paid' ? 'paid' : 'pending',
-        mapped.mercadoPagoPreapprovalId || mapped.mercadoPagoPreapprovalPlanId || null,
-        null,
-        startPaymentStatus,
-        syncedAt,
-        startPaymentStatus,
-        syncedAt,
-        startPayment.paymentId
-      ]
-    )
-    dispatchProductPostWebhooksForPaymentInBackground(startPayment.paymentId, {
-      status: startPaymentStatus === 'paid' ? 'paid' : 'pending',
-      previousStatus: previousStartPayment?.status || ''
-    })
-    const updatedPayment = await findPaymentById(startPayment.paymentId).catch(() => null)
-    publishPaymentChangedEvent(updatedPayment || {
-      id: startPayment.paymentId,
-      status: startPaymentStatus === 'paid' ? 'paid' : 'pending',
-      previousStatus: previousStartPayment?.status || '',
-      payment_method: 'mercadopago_subscription',
-      payment_provider: 'mercadopago'
-    })
-  }
 
   publishSubscriptionChangedEvent(updated || {
     ...existing,
@@ -3427,15 +3396,6 @@ async function insertSubscriptionPaymentFromMercadoPagoAuthorizedPayment(authori
   const paymentIdFromMercadoPago = cleanString(authorizedPayment.payment?.id)
   const reference = authorizedPaymentId ? `mp_authorized_payment:${authorizedPaymentId}` : paymentIdFromMercadoPago
   if (!reference && !paymentIdFromMercadoPago) return null
-
-  const existing = await db.get(
-    `SELECT id
-     FROM payments
-     WHERE (reference IS NOT NULL AND reference = ?)
-        OR (mercadopago_payment_id IS NOT NULL AND mercadopago_payment_id = ?)
-     LIMIT 1`,
-    [reference || '', paymentIdFromMercadoPago || '']
-  )
 
   const currency = normalizeCurrency(authorizedPayment.currency_id || subscriptionRow.currency)
   const amount = normalizePositiveAmount(authorizedPayment.transaction_amount || subscriptionRow.amount)
@@ -3455,168 +3415,127 @@ async function insertSubscriptionPaymentFromMercadoPagoAuthorizedPayment(authori
     mercadoPagoSummarized: cleanString(authorizedPayment.summarized)
   }
 
-  const subscriptionMetadata = parseJson(subscriptionRow.metadata_json, {})
-  const startPayment = getSubscriptionStartPaymentFromMetadata(subscriptionMetadata)
-  if (!existing?.id && startPayment.paymentId) {
-    const startPaymentRow = await db.get(
-      `SELECT id, metadata_json
-       FROM payments
-       WHERE id = ?
-       LIMIT 1`,
-      [startPayment.paymentId]
+  const saved = await db.transaction(async tx => {
+    // Both the webhook and the subscription refresh import these cycles.
+    // Serialize the decision to reuse the first receipt or create a new one.
+    const subscription = await tx.get(
+      `SELECT metadata_json FROM subscriptions WHERE id = ?${databaseDialect === 'postgres' ? ' FOR UPDATE' : ''}`,
+      [subscriptionRow.id]
     )
+    if (!subscription) return null
 
-    if (startPaymentRow?.id) {
-      await db.run(
-        `UPDATE payments
-         SET amount = ?,
-             currency = ?,
-             status = ?,
-             payment_method = 'mercadopago_subscription',
-             payment_mode = ?,
-             payment_provider = 'mercadopago',
-             reference = COALESCE(?, reference),
-             mercadopago_payment_id = COALESCE(?, mercadopago_payment_id),
-             paid_at = COALESCE(?, paid_at),
-             date = COALESCE(?, date),
-             metadata_json = ?,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
+    const subscriptionMetadata = parseJson(subscription.metadata_json, {})
+    const start = getSubscriptionStartPaymentFromMetadata(subscriptionMetadata)
+    let row = await tx.get(
+      `SELECT id, status, reference, metadata_json FROM payments
+       WHERE (payment_provider = 'mercadopago' AND reference = ?) OR mercadopago_payment_id = ?
+       ORDER BY created_at, id LIMIT 1`,
+      [reference, paymentIdFromMercadoPago || null]
+    )
+    let claimingStart = false
+    if (!row && start.paymentId) {
+      const candidate = await tx.get(
+        'SELECT id, status, reference, mercadopago_payment_id, metadata_json FROM payments WHERE id = ?',
+        [start.paymentId]
+      )
+      if (candidate) {
+        // Older preapproval syncs could overwrite the reference of the start
+        // row; the durable authorization/charge also survives in its metadata.
+        const stored = parseJson(candidate.metadata_json, {})
+        const previous = stored.mercadoPago || stored
+        const assigned = cleanString(candidate.mercadopago_payment_id) || cleanString(previous.mercadoPagoPaymentId)
+          || cleanString(previous.mercadoPagoAuthorizedPaymentId) || cleanString(candidate.reference).startsWith('mp_authorized_payment:')
+        const sameCycle = (authorizedPaymentId && authorizedPaymentId === cleanString(previous.mercadoPagoAuthorizedPaymentId))
+          || (paymentIdFromMercadoPago && paymentIdFromMercadoPago === cleanString(previous.mercadoPagoPaymentId))
+        if (!assigned || sameCycle) {
+          row = candidate
+          claimingStart = !assigned
+        }
+      }
+    }
+    const paymentId = row?.id || createId('mercadopago_subscription_payment')
+    const isStart = paymentId === start.paymentId
+    // A response fetched earlier can arrive after confirmation of the same debit.
+    if (!claimingStart && row?.status === 'paid' && nextStatus === 'pending') return null
+    if (row) {
+      const previousMetadata = parseJson(row.metadata_json, {})
+      const cycleMetadata = { ...metadata }
+      const previousCycle = previousMetadata.mercadoPago || previousMetadata
+      cycleMetadata.mercadoPagoAuthorizedPaymentId ||= previousCycle.mercadoPagoAuthorizedPaymentId || ''
+      cycleMetadata.mercadoPagoPaymentId ||= previousCycle.mercadoPagoPaymentId || ''
+      const rowMetadata = isStart
+        ? { ...previousMetadata, mercadoPago: cycleMetadata }
+        : { ...previousMetadata, ...cycleMetadata }
+      const savedReference = !authorizedPaymentId && cleanString(row.reference).startsWith('mp_authorized_payment:')
+        ? row.reference
+        : reference
+      await tx.run(
+        `UPDATE payments SET amount = ?, currency = ?, status = ?,
+           payment_method = 'mercadopago_subscription', payment_mode = ?, payment_provider = 'mercadopago',
+           reference = ?, mercadopago_payment_id = COALESCE(?, mercadopago_payment_id),
+           paid_at = CASE WHEN ? = 1 THEN ? ELSE COALESCE(paid_at, ?) END,
+           date = COALESCE(?, date), metadata_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [
-          amount,
-          currency,
-          nextStatus,
-          subscriptionRow.payment_mode || 'test',
-          reference || paymentIdFromMercadoPago || null,
-          paymentIdFromMercadoPago || null,
-          paidAt,
-          paidAt || timestampToIso(authorizedPayment.debit_date),
-          JSON.stringify({
-            ...parseJson(startPaymentRow.metadata_json, {}),
-            mercadoPago: metadata
-          }),
-          startPaymentRow.id
+          amount, currency, nextStatus, subscriptionRow.payment_mode || 'test', savedReference,
+          paymentIdFromMercadoPago || null, Number(claimingStart), paidAt, paidAt,
+          paidAt || timestampToIso(authorizedPayment.debit_date), JSON.stringify(rowMetadata), paymentId
         ]
       )
+    } else {
+      await tx.run(
+        `INSERT INTO payments (
+          id, contact_id, amount, currency, status, payment_method, payment_mode, payment_provider,
+          reference, title, description, mercadopago_payment_id, paid_at, metadata_json, date, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'mercadopago_subscription', ?, 'mercadopago', ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [
+          paymentId, subscriptionRow.contact_id || null, amount, currency, nextStatus, subscriptionRow.payment_mode || 'test',
+          reference, subscriptionRow.name || 'Suscripción', `Cobro recurrente de ${subscriptionRow.name || 'suscripción'}`,
+          paymentIdFromMercadoPago || null, paidAt, JSON.stringify(metadata),
+          paidAt || timestampToIso(authorizedPayment.debit_date) || new Date().toISOString()
+        ]
+      )
+    }
+    if (isStart && start.status !== nextStatus) {
+      await tx.run('UPDATE subscriptions SET metadata_json = ? WHERE id = ?', [JSON.stringify({
+        ...subscriptionMetadata,
+        subscriptionStartPayment: { ...start, ...subscriptionMetadata.subscriptionStartPayment, status: nextStatus }
+      }), subscriptionRow.id])
+    }
+    return {
+      paymentId,
+      isStart,
+      becamePaid: nextStatus === 'paid' && (row?.status !== 'paid' || claimingStart),
+      previousStatus: row?.status || ''
+    }
+  })
+  if (!saved) return null
 
-      if (subscriptionRow.contact_id && nextStatus === 'paid') {
-        registerGigstackPaymentForTransactionInBackground(startPaymentRow.id)
-        dispatchProductPostWebhooksForPaymentInBackground(startPaymentRow.id, {
-          status: nextStatus,
-          previousStatus: ''
-        })
-        updateSingleContactStats(subscriptionRow.contact_id).catch((error) => {
-          logger.warn(`No se pudieron actualizar stats del contacto por suscripción Mercado Pago ${subscriptionRow.id}: ${error.message}`)
-        })
-      }
-
-      const updatedPayment = await findPaymentById(startPaymentRow.id).catch(() => null)
-      publishPaymentChangedEvent(updatedPayment || {
-        id: startPaymentRow.id,
-        contact_id: subscriptionRow.contact_id || null,
-        status: nextStatus,
-        payment_method: 'mercadopago_subscription',
-        payment_provider: 'mercadopago',
-        metadata_json: JSON.stringify(metadata)
+  const { paymentId, isStart, becamePaid, previousStatus } = saved
+  const updated = await findPaymentById(paymentId).catch(() => null)
+  if (subscriptionRow.contact_id && nextStatus === 'paid') {
+    // Same cycle can retry a failed delivery; Meta dedupes a confirmed one.
+    await reportConfirmedPaymentToMeta(paymentId)
+    if (becamePaid) {
+      registerGigstackPaymentForTransactionInBackground(paymentId)
+      updateSingleContactStats(subscriptionRow.contact_id).catch(error => {
+        logger.warn(`No se pudieron actualizar stats del contacto por suscripción Mercado Pago ${subscriptionRow.id}: ${error.message}`)
       })
-
-      return startPaymentRow.id
+      if (isStart) {
+        dispatchProductPostWebhooksForPaymentInBackground(paymentId, { status: nextStatus, previousStatus })
+      } else if (updated) {
+        queuePaymentAutomationMessage('receipt', updated)
+      }
     }
   }
-
-  if (existing?.id) {
-    await db.run(
-      `UPDATE payments
-       SET amount = ?,
-           currency = ?,
-           status = ?,
-           payment_method = 'mercadopago_subscription',
-           payment_mode = ?,
-           payment_provider = 'mercadopago',
-           mercadopago_payment_id = COALESCE(?, mercadopago_payment_id),
-           paid_at = COALESCE(?, paid_at),
-           date = COALESCE(?, date),
-           metadata_json = ?,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-      [
-        amount,
-        currency,
-        nextStatus,
-        subscriptionRow.payment_mode || 'test',
-        paymentIdFromMercadoPago || null,
-        paidAt,
-        paidAt || timestampToIso(authorizedPayment.debit_date),
-        JSON.stringify(metadata),
-        existing.id
-      ]
-    )
-    const updatedPayment = await findPaymentById(existing.id).catch(() => null)
-    publishPaymentChangedEvent(updatedPayment || {
-      id: existing.id,
-      contact_id: subscriptionRow.contact_id || null,
-      status: nextStatus,
-      payment_method: 'mercadopago_subscription',
-      payment_provider: 'mercadopago',
-      metadata_json: JSON.stringify(metadata)
-    })
-    return existing.id
-  }
-
-  const localPaymentId = createId('mercadopago_subscription_payment')
-  await db.run(
-    `INSERT INTO payments (
-      id, contact_id, amount, currency, status, payment_method, payment_mode,
-      payment_provider, reference, title, description, public_payment_id, payment_url,
-      mercadopago_payment_id, paid_at, metadata_json, date, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-    [
-      localPaymentId,
-      subscriptionRow.contact_id || null,
-      amount,
-      currency,
-      nextStatus,
-      'mercadopago_subscription',
-      subscriptionRow.payment_mode || 'test',
-      'mercadopago',
-      reference || paymentIdFromMercadoPago,
-      subscriptionRow.name || 'Suscripción',
-      `Cobro recurrente de ${subscriptionRow.name || 'suscripción'}`,
-      null,
-      null,
-      paymentIdFromMercadoPago || null,
-      paidAt,
-      JSON.stringify(metadata),
-      paidAt || timestampToIso(authorizedPayment.debit_date) || new Date().toISOString()
-    ]
-  )
-
-  if (subscriptionRow.contact_id && nextStatus === 'paid') {
-    registerGigstackPaymentForTransactionInBackground(localPaymentId)
-    updateSingleContactStats(subscriptionRow.contact_id).catch((error) => {
-      logger.warn(`No se pudieron actualizar stats del contacto por suscripción Mercado Pago ${subscriptionRow.id}: ${error.message}`)
-    })
-    // (PAY2-003) Encolar el comprobante automático también para los cobros recurrentes de Mercado Pago.
-    Promise.resolve(findPaymentById(localPaymentId))
-      .then((paymentRow) => {
-        if (paymentRow) return queuePaymentAutomationMessage('receipt', { ...paymentRow, status: nextStatus })
-      })
-      .catch((error) => {
-        logger.warn(`No se pudo encolar comprobante por suscripción Mercado Pago ${localPaymentId}: ${error.message}`)
-      })
-  }
-
-  const inserted = await findPaymentById(localPaymentId).catch(() => null)
-  publishPaymentChangedEvent(inserted || {
-    id: localPaymentId,
+  publishPaymentChangedEvent(updated || {
+    id: paymentId,
     contact_id: subscriptionRow.contact_id || null,
     status: nextStatus,
     payment_method: 'mercadopago_subscription',
     payment_provider: 'mercadopago',
     metadata_json: JSON.stringify(metadata)
   })
-
-  return localPaymentId
+  return paymentId
 }
 
 function getMercadoPagoPreapprovalSearchResults(payload = {}) {

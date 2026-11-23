@@ -19,6 +19,7 @@ import http from 'node:http'
 import { db, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
 import {
+  buildMetaPublicPurchasePixelEvent,
   triggerMetaPaymentPurchaseEvent,
   triggerWhatsappAppointmentBookedEvent
 } from '../src/services/metaConversionEventsService.js'
@@ -39,10 +40,12 @@ const APP_CONFIG_KEYS = [
   'meta_test_event_code_set_at'
 ]
 
-// Timestamps futuros y ordenados para no chocar con datos reales.
-const T1 = '2099-03-01T10:00:00.000Z'
-const T2 = '2099-03-02T10:00:00.000Z'
-const T3 = '2099-03-03T10:00:00.000Z'
+// Visitas ordenadas anteriores a los pagos creados en las pruebas.
+const oneDay = 24 * 60 * 60 * 1000
+const now = Date.now()
+const T1 = new Date(now - 3 * oneDay).toISOString()
+const T2 = new Date(now - 2 * oneDay).toISOString()
+const T3 = new Date(now - oneDay).toISOString()
 
 function uniqueSuffix() {
   return `${Date.now()}_${Math.random().toString(16).slice(2)}`
@@ -134,12 +137,12 @@ async function insertContact({ contactId, phone = '', email = '' }) {
   )
 }
 
-async function insertWebSession({ contactId, startedAt, fbclid = '', fbc = '', fbp = '', adId = '', adName = '', campaignId = '', adsetId = '', pageUrl = 'https://site.example.test/landing' }) {
+async function insertWebSession({ contactId, startedAt, fbclid = '', fbc = '', fbp = '', userAgent = '', adId = '', adName = '', campaignId = '', adsetId = '', pageUrl = 'https://site.example.test/landing' }) {
   await db.run(
     `INSERT INTO sessions (
        session_id, visitor_id, contact_id, event_name, started_at, created_at,
-       page_url, fbclid, fbc, fbp, campaign_id, adset_id, ad_id, ad_name
-     ) VALUES (?, ?, ?, 'page_view', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       page_url, fbclid, fbc, fbp, user_agent, campaign_id, adset_id, ad_id, ad_name
+     ) VALUES (?, ?, ?, 'page_view', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       `session_${contactId}_${uniqueSuffix()}`,
       `visitor_${contactId}`,
@@ -150,6 +153,7 @@ async function insertWebSession({ contactId, startedAt, fbclid = '', fbc = '', f
       fbclid || null,
       fbc || null,
       fbp || null,
+      userAgent || null,
       campaignId || null,
       adsetId || null,
       adId || null,
@@ -301,6 +305,8 @@ test('escenario 1: WhatsApp orgánico → Web ad → compra WhatsApp = payload w
       // WhatsApp orgánico: Meta exige ctwa_clid para business_messaging, así
       // que usa el contrato chat y conserva el canal real en custom_data.
       assert.equal(payload.data[0].action_source, 'chat')
+      assert.equal(payload.data[0].user_data.fbc, 'fb.1.111.fbclid-attr-1')
+      assert.equal(payload.data[0].event_source_url, undefined)
       assert.equal(payload.data[0].messaging_channel, undefined)
       assert.equal(payload.data[0].user_data.ctwa_clid, undefined)
       assert.equal(payload.data[0].user_data.page_id, undefined)
@@ -319,6 +325,148 @@ test('escenario 1: WhatsApp orgánico → Web ad → compra WhatsApp = payload w
       assert.equal(snapshot.attribution_touch_type, 'web')
       assert.equal(snapshot.attribution_ad_id, 'ad-web-111')
       assert.equal(snapshot.conversion_surface, 'whatsapp')
+    }
+  })
+})
+
+test('Purchase conserva el clic anterior al pago frente a visitas orgánicas, de otro contacto y posteriores', async () => {
+  const contactId = 'contact_attr_payment_click_cutoff'
+  const otherContact = 'contact_attr_payment_other_owner'
+  const paymentId = `payment_attr_cutoff_${uniqueSuffix()}`
+  const checkoutUrl = 'https://checkout.example.test/pay/cutoff'
+  await withPurchaseScenario({
+    contactId,
+    callback: async ({ metaCalls }) => {
+      await insertContact({ contactId, email: 'attr-cutoff@example.test' })
+      await insertWebSession({ contactId, startedAt: T1, fbclid: 'old-click' })
+      await insertWebSession({ contactId, startedAt: T2, pageUrl: 'https://site.example.test/?fbclid=last-click', fbc: `fb.1.${Date.parse(T1)}.old-click` })
+      // El navegador vuelve a crear la cookie del clic antiguo antes de visitar el checkout.
+      await insertWebSession({ contactId, startedAt: T3, fbc: `fb.1.${Date.parse(T3)}.old-click` })
+      await insertWebSession({ contactId, startedAt: T3, fbp: 'fb.1.100.browser', userAgent: 'Checkout browser', pageUrl: checkoutUrl })
+      const paidAtMs = Date.parse(T3) + 7200000
+      const paidAt = new Date(paidAtMs).toISOString()
+      await insertWebSession({ contactId, startedAt: new Date(paidAtMs + 1).toISOString(), fbclid: 'future-click', userAgent: 'Other browser' })
+      await cleanupContact(otherContact)
+      try {
+        await insertContact({ contactId: otherContact })
+        await insertWebSession({ contactId: otherContact, startedAt: new Date(paidAtMs - 1000).toISOString(), fbclid: 'other-owner' })
+        await db.run('UPDATE sessions SET email = ? WHERE contact_id = ?', ['attr-cutoff@example.test', otherContact])
+        await insertPayment({ contactId, paymentId, paymentUrl: checkoutUrl })
+        const result = await triggerMetaPaymentPurchaseEvent(contactId, { id: paymentId, paid_at: paidAt })
+        assert.equal(result.sent, true)
+        const [purchase] = JSON.parse(metaCalls[0].body).data
+        assert.equal(purchase.user_data.fbc, `fb.1.${Date.parse(T2)}.last-click`)
+        assert.equal(purchase.user_data.fbp, 'fb.1.100.browser')
+        assert.equal(purchase.user_data.client_user_agent, 'Checkout browser')
+        assert.equal(purchase.event_source_url, checkoutUrl)
+        const snapshot = await db.get('SELECT attribution_ids_json FROM payments WHERE id = ?', [paymentId])
+        assert.equal(JSON.parse(snapshot.attribution_ids_json).fbclid, 'last-click')
+      } finally {
+        await cleanupContact(otherContact)
+      }
+    }
+  })
+})
+
+test('el snapshot conserva el clic fechado aunque se hayan depurado las visitas', async () => {
+  const contactId = 'contact_attr_retained_click'
+  try {
+    await cleanupContact(contactId)
+    await insertContact({ contactId })
+    const payment = {
+      contact_id: contactId,
+      attribution_touch_type: 'web',
+      attribution_source: 'paid_ad',
+      attribution_channel: 'website',
+      attribution_touch_at: T2,
+      attribution_ids_json: JSON.stringify({ fbclid: 'saved-click', pageUrl: 'https://site.example.test/landing' })
+    }
+    const before = await resolveConversionAttribution({ contactId, conversionTime: T3, payment })
+    assert.equal(before.metaWebFbc, `fb.1.${Date.parse(T2)}.saved-click`)
+    const future = await resolveConversionAttribution({ contactId, conversionTime: T1, payment })
+    assert.equal(future.metaWebFbc, '')
+    assert.equal(future.attributionSource, 'organic')
+  } finally {
+    await cleanupContact(contactId)
+  }
+})
+
+test('un recibo conserva su propio CTWA fechado tras depurar mensajes y rechaza snapshots ajenos o futuros', async () => {
+  const contactId = 'contact_attr_retained_ctwa'
+  const paymentId = `payment_attr_ctwa_${uniqueSuffix()}`
+  await withPurchaseScenario({
+    contactId,
+    callback: async ({ metaCalls }) => {
+      await insertContact({ contactId, phone: '+525599000092' })
+      const payment = {
+        id: paymentId, amount: 900, status: 'paid', contact_id: contactId, paid_at: T3,
+        conversion_surface: 'whatsapp', attribution_channel: 'whatsapp', attribution_source: 'paid_ad',
+        attribution_touch_type: 'whatsapp_ad', attribution_touch_at: T2,
+        attribution_ids_json: JSON.stringify({ ctwaClid: 'original-ctwa' })
+      }
+      const result = await triggerMetaPaymentPurchaseEvent(contactId, payment)
+      assert.equal(result.sent, true)
+      const [purchase] = JSON.parse(metaCalls[0].body).data
+      assert.equal(purchase.action_source, 'business_messaging')
+      assert.equal(purchase.user_data.ctwa_clid, 'original-ctwa')
+      const wrongContact = await resolveConversionAttribution({ contactId, conversionTime: T3, payment: { ...payment, contact_id: 'otro' } })
+      assert.equal(wrongContact.touch, null)
+      const futureClick = await resolveConversionAttribution({ contactId, conversionTime: T1, payment })
+      assert.equal(futureClick.touch, null)
+    }
+  })
+})
+
+test('el enlace del recibo offline conserva el click de WhatsApp previo al cobro', async () => {
+  const contactId = 'contact_attr_offline_receipt'
+  const paymentId = `payment_attr_receipt_${uniqueSuffix()}`
+  const phone = '+525599000090'
+  await withPurchaseScenario({
+    contactId,
+    callback: async ({ metaCalls }) => {
+      await insertContact({ contactId, phone })
+      await insertWhatsappMessage({ contactId, phone, messageTimestamp: T1, ctwaClid: 'ctwa-before' })
+      await insertWhatsappMessage({ contactId, phone, messageTimestamp: T3, ctwaClid: 'ctwa-after' })
+      await insertPayment({ contactId, paymentId, paymentUrl: 'https://site.example.test/pay/receipt' })
+      const result = await triggerMetaPaymentPurchaseEvent(contactId, {
+        id: paymentId, paid_at: T2, payment_method: 'cash', payment_provider: 'offline',
+        metadata: { paymentPlan: { trigger: 'first_payment_offline' } }
+      })
+      assert.equal(result.sent, true)
+      const [purchase] = JSON.parse(metaCalls[0].body).data
+      assert.equal(purchase.action_source, 'business_messaging')
+      assert.equal(purchase.user_data.ctwa_clid, 'ctwa-before')
+      assert.equal(purchase.event_source_url, undefined)
+    }
+  })
+})
+
+test('una renovación automática conserva el fbc y su recibo nunca dispara un Purchase de navegador', async () => {
+  const contactId = 'contact_attr_auto_renewal'
+  const paymentId = `payment_attr_renewal_${uniqueSuffix()}`
+  await withPurchaseScenario({
+    contactId,
+    callback: async ({ metaCalls }) => {
+      await insertContact({ contactId, phone: '+525599000091' })
+      await insertWebSession({ contactId, startedAt: T1, fbclid: 'original-click' })
+      await insertWhatsappMessage({ contactId, phone: '+525599000091', messageTimestamp: T2 })
+      const payment = {
+        id: paymentId, contact_id: contactId, amount: 900, status: 'paid', payment_method: 'stripe_subscription',
+        payment_url: 'https://checkout.example.test/invoice', paid_at: T3,
+        metadata: { stripeBillingReason: 'subscription_cycle', stripeCollectionMethod: 'charge_automatically' }
+      }
+      const result = await triggerMetaPaymentPurchaseEvent(contactId, payment)
+      assert.equal(result.sent, true)
+      const [purchase] = JSON.parse(metaCalls[0].body).data
+      assert.equal(purchase.action_source, 'system_generated')
+      assert.equal(purchase.event_source_url, undefined)
+      assert.equal(purchase.user_data.fbc, `fb.1.${Date.parse(T1)}.original-click`)
+      assert.equal(await buildMetaPublicPurchasePixelEvent(payment), null)
+
+      const first = { ...payment, metadata: { ...payment.metadata, stripeBillingReason: 'subscription_create' } }
+      assert.equal(await detectConversionSurface({ contactId, payment: first, conversionTime: T3 }), 'website')
+      const installment = { ...payment, payment_method: 'stripe_saved_card', metadata: { paymentPlan: { trigger: 'scheduled_installment' } } }
+      assert.equal(await detectConversionSurface({ contactId, payment: installment, conversionTime: T3 }), 'system_generated')
     }
   })
 })
@@ -645,7 +793,7 @@ test('findLastPaidTouch: una cookie _fbc vieja re-enviada en visita orgánica no
     await insertWhatsappMessage({ contactId, phone, messageTimestamp: T1, ctwaClid: 'ctwa-stale-fbc', sourceId: 'ad-wa-888', headline: 'WhatsApp Ad' })
     // Visita orgánica en T3 que re-manda una cookie _fbc creada MESES antes
     // (timestamp embebido viejo, sin fbclid en la URL). No debe contar paid.
-    const staleCreationMs = Date.parse('2099-01-01T00:00:00.000Z')
+    const staleCreationMs = Date.parse('2020-01-01T00:00:00.000Z')
     await insertWebSession({ contactId, startedAt: T3, fbc: `fb.1.${staleCreationMs}.fbclid-viejo`, fbp: 'fb.1.999.111' })
 
     const touch = await findLastPaidTouch({ contactId })

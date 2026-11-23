@@ -31,6 +31,7 @@ import {
 } from './paymentPlanSafetyService.js'
 import {
   buildMetaPublicPurchasePixelEvent,
+  reportConfirmedPaymentToMeta,
   triggerMetaPaymentPurchaseEvent
 } from './metaConversionEventsService.js'
 import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
@@ -1542,6 +1543,7 @@ export async function reconcileConektaSubscriptionFromWebhook(event = {}) {
 
   const refreshed = await db.get('SELECT * FROM subscriptions WHERE id = ?', [existing.id])
   const paymentSync = await syncConektaSubscriptionPaymentFromWebhook(subscription, refreshed || existing, event)
+  await reportConfirmedPaymentToMeta(paymentSync?.paymentId)
   publishSubscriptionChangedEvent(refreshed || {
     ...existing,
     status: nextStatus,
@@ -1998,7 +2000,7 @@ async function updatePaymentFromOrder(order, row, { paymentSourceId = '' } = {})
          conekta_order_id = COALESCE(?, conekta_order_id),
          conekta_charge_id = COALESCE(?, conekta_charge_id),
          conekta_payment_source_id = COALESCE(?, conekta_payment_source_id),
-         paid_at = COALESCE(?, paid_at),
+         paid_at = COALESCE(paid_at, ?),
          date = COALESCE(?, date),
          metadata_json = ?,
          updated_at = CURRENT_TIMESTAMP
@@ -3278,6 +3280,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
       [paymentId, flowId]
     )
     response.firstPaymentPaymentId = paymentId
+    await reportConfirmedPaymentToMeta(response.firstPaymentPaymentId)
     updateSingleContactStats(plan.contact.id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por primer pago ${paymentId}: ${error.message}`)
     })

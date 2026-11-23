@@ -281,6 +281,19 @@ export function businessTodayDateOnly(timezone = DEFAULT_TIMEZONE, referenceDate
     .toISODate()
 }
 
+// Al registrar un pago hoy se conoce la hora de confirmación. Una fecha
+// histórica sin hora conserva su día de negocio usando mediodía local.
+export function resolvePaymentTimestamp(value, timezone = DEFAULT_TIMEZONE, now = new Date()) {
+  if (!value) return now.toISOString()
+  const text = String(value).trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    if (text === businessTodayDateOnly(timezone, now)) return now.toISOString()
+    return normalizeToUtcIso(`${text}T12:00:00`, timezone)
+  }
+  const instant = normalizeToUtcIso(value, timezone)
+  return Number.isFinite(Date.parse(instant)) ? instant : now.toISOString()
+}
+
 export function normalizeDateOnlyInTimezone(value, timezone = DEFAULT_TIMEZONE, fallbackDate = null) {
   const zone = resolveTimezone(timezone)
   const fallback = fallbackDate

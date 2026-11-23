@@ -12,9 +12,10 @@ import {
   recordPayment as recordTransactionPayment
 } from '../src/controllers/transactionsController.js'
 import GHLClient from '../src/services/ghlClient.js'
-import { handlePaymentWebhook } from '../src/controllers/webhooksController.js'
+import { handleInvoiceWebhook, handlePaymentWebhook } from '../src/controllers/webhooksController.js'
 import {
   __invoicesSyncTestHooks,
+  getHighLevelInvoicePaidAt,
   syncAllInvoices,
   syncLocalPaymentsToHighLevel,
   syncSingleInvoice
@@ -369,6 +370,9 @@ test('sincronización de invoice HighLevel dispara el webhook al detectar cambio
         total: 100,
         currency: 'MXN',
         status: 'paid',
+        createdAt: '2026-01-02T10:00:00Z',
+        updatedAt: '2026-07-20T22:30:00Z',
+        fulfilledAt: '2026-07-20T16:11:36.238-05:00',
         paymentMode: 'cash',
         liveMode: false
       }
@@ -386,6 +390,13 @@ test('sincronización de invoice HighLevel dispara el webhook al detectar cambio
     }, async () => {
       const result = await syncSingleInvoice(ids.highLevelInvoiceId)
       assert.equal(result.status, 'paid')
+      const loadPaidAt = async () => (await db.get('SELECT paid_at FROM payments WHERE id = ?', [ids.highLevelInvoiceId])).paid_at
+      assert.equal(new Date(await loadPaidAt()).toISOString(), '2026-07-20T21:11:36.238Z')
+      // The echo must preserve the settled payment even when its update is newer.
+      await handleInvoiceWebhook({ body: {
+        type: 'InvoicePaid', invoice: { _id: ids.highLevelInvoiceId, updatedAt: '2026-07-22T18:00:00Z' }
+      } }, createResponse())
+      assert.equal(new Date(await loadPaidAt()).toISOString(), '2026-07-20T21:11:36.238Z')
     })
 
     const deliveries = await waitForProductWebhookDelivery(ids.highLevelInvoiceId)
@@ -401,6 +412,14 @@ test('sincronización de invoice HighLevel dispara el webhook al detectar cambio
     mock.restoreAll()
     await cleanup(ids)
   }
+})
+
+test('HighLevel usa la confirmación de pago y deja intactas las importaciones históricas sin fecha de cobro', async () => {
+  const invoice = { createdAt: '2026-01-01T08:00:00Z', issueDate: '2026-01-01', updatedAt: '2026-07-15T10:00:00Z' }
+  assert.equal(await getHighLevelInvoicePaidAt(invoice, { incomingStatus: 'paid' }), null)
+  assert.equal(await getHighLevelInvoicePaidAt(invoice, { previousStatus: 'paid', incomingStatus: 'paid' }), null)
+  assert.equal(await getHighLevelInvoicePaidAt(invoice, { previousStatus: 'sent', incomingStatus: 'paid' }), '2026-07-15T10:00:00.000Z')
+  assert.equal(await getHighLevelInvoicePaidAt({ ...invoice, paidAt: '2026-02-03T06:00:00Z' }, { incomingStatus: 'paid' }), '2026-02-03T06:00:00.000Z')
 })
 
 test('enganche manual de plan HighLevel conserva modo test aunque el invoice remoto regrese live', async () => {

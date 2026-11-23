@@ -2,9 +2,8 @@ import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import {
   DEFAULT_TIMEZONE,
-  businessTodayDateOnly,
   getAccountTimezone,
-  normalizeToUtcIso,
+  resolvePaymentTimestamp,
   resolveDateRange,
   resolveDateRangeWithGHLTimezone
 } from '../utils/dateUtils.js'
@@ -531,40 +530,6 @@ async function ensureLocalContactForPayment({ contactId, contactName, email, pho
 const toDateOnly = (dateValue) => {
   if (!dateValue) return undefined
   return String(dateValue).split('T')[0]
-}
-
-/**
- * Normaliza la fecha de un pago a un timestamp ISO COMPLETO, para poder ordenar las
- * transacciones por el momento EXACTO en que se hizo/registró el pago.
- *
- * - Sin valor             -> ahora mismo (timestamp completo con hora).
- * - Ya trae hora (ISO/T)  -> se respeta tal cual.
- * - Solo fecha YYYY-MM-DD:
- *     · si es HOY         -> ahora mismo (captura la hora real del registro).
- *     · si es otra fecha  -> esa fecha a mediodía UTC. Mediodía evita que la zona
- *                            horaria mueva el pago al día anterior/siguiente; el
- *                            desempate por created_at conserva el orden de registro.
- */
-const resolvePaymentTimestamp = (rawDate, timezone = DEFAULT_TIMEZONE) => {
-  const now = new Date()
-  const value = cleanString(rawDate)
-  if (!value) return now.toISOString()
-
-  // Ya viene con hora (timestamp ISO o "YYYY-MM-DD HH:mm:ss") -> respetar.
-  if (value.includes('T') || value.includes(' ')) {
-    const parsed = new Date(value)
-    return Number.isNaN(parsed.getTime()) ? now.toISOString() : parsed.toISOString()
-  }
-
-  // Solo fecha (YYYY-MM-DD).
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const today = businessTodayDateOnly(timezone, now)
-    if (value === today) return now.toISOString()
-    return normalizeToUtcIso(`${value}T12:00:00`, timezone)
-  }
-
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? now.toISOString() : parsed.toISOString()
 }
 
 /**
@@ -2391,7 +2356,7 @@ export const recordPayment = async (req, res) => {
     // (hoy -> hora exacta; otra fecha -> ese día); si no, el momento actual.
     const resolvedPaymentDate = paymentDate
       ? resolvePaymentTimestamp(paymentDate, await getAccountTimezone().catch(() => DEFAULT_TIMEZONE))
-      : (transaction.date || new Date().toISOString())
+      : (transaction.paid_at || (SUCCESS_PAYMENT_STATUSES.has(transaction.status) && transaction.date) || new Date().toISOString())
 
     // Marcar como pagado en HighLevel si tiene invoice asociado. Para pagos locales
     // sin invoice, conserva el modo del pago en vez de heredar el modo global de GHL.

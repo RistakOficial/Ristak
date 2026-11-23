@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import fetch from 'node-fetch'
 import { db, getAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
@@ -11,6 +12,9 @@ import {
 import { getActiveMetaTestEventCode } from '../utils/metaTestCode.js'
 import { PAYMENT_MODE_LIVE, PAYMENT_MODE_TEST, normalizePaymentMode } from '../utils/paymentMode.js'
 import { buildPhoneMatchCandidates } from '../utils/phoneUtils.js'
+import { timestampSortExpression, timestampSortParameterExpression } from '../utils/sqlTimestampSort.js'
+import { parseStoredUtcDateTime } from '../utils/dateUtils.js'
+import { shouldSuppressProductionPaymentEffects } from './paymentRecordSafetyService.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { buildMetaParameterUserData, sanitizeMetaUrlForEvent } from './metaParameterManagerService.js'
 import { parseContactCustomFields } from '../utils/contactCustomFields.js'
@@ -22,8 +26,9 @@ import {
   resolveConversionAttribution,
   persistPaymentConversionAttribution,
   persistAppointmentConversionAttribution,
-  detectConversionSurface,
-  getLatestContactWebSession
+  isAutomaticPayment,
+  getLatestContactWebSession,
+  paymentHasOfflineReceipt
 } from './conversionAttributionService.js'
 
 const CONFIG_KEYS = {
@@ -56,6 +61,8 @@ const QR_LABEL_FALLBACK_PAYMENT_META_CONFIG = {
 }
 const PAYMENT_META_DEFAULT_CURRENCY = 'MXN'
 const PAYMENT_META_MAX_CUSTOM_PARAMETERS = 12
+const META_MAX_EVENT_AGE_SECONDS = 7 * 24 * 60 * 60
+const META_PIXEL_DEDUP_WINDOW_MS = 48 * 60 * 60 * 1000
 const META_ACTION_SOURCES = new Set([
   'app',
   'business_messaging',
@@ -300,6 +307,7 @@ async function getPaymentMetaCurrency() {
 }
 
 function extractPaymentMetaEventSourceUrl(payment = {}) {
+  if (paymentHasOfflineReceipt(payment)) return ''
   const sourceUrl = cleanString(
     payment.eventSourceUrl
     || payment.event_source_url
@@ -329,7 +337,7 @@ function resolvePaymentMetaActionSource(payment = {}, eventSourceUrl = '') {
   const provider = cleanString(payment.payment_provider || payment.provider).toLowerCase()
   const source = cleanString(payment.source).toLowerCase()
 
-  if (eventSourceUrl || payment.public_payment_id || payment.publicPaymentId || payment.payment_url || payment.paymentUrl) {
+  if (!paymentHasOfflineReceipt(payment) && (eventSourceUrl || payment.public_payment_id || payment.publicPaymentId || payment.payment_url || payment.paymentUrl)) {
     return 'website'
   }
   if (/call|phone|telefono/.test(method) || /call|phone|telefono/.test(source)) {
@@ -540,18 +548,30 @@ function getPaymentPlanId(payment = {}, metadata = null) {
   ])
 }
 
-function normalizeMetaEventIdSegment(value = '') {
-  return cleanString(value)
-    .replace(/[^a-zA-Z0-9_-]/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 100)
+async function getLinkedPaymentPlan(contactId, paymentId, invoiceId) {
+  const rows = await db.all(
+    `SELECT id AS plan_id, 0 AS card_setup FROM payment_flows
+     WHERE contact_id = ? AND first_payment_invoice_id IN (?, ?)
+     UNION
+     SELECT id AS plan_id, 1 AS card_setup FROM payment_flows
+     WHERE contact_id = ? AND card_setup_invoice_id IN (?, ?)
+     UNION
+     SELECT f.id AS plan_id, 0 AS card_setup FROM payment_flows f
+     JOIN installment_payments i ON i.flow_id = f.id
+     WHERE f.contact_id = ? AND (i.payment_id = ? OR i.ghl_invoice_id IN (?, ?))
+     LIMIT 2`,
+    [contactId, paymentId, invoiceId || null, contactId, paymentId, invoiceId || null, contactId, paymentId, paymentId, invoiceId || null]
+  )
+  return rows.length === 1 ? rows[0] : null
 }
 
-function buildPurchaseEventId(contactId, paymentPlanId = '') {
-  const normalizedPlanId = normalizeMetaEventIdSegment(paymentPlanId)
-  if (normalizedPlanId) return `purchase_plan_${normalizedPlanId}`
-  return `purchase_contact_${contactId}`
+function purchaseEventId(scope, id) {
+  // Keep normal ledger/plan IDs readable. Hash unusual IDs instead of stripping
+  // characters or truncating, which could merge two different purchases.
+  const segment = /^[a-zA-Z0-9_-]{1,100}$/.test(id)
+    ? id
+    : `sha256:${createHash('sha256').update(id).digest('hex')}`
+  return `purchase_${scope}_${segment}`
 }
 
 async function getPaymentPlanTotalValue(paymentPlanId, metadata = {}) {
@@ -562,10 +582,7 @@ async function getPaymentPlanTotalValue(paymentPlanId, metadata = {}) {
   const metadataValue = parseMetaNumber(
     metadataPlan.total ||
     metadataPlan.totalAmount ||
-    metadataPlan.total_amount ||
-    metadata.total ||
-    metadata.totalAmount ||
-    metadata.total_amount
+    metadataPlan.total_amount
   )
   if (metadataValue !== null && metadataValue > 0) return metadataValue
 
@@ -590,59 +607,88 @@ async function getPaymentPlanTotalValue(paymentPlanId, metadata = {}) {
   const flowValue = parseMetaNumber(flow?.total_amount)
   if (flowValue !== null && flowValue > 0) return flowValue
 
-  return null
+  // Legacy imports sometimes put the plan total on the outer object. Prefer
+  // the linked ledger/mirror above: for a checkout this field can be its cuota.
+  const legacyTotal = parseMetaNumber(metadata.totalAmount || metadata.total_amount || metadata.total)
+  return legacyTotal > 0 ? legacyTotal : null
 }
 
-async function hasSuccessfulPaymentPlanPurchaseEvent(paymentPlanId, eventId) {
-  const cleanPlanId = cleanString(paymentPlanId)
-  if (!cleanPlanId && !eventId) return false
-
-  const jsonNeedle = cleanPlanId ? `"payment_plan_id":"${cleanPlanId}"` : ''
-  const row = await db.get(
-    `SELECT id
+async function getAcceptedPaymentPurchases(contactId, paymentId, planId) {
+  // Older versions reused a contact-wide event_id. The actual ledger ID and
+  // plan ID are still in the request. Restrict the lookup to this contact and
+  // verify exact values after parsing, including IDs with SQL wildcard chars.
+  const ids = [paymentId, planId].filter(Boolean)
+  const patterns = ids.map(id => `%${JSON.stringify(id).replace(/[!%_]/g, '!$&')}%`)
+  const candidates = await db.all(
+    `SELECT event_id, request_payload, response_payload, created_at
      FROM meta_conversion_event_logs
-     WHERE event_type = ?
-       AND status = 'success'
-       AND (
-         event_id = ?
-         ${jsonNeedle ? 'OR request_payload LIKE ?' : ''}
-       )
-     ORDER BY created_at DESC
-     LIMIT 1`,
-    jsonNeedle
-      ? [EVENT_TYPES.purchase, eventId, `%${jsonNeedle}%`]
-      : [EVENT_TYPES.purchase, eventId]
+     WHERE contact_id = ? AND event_type = ? AND status = 'success'
+       AND (${patterns.map(() => "request_payload LIKE ? ESCAPE '!'").join(' OR ')})
+     ORDER BY id ASC`,
+    [contactId, EVENT_TYPES.purchase, ...patterns]
   )
-
-  return Boolean(row?.id)
+  const accepted = []
+  for (const row of candidates) {
+    const payload = parseJson(row.request_payload)
+    const event = payload?.data?.[0]
+    if (!event?.custom_data || payload.test_event_code || !(Number(parseJson(row.response_payload)?.events_received) > 0)) continue
+    const data = event.custom_data
+    if (paymentId !== data.payment_id && (!planId || planId !== data.payment_plan_id)) continue
+    accepted.push({
+      eventId: row.event_id,
+      createdAt: row.created_at,
+      paymentId: data.payment_id,
+      planId: data.payment_plan_id,
+      planTotal: row.event_id.startsWith('purchase_plan_') || data.payment_plan_value_mode === 'payment_plan_total'
+    })
+  }
+  return accepted
 }
 
-async function buildPaymentPurchaseEventContext(contactId, payment = {}, paymentMetaConfig = {}) {
+async function buildPaymentPurchaseEventContext(contactId, payment, paymentMetaConfig, metaConfig, { pixel = false } = {}) {
   const parameters = normalizePaymentMetaPurchaseEventParameters(paymentMetaConfig.parameters || {})
   const metadata = getPaymentMetadata(payment)
-  const paymentPlanId = getPaymentPlanId(payment, metadata)
-  const usePlanTotalValue = Boolean(paymentPlanId && parameters.usePaymentPlanTotalValue)
-  const eventId = buildPurchaseEventId(contactId, usePlanTotalValue ? paymentPlanId : '')
+  const paymentId = firstPaymentValue([payment.id, payment.paymentId, payment.payment_id, metadata.ristak_payment_id, metadata.payment_id])
+  if (!paymentId) return { skip: true, reason: 'missing_payment_id' }
 
-  if (usePlanTotalValue && await hasSuccessfulPaymentPlanPurchaseEvent(paymentPlanId, eventId)) {
-    return {
-      skip: true,
-      reason: 'payment_plan_purchase_already_sent',
-      eventId,
-      paymentPlanId
+  const planTrigger = pickPaymentPlanMetadata(metadata).trigger
+  if (planTrigger === 'card_setup' || planTrigger === 'card_setup_authorization') {
+    return { skip: true, reason: 'card_authorization' }
+  }
+  let paymentPlanId = getPaymentPlanId(payment, metadata)
+  if (!paymentPlanId) {
+    const linked = await getLinkedPaymentPlan(contactId, paymentId, payment.ghl_invoice_id)
+    if (linked?.card_setup) return { skip: true, reason: 'card_authorization' }
+    paymentPlanId = linked?.plan_id || ''
+  }
+  const history = metaConfig.datasetId && (!metaConfig.testEventCode || pixel)
+    ? await getAcceptedPaymentPurchases(contactId, paymentId, paymentPlanId)
+    : []
+  const previousPlanPurchase = paymentPlanId && history.find(row => row.planId === paymentPlanId)
+  // Once a plan has reported payments, preserve its value mode. Switching the
+  // account preference later must not count both the installments and total.
+  const usePlanTotalValue = Boolean(paymentPlanId && (previousPlanPurchase ? previousPlanPurchase.planTotal : parameters.usePaymentPlanTotalValue))
+  const previous = history.find(row => row.paymentId === paymentId) || (usePlanTotalValue && previousPlanPurchase)
+  let eventId = usePlanTotalValue ? purchaseEventId('plan', paymentPlanId) : purchaseEventId('payment', paymentId)
+  if (!metaConfig.datasetId && !usePlanTotalValue) eventId = `purchase_contact_${contactId}`
+
+  if (previous) {
+    // Pair the browser with the same accepted installment, even when CAPI was
+    // faster. Opening another installment or an old receipt is not a new sale.
+    const receivedAt = parseStoredUtcDateTime(previous.createdAt)?.toMillis()
+    const pairable = pixel && previous.paymentId === paymentId && Date.now() - receivedAt < META_PIXEL_DEDUP_WINDOW_MS
+    if (!pairable) {
+      return { skip: true, reason: usePlanTotalValue ? 'payment_plan_purchase_already_sent' : 'already_sent', eventId: previous.eventId }
     }
+    eventId = previous.eventId
   }
 
-  if (!usePlanTotalValue) {
-    return {
-      eventId,
-      payment,
-      customDataOptions: {},
-      skipContactDedupe: false
-    }
-  }
+  if (!usePlanTotalValue) return { eventId, payment, customDataOptions: { paymentPlanId } }
 
   const paymentPlanTotalValue = await getPaymentPlanTotalValue(paymentPlanId, metadata)
+  if (parameters.sendValue && paymentPlanTotalValue === null) {
+    return { skip: true, reason: 'payment_plan_total_unavailable', eventId }
+  }
   const currentPaymentValue = parseMetaNumber(payment.amount)
   const shouldOverrideValue = parameters.sendValue !== false && paymentPlanTotalValue !== null
   const enrichedPayment = shouldOverrideValue
@@ -657,8 +703,7 @@ async function buildPaymentPurchaseEventContext(contactId, payment = {}, payment
       paymentPlanValueMode: shouldOverrideValue ? 'payment_plan_total' : 'current_payment_amount',
       paymentPlanTotalValue,
       currentPaymentValue
-    },
-    skipContactDedupe: true
+    }
   }
 }
 
@@ -814,7 +859,7 @@ function buildPaymentMetaPurchaseEventCustomData(parameters = {}, payment = {}, 
     normalizedParameters.custom.forEach((parameter) => {
       const key = normalizePaymentMetaPurchaseEventCustomParameterKey(parameter.key)
       const value = renderPaymentMetaParameterValue(parameter.value, templateContext)
-      if (!key || !value) return
+      if (!key || !value || Object.hasOwn(customData, key)) return
       customData[key] = value
     })
   }
@@ -832,8 +877,11 @@ function prunePublicMetaPixelCustomData(customData = {}) {
 }
 
 export async function buildMetaPublicPurchasePixelEvent(payment = {}, options = {}) {
-  if (!isSuccessfulPaymentStatus(payment.status)) return null
+  if (!isSuccessfulPaymentStatus(payment.status) || !(parseMetaNumber(payment.amount) > 0)) return null
 
+  if (paymentHasOfflineReceipt(payment) || await isAutomaticPayment(payment, payment.paid_at || payment.paidAt || payment.date)) return null
+  const paidAt = parseStoredUtcDateTime(payment.paid_at || payment.paidAt || payment.date || payment.created_at || payment.createdAt)?.toMillis()
+  if (paidAt && Date.now() - paidAt >= META_PIXEL_DEDUP_WINDOW_MS) return null
   if (await shouldSkipTestPaymentForMeta(payment, { allowWithMetaTestMode: false })) return null
 
   const contactId = cleanString(
@@ -851,8 +899,8 @@ export async function buildMetaPublicPurchasePixelEvent(payment = {}, options = 
   if (!metaConfig.datasetId) return null
 
   const accountCurrency = await getPaymentMetaCurrency()
-  const eventContext = await buildPaymentPurchaseEventContext(contactId, payment, paymentMetaConfig)
-  if (eventContext.skip) return { sent: false, reason: eventContext.reason, eventId: eventContext.eventId }
+  const eventContext = await buildPaymentPurchaseEventContext(contactId, payment, paymentMetaConfig, metaConfig, { pixel: true })
+  if (eventContext.skip) return null
   const contact = await getContactForMetaEvent(contactId)
   // Un pago en checkout público ES superficie website: el pixel del navegador
   // siempre dispara y el evento server-side va también como website con el
@@ -958,7 +1006,7 @@ function normalizeBusinessMessagingEventName(value) {
 // ig_account_id, ig_sid) están centralizados AQUÍ. Meta exige que el
 // dataset tenga una Página asociada para eventos CTM/CTWA; una vez asociada, si
 // Meta pidiera otro nombre de campo, se ajusta en este único lugar.
-function buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution, channel = 'whatsapp', socialIdentity = null, attributionTouch = null) {
+function buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution, channel = 'whatsapp', socialIdentity = null, attributionTouch = null, allowContactFallback = true) {
   const userData = buildUserData(contact)
   const pageId = cleanString(metaConfig?.pageId)
   // Los ids del touch de atribución solo sirven como identidad si el touch es
@@ -985,8 +1033,8 @@ function buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution
   // WhatsApp (default): ctwa_clid + page_id + whatsapp_business_account_id.
   const ctwaClid = cleanString(
     whatsappAttribution?.referral_ctwa_clid ||
-    contact.attribution_ctwa_clid ||
-    touchIds.ctwaClid
+    touchIds.ctwaClid ||
+    (allowContactFallback ? contact.attribution_ctwa_clid : '')
   )
   const whatsappBusinessAccountId = cleanString(metaConfig?.whatsappBusinessAccountId)
 
@@ -1002,7 +1050,7 @@ function buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution
 // no-comentario): alguien que solo comentó no debe disparar un evento de
 // mensajería. Se condiciona por message_type, no por el senderId (que tras la
 // fusión es el PSID/IGSID real tanto para comentario como para DM).
-export async function getSocialMessagingIdentity(contactId, platform = '') {
+export async function getSocialMessagingIdentity(contactId, platform = '', conversionTime = null) {
   if (!contactId) return null
   const normalizedPlatform = ['messenger', 'instagram'].includes(cleanString(platform).toLowerCase())
     ? cleanString(platform).toLowerCase()
@@ -1012,6 +1060,14 @@ export async function getSocialMessagingIdentity(contactId, platform = '') {
     : normalizedPlatform === 'messenger'
       ? " AND LOWER(COALESCE(platform, '')) != 'instagram'"
       : ''
+  const cutoff = parseStoredUtcDateTime(conversionTime)?.toISO()
+  const priorMessageFilter = cutoff
+    ? `AND m.platform = meta_social_contacts.platform
+       AND (m.meta_social_contact_id = meta_social_contacts.id OR (
+         m.meta_social_contact_id IS NULL AND meta_social_contacts.sender_id IN (m.sender_id, m.recipient_id)
+       ))
+       AND ${timestampSortExpression('COALESCE(m.message_timestamp, m.created_at)')} <= ${timestampSortParameterExpression()}`
+    : ''
   const row = await db.get(
     `SELECT platform, sender_id, page_id, instagram_account_id,
             first_seen_at, last_seen_at, created_at, updated_at
@@ -1020,11 +1076,12 @@ export async function getSocialMessagingIdentity(contactId, platform = '') {
        AND EXISTS (
          SELECT 1 FROM meta_social_messages m
          WHERE m.contact_id = ?
+           ${priorMessageFilter}
            AND COALESCE(m.message_type, '') NOT IN ('comment', 'comment_reply_public', 'comment_reply_private')
        )
      ORDER BY updated_at DESC, last_seen_at DESC
      LIMIT 1`,
-    [contactId, contactId]
+    cutoff ? [contactId, contactId, cutoff] : [contactId, contactId]
   ).catch(() => null)
   if (!row || !cleanString(row.sender_id)) return null
   const channel = cleanString(row.platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
@@ -1381,7 +1438,8 @@ async function postEventToMeta({ datasetId, accessToken, appSecretProof = '', pa
     response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10000)
     })
   } catch (error) {
     throw new Error(safeMetaGraphTransportError(error))
@@ -1402,10 +1460,16 @@ async function postEventToMeta({ datasetId, accessToken, appSecretProof = '', pa
     throw error
   }
 
+  if (responsePayload?.events_received !== payload.data.length) {
+    const error = new Error('Meta respondió sin confirmar la recepción de todos los eventos enviados.')
+    error.responsePayload = responsePayload
+    throw error
+  }
   return responsePayload
 }
 
 async function sendMetaWhatsappEvent({
+  eventTime = null,
   contactId,
   eventType,
   metaEventName,
@@ -1414,7 +1478,8 @@ async function sendMetaWhatsappEvent({
   skipContactDedupe = false,
   channel = 'whatsapp',
   socialIdentity = null,
-  attributionTouch = null
+  attributionTouch = null,
+  metaWebFbc = ''
 }) {
   const cleanChannel = ['messenger', 'instagram'].includes(channel) ? channel : 'whatsapp'
   const isWhatsapp = cleanChannel === 'whatsapp'
@@ -1475,9 +1540,12 @@ async function sendMetaWhatsappEvent({
     return { sent: false, reason: 'already_sent' }
   }
 
-  const whatsappAttribution = isWhatsapp ? await getLatestWhatsappAttribution(contact) : null
+  // Para compras, el resolver ya escogió la evidencia que existía al pagar.
+  // Consultar el último WhatsApp otra vez permitiría elegir un anuncio futuro.
+  const isPurchase = eventType === EVENT_TYPES.purchase
+  const whatsappAttribution = isWhatsapp && !isPurchase ? await getLatestWhatsappAttribution(contact) : null
 
-  let userData = buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution, cleanChannel, socialIdentity, attributionTouch)
+  let userData = buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution, cleanChannel, socialIdentity, attributionTouch, !isPurchase)
   const isOrganicWhatsapp = isWhatsapp && !cleanString(userData.ctwa_clid)
 
   // Meta exige ctwa_clid para action_source=business_messaging en WhatsApp.
@@ -1486,6 +1554,7 @@ async function sendMetaWhatsappEvent({
   // No mandamos page_id/WABA en ese contrato porque pertenecen al payload CTWA.
   if (isOrganicWhatsapp) {
     userData = buildUserData(contact)
+    if (attributionTouch?.channel === 'website' && metaWebFbc) userData.fbc = metaWebFbc
   }
 
   if (!userData.external_id) {
@@ -1516,13 +1585,13 @@ async function sendMetaWhatsappEvent({
     }
   }
 
-  const enrichedCustomData = buildBusinessMessagingCustomData(customData, contact, whatsappAttribution, attributionTouch)
+  const enrichedCustomData = buildBusinessMessagingCustomData(customData, isPurchase ? {} : contact, whatsappAttribution, attributionTouch)
   if (!enrichedCustomData.source) enrichedCustomData.source = cleanChannel
   if (!enrichedCustomData.messaging_channel) enrichedCustomData.messaging_channel = cleanChannel
 
   const eventPayload = {
     event_name: metaEventName,
-    event_time: Math.floor(Date.now() / 1000),
+    event_time: eventTime ?? Math.floor(Date.now() / 1000),
     action_source: isOrganicWhatsapp ? 'chat' : 'business_messaging',
     event_id: eventId,
     user_data: userData,
@@ -1582,6 +1651,7 @@ async function sendMetaWhatsappEvent({
 }
 
 async function sendMetaSiteEvent({
+  eventTime = null,
   contactId,
   eventType,
   metaEventName,
@@ -1644,6 +1714,7 @@ async function sendMetaSiteEvent({
   if (extraUserData && typeof extraUserData === 'object') {
     if (!userData.fbp && cleanString(extraUserData.fbp)) userData.fbp = cleanString(extraUserData.fbp)
     if (!userData.fbc && cleanString(extraUserData.fbc)) userData.fbc = cleanString(extraUserData.fbc)
+    if (cleanString(extraUserData.client_user_agent)) userData.client_user_agent = cleanString(extraUserData.client_user_agent)
   }
   if (!userData.em && !userData.ph && !userData.external_id) {
     await logMetaEvent({
@@ -1678,7 +1749,7 @@ async function sendMetaSiteEvent({
     data: [
       {
         event_name: metaEventName,
-        event_time: Math.floor(Date.now() / 1000),
+        event_time: eventTime ?? Math.floor(Date.now() / 1000),
         action_source: normalizeMetaActionSource(actionSource, 'website'),
         event_id: eventId,
         user_data: userData,
@@ -1915,7 +1986,21 @@ export async function triggerWhatsappAppointmentBookedEvent(contactId, options =
   return sendMetaWhatsappEvent({ ...buildScheduleArgs('whatsapp'), channel: 'whatsapp' })
 }
 
-export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
+// Gateways can report the same charge through both checkout and webhook while
+// the first request to Meta is still pending. Serialize locally per contact so
+// a second notification sees the saved receipt, even for total-mode plans.
+const pendingPurchaseDispatches = new Map()
+
+export function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
+  const pending = pendingPurchaseDispatches.get(contactId) || Promise.resolve()
+  const dispatch = pending.catch(() => {}).then(() => dispatchMetaPaymentPurchaseEvent(contactId, payment))
+  pendingPurchaseDispatches.set(contactId, dispatch)
+  return dispatch.finally(() => {
+    if (pendingPurchaseDispatches.get(contactId) === dispatch) pendingPurchaseDispatches.delete(contactId)
+  })
+}
+
+async function dispatchMetaPaymentPurchaseEvent(contactId, payment) {
   const paymentMetaConfig = await getPaymentMetaPurchaseEventConfig()
   if (!contactId) {
     return { sent: false, reason: 'missing_contact_id' }
@@ -1933,15 +2018,20 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
     }
   }
 
+  if (!isSuccessfulPaymentStatus(payment.status) || !(parseMetaNumber(payment.amount) > 0)) {
+    return { sent: false, reason: 'payment_not_successful' }
+  }
+
   // Atribución interna (último paid touch) + superficie real de conversión.
   // Se calcula y persiste SIEMPRE (aunque el CAPI esté apagado o falle):
   // la atribución interna no depende de Meta. El snapshot es write-once: los
   // re-disparos no lo sobreescriben.
+  const conversionTime = payment.paid_at || payment.paidAt || payment.date || payment.created_at || payment.createdAt || new Date()
   const conversionResolution = await resolveConversionAttribution({
     contactId,
     conversionType: 'purchase',
     conversionSurface: payment.conversionSurface || payment.conversion_surface || '',
-    conversionTime: payment.paid_at || payment.paidAt || payment.date || payment.created_at || payment.createdAt || null,
+    conversionTime,
     payment
   }).catch(error => {
     logger.warn(`No se pudo resolver atribución de conversión para compra del contacto ${contactId}: ${error.message}`)
@@ -1996,10 +2086,20 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
       ? effectivePaymentMetaConfig.eventName || DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME
       : DEFAULT_PAYMENT_WHATSAPP_EVENT_NAME
   )
-  const eventSourceUrl = sanitizeMetaUrlForEvent(extractPaymentMetaEventSourceUrl(payment))
-  const actionSource = resolvePaymentMetaActionSource(payment, eventSourceUrl)
-  const eventContext = await buildPaymentPurchaseEventContext(contactId, payment, effectivePaymentMetaConfig)
-  if (eventContext.skip) return { sent: false, reason: eventContext.reason, eventId: eventContext.eventId }
+  const automatic = conversionResolution?.conversionSurface === 'system_generated'
+  const eventSourceUrl = automatic ? '' : sanitizeMetaUrlForEvent(extractPaymentMetaEventSourceUrl(payment))
+  const actionSource = automatic ? 'system_generated' : resolvePaymentMetaActionSource(payment, eventSourceUrl)
+  const eventContext = await buildPaymentPurchaseEventContext(contactId, payment, effectivePaymentMetaConfig, metaConfig)
+  if (eventContext.skip) {
+    if (eventContext.reason === 'payment_plan_total_unavailable') {
+      await logMetaEvent({
+        contactId, eventType: EVENT_TYPES.purchase, metaEventName: siteMetaEventName,
+        eventId: eventContext.eventId, status: 'error',
+        errorMessage: 'Falta el total del plan para enviar la compra a Meta.'
+      })
+    }
+    return { sent: false, reason: eventContext.reason, eventId: eventContext.eventId }
+  }
   const eventId = eventContext.eventId
   const accountCurrency = await getPaymentMetaCurrency()
   const contact = await getContactForMetaEvent(contactId)
@@ -2039,31 +2139,55 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
     })
   }
 
+  const paidInstant = parseStoredUtcDateTime(conversionTime)
+  const eventTime = paidInstant && Math.floor(paidInstant.toSeconds())
+  if (!eventTime || eventTime < Math.floor(Date.now() / 1000) - META_MAX_EVENT_AGE_SECONDS) {
+    const reason = eventTime ? 'payment_outside_meta_window' : 'invalid_payment_time'
+    const errorMessage = eventTime
+      ? 'La fecha de cobro supera los siete días que acepta Meta.'
+      : 'El pago tiene una fecha de cobro inválida.'
+    const logged = await db.get(
+      `SELECT id FROM meta_conversion_event_logs WHERE event_type = ? AND event_id = ? AND status = 'skipped' AND error_message = ? LIMIT 1`,
+      [EVENT_TYPES.purchase, eventId, errorMessage]
+    )
+    if (!logged) {
+      await logMetaEvent({ contactId, eventId, eventType: EVENT_TYPES.purchase, metaEventName: siteMetaEventName, status: 'skipped', errorMessage })
+    }
+    return { sent: false, reason, eventId }
+  }
   const purchaseArgs = {
+    eventTime,
     contactId,
     eventType: EVENT_TYPES.purchase,
     metaEventName: whatsappMetaEventName,
     eventId,
     customData,
-    skipContactDedupe: eventContext.skipContactDedupe,
-    attributionTouch
+    skipContactDedupe: true,
+    attributionTouch,
+    metaWebFbc: conversionResolution?.metaWebFbc
   }
-  const isConversionResult = (r) => Boolean(r) && (r.sent || r.reason === 'already_sent' || r.reason === 'meta_error')
 
   const sendPurchaseSiteEvent = async () => {
-    // Superficie website enviada server-side: sumamos fbp/fbc de la última
-    // sesión web conocida para mejorar el matching del evento.
-    const latestWebSession = await getLatestContactWebSession(contactId).catch(() => null)
+    const latestWebSession = actionSource === 'website'
+      ? await getLatestContactWebSession(contactId, conversionTime, eventSourceUrl)
+      : null
     return sendMetaSiteEvent({
       contactId,
       eventType: EVENT_TYPES.purchase,
       metaEventName: siteMetaEventName,
+      eventTime,
       eventId,
       customData,
       eventSourceUrl,
       actionSource,
-      skipContactDedupe: eventContext.skipContactDedupe,
-      extraUserData: latestWebSession ? { fbp: latestWebSession.fbp, fbc: latestWebSession.fbc } : null,
+      skipContactDedupe: true,
+      extraUserData: {
+        fbc: conversionResolution?.metaWebFbc,
+        fbp: latestWebSession?.fbp,
+        client_user_agent: eventSourceUrl && sanitizeMetaUrlForEvent(latestWebSession?.page_url) === eventSourceUrl
+          ? latestWebSession.user_agent
+          : null
+      },
       attributionTouch
     })
   }
@@ -2074,12 +2198,9 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
   }
 
   if (paymentMetaConfig.channel === 'messenger' || paymentMetaConfig.channel === 'instagram') {
-    const socialIdentity = await getSocialMessagingIdentity(contactId, paymentMetaConfig.channel)
-    if (socialIdentity && socialIdentity.channel === paymentMetaConfig.channel) {
-      const socialResult = await sendMetaWhatsappEvent({ ...purchaseArgs, channel: socialIdentity.channel, socialIdentity })
-      if (isConversionResult(socialResult)) return socialResult
-    }
-    return sendPurchaseSiteEvent()
+    const channel = paymentMetaConfig.channel
+    const socialIdentity = await getSocialMessagingIdentity(contactId, channel, conversionTime)
+    return sendMetaWhatsappEvent({ ...purchaseArgs, channel, socialIdentity })
   }
 
   // smart: el payload lo decide la SUPERFICIE REAL de la conversión, no la
@@ -2095,7 +2216,7 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
     }
 
     if (surface === 'messenger' || surface === 'instagram') {
-      const socialIdentity = await getSocialMessagingIdentity(contactId, surface)
+      const socialIdentity = await getSocialMessagingIdentity(contactId, surface, conversionTime)
       return sendMetaWhatsappEvent({ ...purchaseArgs, channel: surface, socialIdentity })
     }
   }
@@ -2120,7 +2241,18 @@ export async function triggerMetaPurchaseEventForPaymentRow(paymentId) {
     return { sent: false, reason: 'payment_not_successful' }
   }
 
+  if (shouldSuppressProductionPaymentEffects(payment)) return { sent: false, reason: 'test_payment' }
   return triggerMetaPaymentPurchaseEvent(payment.contact_id, payment)
+}
+
+// El cobro ya quedó confirmado. Una falla de medición no debe devolver un error de cobro.
+export async function reportConfirmedPaymentToMeta(paymentId) {
+  if (!paymentId) return
+  try {
+    await triggerMetaPurchaseEventForPaymentRow(paymentId)
+  } catch (error) {
+    logger.warn(`No se pudo registrar Purchase para el pago ${paymentId}: ${error.message}`)
+  }
 }
 
 export const triggerWhatsappFirstPurchaseEvent = triggerMetaPaymentPurchaseEvent

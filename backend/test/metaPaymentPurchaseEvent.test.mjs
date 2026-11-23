@@ -4,6 +4,7 @@ import http from 'node:http'
 
 import { db, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
+import { handleInvoiceWebhook, handlePaymentWebhook } from '../src/controllers/webhooksController.js'
 import {
   buildMetaPublicPurchasePixelEvent,
   triggerWhatsappAppointmentBookedEvent,
@@ -15,6 +16,8 @@ import {
   resetWhatsAppQrServiceForTest,
   setBaileysRuntimeForTest
 } from '../src/services/whatsappQrService.js'
+import { createOfflinePaymentPlan } from '../src/services/offlinePaymentPlanService.js'
+import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 import { saveAccountLocaleSettings } from '../src/utils/accountLocale.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 
@@ -465,7 +468,7 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
           req.on('end', () => {
             metaCalls.push({ url: req.url, body })
             res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ events_received: 1 }))
+            res.end(JSON.stringify({ events_received: metaCalls.length === 1 ? 0 : 1 }))
           })
         })
         await new Promise(resolve => metaServer.listen(0, '127.0.0.1', resolve))
@@ -474,7 +477,9 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
           configurable: true
         })
 
-        const result = await triggerMetaPaymentPurchaseEvent(contactId, {
+        const paidAt = new Date(Date.now() - 86400000).toISOString()
+        const payment = {
+          paid_at: paidAt,
           id: 'payment_meta_purchase_1',
           amount: 123.45,
           currency: 'MXN',
@@ -499,17 +504,24 @@ test('payment Purchase CAPI event uses real payment amount and account currency'
             }
           }),
           eventSourceUrl: `https://checkout.example.test/pay/payment_meta_purchase_1?email=${contactEmail}&phone=${contactPhoneQuery}&fbclid=fb.123`
-        })
-
+        }
+        const expired = { ...payment, paid_at: new Date(Date.now() - 8 * 86400000).toISOString() }
+        assert.equal((await triggerMetaPaymentPurchaseEvent(contactId, expired)).reason, 'payment_outside_meta_window')
+        assert.equal(metaCalls.length, 0)
+        const rejected = await triggerMetaPaymentPurchaseEvent(contactId, payment)
+        assert.equal(rejected.reason, 'meta_error')
+        const result = await triggerMetaPaymentPurchaseEvent(contactId, payment)
         assert.equal(result.sent, true)
-        assert.equal(metaCalls.length, 1)
+        assert.equal(metaCalls.length, 2)
+        assert.equal(JSON.parse(metaCalls[1].body).data[0].event_id, JSON.parse(metaCalls[0].body).data[0].event_id)
         assert.match(decodeURIComponent(metaCalls[0].url), /access_token=meta-access-token/)
 
         const payload = JSON.parse(metaCalls[0].body)
         assert.equal(payload.data[0].event_name, 'Purchase')
+        assert.equal(payload.data[0].event_time, Math.floor(Date.parse(paidAt) / 1000))
         assert.equal(payload.data[0].action_source, 'website')
         assert.equal(payload.data[0].event_source_url, 'https://checkout.example.test/pay/payment_meta_purchase_1?fbclid=fb.123')
-        assert.equal(payload.data[0].event_id, `purchase_contact_${contactId}`)
+        assert.equal(payload.data[0].event_id, 'purchase_payment_payment_meta_purchase_1')
         assert.equal(payload.data[0].custom_data.value, 123.45)
         assert.equal(payload.data[0].custom_data.currency, 'USD')
         assert.equal(payload.data[0].custom_data.checkout_source, 'public_payment')
@@ -759,7 +771,7 @@ test('payment Purchase does not apply WhatsApp QR label when Meta dataset is con
 
           const payload = JSON.parse(metaCalls[0].body)
           assert.equal(payload.data[0].event_name, 'Purchase')
-          assert.equal(payload.data[0].event_id, `purchase_contact_${contactId}`)
+          assert.equal(payload.data[0].event_id, 'purchase_payment_payment_meta_dataset_no_qr_label')
           assert.equal(payload.data[0].custom_data.value, 150)
         })
       })
@@ -824,7 +836,7 @@ test('payment Purchase CAPI sends test payments only to Meta Test Events when ac
         const payload = JSON.parse(metaCalls[0].body)
         assert.equal(payload.test_event_code, 'TESTPAY123')
         assert.equal(payload.data[0].event_name, 'Purchase')
-        assert.equal(payload.data[0].event_id, `purchase_contact_${contactId}`)
+        assert.equal(payload.data[0].event_id, 'purchase_payment_payment_meta_test_allowed')
         assert.equal(payload.data[0].custom_data.value, 222.5)
         assert.equal(payload.data[0].custom_data.payment_id, 'payment_meta_test_allowed')
         assert.equal(payload.data[0].custom_data.payment_provider, 'stripe')
@@ -989,6 +1001,15 @@ test('payment plan Purchase uses total plan value once by default', async () => 
 
         metaServer = await startMetaCaptureServer(metaCalls)
 
+        // Card verification can have a nonzero amount. It is not the first
+        // installment and must never consume the plan-wide conversion.
+        const setup = { id: 'plan_card_verification', contact_id: contactId, status: 'paid', amount: 25,
+          metadata: { paymentPlan: { flowId: planId, trigger: 'card_setup' } } }
+        const missingPlan = { ...setup, id: 'missing_plan', metadata: { paymentPlan: { flowId: 'missing_flow' } } }
+        assert.equal((await triggerMetaPaymentPurchaseEvent(contactId, missingPlan)).reason, 'payment_plan_total_unavailable')
+        assert.equal((await triggerMetaPaymentPurchaseEvent(contactId, setup)).reason, 'card_authorization')
+        assert.equal(await buildMetaPublicPurchasePixelEvent(setup), null)
+        await db.run('UPDATE payment_flows SET first_payment_invoice_id = ? WHERE id = ?', ['payment_meta_plan_1', planId])
         const firstResult = await triggerMetaPaymentPurchaseEvent(contactId, {
           id: 'payment_meta_plan_1',
           amount: 300,
@@ -996,6 +1017,7 @@ test('payment plan Purchase uses total plan value once by default', async () => 
           payment_provider: 'stripe',
           payment_method: 'stripe',
           metadata_json: JSON.stringify({
+            total: 300,
             paymentPlan: {
               flowId: planId,
               installmentId: 'installment_1',
@@ -1018,6 +1040,22 @@ test('payment plan Purchase uses total plan value once by default', async () => 
         assert.equal(payload.data[0].custom_data.payment_plan_total_value, 900)
         assert.equal(payload.data[0].custom_data.current_payment_value, 300)
         assert.equal(payload.data[0].custom_data.checkout_source, 'payment_plan')
+
+        // A checkout that renders after its CAPI receipt must still provide
+        // the matching Pixel event. Later installments must never do so.
+        const firstPixel = await buildMetaPublicPurchasePixelEvent({
+          id: 'payment_meta_plan_1', contact_id: contactId, status: 'paid', amount: 300
+        })
+        assert.equal(firstPixel.eventId, firstResult.eventId)
+        assert.equal(firstPixel.customData.value, 900)
+        await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({
+          enabled: true, channel: 'site', parameters: { usePaymentPlanTotalValue: false }
+        }))
+        const laterPixel = await buildMetaPublicPurchasePixelEvent({
+          id: 'payment_meta_plan_2', contact_id: contactId, status: 'paid', amount: 300,
+          metadata: { paymentPlan: { flowId: planId } }
+        })
+        assert.equal(laterPixel, null)
 
         const secondResult = await triggerMetaPaymentPurchaseEvent(contactId, {
           id: 'payment_meta_plan_2',
@@ -1048,6 +1086,139 @@ test('payment plan Purchase uses total plan value once by default', async () => 
     await db.run('DELETE FROM payment_plans WHERE id = ?', [planId]).catch(() => undefined)
     await db.run('DELETE FROM payment_flows WHERE id = ?', [planId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('each paid transaction has its own Purchase and only an accepted live receipt consumes it', async () => {
+  const previousGraph = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const contactId = 'accepted_purchase_receipts'
+  const planId = 'recurring_plan_%_1'
+  const metaCalls = []
+  let server
+  const payment = (id, amount) => ({
+    id, contact_id: contactId, status: 'paid', amount, payment_provider: 'stripe',
+    payment_url: `https://checkout.example.test/pay/${id}`
+  })
+
+  try {
+    await initializeMasterKey()
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(APP_CONFIG_KEYS, async () => {
+        await deletePaymentMetaTestContact(contactId)
+        await db.run(
+          `INSERT INTO contacts (id, email, meta_purchase_event_sent, meta_purchase_event_id)
+           VALUES (?, ?, 1, ?)`, [contactId, 'receipts@example.test', `purchase_contact_${contactId}`]
+        )
+        await insertMetaPixelConfig()
+        await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({
+          enabled: true, channel: 'site', parameters: { usePaymentPlanTotalValue: false }
+        }))
+        server = await startMetaCaptureServer(metaCalls)
+        const legacyId = `purchase_contact_${contactId}`
+        const saveHistory = async (paymentId, response, testCode = '') => {
+          const request = {
+            data: [{ event_id: legacyId, custom_data: { payment_id: paymentId } }],
+            ...(testCode && { test_event_code: testCode })
+          }
+          await db.run(
+            `INSERT INTO meta_conversion_event_logs (contact_id, event_type, meta_event_name, event_id,
+               status, request_payload, response_payload) VALUES (?, 'first_purchase', 'Purchase', ?, 'success', ?, ?)`,
+            [contactId, legacyId, JSON.stringify(request), JSON.stringify(response)]
+          )
+        }
+        // A legacy contact flag is only evidence for the payment actually
+        // identified in its live payload. Test Events and empty receipts are retryable.
+        await saveHistory('old_purchase', { events_received: 1 })
+        await saveHistory('new_purchase', { events_received: 1 }, 'TEST_1')
+        await saveHistory('new_purchase', { events_received: 0 })
+        assert.equal((await triggerMetaPaymentPurchaseEvent(contactId, payment('old_purchase', 90))).reason, 'already_sent')
+        assert.equal((await buildMetaPublicPurchasePixelEvent(payment('old_purchase', 90))).eventId, legacyId)
+        assert.equal((await triggerMetaPaymentPurchaseEvent(contactId, payment('no_charge', 0))).reason, 'payment_not_successful')
+        assert.equal(await buildMetaPublicPurchasePixelEvent(payment('no_charge', 0)), null)
+        assert.equal((await triggerMetaPaymentPurchaseEvent(contactId, { ...payment('pending_charge', 100), status: 'pending' })).reason, 'payment_not_successful')
+        assert.equal(await buildMetaPublicPurchasePixelEvent({ ...payment('cash_receipt', 200), payment_provider: 'offline' }), null)
+        const staleReceipt = { ...payment('stale_receipt', 200), paid_at: new Date(Date.now() - 49 * 3600000).toISOString() }
+        assert.equal(await buildMetaPublicPurchasePixelEvent(staleReceipt), null)
+        const standalone = await triggerMetaPaymentPurchaseEvent(contactId, payment('new_purchase', 100))
+        assert.equal(standalone.sent, true)
+        assert.equal((await triggerMetaPaymentPurchaseEvent(contactId, payment('new_purchase', 100))).reason, 'already_sent')
+
+        const installment = (id, amount) => ({ ...payment(id, amount), payment_plan_id: planId })
+        const first = await triggerMetaPaymentPurchaseEvent(contactId, installment('installment_1', 120))
+        await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({
+          enabled: true, channel: 'site', parameters: { usePaymentPlanTotalValue: true }
+        }))
+        const second = await triggerMetaPaymentPurchaseEvent(contactId, installment('installment_2', 130))
+        assert.equal(first.sent, true)
+        assert.equal(second.sent, true)
+        assert.notEqual(first.eventId, second.eventId)
+        const paired = await buildMetaPublicPurchasePixelEvent(installment('installment_2', 130))
+        assert.equal(paired.eventId, second.eventId)
+        assert.deepEqual(metaCalls.map(call => JSON.parse(call.body).data[0].custom_data.value), [100, 120, 130])
+        await db.run(
+          `UPDATE meta_conversion_event_logs SET created_at = ? WHERE contact_id = ? AND event_id = ?`,
+          [new Date(Date.now() - 49 * 3600000).toISOString(), contactId, second.eventId]
+        )
+        assert.equal(await buildMetaPublicPurchasePixelEvent(installment('installment_2', 130)), null)
+
+        const concurrent = payment('concurrent', 150)
+        const before = metaCalls.length
+        await Promise.all([triggerMetaPaymentPurchaseEvent(contactId, concurrent), triggerMetaPaymentPurchaseEvent(contactId, concurrent)])
+        const ids = metaCalls.slice(before).map(call => JSON.parse(call.body).data[0].event_id)
+        assert.deepEqual(ids, ['purchase_payment_concurrent'])
+      })
+    })
+  } finally {
+    if (server) await new Promise(resolve => server.close(resolve))
+    if (previousGraph) Object.defineProperty(API_URLS, 'META_GRAPH', previousGraph)
+    await deletePaymentMetaTestContact(contactId)
+  }
+})
+
+test('HighLevel payment and invoice webhooks send the payment instant for an older issued invoice', async () => {
+  const previousGraph = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const contactId = 'contact_meta_webhook_date'
+  const ghlContactId = 'ghl_meta_webhook_date'
+  const invoiceIds = ['meta_payment_hook', 'meta_invoice_hook']
+  const issuedAt = new Date(Date.now() - 90 * 86400000).toISOString()
+  const paidAt = new Date(Date.now() - 3600000).toISOString()
+  const metaCalls = []
+  let server
+  const response = { status() { return this }, json() {} }
+  try {
+    await initializeMasterKey()
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(APP_CONFIG_KEYS, async () => {
+        await db.run('INSERT INTO contacts (id, ghl_contact_id, email) VALUES (?, ?, ?)', [contactId, ghlContactId, 'invoice@example.test'])
+        for (const invoiceId of invoiceIds) {
+          await db.run(
+            `INSERT INTO payments (id, ghl_invoice_id, contact_id, amount, status, date, created_at, payment_mode)
+             VALUES (?, ?, ?, 100, 'sent', ?, ?, 'live')`, [invoiceId, invoiceId, contactId, issuedAt, issuedAt]
+          )
+        }
+        await insertMetaPixelConfig()
+        await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({ enabled: true, channel: 'site' }))
+        server = await startMetaCaptureServer(metaCalls)
+        await handlePaymentWebhook({ body: { payment: {
+          id: 'ghl_transaction_1', invoiceId: invoiceIds[0], contactId: ghlContactId, amount: 100, currency: 'USD',
+          status: 'succeeded', liveMode: true, createdAt: issuedAt, fulfilledAt: paidAt
+        } } }, response)
+        await handleInvoiceWebhook({ body: {
+          type: 'InvoicePaid', invoice: { _id: invoiceIds[1], createdAt: issuedAt, updatedAt: paidAt, liveMode: true }
+        } }, response)
+        await handleInvoiceWebhook({ body: {
+          type: 'InvoicePaid', invoice: { _id: invoiceIds[1], updatedAt: new Date().toISOString(), liveMode: true }
+        } }, response)
+        const events = metaCalls.map(call => JSON.parse(call.body).data[0])
+        assert.deepEqual(events.map(event => event.custom_data.payment_id), invoiceIds)
+        for (const event of events) assert.equal(event.event_time, Math.floor(Date.parse(paidAt) / 1000))
+      })
+    })
+  } finally {
+    if (server) await new Promise(resolve => server.close(resolve))
+    if (previousGraph) Object.defineProperty(API_URLS, 'META_GRAPH', previousGraph)
+    await db.run('DELETE FROM payments WHERE id IN (?, ?)', invoiceIds)
+    await deletePaymentMetaTestContact(contactId)
   }
 })
 
@@ -1117,7 +1288,7 @@ test('payment smart sends website Purchase for checkout payments even with Whats
         assert.equal(payload.data[0].action_source, 'website')
         assert.equal(payload.data[0].messaging_channel, undefined)
         assert.equal(payload.data[0].event_source_url, 'https://checkout.example.test/pay/payment_meta_purchase_smart_wa')
-        assert.equal(payload.data[0].event_id, `purchase_contact_${contactId}`)
+        assert.equal(payload.data[0].event_id, 'purchase_payment_payment_meta_purchase_smart_wa')
         assert.equal(payload.data[0].custom_data.value, 777.5)
         assert.equal(payload.data[0].custom_data.currency, 'MXN')
         assert.equal(payload.data[0].custom_data.predicted_ltv, 5400)
@@ -1205,6 +1376,14 @@ test('payment smart sends Messenger Business Messaging when the conversation liv
         assert.equal(payload.data[0].custom_data.currency, 'USD')
         assert.equal(payload.data[0].custom_data.payment_id, 'payment_meta_purchase_smart_msg')
         assert.equal(payload.data[0].custom_data.checkout_source, 'messenger_dm')
+
+        await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({ enabled: true, channel: 'messenger' }))
+        const beforeDm = await triggerMetaPaymentPurchaseEvent(contactId, {
+          id: 'payment_before_messenger_conversation', amount: 100, status: 'paid',
+          paid_at: new Date(Date.now() - 86400000).toISOString()
+        })
+        assert.equal(beforeDm.reason, 'missing_messaging_identity')
+        assert.equal(metaCalls.length, 1)
       })
     })
   } finally {
@@ -1386,7 +1565,7 @@ test('payment smart default falls back to website Purchase data without WhatsApp
         assert.equal(payload.data[0].event_name, 'Purchase')
         assert.equal(payload.data[0].action_source, 'website')
         assert.equal(payload.data[0].event_source_url, 'https://checkout.example.test/pay/payment_meta_purchase_smart_site')
-        assert.equal(payload.data[0].event_id, `purchase_contact_${contactId}`)
+        assert.equal(payload.data[0].event_id, 'purchase_payment_payment_meta_purchase_smart_site')
         assert.equal(payload.data[0].custom_data.value, 321)
         assert.equal(payload.data[0].custom_data.currency, 'USD')
         assert.equal(payload.data[0].custom_data.payment_id, 'payment_meta_purchase_smart_site')
@@ -1448,7 +1627,7 @@ test('public payment pixel event is built for smart website Purchase without Wha
 
         assert.equal(event.pixelId, 'pixel-public-payment-123')
         assert.equal(event.eventName, 'Purchase')
-        assert.equal(event.eventId, `purchase_contact_${contactId}`)
+        assert.equal(event.eventId, 'purchase_payment_payment_meta_public_pixel_1')
         assert.equal(event.customData.value, 456.78)
         assert.equal(event.customData.currency, 'MXN')
         assert.equal(event.customData.payment_id, 'payment_meta_public_pixel_1')
@@ -1529,7 +1708,7 @@ test('public payment pixel event is built for smart WhatsApp-attributed checkout
         assert.ok(event)
         assert.equal(event.pixelId, 'pixel-public-payment-wa-123')
         assert.equal(event.eventName, 'Purchase')
-        assert.equal(event.eventId, `purchase_contact_${contactId}`)
+        assert.equal(event.eventId, 'purchase_payment_payment_meta_public_pixel_wa')
         assert.equal(event.customData.value, 650)
       })
     })
@@ -1589,11 +1768,49 @@ test('public payment pixel event is built for smart Meta social-attributed check
         assert.ok(event)
         assert.equal(event.pixelId, 'pixel-public-payment-msg-123')
         assert.equal(event.eventName, 'Purchase')
-        assert.equal(event.eventId, `purchase_contact_${contactId}`)
+        assert.equal(event.eventId, 'purchase_payment_payment_meta_public_pixel_msg')
         assert.equal(event.customData.value, 725)
       })
     })
   } finally {
     await deletePaymentMetaTestContact(contactId)
+  }
+})
+
+test('crear un plan con anticipo pagado reporta ese cobro y deja pendientes las cuotas futuras', async () => {
+  const contactId = 'contact_offline_first_meta'
+  const metaCalls = []
+  const originalGraph = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  let server
+  try {
+    await initializeMasterKey()
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig([...APP_CONFIG_KEYS, 'payments_settings'], async () => {
+        await insertMetaPixelConfig()
+        await setAppConfig('meta_payment_purchase_event_config', JSON.stringify({
+          enabled: true, channel: 'smart', parameters: { sendValue: true, usePaymentPlanTotalValue: false }
+        }))
+        await savePaymentSettings({ paymentMode: 'live', automations: { remindersEnabled: true, reminderChannel: 'email' } })
+        await db.run('INSERT INTO contacts (id, full_name, email) VALUES (?, ?, ?)', [contactId, 'Prueba Plan', 'plan@example.test'])
+        server = await startMetaCaptureServer(metaCalls)
+        const plan = await createOfflinePaymentPlan({
+          contact: { id: contactId, email: 'plan@example.test' }, totalAmount: 400,
+          firstPayment: { enabled: true, amount: 100, method: 'cash' },
+          remainingPayments: [{ amount: 300, dueDate: '2099-09-01' }]
+        }, { baseUrl: 'https://checkout.example.test' })
+        assert.equal(metaCalls.length, 1)
+        const [purchase] = JSON.parse(metaCalls[0].body).data
+        assert.equal(purchase.custom_data.payment_id, plan.firstPaymentPaymentId)
+        assert.equal(purchase.custom_data.value, 100)
+        assert.equal(purchase.action_source, 'physical_store')
+        assert.equal(purchase.event_source_url, undefined)
+        const pending = await triggerMetaPurchaseEventForPaymentRow(plan.scheduledPayments[0].paymentId)
+        assert.equal(pending.reason, 'payment_not_successful')
+        assert.equal(metaCalls.length, 1)
+      })
+    })
+  } finally {
+    if (server) await new Promise(resolve => server.close(resolve))
+    Object.defineProperty(API_URLS, 'META_GRAPH', originalGraph)
   }
 })

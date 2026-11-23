@@ -1,3 +1,4 @@
+import { reportConfirmedPaymentToMeta } from './metaConversionEventsService.js'
 import { DateTime } from 'luxon'
 import { createHash } from 'node:crypto'
 import { db } from '../config/database.js'
@@ -20,6 +21,7 @@ import {
   getAccountTimezone,
   normalizeDateOnlyInTimezone,
   normalizeToUtcIso,
+  resolvePaymentTimestamp,
   resolveTimezone
 } from '../utils/dateUtils.js'
 
@@ -838,6 +840,7 @@ async function insertLocalInvoicePayment({
   fallbackDescription,
   paymentLink = null,
   paymentLinkRequestKey = null,
+  flowId = null,
   sentAt = null,
   status = 'draft',
   paymentMode = 'live'
@@ -854,9 +857,9 @@ async function insertLocalInvoicePayment({
     `INSERT INTO payments (
       id, contact_id, amount, currency, status, payment_method, payment_mode,
       payment_provider, reference, title, description, date, ghl_invoice_id, invoice_number,
-      payment_url, payment_link_request_key,
+      payment_url, payment_link_request_key, metadata_json,
       due_date, sent_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       contact_id = excluded.contact_id,
       amount = excluded.amount,
@@ -891,6 +894,7 @@ async function insertLocalInvoicePayment({
       invoice.invoiceNumber || null,
       paymentLink,
       paymentLinkRequestKey,
+      flowId ? JSON.stringify({ paymentPlan: { flowId } }) : null,
       invoice.dueDate || null,
       sentAt
     ]
@@ -907,6 +911,7 @@ async function createInvoice({
   title,
   dueDate,
   summaryDetails,
+  flowId = null,
   paymentLinkRequestKey = null
 }) {
   const context = await getInvoiceSendContext()
@@ -954,6 +959,7 @@ async function createInvoice({
   await insertLocalInvoicePayment({
     invoice,
     contactId: contact.id,
+    flowId,
     fallbackAmount: amount,
     fallbackCurrency: currency,
     fallbackDescription: concept,
@@ -1479,7 +1485,9 @@ export async function createOfflineContactPayment(payload) {
   const concept = payload.description || payload.concept || payload.title || 'Pago registrado'
   const title = payload.title || concept || 'Pago registrado'
   const paymentMethod = normalizeOfflineRecordMethod(payload.paymentMethod || payload.method)
-  const paymentDate = normalizeDateOnly(payload.paymentDate || payload.fulfilledAt || payload.date || new Date().toISOString(), payload.timezone)
+  const timezone = payload.timezone || await getAccountTimezone()
+  const paidAt = resolvePaymentTimestamp(payload.paymentDate || payload.fulfilledAt || payload.date, timezone)
+  const paymentDate = normalizeDateOnly(paidAt, timezone)
   const { liveMode } = await getPaymentFlowConfig()
 
   if (!contact.id) {
@@ -1516,7 +1524,7 @@ export async function createOfflineContactPayment(payload) {
   await ghlClient.recordPayment(invoiceId, {
     amount,
     currency,
-    fulfilledAt: paymentDate,
+    fulfilledAt: paidAt,
     note: [
       'Pago registrado desde Ristak',
       `Método: ${methodLabels[paymentMethod] || paymentMethod}`,
@@ -1534,17 +1542,20 @@ export async function createOfflineContactPayment(payload) {
          payment_mode = ?,
          reference = ?,
          date = ?,
+         paid_at = COALESCE(paid_at, ?),
          updated_at = CURRENT_TIMESTAMP
      WHERE ghl_invoice_id = ?`,
     [
       paymentMethod,
       liveMode ? 'live' : 'test',
       payload.reference || null,
-      paymentDate,
+      paidAt,
+      paidAt,
       invoiceId
     ]
   )
 
+  await reportConfirmedPaymentToMeta(invoiceId)
   await updateSingleContactStats(contact.id)
   logger.info(`Pago offline registrado desde ${payload.source || 'app'} para contacto ${contact.id}: ${amount} ${currency}`)
 
@@ -1618,6 +1629,7 @@ export async function registerAgentTransferDepositPayment({
     ]
   )
 
+  await reportConfirmedPaymentToMeta(paymentId)
   await updateSingleContactStats(cleanContactId).catch(() => {})
   logger.info(`Anticipo por transferencia registrado por el agente conversacional para contacto ${cleanContactId}: ${normalizedAmount} ${paymentCurrency}`)
 
@@ -2920,6 +2932,7 @@ export async function createInstallmentPaymentFlow(payload) {
 
   if (firstPaymentEnabled && firstPaymentIsOffline) {
     const invoice = await createInvoice({
+      flowId,
       ghlClient,
       basePayload: payload.invoicePayload,
       contact,
@@ -2943,10 +2956,11 @@ export async function createInstallmentPaymentFlow(payload) {
       other: 'Otro'
     }
 
+    const paidAt = resolvePaymentTimestamp(firstPaymentDate, accountTimezone)
     await ghlClient.recordPayment(invoiceId, {
       amount: firstPaymentAmount,
       currency,
-      fulfilledAt: firstPaymentDate || new Date().toISOString(),
+      fulfilledAt: paidAt,
       note: [
         'Primer pago parcial registrado desde Ristak',
         `Método: ${methodLabels[firstPaymentMethod] || firstPaymentMethod}`,
@@ -2961,9 +2975,9 @@ export async function createInstallmentPaymentFlow(payload) {
 
     await db.run(
       `UPDATE payments
-       SET status = 'paid', payment_method = ?, payment_mode = ?, reference = ?, updated_at = CURRENT_TIMESTAMP
+       SET status = 'paid', payment_method = ?, payment_mode = ?, reference = ?, paid_at = COALESCE(paid_at, ?), updated_at = CURRENT_TIMESTAMP
        WHERE ghl_invoice_id = ?`,
-      [firstPaymentMethod, liveMode ? 'live' : 'test', firstPayment.reference || null, invoiceId]
+      [firstPaymentMethod, liveMode ? 'live' : 'test', firstPayment.reference || null, paidAt, invoiceId]
     )
 
     stateHistory = addState(stateHistory, PAYMENT_FLOW_STATES.OFFLINE_PAYMENT_REGISTERED)
@@ -2973,12 +2987,14 @@ export async function createInstallmentPaymentFlow(payload) {
     })
 
     response.firstPaymentInvoiceId = invoiceId
+    await reportConfirmedPaymentToMeta(invoiceId)
     response.currentState = PAYMENT_FLOW_STATES.OFFLINE_PAYMENT_REGISTERED
     response.stateHistory = stateHistory
   }
 
   if (firstPaymentEnabled && firstPaymentIsCard && firstPaymentStoredCardShouldRecordNow) {
     const invoice = await createInvoice({
+      flowId,
       ghlClient,
       basePayload: payload.invoicePayload,
       contact,
@@ -2991,10 +3007,11 @@ export async function createInstallmentPaymentFlow(payload) {
     })
     const invoiceId = invoice.id || invoice._id
 
+    const paidAt = resolvePaymentTimestamp(firstPaymentDate, accountTimezone)
     await ghlClient.recordPayment(invoiceId, {
       amount: firstPaymentAmount,
       currency,
-      fulfilledAt: firstPaymentDate || new Date().toISOString(),
+      fulfilledAt: paidAt,
       note: [
         'Primer pago parcial registrado desde Ristak con tarjeta guardada',
         authorizedCard.brand || authorizedCard.last4
@@ -3009,9 +3026,9 @@ export async function createInstallmentPaymentFlow(payload) {
 
     await db.run(
       `UPDATE payments
-       SET status = 'paid', payment_method = 'card', payment_mode = ?, reference = ?, updated_at = CURRENT_TIMESTAMP
+       SET status = 'paid', payment_method = 'card', payment_mode = ?, reference = ?, paid_at = COALESCE(paid_at, ?), updated_at = CURRENT_TIMESTAMP
        WHERE ghl_invoice_id = ?`,
-      [liveMode ? 'live' : 'test', firstPayment.reference || null, invoiceId]
+      [liveMode ? 'live' : 'test', firstPayment.reference || null, paidAt, invoiceId]
     )
 
     await persistGhlPaymentMethodForFlow(flowId, authorizedCard)
@@ -3022,10 +3039,12 @@ export async function createInstallmentPaymentFlow(payload) {
     })
 
     response.firstPaymentInvoiceId = invoiceId
+    await reportConfirmedPaymentToMeta(invoiceId)
     response.currentState = PAYMENT_FLOW_STATES.FIRST_PAYMENT_REGISTERED
     response.stateHistory = stateHistory
   } else if (firstPaymentEnabled && firstPaymentIsCard) {
     const invoice = await createInvoice({
+      flowId,
       ghlClient,
       basePayload: payload.invoicePayload,
       contact,

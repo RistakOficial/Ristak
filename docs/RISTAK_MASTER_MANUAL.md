@@ -6796,18 +6796,22 @@ Implementacion esperada:
   Meta Test Events.
 - El pixel publico de navegador para checkout no debe usarse para pagos test si
   no hay aislamiento equivalente al `test_event_code` de CAPI.
-- En compras con canal `smart`, el `action_source` lo decide la SUPERFICIE REAL
-  de la conversion (ver `docs/CONVERSION_ATTRIBUTION.md`): un pago con URL de
-  checkout es `website` aunque el contacto tenga atribucion de mensajeria; un
-  pago sin checkout usa el canal de la conversacion mas reciente
-  (WhatsApp/Messenger/Instagram) y cae a website/system_generated si no hay
-  mensajeria. La atribucion interna (ultimo paid touch) se guarda en
-  `payments.attribution_*` + `conversion_surface` y viaja como metadata en
-  `custom_data` (ad_id, ad_name, attribution_channel).
-- El pixel publico del checkout SIEMPRE se genera para pagos de checkout (la
-  superficie es website); comparte `event_id` con el evento server-side para
-  que Meta deduplique. Solo se suprime si el canal configurado es un override
-  explicito de mensajeria (whatsapp/messenger/instagram).
+- En Pagos, cada cobro confirmado reporta su propio `Purchase`. Si la cuenta
+  activa el total del plan, el primer abono reporta ese total una vez. Una misma
+  persona puede generar compras distintas. Repetir el aviso del mismo pago
+  conserva su identificador en Meta, también en el Pixel de checkout.
+- En canal `smart` la compra conserva el medio donde ocurrió. Ristak adjunta el
+  último clic publicitario de Meta conocido antes del pago cuando corresponde.
+  Esto incluye un clic web seguido de una venta por chat y un clic hacia WhatsApp
+  seguido de una compra en esa conversación. El importe usa la moneda de la
+  cuenta y el evento conserva la fecha real del cobro. El acuse de recepción de
+  Meta se consulta en `meta_conversion_event_logs`. El crédito en Ads Manager
+  depende de la ventana y las reglas de atribución del anuncio.
+- Las mensualidades de Mercado Pago se identifican por su cargo en la pasarela.
+  Autorizar la suscripción deja el primer recibo pendiente hasta confirmar el
+  cobro. Cada ciclo posterior tiene su propio recibo.
+- El contrato de cobros, clics, fechas, reintentos y recibos públicos está en
+  [Atribución de conversiones](./CONVERSION_ATTRIBUTION.md).
 - Tests: `backend/test/metaPaymentPurchaseEvent.test.mjs` y
   `backend/test/conversionAttribution.test.mjs`.
 

@@ -12,6 +12,7 @@ import { db } from '../config/database.js'
 import { getGHLClient } from './ghlClient.js'
 import { ensureContactExists } from './highlevelSyncService.js'
 import { logger } from '../utils/logger.js'
+import { getAccountTimezone, normalizeToUtcIso, parseStoredUtcDateTime } from '../utils/dateUtils.js'
 import { getInvoicePaymentMode, nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildPhoneMatchCandidates, sanitizeContactName } from '../utils/phoneUtils.js'
 import { markPaymentFlowInvoicePaid } from './paymentFlowService.js'
@@ -881,6 +882,42 @@ async function findExistingPaymentForInvoice({
   })
 }
 
+// HighLevel's invoice.createdAt and issueDate are the issue date, which can
+// precede collection by months. Only an observed transition may use the time
+// of the provider update or, if omitted, the time we first observed payment.
+export async function getHighLevelInvoicePaidAt(invoice, {
+  previousStatus,
+  incomingStatus,
+  event = {},
+  transactionDate = null,
+  newlyPaid = Boolean(previousStatus) && !isSuccessfulPaymentStatus(previousStatus)
+}) {
+  if (!isSuccessfulPaymentStatus(incomingStatus)) return null
+  const payment = invoice.payment || event.payment || {}
+  const candidates = [
+    invoice.paidAt, invoice.paid_at, invoice.fulfilledAt, invoice.fulfilled_at, invoice.paymentDate, invoice.payment_date, invoice.transactionDate, invoice.transaction_date, transactionDate,
+    event.paidAt, event.paid_at, event.fulfilledAt, event.fulfilled_at, event.paymentDate,
+    payment.paidAt, payment.paid_at, payment.fulfilledAt, payment.fulfilled_at, payment.paymentDate,
+    ...(newlyPaid ? [event.timestamp, invoice.updatedAt, event.updatedAt] : [])
+  ]
+  for (const value of candidates) {
+    if (!value) continue
+    if (typeof value === 'number' || /^\d{10}$|^\d{13}$/.test(value)) {
+      const epoch = Number(value)
+      const date = new Date(epoch < 1e12 ? epoch * 1000 : epoch)
+      if (Number.isFinite(date.getTime())) return date.toISOString()
+      continue
+    }
+    if (typeof value === 'string' && !/^\d{4}-\d{2}-\d{2}/.test(value)) continue
+    const normalized = typeof value === 'string' && !/(Z|[+-]\d{2}:?\d{2})$/i.test(value)
+      ? normalizeToUtcIso(value, await getAccountTimezone())
+      : value
+    const instant = parseStoredUtcDateTime(normalized)
+    if (instant) return instant.toISO()
+  }
+  return newlyPaid ? new Date().toISOString() : null
+}
+
 function resolveSyncedInvoiceStatus(existingStatus, incomingStatus) {
   const normalizedExistingStatus = cleanString(existingStatus).toLowerCase()
   const normalizedIncomingStatus = cleanString(incomingStatus).toLowerCase()
@@ -1033,6 +1070,7 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId, exportL
           due_date: invoice.dueDate || null,
           sent_at: invoice.sentAt || null,
         }
+        const paidAt = await getHighLevelInvoicePaidAt(invoice, { previousStatus: existing?.status, incomingStatus: invoiceData.status })
         let savedInvoiceStatus = invoiceData.status
 
         if (existing) {
@@ -1047,7 +1085,7 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId, exportL
                  payment_provider = ${preserveLocalPaymentProviderSql()},
                  payment_mode = ?, reference = ?, title = ?, description = ?,
                  contact_id = COALESCE(?, contact_id),
-                 ghl_invoice_id = ?, invoice_number = ?, due_date = ?, sent_at = ?,
+                 ghl_invoice_id = ?, invoice_number = ?, due_date = ?, sent_at = ?, paid_at = COALESCE(paid_at, ?),
                  updated_at = CURRENT_TIMESTAMP
              WHERE id = ?`,
             [
@@ -1064,6 +1102,7 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId, exportL
               invoiceData.invoice_number,
               invoiceData.due_date,
               invoiceData.sent_at,
+              paidAt,
               existing.id
             ]
           )
@@ -1083,8 +1122,8 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId, exportL
             `INSERT INTO payments (
               id, contact_id, amount, currency, status, payment_method, payment_mode,
               payment_provider, reference, title, description, date, ghl_invoice_id, invoice_number,
-              due_date, sent_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+              due_date, sent_at, paid_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
             [
               ghlInvoiceId, // Usar mismo ID que en HighLevel
               invoiceData.contact_id,
@@ -1101,7 +1140,8 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId, exportL
               invoiceData.ghl_invoice_id,
               invoiceData.invoice_number,
               invoiceData.due_date,
-              invoiceData.sent_at
+              invoiceData.sent_at,
+              paidAt
             ]
           )
           created++
@@ -1280,6 +1320,7 @@ export async function syncAllInvoices({ contactId, exportLocal = false } = {}) {
           due_date: invoice.dueDate || null,
           sent_at: invoice.sentAt || null,
         }
+        const paidAt = await getHighLevelInvoicePaidAt(invoice, { previousStatus: existing?.status, incomingStatus: invoiceData.status })
         let savedInvoiceStatus = invoiceData.status
 
         if (existing) {
@@ -1291,7 +1332,7 @@ export async function syncAllInvoices({ contactId, exportLocal = false } = {}) {
              SET status = ?, amount = ?, currency = ?, payment_method = ?,
                  payment_provider = ${preserveLocalPaymentProviderSql()},
                  payment_mode = ?, reference = ?, title = ?, description = ?, contact_id = ?,
-                 ghl_invoice_id = ?, invoice_number = ?, due_date = ?, sent_at = ?,
+                 ghl_invoice_id = ?, invoice_number = ?, due_date = ?, sent_at = ?, paid_at = COALESCE(paid_at, ?),
                  updated_at = CURRENT_TIMESTAMP
              WHERE id = ?`,
             [
@@ -1308,6 +1349,7 @@ export async function syncAllInvoices({ contactId, exportLocal = false } = {}) {
               invoiceData.invoice_number,
               invoiceData.due_date,
               invoiceData.sent_at,
+              paidAt,
               existing.id
             ]
           )
@@ -1318,8 +1360,8 @@ export async function syncAllInvoices({ contactId, exportLocal = false } = {}) {
             `INSERT INTO payments (
               id, contact_id, amount, currency, status, payment_method, payment_mode,
               payment_provider, reference, title, description, date, ghl_invoice_id, invoice_number,
-              due_date, sent_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+              due_date, sent_at, paid_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
             [
               ghlInvoiceId,
               invoiceData.contact_id,
@@ -1336,7 +1378,8 @@ export async function syncAllInvoices({ contactId, exportLocal = false } = {}) {
               invoiceData.ghl_invoice_id,
               invoiceData.invoice_number,
               invoiceData.due_date,
-              invoiceData.sent_at
+              invoiceData.sent_at,
+              paidAt
             ]
           )
           created++
@@ -1469,6 +1512,7 @@ export async function syncSingleInvoice(invoiceId) {
       due_date: invoice.dueDate || null,
       sent_at: invoice.sentAt || null,
     }
+    const paidAt = await getHighLevelInvoicePaidAt(invoice, { previousStatus: existing?.status, incomingStatus: invoiceData.status })
     let savedInvoiceStatus = invoiceData.status
 
     if (existing) {
@@ -1484,7 +1528,7 @@ export async function syncSingleInvoice(invoiceId) {
              payment_provider = ${preserveLocalPaymentProviderSql()},
              payment_mode = ?, reference = ?, title = ?, description = ?,
              contact_id = COALESCE(?, contact_id),
-             ghl_invoice_id = ?, invoice_number = ?, due_date = ?, sent_at = ?,
+             ghl_invoice_id = ?, invoice_number = ?, due_date = ?, sent_at = ?, paid_at = COALESCE(paid_at, ?),
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
         [
@@ -1501,6 +1545,7 @@ export async function syncSingleInvoice(invoiceId) {
           invoiceData.invoice_number,
           invoiceData.due_date,
           invoiceData.sent_at,
+          paidAt,
           existing.id
         ]
       )
@@ -1511,8 +1556,8 @@ export async function syncSingleInvoice(invoiceId) {
         `INSERT INTO payments (
           id, contact_id, amount, currency, status, payment_method, payment_mode,
           payment_provider, reference, title, description, date, ghl_invoice_id, invoice_number,
-          due_date, sent_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+          due_date, sent_at, paid_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         [
           ghlInvoiceId,
           invoiceData.contact_id,
@@ -1529,7 +1574,8 @@ export async function syncSingleInvoice(invoiceId) {
           ghlInvoiceId,
           invoiceData.invoice_number,
           invoiceData.due_date,
-          invoiceData.sent_at
+          invoiceData.sent_at,
+          paidAt
         ]
       )
       logger.info(`Invoice insertado desde GHL: ${ghlInvoiceId} (${invoiceData.status})`)

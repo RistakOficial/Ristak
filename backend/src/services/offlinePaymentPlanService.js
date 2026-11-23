@@ -1,3 +1,4 @@
+import { reportConfirmedPaymentToMeta } from './metaConversionEventsService.js'
 import { paymentTaxSnapshotForTotal } from '../utils/paymentTaxSnapshot.js'
 import { databaseDialect, db } from '../config/database.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
@@ -789,6 +790,7 @@ export async function createOfflinePaymentPlan(input = {}, { baseUrl = '' } = {}
     }
   })
 
+  await reportConfirmedPaymentToMeta(response.firstPaymentPaymentId)
   await persistOfflinePaymentPlanMirror(flowId)
   return response
 }

@@ -132,11 +132,9 @@ marcador `rstkad_id` si coincide con un anuncio vivo ese dia.
 `backend/src/services/conversionAttributionService.js`:
 
 - `findLastPaidTouch({ contactId, conversionTime })` — barre los cuatro silos
-  de touches y devuelve el paid touch mas reciente. Un touch dentro de la
-  ventana (anterior a la conversion) de cualquier silo le gana a un fallback
-  fuera de ventana de otro silo. El predicado paid va en el WHERE de SQL
-  (antes del LIMIT de escaneo) para que muchos pageviews organicos no
-  entierren el touch pagado:
+  de touches y devuelve el anuncio más reciente observado hasta el instante de
+  la conversión. Las consultas acotan por comprador y fecha antes de ordenar.
+  Las visitas orgánicas posteriores conservan su lugar en el historial.
   - **Web** (`sessions`): paid si tiene `fbclid`, otros click IDs (`gclid`,
     `msclkid`, `ttclid`, `wbraid`, `gbraid`), `campaign_id`/`adset_id`/`ad_id`,
     `channel='paid'` o `utm_medium` de pago (cpc/ppc/paid). **`fbp` solo NO
@@ -160,7 +158,7 @@ marcador `rstkad_id` si coincide con un anuncio vivo ese dia.
 - `detectConversionSurface({ contactId, explicitSurface, payment })`:
   - `explicitSurface` gana (el call site sabe la verdad: checkout publico y
     bookings del widget web SON `website`).
-  - Un pago con URL de checkout / `public_payment_id` es `website`.
+  - Una compra efectuada en el checkout es `website`. Una liga de recibo de un anticipo en efectivo o por transferencia solo identifica el comprobante.
   - Si no, la superficie es la conversacion mas reciente del contacto
     (WhatsApp / Messenger / Instagram) antes de la conversion.
   - Sin actividad de mensajeria → `website` (el sender de sitio degrada
@@ -194,7 +192,7 @@ ANTES de los gates de configuracion, igual que en compras):
 
 | Superficie | action_source | user_data clave |
 | --- | --- | --- |
-| website | `website` (+`event_source_url`) | `em`, `ph`, `fbp`, `fbc` (de la ultima sesion web si es server-side) |
+| website | `website` (+`event_source_url`) | `em`, `ph`, `fbp`, `fbc` del clic de Meta previo al cobro y navegador del checkout cuando se conoce |
 | whatsapp con `ctwa_clid` | `business_messaging` + `messaging_channel=whatsapp` | `ph`, `ctwa_clid`, `page_id`, `whatsapp_business_account_id` |
 | whatsapp organico (sin `ctwa_clid`) | `chat` (WhatsApp queda en `custom_data.messaging_channel`) | `ph`, `em`, `external_id` y nombres disponibles |
 | messenger | `business_messaging` + `messaging_channel=messenger` | `page_scoped_user_id` + `page_id` |
@@ -214,9 +212,7 @@ Notas:
   a otra superficie.
 - La atribucion interna viaja como metadata en `custom_data` (`ad_id`,
   `ad_name`, `campaign_id`, `adset_id`, `attribution_channel`) sin importar la
-  superficie. Los IDs del touch solo se usan como identidad de `user_data`
-  cuando el touch es del MISMO canal que el evento (un IGSID nunca viaja como
-  PSID de Messenger).
+  superficie. Los identificadores de mensajería pertenecen a su propio canal. Un pago cerrado por chat puede conservar el `fbc` del clic web del comprador como señal de coincidencia.
 - Anti doble conteo de citas: el sender de sitio
   (`sendCalendarBookingSiteMetaEvent`) marca `meta_schedule_event_sent` en el
   contacto al exito, de modo que un echo posterior del webhook GHL de la misma
@@ -226,15 +222,41 @@ Notas:
 
 ## Canal configurado vs smart
 
-- `smart` (default) = superficie real detectada automaticamente (esta pagina).
+- En `smart`, las renovaciones automáticas y las cuotas con tarjeta programada que se pueden identificar como tales usan `system_generated`. La contratación interactiva conserva su propio canal. El recibo de una renovación no dispara el Pixel.
 - Un canal explicito (`site`, `whatsapp`, `messenger`, `instagram`) en
   `meta_payment_purchase_event_config.channel` o en `customEvents.channel` del
   calendario es un **override forzado por el usuario**: se respeta tal cual y
   queda documentado que puede no coincidir con la superficie real. El snapshot
   interno guarda siempre la superficie detectada.
-- El pixel publico del checkout siempre dispara para pagos de checkout y
-  comparte `event_id` con el evento server-side (Meta deduplica); solo se
-  suprime con override explicito de mensajeria.
+- El Pixel de un checkout real y CAPI comparten el mismo nombre e identificador
+  para el mismo cobro. El navegador omite pagos de prueba, recibos antiguos,
+  pagos offline y canales de mensajería forzados.
+
+## Compras, parcialidades y reintentos
+
+En Configuración → Pagos, la opción de enviar el total del plan determina el
+importe. Apagada, cada cobro confirmado de importe positivo genera su propio
+`Purchase`, aunque el comprador ya haya pagado antes. Encendida, el primer
+cobro confirmado reporta una sola vez el total del plan y las mensualidades
+siguientes quedan cubiertas. Los planes que ya enviaron una compra aceptada
+conservan su modalidad para evitar sumar parcialidades y total a la vez.
+La verificación de tarjeta y las cuotas pendientes quedan excluidas.
+
+El intento usa la fecha del cobro y un identificador estable por pago o plan.
+La recepción se acredita con `events_received` en la respuesta de Meta. Los
+errores permiten volver a intentar el mismo cobro. Las pruebas y etiquetas QR
+se mantienen fuera del historial de compras aceptadas en vivo. Para registros
+antiguos con identificador compartido por contacto, se consulta el pago exacto
+en el envío aceptado. La API acepta eventos de hasta siete días. Un recibo
+antiguo conserva su fecha original al volver a abrirlo.
+
+El identificador web parte de un `fbclid` observado en la visita o su URL, o
+de una cookie `fbc` válida con su fecha de creación. Ristak toma el último
+clic elegible anterior al cobro. Para una compra por chat conserva su
+`action_source` y puede incluir ese identificador web. En WhatsApp publicitario
+usa el `ctwa_clid` correspondiente. Para un checkout, `event_source_url`
+identifica la página donde se pagó. Un contacto recomendado, una visita ajena
+o una fecha de clic posterior al pago quedan fuera de la selección.
 
 ## Escenarios canonicos (tests)
 

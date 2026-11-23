@@ -88,7 +88,7 @@ Lee y aplica esta guia antes de tocar:
   `getAccountCurrency()` (`getPaymentMetaCurrency()` en
   `metaConversionEventsService.js`), para que Meta reciba señales consistentes.
   El pago conserva su propia `currency` guardada en la BD para reportes locales;
-  esa moneda NO se manda a Meta.
+  esa moneda NO se manda a Meta. Para `Purchase`, cada abono confirmado lleva su importe cobrado, salvo que el plan esté configurado para reportar su total una sola vez. Una autorización de tarjeta no consume el evento del plan.
 - En automatizaciones e IA, si el contexto no trae moneda de un pago existente,
   resuelve la moneda desde la cuenta antes de construir el mensaje o accion.
 

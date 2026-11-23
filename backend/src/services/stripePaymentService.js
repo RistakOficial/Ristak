@@ -30,6 +30,7 @@ import {
 } from './paymentPlanSafetyService.js'
 import {
   buildMetaPublicPurchasePixelEvent,
+  reportConfirmedPaymentToMeta,
   triggerMetaPaymentPurchaseEvent
 } from './metaConversionEventsService.js'
 import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
@@ -2256,7 +2257,9 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
   const ignorePendingRegression = shouldIgnorePendingWebhookRegression(existingRow, nextStatus)
   const persistedStatus = ignorePendingRegression ? cleanString(existingRow?.status) || 'paid' : nextStatus
   const statusChanged = cleanString(existingRow?.status).toLowerCase() !== cleanString(persistedStatus).toLowerCase()
-  const paidAt = intent.status === 'succeeded' ? new Date().toISOString() : null
+  const paidAt = intent.status === 'succeeded'
+    ? timestampToIso(stripeContext?.eventCreated) || new Date().toISOString()
+    : null
   const latestChargeId = typeof intent.latest_charge === 'string'
     ? intent.latest_charge
     : intent.latest_charge?.id || null
@@ -2277,7 +2280,7 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
          reference = COALESCE(?, reference),
          stripe_payment_intent_id = ?,
          stripe_charge_id = COALESCE(?, stripe_charge_id),
-         paid_at = COALESCE(${timestampPlaceholder()}, paid_at),
+         paid_at = COALESCE(paid_at, ${timestampPlaceholder()}),
          date = COALESCE(${timestampPlaceholder()}, date),
          metadata_json = ?,
          updated_at = CURRENT_TIMESTAMP
@@ -2434,7 +2437,7 @@ async function updatePaymentFromInvoice(invoice, nextStatus) {
          payment_provider = 'stripe',
          reference = COALESCE(?, reference),
          stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id),
-         paid_at = COALESCE(${timestampPlaceholder()}, paid_at),
+         paid_at = COALESCE(paid_at, ${timestampPlaceholder()}),
          date = COALESCE(${timestampPlaceholder()}, date),
          updated_at = CURRENT_TIMESTAMP
      WHERE ${whereColumn} = ?`,
@@ -2690,6 +2693,8 @@ async function insertSubscriptionPaymentFromInvoice(invoice, subscriptionRow, ne
   const paymentId = createId('stripe_subscription_payment')
   const metadata = {
     source: 'stripe_subscription_invoice',
+    stripeBillingReason: cleanString(invoice.billing_reason),
+    stripeCollectionMethod: cleanString(invoice.collection_method),
     tax: paymentTaxSnapshotForTotal(parseJson(subscriptionRow.metadata_json, {}).tax, amount),
     ristakSubscriptionId: subscriptionRow.id,
     stripeSubscriptionId: subscriptionRow.stripe_subscription_id || extractInvoiceSubscriptionId(invoice),
@@ -2792,11 +2797,12 @@ async function updateSubscriptionFromInvoice(invoice, nextStatus) {
     ]
   )
 
-  await insertSubscriptionPaymentFromInvoice(invoice, {
+  const paidPaymentId = await insertSubscriptionPaymentFromInvoice(invoice, {
     ...existing,
     status,
     stripe_subscription_id: stripeSubscriptionId || existing.stripe_subscription_id
   }, nextStatus)
+  await reportConfirmedPaymentToMeta(paidPaymentId)
 
   const updated = await db.get('SELECT * FROM subscriptions WHERE id = ?', [existing.id])
   publishSubscriptionChangedEvent(updated || {
@@ -5560,6 +5566,7 @@ export async function createStripePaymentPlan(input = {}, { baseUrl } = {}) {
       [paymentId, flowId]
     )
     response.firstPaymentPaymentId = paymentId
+    await reportConfirmedPaymentToMeta(response.firstPaymentPaymentId)
     updateSingleContactStats(plan.contact.id).catch((error) => {
       logger.warn(`No se pudieron actualizar stats del contacto por primer pago ${paymentId}: ${error.message}`)
     })
@@ -6074,7 +6081,7 @@ export async function handleStripeWebhookEvent(rawBody, signature) {
   const object = event?.data?.object
 
   if (object?.object === 'payment_intent') {
-    await updatePaymentFromIntent(object, { stripe, config, requestOptions, eventType: event.type })
+    await updatePaymentFromIntent(object, { stripe, config, requestOptions, eventType: event.type, eventCreated: event.created })
   } else if (event.type === 'checkout.session.completed' && object?.object === 'checkout.session') {
     await updateSubscriptionFromStripeCheckoutSession(object, { stripe, requestOptions })
   } else if (event.type === 'invoice.payment_succeeded' && object?.object === 'invoice') {
