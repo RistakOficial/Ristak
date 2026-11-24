@@ -10260,6 +10260,21 @@ las condiciones operativas configuradas expresamente dentro de
 convertir un resultado pendiente o fallido en exito, pero fuera de esos limites
 el backend no reemplaza su criterio con un embudo propio.
 
+Cuando una persona solicita atención médica urgente, el agente comprueba en su
+capacitación o en la información del negocio si el especialista atiende ese tipo
+de caso. Si corresponde una valoración por cita y tiene la agenda habilitada,
+consulta los horarios próximos en ese mismo turno y presenta las opciones reales.
+La persona elige y confirma antes de reservar. Si faltan cupos oportunos o el
+consultorio atiende estos casos por otra vía, el agente indica la opción de
+atención que tenga documentada.
+
+Ante una posible emergencia, la primera indicación es buscar atención inmediata.
+Cuando el especialista atiende ese caso, el agente también puede facilitar un
+contacto verificado en paralelo o ayudar a coordinar el seguimiento después de
+la atención inmediata. Una oferta de cita que ya estaba pendiente se conserva
+mientras el agente responde al problema actual. El simulador y los chats con
+pacientes reciben las mismas instrucciones.
+
 La proteccion preventiva tampoco usa regex ni detectores de palabras. El mismo
 modelo principal puede decidir `apply_safety_measure` sólo con contexto claro,
 confianza alta y severidad alta o critica. La tool crea un caso global por

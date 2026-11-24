@@ -191,3 +191,50 @@ test('un agente sin acciones habilitadas no expone herramientas operativas', () 
   const tools = createConversationalTools({ config: agentConfig(), dryRun: true, actions: [] })
   assert.deepEqual(tools.map((item) => item.name).sort(), ['get_business_profile', 'get_contact_profile', 'list_products'])
 })
+
+test('el turno de una clínica que atiende urgencias conserva la orientación inmediata y la ruta real de agenda', async () => {
+  const config = agentConfig({
+    includeBusinessDescription: false,
+    strategyText: 'El especialista atiende urgencias maxilofaciales. Ofrécele valoración al paciente.'
+  })
+  config.capabilitiesConfig.items = [{ id: 'schedule_appointment', enabled: true, calendarId: 'calendar-clinica' }]
+  const turn = await inspectTurn(config, { message: 'no puedo abrir la boca es urgente' })
+  const { instructions } = turn.agent
+
+  assert.ok(instructions.includes(config.promptConfig.strategyText))
+  assert.match(instructions, /atención inmediata[^\n]*acuda ahora a urgencias/i)
+  assert.match(instructions, /en paralelo[^\n]*sin demorar la atención/i)
+  assert.match(instructions, /conserva visible esta orientación[^\n]*ofrecer un horario[^\n]*transferir el chat/i)
+  assert.match(instructions, /urgencias directamente o por teléfono[^\n]*datos verificados/i)
+  assert.match(instructions, /valoración urgente[^\n]*get_free_slots desde hoy/i)
+  assert.match(instructions, /varias opciones oportunas[^\n]*offer_appointment_options[^\n]*maxDays=1[^\n]*una sola[^\n]*offer_appointment_slot/i)
+  assert.match(instructions, /urgencia no confirma una reserva/i)
+  assert.match(instructions, /no hay un horario oportuno o la consulta falla[^\n]*sin sugerir que espere/i)
+  const tools = turn.tools.map((item) => item.name)
+  for (const name of ['get_free_slots', 'offer_appointment_slot', 'offer_appointment_options']) {
+    assert.ok(tools.includes(name), name)
+  }
+})
+
+test('la orientación urgente respeta los servicios declarados y las herramientas disponibles en cada vuelta', async () => {
+  const config = agentConfig({
+    includeBusinessDescription: false,
+    strategyText: 'El consultorio sólo ofrece consultas de rutina.'
+  })
+  const message = 'Necesito atención, me cuesta respirar'
+  const searchUrgently = /valoración urgente[^\n]*get_free_slots desde hoy/i
+  for (const calendar of [null, { id: 'schedule_appointment', enabled: true }]) {
+    config.capabilitiesConfig.items = calendar ? [calendar] : []
+    const turn = await inspectTurn(config, { message })
+    assert.ok(turn.agent.instructions.includes(config.promptConfig.strategyText))
+    assert.match(turn.agent.instructions, /atención propia sólo si[^\n]*expresamente[^\n]*si no consta/i)
+    assert.match(turn.agent.instructions, /atención inmediata[^\n]*acuda ahora a urgencias/i)
+    assert.doesNotMatch(turn.agent.instructions, searchUrgently)
+    assert.equal(turn.tools.some((item) => item.name === 'get_free_slots'), false)
+  }
+  config.capabilitiesConfig.items = [{ id: 'schedule_appointment', enabled: true, calendarId: 'calendar-clinica' }]
+  const followUp = await inspectTurn(config, { message, followUpContext: { index: 1, strategy: 'Retoma la conversación.' } })
+  assert.doesNotMatch(followUp.agent.instructions, /Solicitudes de atención médica urgente/i)
+  assert.doesNotMatch(followUp.agent.instructions, searchUrgently)
+  assert.equal(followUp.tools.some((item) => item.name === 'get_free_slots'), false)
+})

@@ -3031,6 +3031,7 @@ export async function validateToolCallingV2PreservedOfferReplySemantics({
       `Elige ${APPOINTMENT_OFFER_REPLY_SEMANTIC_CLASSIFICATIONS.outcomeClaim} si el texto afirma o da por hecho un resultado de agenda ya realizado o garantizado.`,
       `Elige ${APPOINTMENT_OFFER_REPLY_SEMANTIC_CLASSIFICATIONS.decisionPrompt} si vuelve a pedir, confirmar u ofrecer fecha, hora, horario o una decisión sobre la cita pendiente.`,
       `Elige ${APPOINTMENT_OFFER_REPLY_SEMANTIC_CLASSIFICATIONS.safe} sólo si responde un tema lateral sin afirmar resultados de agenda ni reabrir preguntas de agendamiento.`,
+      'Una indicación de acudir ahora a urgencias sin esperar la cita, con una vía de contacto del especialista, es un tema lateral seguro si no pide decidir sobre el horario ni afirma una reserva.',
       `Ante mezcla, contradicción o duda elige ${APPOINTMENT_OFFER_REPLY_SEMANTIC_CLASSIFICATIONS.uncertain}.`,
       `Debes llamar exactamente ${classifierToolName}. No redactes una respuesta para la persona.`
     ].join('\n'),
@@ -4781,6 +4782,7 @@ async function buildToolCallingV2AgentForRun({
 - Tu PRIMERA acción de este turno debe ser resolve_active_appointment_offer. Esta adjudicación semántica es obligatoria aunque después respondas otro asunto o uses otra herramienta.
 - Decide accept si acepta la oferta; request_other_options si rechaza ese horario pero quiere otro; decline si ya no quiere agendar;${pendingOfferHandoffInstruction} preserve si habla de otro tema o si el mensaje es ambiguo respecto al horario.
 - preserve no modifica ni cierra la oferta. Después de usarlo, responde la duda o usa cualquier otra capacidad habilitada con normalidad; no fuerces al cliente a decidir.
+- Si el mensaje actual indica una posible emergencia médica, conserva la oferta con preserve y responde primero con la orientación de atención inmediata. No interpretes el relato como aceptación ni vuelvas a preguntarle por ese horario.
 - Nunca elijas accept sólo porque exista una oferta. Interpreta el mensaje completo y adjudica su intención semántica, sin listas de palabras ni coincidencias textuales.
 - Si la persona ya aceptó esta misma oferta y ahora contesta los datos que faltaban para ejecutarla, continúa esa aceptación; no confundas esos datos con otro tema ni vuelvas a pedir confirmación del horario. Un rechazo o cambio posterior manda sobre la aceptación anterior.
 - Si accept devuelve needsData, no cierres la vuelta antes de revisar lo que ya recibiste: guarda los datos propios confirmados con save_contact_data y reintenta accept después de completar o corregir los datos. Si aún falta algo, pide únicamente lo faltante, sin repetir datos guardados ni la confirmación del horario.

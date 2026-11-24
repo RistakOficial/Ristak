@@ -578,6 +578,7 @@ test('una oferta durable fuerza adjudicación semántica primero y preserve deja
         activeOfferAgent = agent
         const names = agent.tools.map((item) => item.name)
         assert.equal(agent.modelSettings.toolChoice, 'resolve_active_appointment_offer')
+        assert.match(agent.instructions, /posible emergencia médica[^\n]*conserva la oferta con preserve[^\n]*atención inmediata/i)
         assert.equal(agent.resetToolChoice, true)
         for (const expected of [
           'resolve_active_appointment_offer',
