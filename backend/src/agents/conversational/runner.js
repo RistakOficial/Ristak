@@ -72,6 +72,7 @@ import { DEFAULT_OPENAI_MODEL } from '../../config/openAIModels.js'
 import { hasFeature } from '../../services/licenseService.js'
 import {
   createConversationalTools,
+  SPECIALIST_ASSESSMENT_CONTEXTS,
   loadConversationalAppointmentOfferDecisionContext,
   loadConversationalAppointmentSelectionProgressContext,
   loadConversationalVerifiedAppointmentContext,
@@ -227,12 +228,15 @@ function previewToolResultEndsTurn(result = {}) {
 }
 
 function stopAfterCommittedLiveMutation(_runContext, toolResults = []) {
-  const serverVisibleTerminal = (Array.isArray(toolResults) ? toolResults : []).find((result) => (
-    ['offer_appointment_options', 'offer_appointment_slot', 'resolve_active_appointment_selection', 'resolve_active_appointment_offer'].includes(String(result?.tool?.name || '').trim()) &&
-    result?.output?.terminal === true &&
-    result?.output?.suppressReply !== true &&
-    String(result?.output?.visibleReply || '').trim()
-  ))
+  const serverVisibleTerminal = (Array.isArray(toolResults) ? toolResults : []).find((result) => {
+    const toolName = result?.tool?.name
+    const output = result?.output
+    if (output?.terminal !== true || output.suppressReply === true || !String(output.visibleReply || '').trim()) return false
+    if (toolName === 'get_free_slots') {
+      return SPECIALIST_ASSESSMENT_CONTEXTS.includes(output.presentationContext)
+    }
+    return ['offer_appointment_options', 'offer_appointment_slot', 'resolve_active_appointment_selection', 'resolve_active_appointment_offer'].includes(toolName)
+  })
   if (serverVisibleTerminal) {
     return {
       isFinalOutput: true,

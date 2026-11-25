@@ -104,6 +104,57 @@ test('scope y ejecución del preview quedan ligados a usuario, agente, sesión y
   assert.notEqual(firstExecution, secondExecution)
 })
 
+test('el simulador sin efectos distingue turnos sin testMessageId y no materializa contactos ni citas', async () => {
+  const suffix = randomUUID()
+  const agentId = `agent_${suffix}`
+  const name = `Especialista ${suffix}`
+  const calendarId = `calendar_${suffix}`
+  const sessionId = `session_${suffix}`
+  const user = { role: 'admin', userId: `user_${suffix}` }
+  const opening = [{ role: 'user', content: 'No puedo abrir la boca, ¿cuándo me puede revisar?' }]
+  const run = async (messages, session = {}) => {
+    const res = mockResponse()
+    let preview
+    await runConversationalAgentTester({
+      user, body: { agentId, messages, effects: { enabled: false }, ...session }
+    }, res, {
+      runPreview: async (input) => {
+        preview = input
+        return { reply: 'Respuesta del simulador', actions: [] }
+      }
+    })
+    assert.equal(res.statusCode, 200, JSON.stringify(res.body))
+    assert.equal(res.body.data.testRunId, undefined)
+    assert.equal(preview.previewContact, null)
+    return preview
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO conversational_agents (id, name, enabled, runtime_mode, capabilities_config)
+       VALUES (?, ?, 0, 'tool_calling_v2', ?)`,
+      [agentId, name, JSON.stringify({ items: [{ id: 'schedule_appointment', enabled: true, calendarId }] })]
+    )
+    const session = { testSessionId: sessionId }
+    const first = await run(opening, session)
+    assert.equal(first.previewScopeId, buildConversationalAppointmentPreviewScopeId({ testSessionId: sessionId, agentId, requestedByUserId: user.userId }))
+    assert.match(first.executionId, /^preview:[a-f0-9]{48}$/)
+    assert.equal((await run(opening, session)).executionId, first.executionId)
+    const next = await run([...opening, { role: 'assistant', content: '¿Confirmas ese horario?' }, { role: 'user', content: 'Sí' }], session)
+    assert.equal(next.previewScopeId, first.previewScopeId)
+    assert.match(next.executionId, /^preview:[a-f0-9]{48}$/)
+    assert.notEqual(next.executionId, first.executionId)
+    const anonymous = await run(opening)
+    assert.equal(anonymous.previewScopeId, '')
+    assert.equal(anonymous.executionId, '')
+    assert.equal(await db.get('SELECT id FROM conversational_agent_test_runs WHERE id = ?', [sessionId]), null)
+    assert.equal(await db.get('SELECT id FROM contacts WHERE full_name = ?', [`${name} - Test`]), null)
+    assert.equal(await db.get('SELECT id FROM appointments WHERE calendar_id = ?', [calendarId]), null)
+  } finally {
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId])
+  }
+})
+
 test('el turno test completo serializa carreras, reproduce la respuesta exacta y recupera crashes desde el preview', async () => {
   const suffix = randomUUID()
   const runId = `session_turn_${suffix}`

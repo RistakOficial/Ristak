@@ -10260,20 +10260,30 @@ las condiciones operativas configuradas expresamente dentro de
 convertir un resultado pendiente o fallido en exito, pero fuera de esos limites
 el backend no reemplaza su criterio con un embudo propio.
 
-Cuando una persona solicita atención médica urgente, el agente comprueba en su
-capacitación o en la información del negocio si el especialista atiende ese tipo
-de caso. Si corresponde una valoración por cita y tiene la agenda habilitada,
-consulta los horarios próximos en ese mismo turno y presenta las opciones reales.
+Cuando una persona describe una urgencia médica, el agente comprueba si el
+consultorio atiende ese tipo de caso por cita. Puede detectarla al comienzo o
+a mitad del chat aunque la persona nunca diga «urgente». En ese turno recomienda
+la valoración y muestra los horarios reales. Puede mencionar al profesional que
+la capacitación identifica para el caso. Los saludos y las preguntas informativas
+siguen su conversación habitual. Una solicitud de cita ordinaria sigue la
+estrategia de agenda configurada por el negocio.
 La persona elige y confirma antes de reservar. Si faltan cupos oportunos o el
 consultorio atiende estos casos por otra vía, el agente indica la opción de
 atención que tenga documentada.
 
 Ante una posible emergencia, la primera indicación es buscar atención inmediata.
-Cuando el especialista atiende ese caso, el agente también puede facilitar un
-contacto verificado en paralelo o ayudar a coordinar el seguimiento después de
-la atención inmediata. Una oferta de cita que ya estaba pendiente se conserva
-mientras el agente responde al problema actual. El simulador y los chats con
-pacientes reciben las mismas instrucciones.
+Si el consultorio atiende ese caso por cita, el agente puede ofrecer en el mismo
+mensaje los horarios verificados del primer día con cupo. El mensaje indica que
+la persona debe acudir a urgencias ahora y que puede coordinar la valoración con
+el especialista en paralelo. Tanto la lista como la oferta de un único horario
+conservan ese aviso. Para reservar, la persona confirma el horario y el sistema
+vuelve a comprobarlo. La urgencia por sí sola no transfiere el chat. Si el
+consultorio recibe esos casos por otra vía, se respeta la vía que haya indicado.
+
+Cuando la persona refiere peligro inmediato, por ejemplo dificultad para respirar,
+el agente le indica buscar ayuda de inmediato sin detenerse a consultar la agenda.
+Una oferta anterior se conserva mientras responde al síntoma nuevo. El simulador
+y los chats con pacientes comparten estas reglas.
 
 La proteccion preventiva tampoco usa regex ni detectores de palabras. El mismo
 modelo principal puede decidir `apply_safety_measure` sólo con contexto claro,
@@ -10515,6 +10525,10 @@ identidad demuestra orden y visibilidad dentro de la conversación y es distinta
 del `executionId`/`testMessageId`, que identifica e idempotentiza el request que
 se está ejecutando. Nunca se vuelve a numerar el historial por posición ni se
 usa el ID del request actual como si fuera el ID durable de todas las vueltas.
+En una simulación sin efectos que envía una sesión válida y omite
+`testMessageId`, el servidor deriva la identidad del turno de la solicitud.
+Así se puede ofrecer, seleccionar y confirmar un horario entre mensajes sin
+crear una ficha de contacto ni ocupar un espacio del calendario.
 
 La agenda automática de prueba sólo autoriza cita o entrega humana; Pagos
 conserva su propio **Modo test** y autoriza exclusivamente el mecanismo

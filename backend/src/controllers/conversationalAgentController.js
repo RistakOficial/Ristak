@@ -472,9 +472,18 @@ export async function runConversationalAgentTester(req, res, { runPreview = runC
       requestedByUserId: req.user?.userId,
       agentId
     })
+    // El simulador sin efectos también necesita identificar y reintentar el turno
+    // que ofreció el horario. Esta identidad sólo pertenece al scope de preview.
+    let previewMessageId = req.body?.testMessageId
+    if (previewScopeId && !runContext && !requestedEffects.enabled && (previewMessageId == null || previewMessageId === '')) {
+      previewMessageId = buildConversationalAgentTestTurnRequestHash({
+        messages: req.body?.messages || [],
+        configOverride
+      })
+    }
     const previewExecutionId = runContext?.executionId || buildConversationalAppointmentPreviewExecutionId({
       previewScopeId,
-      testMessageId: req.body?.testMessageId
+      testMessageId: previewMessageId
     })
     const createPreview = async () => {
       const runtimeEventContext = runContext

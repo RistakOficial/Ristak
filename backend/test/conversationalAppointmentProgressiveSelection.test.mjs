@@ -11,7 +11,7 @@ import {
   loadConversationalAppointmentSelectionProgressContext,
   setNativeAppointmentAvailabilityLookupHookForTest
 } from '../src/agents/conversational/tools.js'
-import { runToolCallingV2Turn } from '../src/agents/conversational/runner.js'
+import { createToolCallingV2Agent, ensureToolCallingV2VisibleReply, runToolCallingV2Turn } from '../src/agents/conversational/runner.js'
 import { upsertLocalCalendar } from '../src/services/localCalendarService.js'
 import {
   CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT,
@@ -141,6 +141,183 @@ async function cleanupFixture(fixture) {
   await db.run('DELETE FROM appointments WHERE calendar_id = ?', [fixture.calendarId]).catch(() => {})
   await db.run('DELETE FROM calendars WHERE id = ?', [fixture.calendarId]).catch(() => {})
 }
+
+function urgentAssessmentTurn(fixture, executionId, messages = []) {
+  return previewContext({
+    config: fixture.config,
+    scopeId: fixture.scopeId,
+    contactId: fixture.contactId,
+    executionId,
+    messages
+  })
+}
+
+test('la lista urgente muestra el aviso antes de los horarios reales del primer día y no reserva', async () => {
+  const fixture = await createFixture('urgent_options')
+  try {
+    const ctx = urgentAssessmentTurn(fixture, 'consulta-urgente', [
+      { role: 'user', content: 'No puedo abrir la boca, es urgente' }
+    ])
+    const request = freeSlotsInput(fixture.firstDate, { endDate: fixture.secondDate })
+    const search = toolNamed(ctx, 'get_free_slots')
+    const urgent = await search.invoke(null, JSON.stringify({ ...request, presentationContext: 'urgent_specialist_assessment' }))
+    assert.equal(urgent.ok, true, JSON.stringify(urgent))
+    assert.deepEqual(urgent.slots.map(day => day.localDate), [fixture.firstDate])
+    assert.equal(urgent.total, 6)
+    const present = toolNamed(ctx, 'offer_appointment_options')
+    const list = await present.invoke(null, JSON.stringify({ maxDays: 3, selectionMode: 'exploring' }))
+    assert.equal(list.ok, true, JSON.stringify(list))
+    assert.match(list.visibleReply, /^Acude a urgencias ahora[^\n]*sin esperar a la cita[\s\S]*valoración con el especialista[\s\S]*11:00 a\.m\. a 4:00 p\.m\./i)
+    assert.equal(list.displayedDays, 1)
+    assert.equal(list.actionCompleted, false)
+    assert.equal(ensureToolCallingV2VisibleReply('otro texto', ctx.actions), list.visibleReply)
+    assert.equal(await loadConversationalAppointmentOfferDecisionContext({ ctx, config: fixture.config }), null)
+    assert.deepEqual(ctx.actions.map(action => action.type), ['offer_appointment_options'])
+
+    for (const context of [{}, { presentationContext: null }]) {
+      const ordinaryCtx = urgentAssessmentTurn({ ...fixture, scopeId: previewScope(randomUUID()) }, 'consulta-ordinaria')
+      const normal = await toolNamed(ordinaryCtx, 'get_free_slots').invoke(null, JSON.stringify({ ...request, ...context }))
+      assert.equal(normal.total, 12)
+      const ordinaryList = await toolNamed(ordinaryCtx, 'offer_appointment_options').invoke(null, JSON.stringify({ maxDays: 3, selectionMode: 'exploring' }))
+      assert.equal(ordinaryList.ok, true, JSON.stringify(ordinaryList))
+      assert.equal(ordinaryList.displayedDays, 2)
+      assert.doesNotMatch(ordinaryList.visibleReply, /urgencias|emergencias/i)
+    }
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
+test('la oferta urgente de un horario sí se puede confirmar al contestar en el turno siguiente', async () => {
+  const fixture = await createFixture('urgent_single')
+  try {
+    const messages = [{ id: 'relato-urgente', role: 'user', content: 'No puedo abrir la boca, ¿me puede revisar?' }]
+    const ctx = urgentAssessmentTurn(fixture, messages[0].id, messages)
+    const available = await toolNamed(ctx, 'get_free_slots').invoke(null, JSON.stringify(freeSlotsInput(fixture.firstDate, {
+      endDate: fixture.secondDate,
+      earliestLocalTime: '16:00',
+      latestLocalTime: '16:00',
+      presentationContext: 'urgent_specialist_assessment'
+    })))
+    assert.equal(available.total, 1, JSON.stringify(available))
+    const slot = available.slots[0].options[0]
+    const offer = await toolNamed(ctx, 'offer_appointment_slot').invoke(null, JSON.stringify({
+      startTime: slot.startTime, appointmentId: null, selectionContext: 'neutral'
+    }))
+    assert.equal(offer.ok, true, JSON.stringify(offer))
+    assert.match(offer.visibleReply, /^Acude a urgencias ahora[^\n]*sin esperar a la cita[\s\S]*valoración con el especialista[\s\S]*4:00 p\.m\./i)
+    assert.equal(ensureToolCallingV2VisibleReply('otro texto', ctx.actions), offer.visibleReply)
+    assert.deepEqual(ctx.actions.map(action => action.type), ['offer_appointment_slot'])
+
+    const confirm = urgentAssessmentTurn(fixture, 'respuesta-confirmada', [
+      ...messages, { id: 'oferta-visible', role: 'assistant', content: offer.visibleReply },
+      { id: 'respuesta-confirmada', role: 'user', content: 'Sí, confírmame ese horario de revisión' }
+    ])
+    confirm.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({ ctx: confirm, config: fixture.config })
+    assert.equal(confirm.appointmentOfferDecision?.startTime, slot.startTime)
+    const booked = await toolNamed(confirm, 'resolve_active_appointment_offer').invoke(null, JSON.stringify(offerDecisionInput('accept')))
+    assert.equal(booked.ok, true, JSON.stringify(booked))
+    assert.equal(booked.simulated, true)
+    assert.match(booked.visibleReply, /cita de prueba quedó confirmada/i)
+    assert.equal(confirm.actions.filter(action => action.type === 'book_appointment').length, 1)
+    assert.equal(confirm.actions.some(action => action.type === 'send_to_human'), false)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
+test('una urgencia de consultorio tras un saludo ofrece horarios y sólo nombra profesionales de la capacitación', async () => {
+  const fixture = await createFixture('priority_assessment')
+  fixture.config.promptConfig = {
+    strategyText: 'El dr marco atiende las urgencias de esta agenda. La Dra. Ana atiende sus seguimientos.'
+  }
+  const history = [
+    { role: 'user', content: 'Hola, ¿dónde están?' },
+    { role: 'assistant', content: 'Estamos en el Centro.' },
+    { role: 'user', content: 'Me duele una muela. Me dijeron que aquí está la Dra. Elena.' }
+  ]
+  const presentationContext = 'priority_specialist_assessment'
+  try {
+    for (const [specialistName, expected, single] of [
+      ['Dr. Marco', /con el Dr\. Marco/i, false],
+      ['Dra. Ana', /con la Dra\. Ana/i, true],
+      ['Dra. Elena', /con el especialista/i, true]
+    ]) {
+      const ctx = urgentAssessmentTurn({ ...fixture, scopeId: previewScope(randomUUID()) }, 'dolor-actual', history)
+      const request = freeSlotsInput(fixture.firstDate, {
+        endDate: fixture.secondDate, presentationContext, specialistName,
+        ...(single ? { earliestLocalTime: '16:00', latestLocalTime: '16:00' } : {})
+      })
+      const search = toolNamed(ctx, 'get_free_slots')
+      const result = await search.invoke(null, JSON.stringify(request))
+      assert.equal(result.ok, true, JSON.stringify(result))
+      assert.deepEqual(result.slots.map(day => day.localDate), [fixture.firstDate])
+      const offer = single
+        ? await toolNamed(ctx, 'offer_appointment_slot').invoke(null, JSON.stringify({
+            startTime: result.slots[0].options[0].startTime, appointmentId: null, selectionContext: 'neutral'
+          }))
+        : await toolNamed(ctx, 'offer_appointment_options').invoke(null, JSON.stringify({ maxDays: 3 }))
+      assert.equal(offer.ok, true, JSON.stringify(offer))
+      assert.match(offer.visibleReply, /recomiendo[^\n]*valoración[^\n]*lo antes posible/i)
+      assert.match(offer.visibleReply, expected)
+      assert.match(offer.visibleReply, /4:00 p\.m\./)
+      assert.doesNotMatch(offer.visibleReply, /urgencias|emergencias|hospital|Dra\. Elena/i)
+      assert.equal(ensureToolCallingV2VisibleReply('otro texto', ctx.actions), offer.visibleReply)
+      if (single) {
+        const nextTurn = urgentAssessmentTurn({ ...fixture, scopeId: ctx.previewScopeId }, 'siguiente-turno', [
+          ...history, { role: 'assistant', content: offer.visibleReply }, { role: 'user', content: 'Sí' }
+        ])
+        const pending = await loadConversationalAppointmentOfferDecisionContext({ ctx: nextTurn, config: fixture.config })
+        assert.equal(pending?.startTime, result.slots[0].options[0].startTime)
+      }
+    }
+    const emptyCtx = urgentAssessmentTurn({ ...fixture, scopeId: previewScope(randomUUID()) }, 'sin-cupo', history)
+    const empty = await toolNamed(emptyCtx, 'get_free_slots').invoke(null, JSON.stringify(freeSlotsInput(fixture.firstDate, {
+      earliestLocalTime: '23:00', presentationContext, specialistName: 'Dr. Marco'
+    })))
+    assert.equal(empty.total, 0)
+    assert.equal(empty.terminal, true)
+    assert.match(empty.visibleReply, /recomiendo[^\n]*Dr\. Marco/i)
+    assert.match(empty.visibleReply, /no hay horarios/i)
+    assert.doesNotMatch(empty.visibleReply, /urgencias|emergencias|hospital/i)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
+test('sin cupos o con una agenda que falla, la búsqueda urgente conserva la indicación de atención inmediata', async () => {
+  const fixture = await createFixture('urgent_no_slots')
+  try {
+    const ctx = urgentAssessmentTurn(fixture, 'sin-horarios')
+    const request = freeSlotsInput(fixture.firstDate, {
+      endDate: fixture.secondDate, earliestLocalTime: '23:00', presentationContext: 'urgent_specialist_assessment'
+    })
+    const search = toolNamed(ctx, 'get_free_slots')
+    const empty = await search.invoke(null, JSON.stringify(request))
+    assert.equal(empty.ok, true, JSON.stringify(empty))
+    assert.equal(empty.total, 0)
+    assert.match(empty.visibleReply, /^Acude a urgencias ahora[\s\S]*no hay horarios/i)
+    setNativeAppointmentAvailabilityLookupHookForTest(async () => {
+      throw Object.assign(new Error('Calendario no disponible'), { statusCode: 503 })
+    })
+    const failed = await search.invoke(null, JSON.stringify(request))
+    assert.equal(failed.ok, false)
+    assert.equal(failed.availabilityCheckFailed, true)
+    assert.deepEqual(failed.slots, [])
+    assert.notEqual(failed.transferRequired, true)
+    assert.match(failed.visibleReply, /^Acude a urgencias ahora[\s\S]*no puedo confirmar un horario/i)
+    const agent = createToolCallingV2Agent({ model: 'gpt-4.1-mini', instructions: '', tools: [search] })
+    for (const output of [empty, failed]) {
+      const result = await agent.toolUseBehavior(null, [{ tool: search, output }])
+      assert.equal(result.isFinalOutput, true)
+      assert.equal(result.finalOutput, output.visibleReply)
+    }
+    assert.deepEqual(ctx.actions, [])
+  } finally {
+    setNativeAppointmentAvailabilityLookupHookForTest(null)
+    await cleanupFixture(fixture)
+  }
+})
 
 async function selectDate(fixture, localDate, executionId = `select-date-${fixture.suffix}`) {
   const ctx = previewContext({

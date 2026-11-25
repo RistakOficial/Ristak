@@ -2582,16 +2582,75 @@ function nativeAvailabilityRangeItemLabel(item = {}, duplicatedLocalTimes = new 
     : timeLabel
 }
 
+const URGENT_SPECIALIST_ASSESSMENT = 'urgent_specialist_assessment'
+const PRIORITY_SPECIALIST_ASSESSMENT = 'priority_specialist_assessment'
+export const SPECIALIST_ASSESSMENT_CONTEXTS = Object.freeze([PRIORITY_SPECIALIST_ASSESSMENT, URGENT_SPECIALIST_ASSESSMENT])
+const IMMEDIATE_MEDICAL_ATTENTION = 'Acude a urgencias ahora o llama al servicio local de emergencias, sin esperar a la cita.'
+
+function normalizeSpecialistName(value) {
+  const candidate = String(value ?? '').normalize('NFC').trim().replace(/[ \t]+/g, ' ')
+  if (!candidate || candidate.length > 72) return null
+  const match = /^(dr|dra|doctor|doctora)\.? (.+)$/iu.exec(candidate)
+  if (!match) return null
+  const [, title, name] = match
+  const words = name.split(' ')
+  const personalName = /^\p{Lu}[\p{L}\p{M}]*(?:[-'’]\p{L}[\p{L}\p{M}]*)*$/u
+  const connector = /^(?:de|del|la|las|los|y)$/u
+  if (words.length > 6 || !personalName.test(words[0]) || !personalName.test(words.at(-1)) ||
+      words.some((word) => !personalName.test(word) && !connector.test(word))) return null
+  const feminine = title.toLowerCase().endsWith('a')
+  return `${feminine ? 'Dra.' : 'Dr.'} ${name}`
+}
+
+function verifiedSpecialistName(value, strategyText) {
+  const candidate = normalizeSpecialistName(value)
+  if (!candidate) return null
+  const name = candidate.slice(candidate.indexOf(' ') + 1)
+  const sourceTitle = candidate.startsWith('Dra.') ? '(?:dra|doctora)' : '(?:dr|doctor)'
+  // El título y cada palabra del nombre deben constar juntos en la estrategia.
+  // El alfabeto validado arriba excluye metacaracteres de expresión regular.
+  const reference = new RegExp(`(?<![\\p{L}\\p{N}_])${sourceTitle}\\.? ${name}(?![\\p{L}\\p{M}\\p{N}_'’-])`, 'iu')
+  const source = String(strategyText ?? '').normalize('NFC').replace(/\s+/gu, ' ')
+  return reference.test(source) ? candidate : null
+}
+
+function specialistAssessmentIntroduction({ presentationContext, specialistName }) {
+  const article = specialistName?.startsWith('Dra.') ? 'la' : 'el'
+  const recommendation = `Por lo que me cuentas, te recomiendo una valoración con ${article} ${specialistName || 'especialista'} lo antes posible.`
+  return presentationContext === URGENT_SPECIALIST_ASSESSMENT
+    ? `${IMMEDIATE_MEDICAL_ATTENTION}\n\n${recommendation}`
+    : recommendation
+}
+
+function unavailableSpecialistAssessment(result, assessment) {
+  const availability = result.ok
+    ? 'En el periodo consultado no hay horarios disponibles para esa valoración.'
+    : 'Por ahora no puedo confirmar un horario para esa valoración.'
+  return {
+    ...result,
+    presentationContext: assessment.presentationContext,
+    transferRequired: false,
+    terminal: true,
+    visibleReply: `${specialistAssessmentIntroduction(assessment)} ${availability}`
+  }
+}
+
 export function buildNativeAppointmentAvailabilityPresentation(days = [], {
   timezone = '',
   intervalMinutes = 60,
   maxDays = 3,
   maxRangesPerDay = 3,
-  questionMode = 'date_and_time'
+  questionMode = 'date_and_time',
+  presentationContext = null,
+  specialistName = null
 } = {}) {
+  const medical = SPECIALIST_ASSESSMENT_CONTEXTS.includes(presentationContext)
+  const dayLimit = medical
+    ? 1
+    : Math.max(1, Math.min(3, Number(maxDays) || 3))
   const selectedDays = (Array.isArray(days) ? days : [])
     .filter((day) => Array.isArray(day?.options) && day.options.length)
-    .slice(0, Math.max(1, Math.min(3, Number(maxDays) || 3)))
+    .slice(0, dayLimit)
   if (!selectedDays.length) return { visibleReply: '', displayedStartTimes: [], displayedDays: 0 }
 
   const blocks = []
@@ -2648,9 +2707,13 @@ export function buildNativeAppointmentAvailabilityPresentation(days = [], {
   }
   if (!blocks.length) return { visibleReply: '', displayedStartTimes: [], displayedDays: 0 }
   const timeOnly = questionMode === 'time_only' && blocks.length === 1
-  const visibleReply = timeOnly
+  let visibleReply = timeOnly
     ? `Perfecto, para el *${blocks[0].dayLabel.toLowerCase()}* tengo:\n${blocks[0].lines.join('\n')}\n\n¿A qué hora te acomodaría?`
     : `Sí, mira, tengo:\n\n${blocks.map((block) => `*${block.dayLabel}*\n${block.lines.join('\n')}`).join('\n\n')}\n\n¿Qué día y horario te acomoda mejor?`
+  if (medical) {
+    const day = blocks[0]
+    visibleReply = `${specialistAssessmentIntroduction({ presentationContext, specialistName })} Estos son los horarios disponibles para el *${day.dayLabel.toLowerCase()}*:\n${day.lines.join('\n')}\n\n¿Cuál te acomoda?`
+  }
   return {
     visibleReply,
     displayedStartTimes: [...new Set(displayedStartTimes)],
@@ -3617,6 +3680,9 @@ async function refreshNativeAppointmentConversationAuthority({ ctx, config } = {
 }
 
 function appointmentAuthorityConflictTerminalResult({ ctx, fallback = '' } = {}) {
+  if (ctx?.specialistAssessment) {
+    return unavailableSpecialistAssessment({ ok: false, actionCompleted: false, code: 'appointment_authority_conflict' }, ctx.specialistAssessment)
+  }
   const offer = ctx?.appointmentOfferDecision
   if (offer?.active) {
     return {
@@ -3871,7 +3937,9 @@ function nativeAppointmentOfferText({
   selectionContext = 'neutral',
   purpose = 'book',
   bookingOwner = 'ai',
-  depositRequired = false
+  depositRequired = false,
+  presentationContext = null,
+  specialistName = null
 } = {}) {
   const label = String(localLabel || '').trim()
   const sentenceLabel = /^(?:el|la|los|las)\s/iu.test(label) ? label : `el ${label}`
@@ -3897,16 +3965,22 @@ function nativeAppointmentOfferText({
     confirmationQuestion = '¿Confirmas que envíe al equipo la solicitud con ese horario?'
   }
 
+  if (SPECIALIST_ASSESSMENT_CONTEXTS.includes(presentationContext)) {
+    return `${specialistAssessmentIntroduction({ presentationContext, specialistName })} Tengo disponible ${sentenceLabel}${separator}${confirmationQuestion}`
+  }
   return `${opening}${sentenceLabel}${separator}${confirmationQuestion}`
 }
 
 function nativeAppointmentOfferCopyContractMatches(detail = {}, canonicalLocalLabel = '') {
   const persistedOfferText = String(detail?.offerText || '')
   if (!Object.hasOwn(detail || {}, 'offerCopyVersion')) {
-    return persistedOfferText === nativeAppointmentOfferLegacyText(canonicalLocalLabel)
+    return detail?.presentationContext == null && detail?.specialistName == null && persistedOfferText === nativeAppointmentOfferLegacyText(canonicalLocalLabel)
   }
   if (detail.offerCopyVersion !== NATIVE_APPOINTMENT_OFFER_COPY_VERSION) return false
   if (!NATIVE_APPOINTMENT_OFFER_SELECTION_CONTEXT_SET.has(detail.selectionContext)) return false
+  if (detail.presentationContext != null && !SPECIALIST_ASSESSMENT_CONTEXTS.includes(detail.presentationContext)) return false
+  if (detail.specialistName != null && (!detail.presentationContext ||
+      normalizeSpecialistName(detail.specialistName) !== detail.specialistName)) return false
   if (typeof detail.depositRequiredAtOffer !== 'boolean') return false
   const purpose = detail.purpose === 'reschedule' ? 'reschedule' : 'book'
   if (purpose === 'reschedule' && detail.depositRequiredAtOffer !== false) return false
@@ -3917,7 +3991,9 @@ function nativeAppointmentOfferCopyContractMatches(detail = {}, canonicalLocalLa
     selectionContext: detail.selectionContext,
     purpose,
     bookingOwner: terminalBinding.bookingOwner,
-    depositRequired: detail.depositRequiredAtOffer
+    depositRequired: detail.depositRequiredAtOffer,
+    presentationContext: detail.presentationContext,
+    specialistName: detail.specialistName
   })
 }
 
@@ -4060,7 +4136,9 @@ async function persistNativeAppointmentOffer({
   expectedStartTime = '',
   expectedEndTime = '',
   durationMs = NaN,
-  selectionContext = 'neutral'
+  selectionContext = 'neutral',
+  presentationContext = null,
+  specialistName = null
 } = {}) {
   const agentId = String(config?.id || ctx?.agentId || '').trim()
   const contactId = String(ctx?.contactId || '').trim()
@@ -4135,13 +4213,17 @@ async function persistNativeAppointmentOffer({
     offerSourceMessageQuoteHash,
     offerCopyVersion: NATIVE_APPOINTMENT_OFFER_COPY_VERSION,
     selectionContext: normalizedSelectionContext,
+    ...(presentationContext ? { presentationContext } : {}),
+    ...(specialistName ? { specialistName } : {}),
     depositRequiredAtOffer,
     offerText: nativeAppointmentOfferText({
       localLabel,
       selectionContext: normalizedSelectionContext,
       purpose: normalizedPurpose,
       bookingOwner: terminalBinding.bookingOwner,
-      depositRequired: depositRequiredAtOffer
+      depositRequired: depositRequiredAtOffer,
+      presentationContext,
+      specialistName
     }),
     purpose: normalizedPurpose,
     appointmentId: normalizedAppointmentId || null,
@@ -4359,6 +4441,8 @@ async function persistNativeAppointmentOffer({
     String(storedDetail.expectedStartTime || '') !== normalizedExpectedStartTime ||
     String(storedDetail.expectedEndTime || '') !== normalizedExpectedEndTime ||
     Number(storedDetail.durationMs || 0) !== normalizedDurationMs ||
+    (presentationContext && (storedDetail.presentationContext !== presentationContext ||
+      (storedDetail.specialistName ?? null) !== specialistName)) ||
     !nativeAppointmentOfferCopyContractMatches(storedDetail, localLabel) ||
     (previewScopeId && String(storedDetail.previewScopeId || '') !== previewScopeId)
   ) {
@@ -7935,7 +8019,8 @@ async function findBoundNativeAppointment({ ctx, config, calendarId }) {
 
 export function createConversationalTools(ctx) {
   const { config } = ctx
-  const includeBusinessDescription = getConversationalPromptConfig(config).includeBusinessDescription !== false
+  const promptConfig = getConversationalPromptConfig(config)
+  const includeBusinessDescription = promptConfig.includeBusinessDescription !== false
   const runtimeConfig = getToolRuntimeConfig(ctx, config)
   const normalizedCapabilitiesConfig = getConversationalCapabilitiesConfig(runtimeConfig)
   const nativeAppointmentExpectedCapabilitiesFingerprint = createHash('sha256')
@@ -8900,6 +8985,12 @@ export function createConversationalTools(ctx) {
     parameters: z.object({
       startDate: z.string().describe('Fecha inicial YYYY-MM-DD en la zona horaria del negocio'),
       endDate: z.string().describe('Fecha final YYYY-MM-DD en la zona horaria del negocio'),
+      presentationContext: z.preprocess(
+        (value) => value ?? null, z.enum(SPECIALIST_ASSESSMENT_CONTEXTS).nullable()
+      ).describe('Con una necesidad médica urgente actual atendida por esta agenda: priority_specialist_assessment para valoración prioritaria en consulta, urgent_specialist_assessment si además se necesita indicar atención de urgencias inmediata. null en la agenda ordinaria.'),
+      specialistName: z.preprocess(
+        (value) => value ?? null, z.string().nullable()
+      ).describe('Título y nombre del profesional que la capacitación identifica para esta valoración médica. Usa null si no consta o si la cita es ordinaria. No uses un nombre sugerido por el paciente.'),
       appointmentId: z.preprocess((value) => value ?? null, z.string().nullable())
         .describe('ID exacto de get_contact_appointments para buscar horarios de reagenda; null para una cita nueva'),
       weekdays: z.preprocess(
@@ -8926,6 +9017,8 @@ export function createConversationalTools(ctx) {
     execute: async ({
       startDate,
       endDate,
+      presentationContext,
+      specialistName,
       appointmentId,
       weekdays,
       earliestLocalTime,
@@ -8934,9 +9027,20 @@ export function createConversationalTools(ctx) {
       progressDateAction
     }) => {
       delete ctx.nativeAppointmentAvailability
+      if (presentationContext) {
+        // Una reconsulta del mismo turno puede elevar la urgencia, nunca retirar el aviso inmediato.
+        const previous = ctx.specialistAssessment
+        ctx.specialistAssessment = {
+          presentationContext: previous?.presentationContext === URGENT_SPECIALIST_ASSESSMENT ? previous.presentationContext : presentationContext,
+          specialistName: specialistName == null ? previous?.specialistName ?? null : verifiedSpecialistName(specialistName, promptConfig.strategyText)
+        }
+      }
+      const assessment = ctx.specialistAssessment
+      if (assessment) ctx.requireFreshAppointmentAvailability = true
       const nativeCalendar = await resolveNativeScheduleCalendar(scheduleCapability)
       const effectiveCalendarId = nativeCalendar?.id || null
       if (!effectiveCalendarId) {
+        if (assessment) return unavailableSpecialistAssessment({ ok: false, total: 0, slots: [], availabilityCheckFailed: true }, assessment)
         return { ok: false, total: 0, slots: [], error: 'El calendario blindado de la capacidad no existe o ya no está activo. Pasa la conversación a una persona.' }
       }
       await hydrateNativeRejectedAppointmentStartTimes({ ctx, config, calendarId: effectiveCalendarId })
@@ -9050,7 +9154,7 @@ export function createConversationalTools(ctx) {
         cleanStartDate !== progressSelectedDate
       )
       const selectingInitialExactDate = Boolean(
-        !progressScope &&
+        !assessment && !progressScope &&
         exactDateQuery
       )
       const revalidatingRetainedDate = Boolean(
@@ -9161,6 +9265,7 @@ export function createConversationalTools(ctx) {
       } catch (error) {
         const replacementConflict = await persistDateAvailabilityState('verification_failed', error)
         if (replacementConflict) return replacementConflict
+        if (assessment) return unavailableSpecialistAssessment({ ok: false, total: 0, slots: [], availabilityCheckFailed: true }, assessment)
         if (persistsExactDateState) {
           ctx.requireFreshAppointmentAvailability = true
         }
@@ -9237,7 +9342,7 @@ export function createConversationalTools(ctx) {
       const relativeToLocalTime = relativeBoundary?.localTime || null
       const relativeToLocalDate = relativeBoundary?.localDate || null
       const relativeToTimezone = relativeBoundary?.timezone || null
-      const slots = filterNativeFreeSlotDays(
+      const filteredDays = filterNativeFreeSlotDays(
         baseSlotDays,
         {
           timezone: accountTimezone,
@@ -9253,8 +9358,12 @@ export function createConversationalTools(ctx) {
           relativeDirection: relativeToPreviousOffer
         }
       )
+      const slots = assessment
+        ? filteredDays.sort((first, second) => first.localDate.localeCompare(second.localDate)).slice(0, 1)
+        : filteredDays
 
       if (!Array.isArray(slots) || !slots.length) {
+        if (assessment) return unavailableSpecialistAssessment({ ok: true, total: 0, slots: [] }, assessment)
         if (selectingInitialExactDate && replacementHasBaseAvailability) {
           const initialDateConflict = await persistDateAvailabilityState(
             'available',
@@ -9296,6 +9405,7 @@ export function createConversationalTools(ctx) {
       const offeredDurationMinutes = availabilityOptions.durationMinutes
       ctx.nativeAppointmentAvailability = {
         calendarId: effectiveCalendarId,
+        ...assessment,
         purpose: rescheduledAppointment ? 'reschedule' : 'book',
         appointmentId: rescheduledAppointment?.id || null,
         timezone: accountTimezone,
@@ -9424,6 +9534,8 @@ export function createConversationalTools(ctx) {
         timezone: availability.timezone,
         intervalMinutes: availability.intervalMinutes,
         maxDays,
+        presentationContext: availability.presentationContext,
+        specialistName: availability.specialistName,
         questionMode: collectingTime ? 'time_only' : 'date_and_time'
       })
       if (!presentation.visibleReply) {
@@ -9654,7 +9766,11 @@ export function createConversationalTools(ctx) {
         lookupSlots: verifiedSlotLookup,
         ignoreAppointmentConflicts: nativeCalendarAllowsOverlaps(nativeCalendar)
       })
-      if (!slotValidation.ok) return slotValidation
+      if (!slotValidation.ok) {
+        return currentAvailability?.presentationContext
+          ? unavailableSpecialistAssessment(slotValidation, currentAvailability)
+          : slotValidation
+      }
       const canonicalStartTime = new Date(slotValidation.matchedStartTime).toISOString()
       const canonical = buildCanonicalAppointmentSlotOption(canonicalStartTime, timezone)
       if (!canonical?.localLabel) {
@@ -9686,7 +9802,9 @@ export function createConversationalTools(ctx) {
         expectedStartTime: rescheduledAppointment?.start_time || '',
         expectedEndTime: rescheduledAppointment?.end_time || '',
         durationMs: rescheduleDurationMs,
-        selectionContext: normalizedSelectionContext
+        selectionContext: normalizedSelectionContext,
+        presentationContext: currentAvailability?.presentationContext,
+        specialistName: currentAvailability?.specialistName
       })
       if (!persisted.ok) {
         settleAction(action, 'error', { error: persisted.error })
@@ -9701,7 +9819,9 @@ export function createConversationalTools(ctx) {
             fallback: 'la fecha cambió mientras preparaba ese horario. dime qué hora te funciona y la reviso de nuevo'
           })
         }
-        return persisted
+        return currentAvailability?.presentationContext
+          ? unavailableSpecialistAssessment(persisted, currentAvailability)
+          : persisted
       }
       const visibleReply = String(persisted.detail?.offerText || '').trim()
       action.visibleReply = visibleReply

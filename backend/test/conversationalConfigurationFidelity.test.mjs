@@ -204,7 +204,14 @@ test('el turno de una clínica que atiende urgencias conserva la orientación in
   assert.ok(instructions.includes(config.promptConfig.strategyText))
   assert.match(instructions, /atención inmediata[^\n]*acuda ahora a urgencias/i)
   assert.match(instructions, /en paralelo[^\n]*sin demorar la atención/i)
-  assert.match(instructions, /conserva visible esta orientación[^\n]*ofrecer un horario[^\n]*transferir el chat/i)
+  assert.match(instructions, /puede ocurrir al comenzar o a mitad de la conversación/i)
+  assert.match(instructions, /un saludo[^\n]*consulta informativa[^\n]*no activan esa búsqueda/i)
+  assert.match(instructions, /cita ordinaria[^\n]*estrategia habitual/i)
+  assert.match(instructions, /no hay señales para indicar atención de emergencia[^\n]*presentationContext="priority_specialist_assessment"/i)
+  assert.match(instructions, /imposibilidad de abrir la boca[^\n]*get_free_slots con presentationContext="urgent_specialist_assessment"/i)
+  assert.match(instructions, /acudir a urgencias ahora sin esperar la cita[^\n]*horarios verificados/i)
+  assert.match(instructions, /no ofrezcas transferir el chat cuando la vía indicada es agendar/i)
+  assert.match(instructions, /dificultad para respirar[^\n]*sin consultar agenda/i)
   assert.match(instructions, /urgencias directamente o por teléfono[^\n]*datos verificados/i)
   assert.match(instructions, /valoración urgente[^\n]*get_free_slots desde hoy/i)
   assert.match(instructions, /varias opciones oportunas[^\n]*offer_appointment_options[^\n]*maxDays=1[^\n]*una sola[^\n]*offer_appointment_slot/i)
@@ -222,13 +229,14 @@ test('la orientación urgente respeta los servicios declarados y las herramienta
     strategyText: 'El consultorio sólo ofrece consultas de rutina.'
   })
   const message = 'Necesito atención, me cuesta respirar'
-  const searchUrgently = /valoración urgente[^\n]*get_free_slots desde hoy/i
+  const searchUrgently = /presentationContext="(?:urgent|priority)_specialist_assessment"/
   for (const calendar of [null, { id: 'schedule_appointment', enabled: true }]) {
     config.capabilitiesConfig.items = calendar ? [calendar] : []
     const turn = await inspectTurn(config, { message })
     assert.ok(turn.agent.instructions.includes(config.promptConfig.strategyText))
     assert.match(turn.agent.instructions, /atención propia sólo si[^\n]*expresamente[^\n]*si no consta/i)
     assert.match(turn.agent.instructions, /atención inmediata[^\n]*acuda ahora a urgencias/i)
+    assert.match(turn.agent.instructions, /dificultad para respirar[^\n]*sin trámites ni búsqueda de horarios/i)
     assert.doesNotMatch(turn.agent.instructions, searchUrgently)
     assert.equal(turn.tools.some((item) => item.name === 'get_free_slots'), false)
   }
