@@ -152,11 +152,11 @@ function urgentAssessmentTurn(fixture, executionId, messages = []) {
   })
 }
 
-test('la lista urgente muestra el aviso antes de los horarios reales del primer día y no reserva', async () => {
+test('al pedir horarios para valoración urgente, la lista muestra el aviso antes del primer día disponible y no reserva', async () => {
   const fixture = await createFixture('urgent_options')
   try {
     const ctx = urgentAssessmentTurn(fixture, 'consulta-urgente', [
-      { role: 'user', content: 'No puedo abrir la boca, es urgente' }
+      { role: 'user', content: 'No puedo abrir la boca, es urgente. ¿Qué horarios hay para la valoración?' }
     ])
     const request = freeSlotsInput(fixture.firstDate, { endDate: fixture.secondDate })
     const search = toolNamed(ctx, 'get_free_slots')
@@ -191,7 +191,7 @@ test('la lista urgente muestra el aviso antes de los horarios reales del primer 
 test('la oferta urgente de un horario sí se puede confirmar al contestar en el turno siguiente', async () => {
   const fixture = await createFixture('urgent_single')
   try {
-    const messages = [{ id: 'relato-urgente', role: 'user', content: 'No puedo abrir la boca, ¿me puede revisar?' }]
+    const messages = [{ id: 'relato-urgente', role: 'user', content: 'No puedo abrir la boca. Quiero agendar la valoración. ¿Qué horario tiene?' }]
     const ctx = urgentAssessmentTurn(fixture, messages[0].id, messages)
     const available = await toolNamed(ctx, 'get_free_slots').invoke(null, JSON.stringify(freeSlotsInput(fixture.firstDate, {
       endDate: fixture.secondDate,
@@ -226,7 +226,7 @@ test('la oferta urgente de un horario sí se puede confirmar al contestar en el 
   }
 })
 
-test('una urgencia de consultorio tras un saludo ofrece horarios y sólo nombra profesionales de la capacitación', async () => {
+test('tras aceptar la invitación de valoración se muestran horarios y sólo se nombra a profesionales de la capacitación', async () => {
   const fixture = await createFixture('priority_assessment')
   fixture.config.promptConfig = {
     strategyText: 'El dr marco atiende las urgencias de esta agenda. La Dra. Ana atiende sus seguimientos.'
@@ -234,7 +234,9 @@ test('una urgencia de consultorio tras un saludo ofrece horarios y sólo nombra 
   const history = [
     { role: 'user', content: 'Hola, ¿dónde están?' },
     { role: 'assistant', content: 'Estamos en el Centro.' },
-    { role: 'user', content: 'Me duele una muela. Me dijeron que aquí está la Dra. Elena.' }
+    { role: 'user', content: 'Me duele una muela. Me dijeron que aquí está la Dra. Elena.' },
+    { role: 'assistant', content: 'Te recomiendo que te revise el especialista. ¿Quieres que busque un horario?' },
+    { role: 'user', content: 'Sí, por favor.' }
   ]
   const presentationContext = 'priority_specialist_assessment'
   try {
@@ -288,7 +290,9 @@ test('una urgencia de consultorio tras un saludo ofrece horarios y sólo nombra 
 test('sin cupos o con una agenda que falla, la búsqueda urgente conserva la indicación de atención inmediata', async () => {
   const fixture = await createFixture('urgent_no_slots')
   try {
-    const ctx = urgentAssessmentTurn(fixture, 'sin-horarios')
+    const ctx = urgentAssessmentTurn(fixture, 'sin-horarios', [
+      { role: 'user', content: 'No puedo abrir la boca. Quiero agendar una revisión, ¿tiene horarios disponibles?' }
+    ])
     const request = freeSlotsInput(fixture.firstDate, {
       endDate: fixture.secondDate, earliestLocalTime: '23:00', presentationContext: 'urgent_specialist_assessment'
     })

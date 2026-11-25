@@ -10260,25 +10260,26 @@ las condiciones operativas configuradas expresamente dentro de
 convertir un resultado pendiente o fallido en exito, pero fuera de esos limites
 el backend no reemplaza su criterio con un embudo propio.
 
-Cuando una persona describe una urgencia médica, el agente comprueba si el
-consultorio atiende ese tipo de caso por cita. Puede detectarla al comienzo o
-a mitad del chat aunque la persona nunca diga «urgente». En ese turno recomienda
-la valoración y muestra los horarios reales. Puede mencionar al profesional que
-la capacitación identifica para el caso. Los saludos y las preguntas informativas
-siguen su conversación habitual. Una solicitud de cita ordinaria sigue la
-estrategia de agenda configurada por el negocio.
-La persona elige y confirma antes de reservar. Si faltan cupos oportunos o el
-consultorio atiende estos casos por otra vía, el agente indica la opción de
-atención que tenga documentada.
+Los saludos y las preguntas informativas siguen su conversación habitual. Si la
+capacitación exige conocer el motivo de consulta, ante «hola, quiero una cita»
+el agente pregunta qué necesita la persona antes de consultar disponibilidad.
+Una revisión de rutina también puede ser un motivo válido.
+
+Cuando la persona describe una urgencia que el consultorio atiende por cita,
+el agente reconoce lo que le pasa, recomienda una valoración con el especialista
+y pregunta si quiere agendarla. Esto aplica en cualquier turno. Por ejemplo,
+si el paciente explica su problema después de un saludo, ahí recibe la
+invitación. Al responder «sí» a esa pregunta o al pedir horarios con el motivo
+ya conocido, el agente consulta la agenda y presenta opciones verificadas. Si
+la persona ya explicó el problema y pidió horarios en el mismo mensaje, puede
+recibirlos directamente. Si declina, el agente respeta su decisión. La reserva
+requiere que el paciente elija y confirme un horario concreto.
 
 Ante una posible emergencia, la primera indicación es buscar atención inmediata.
-Si el consultorio atiende ese caso por cita, el agente puede ofrecer en el mismo
-mensaje los horarios verificados del primer día con cupo. El mensaje indica que
-la persona debe acudir a urgencias ahora y que puede coordinar la valoración con
-el especialista en paralelo. Tanto la lista como la oferta de un único horario
-conservan ese aviso. Para reservar, la persona confirma el horario y el sistema
-vuelve a comprobarlo. La urgencia por sí sola no transfiere el chat. Si el
-consultorio recibe esos casos por otra vía, se respeta la vía que haya indicado.
+Si la valoración con el especialista también procede, el agente puede invitar
+a agendar en paralelo. Si la persona acepta, los horarios verificados conservan
+el aviso de atención inmediata. Si el consultorio atiende esos casos por otra
+vía, se respeta la vía configurada. La urgencia por sí sola no transfiere el chat.
 
 Cuando la persona refiere peligro inmediato, por ejemplo dificultad para respirar,
 el agente le indica buscar ayuda de inmediato sin detenerse a consultar la agenda.

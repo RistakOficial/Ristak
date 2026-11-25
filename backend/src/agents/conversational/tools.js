@@ -8977,7 +8977,7 @@ export function createConversationalTools(ctx) {
   const getFreeSlotsForAgentTool = tool({
     name: 'get_free_slots',
     description: [
-      'Obtiene horarios reales del calendario blindado y aplica su regla actual de empalme al momento de consultar.',
+      'Obtiene horarios reales del calendario blindado y aplica su regla actual de empalme al momento de consultar. Antes de llamarla, respeta el momento y los pasos previos que define la estrategia de esa cuenta. Para una valoración médica por urgencia, espera a que la persona pida o acepte agendar por ese motivo.',
       'Filtra aquí mismo por días y horas cuando la persona diga cosas como "miércoles o viernes", "después de las 5" o "más tarde".',
       'Cada opción incluye localLabel/localDate/localTime ya calculados en la zona del negocio: NO conviertas el horario por tu cuenta.',
       'Si pidió opciones amplias, llama offer_appointment_options. Si eligió o propuso una fecha y hora exactas, pasa options[].startTime sin modificar a offer_appointment_slot. Para reagendar manda también el appointmentId exacto.'
@@ -8987,7 +8987,7 @@ export function createConversationalTools(ctx) {
       endDate: z.string().describe('Fecha final YYYY-MM-DD en la zona horaria del negocio'),
       presentationContext: z.preprocess(
         (value) => value ?? null, z.enum(SPECIALIST_ASSESSMENT_CONTEXTS).nullable()
-      ).describe('Con una necesidad médica urgente actual atendida por esta agenda: priority_specialist_assessment para valoración prioritaria en consulta, urgent_specialist_assessment si además se necesita indicar atención de urgencias inmediata. null en la agenda ordinaria.'),
+      ).describe('Para una valoración urgente que atiende esta agenda y que la persona ya pidió o aceptó agendar: priority_specialist_assessment para valoración prioritaria en consulta, urgent_specialist_assessment si además se necesita indicar atención de urgencias inmediata. null en la agenda ordinaria.'),
       specialistName: z.preprocess(
         (value) => value ?? null, z.string().nullable()
       ).describe('Título y nombre del profesional que la capacitación identifica para esta valoración médica. Usa null si no consta o si la cita es ordinaria. No uses un nombre sugerido por el paciente.'),
